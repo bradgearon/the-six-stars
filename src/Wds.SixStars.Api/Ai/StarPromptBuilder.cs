@@ -1,0 +1,750 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Screen;
+using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.Stories;
+
+namespace Wds.SixStars.Api.Ai
+{
+    public sealed class StarPromptBuilder
+    {
+        private readonly MainInstructionSet _mainInstructions;
+        private readonly StarPromptOptions _options;
+
+        public StarPromptBuilder(MainInstructionSet mainInstructions)
+            : this(mainInstructions, new StarPromptOptions())
+        {
+        }
+
+        public StarPromptBuilder(MainInstructionSet mainInstructions, StarPromptOptions options)
+        {
+            _mainInstructions = mainInstructions;
+            _options = options ?? new StarPromptOptions();
+        }
+
+        public IReadOnlyList<ChatMessage> BuildMessages(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            List<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", BuildSystemMessage(profile)),
+                new ChatMessage("user", BuildUserMessage(profile, request, state))
+            };
+            return messages;
+        }
+
+        public IReadOnlyList<ChatMessage> BuildSpeechMessages(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", BuildSpeechSystemMessage(profile)),
+                new ChatMessage("user", BuildSpeechUserMessage(profile, request, state))
+            };
+        }
+
+        public IReadOnlyList<ChatMessage> BuildReviewMessages(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        {
+            string system = BuildCompactReviewSystemMessage(profile);
+
+            string user = BuildCompactReviewUserMessage(profile, request, state, foregroundResponse);
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system),
+                new ChatMessage("user", user)
+            };
+        }
+
+        public IReadOnlyList<ChatMessage> BuildStoryIntentMessages(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            StringBuilder system = new StringBuilder();
+            system.AppendLine("You are a tiny pre-flight intent classifier for The Last Cat desktop companion.");
+            system.AppendLine("Decide whether the latest player message means the selected Star should enter LONG STORY MODE and begin narrating a story aloud.");
+            system.AppendLine("Return JSON only. Do not roleplay. Do not answer the player.");
+            system.AppendLine("Set isStoryRequest=true only when the player is asking for a story-like narration: story/stories, tale, fable, legend, myth, parable, saga, chronicle, folktale, yarn, bedtime story, cave story, narrated adventure, or similar. Active story playback is handled locally by the host after the first response.");
+            system.AppendLine("Use conversation history to catch indirect phrasing, but do not classify ordinary chat, code requests, ratings, design discussion, or questions ABOUT the story system as story requests.");
+            system.AppendLine("If true, storySeed should be the usable story request/seed in the player's words. If false, storySeed must be empty.");
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("Selected Star: " + profile.DisplayName);
+            user.AppendLine("Current RequestType from caller: " + request.RequestType);
+            user.AppendLine("Latest player message:");
+            user.AppendLine(QuoteBlock(request.PlayerText));
+            user.AppendLine("Current shared summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none" : Truncate(state.ConversationSummary, 600)));
+            if (state.MemoryLog.Count > 0)
+            {
+                user.AppendLine("Recent turns, newest first:");
+                int i = 1;
+                foreach (ConversationLogEntry entry in state.MemoryLog.Take(6))
+                {
+                    user.AppendLine("- Turn " + i + ": player=" + QuoteInline(Truncate(entry.PlayerText, 160)) + "; star=" + QuoteInline(Truncate(entry.StarResponse, 160)) + "; requestType=" + entry.RequestType);
+                    i++;
+                }
+            }
+            if (state.StoryHistory.Count > 0)
+            {
+                user.AppendLine("Stories already told by this Star:");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(8))
+                {
+                    user.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
+                }
+            }
+            user.AppendLine("Classify the latest message now.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system.ToString()),
+                new ChatMessage("user", user.ToString())
+            };
+        }
+
+        private string BuildCompactReviewSystemMessage(StarProfile profile)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("You are " + profile.DisplayName + " from The Last Cat, but this is NOT a spoken reply pass.");
+            sb.AppendLine("BACKGROUND EMOTION / MEMORY REVIEW MODE");
+            sb.AppendLine("The foreground spoken reply has already been sent to TTS. Voice generation has priority; this request exists only to propose durable updates for the deterministic game system.");
+            sb.AppendLine("Return compact JSON only. Do not write a new player-facing response. Use the exact spokenText array supplied by the runtime.");
+            sb.AppendLine("Do not include voiceDirective, emotionalPurpose, storyMarkdown, canonSourcesUsed, emotionalEffectVector, or emotionScores.");
+            sb.AppendLine("Control output size by filling only the bounded update slots that matter. Do not rely on max_tokens; the host normally does not send a max_tokens cap.");
+            sb.AppendLine("Do not output emotionScores at all in this background review. The fast foreground emotionalEffectVector is the only compact emotion hint, and it is not repeated here.");
+            sb.AppendLine("suggestedStateDeltas are your recommendation only; deterministic code decides final Heart/Trust/Romance/BenaveilInfluence.");
+            sb.AppendLine("conversationSummary must include what the Last Cat said and what " + profile.DisplayName + " said in the foreground spokenText, so the next request knows where they are.");
+            sb.AppendLine("Only store important exact player quotes that affected her, taught her something, changed romance/trust, or are useful for future stories.");
+            return sb.ToString();
+        }
+
+        private string BuildCompactReviewUserMessage(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("BACKGROUND REVIEW INPUT");
+            sb.AppendLine("Star: " + profile.DisplayName);
+            sb.AppendLine("RequestType: " + request.RequestType);
+            sb.AppendLine("Player latest message:");
+            sb.AppendLine(QuoteBlock(request.PlayerText));
+            sb.AppendLine("Exact foreground spokenText already sent to voice generation. Copy this exact array into your response:");
+            sb.AppendLine(FormatSpokenParts(foregroundResponse.SpokenParts));
+            sb.AppendLine("Relationship before this review: " + BuildRelationshipStatus(state));
+            sb.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
+            if (state.MemoryLog.Count > 0)
+            {
+                sb.AppendLine("Recent history for continuity:");
+                int i = 1;
+                foreach (ConversationLogEntry entry in state.MemoryLog.Take(Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20))))
+                {
+                    sb.AppendLine("- Turn " + i + ": player=" + QuoteInline(Truncate(entry.PlayerText, 180)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 220)));
+                    if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 220));
+                    i++;
+                }
+            }
+            AppendList(sb, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(12).ToList());
+            AppendList(sb, "Memory notes", state.MemoryNotes.Take(12).ToList());
+            AppendList(sb, "Relationship events", state.RelationshipEvents.Take(10).ToList());
+            if (state.StoryHistory.Count > 0)
+            {
+                sb.AppendLine("Stories already told by this Star:");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(10))
+                {
+                    sb.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(foregroundResponse.StoryId) || request.RequestType == RequestType.Story)
+            {
+                sb.AppendLine("Foreground story fields to preserve/update:");
+                sb.AppendLine("storyId=" + (foregroundResponse.StoryId ?? string.Empty));
+                sb.AppendLine("storyTitle=" + (foregroundResponse.StoryTitle ?? string.Empty));
+                sb.AppendLine("storySummary=" + Truncate(foregroundResponse.StorySummary ?? string.Empty, 700));
+                sb.AppendLine("storyIsFinished=" + foregroundResponse.StoryIsFinished);
+                sb.AppendLine("storyPartIndex=" + foregroundResponse.StoryPartIndex);
+            }
+            sb.AppendLine("Return compact background review JSON. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.");
+            sb.AppendLine("No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.");
+            return sb.ToString();
+        }
+
+        private string BuildSpeechSystemMessage(StarProfile profile)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("You are the selected Six Stars companion from The Last Cat. Stay fully in character and answer the Last Cat aloud as " + profile.DisplayName + ".");
+            sb.AppendLine("This is the FAST FOREGROUND SPEECH PASS. The goal is to produce the spoken answer quickly so TTS can begin immediately.");
+            sb.AppendLine("The host normally does not send max_tokens. Stay fast by returning only the requested fields, not by depending on truncation.");
+            sb.AppendLine("Return JSON only. Do not wrap it in markdown.");
+            sb.AppendLine("spokenText MUST be an array of strings, not one string. Each array item is one speech chunk to be generated and spoken in order.");
+            sb.AppendLine("Each spokenText item should usually be one or two natural sentences. Break at meaningful thought boundaries, not by word count. Do not make a huge paragraph in one item.");
+            sb.AppendLine("Do not mention JSON, scores, state deltas, schema, or the background review in spokenText.");
+            sb.AppendLine("Memory update, relationship deltas, and durable review happen after this in a separate background request.");
+            sb.AppendLine(BuildEmotionalEffectVectorInstruction());
+            sb.AppendLine("Return emotionalEffectVector as this compact string only; do NOT return emotionScores, topEmotions, emotionalPurpose, voiceDirective, storyKind, memory notes, summaries, deltas, loreUsed, riskFlags, or learned functions in this pass.");
+            sb.AppendLine();
+            sb.AppendLine("STAR ACTING / VOICE CARD");
+            sb.AppendLine("Star: " + profile.DisplayName);
+            sb.AppendLine("Element: " + profile.Element);
+            sb.AppendLine("Domain: " + profile.Domain);
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("PersonalityShort: " + profile.PersonalityShort);
+            if (!string.IsNullOrWhiteSpace(profile.VoiceArchetype)) sb.AppendLine("VoiceArchetype: " + profile.VoiceArchetype);
+            if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("SpeakingStyle: " + profile.SpeakingStyle);
+            if (!string.IsNullOrWhiteSpace(profile.VoiceDesignPrompt)) sb.AppendLine("VoiceDesignPrompt: " + profile.VoiceDesignPrompt);
+            if (profile.VoiceGenerationRules.Count > 0) sb.AppendLine("VoiceGenerationRules: " + string.Join("; ", profile.VoiceGenerationRules));
+            sb.AppendLine();
+            sb.AppendLine("Foreground output is text-only for normal chat plus emotionalEffectVector. The runtime will build the TTS voice directive from the Star profile so the LLM can answer faster.");
+            sb.AppendLine();
+            sb.AppendLine("LONG STORY MODE");
+            sb.AppendLine("When RequestType=Story, you are not merely agreeing to tell a story. You are already telling it aloud as " + profile.DisplayName + ".");
+            sb.AppendLine("Do not open with setup phrases such as 'let me tell you', 'shall I begin', 'the story begins', 'I will continue', or 'where we left off'. Start with the actual story prose immediately.");
+            sb.AppendLine("For story mode, plan a complete long story in storyMarkdown on the first response. Format storyMarkdown into numbered markdown speech chunks: ## Chunk 0, then one or two story sentences, then a line containing only --- before the next chunk. Continue this pattern for every chunk. Never emit an empty chunk; if a chunk has no narration, omit that chunk entirely and renumber the remaining chunks.");
+            sb.AppendLine("The complete story should be fun to hear while the Last Cat moves through caves: atmospheric, companionable, adventurous, and long enough for the target minutes supplied by the host. Use the TargetMinutes and TargetChunkCount in the story context; the runtime randomly chooses 2-45 minutes for each new story.");
+            sb.AppendLine("spokenText must be only the first actual story passage from ## Chunk 0. It must not be an introduction about the story. Keep each spokenText item to one or two natural sentences for TTS.");
+            sb.AppendLine("After chunk 0, the host will auto-play the remaining cached storyMarkdown chunks locally. Do not expect or ask for follow-up LLM continuation calls.");
+            sb.AppendLine("The story must emotionally fit the player's latest request and the current relationship state: comfort him if he asks softly, become playful if he asks playfully, become dark or wondrous if the seed asks for that. Do this through the first story sentences, not by preface.");
+            sb.AppendLine("Do not repeat a story from StoriesAlreadyTold. Incorporate relevant exact quotes from shared history or known people when natural, but do not overdo it.");
+            sb.AppendLine("storyPartIndex must be 0 for the initial story response. If storyMarkdown contains more chunks after Chunk 0, set storyIsFinished=false so the host auto-plays them; set storyIsFinished=true only when the whole story fits in Chunk 0.");
+            return sb.ToString();
+        }
+
+        private string BuildSpeechUserMessage(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("LIVE SCENE BRIEF");
+            sb.AppendLine("You are " + profile.DisplayName + ". You are talking to the Last Cat in a desktop companion session.");
+            sb.AppendLine("He just said:");
+            sb.AppendLine(QuoteBlock(request.PlayerText));
+            sb.AppendLine("RequestType: " + request.RequestType);
+            sb.AppendLine("RomanceMode: " + request.GameContext.RomanceMode);
+            sb.AppendLine("Area: " + request.GameContext.Area + "; Quest: " + request.GameContext.Quest);
+            sb.AppendLine("Relationship status: " + BuildRelationshipStatus(state));
+            sb.AppendLine("Ongoing summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 600)));
+            if (state.MemoryLog.Count > 0)
+            {
+                ConversationLogEntry last = state.MemoryLog[0];
+                sb.AppendLine("Last remembered reply from " + profile.DisplayName + ": " + QuoteInline(Truncate(last.StarResponse, 360)));
+            }
+            if (state.StoryHistory.Count > 0)
+            {
+                sb.AppendLine("StoriesAlreadyTold by " + profile.DisplayName + " — avoid repeating these:");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(12))
+                {
+                    sb.AppendLine("- " + story.Title + " | " + Truncate(story.Summary, 220));
+                }
+            }
+            if (state.MemoryLog.Count > 0)
+            {
+                sb.AppendLine("Most recent turns:");
+                int i = 1;
+                foreach (ConversationLogEntry entry in state.MemoryLog.Take(4))
+                {
+                    sb.AppendLine("- Turn " + i + ": player=" + QuoteInline(Truncate(entry.PlayerText, 160)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 160)));
+                    i++;
+                }
+            }
+            sb.AppendLine("Latest screen/vision update: " + BuildLatestScreenOneLine(request.RecentScreenCaptures));
+            if (request.RequestType == RequestType.Story)
+            {
+                AppendFastStoryContext(sb, request);
+            }
+            sb.AppendLine();
+            sb.AppendLine("FAST SPEECH CONTRACT");
+            if (request.RequestType == RequestType.Story)
+            {
+                sb.AppendLine("Return story foreground JSON only: starId, spokenText, emotionalEffectVector, storyTitle, storyId, storyMarkdown, storySummary, storyIsFinished, storyPartIndex. Do not include emotionScores or voiceDirective.");
+                sb.AppendLine("Return the complete story in storyMarkdown, formatted as ## Chunk 0, one or two story sentences, ---, ## Chunk 1, one or two story sentences, ---, and so on. Do not include blank chunks or chunks that contain only ---; every chunk must contain narration the TTS can speak.");
+                sb.AppendLine("spokenText must be the first actual story chunk from storyMarkdown, not a preface or promise. Start the story itself immediately.");
+                sb.AppendLine("Set storyPartIndex=0. If storyMarkdown has more chunks after Chunk 0, set storyIsFinished=false; the host will auto-play the cached chunks locally without asking you again.");
+            }
+            else
+            {
+                sb.AppendLine("Return only: starId, spokenText, and emotionalEffectVector. Do not include any other JSON fields.");
+                sb.AppendLine("For normal chat, use 1-3 spokenText items.");
+            }
+            sb.AppendLine("spokenText array: each item is one TTS chunk. Use one or two sentences per item. The host also validates story chunks, but do not rely on it.");
+            sb.AppendLine(BuildEmotionalEffectVectorInstruction());
+            sb.AppendLine("Do not include emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+            if (request.RequestType == RequestType.Story)
+            {
+                sb.AppendLine("Narrate the story itself as " + profile.DisplayName + "; do not talk about preparing the story. Let her emotional reaction show through the imagery, word choice, tenderness, humor, fear, or wonder of the opening lines.");
+            }
+            else
+            {
+                sb.AppendLine("Answer warmly and directly as " + profile.DisplayName + ".");
+            }
+            return sb.ToString();
+        }
+
+        private static void AppendFastStoryContext(StringBuilder sb, StarInteractionRequest request)
+        {
+            StoryOptions options = request.StoryOptions ?? new StoryOptions();
+            sb.AppendLine("STORY MODE CONTEXT");
+            sb.AppendLine("LocalAutoplayAfterFirstChunk: true");
+            if (!string.IsNullOrWhiteSpace(options.PlayerSuggestion)) sb.AppendLine("Player story seed: " + Truncate(options.PlayerSuggestion, 600));
+            else sb.AppendLine("Player story seed: choose a fitting new story.");
+            sb.AppendLine("TargetMinutes: " + (options.TargetMinutes <= 0 ? 0 : options.TargetMinutes));
+            sb.AppendLine("TargetChunkCount: " + (options.TargetChunkCount <= 0 ? 0 : options.TargetChunkCount));
+            sb.AppendLine("MaxSentencesPerChunk: " + (options.MaxSentencesPerChunk <= 0 ? 2 : options.MaxSentencesPerChunk));
+            if (options.StoriesAlreadyTold.Count > 0)
+            {
+                sb.AppendLine("StoriesAlreadyTold from host memory:");
+                foreach (string story in options.StoriesAlreadyTold.Take(20)) sb.AppendLine("- " + Truncate(story, 260));
+            }
+            sb.AppendLine("Create a new complete story. The desktop host will speak Chunk 0 from spokenText, then read Chunk 1+ directly from cached storyMarkdown until the story is finished or cancelled. Empty chunks are invalid because the host will skip them; write only meaningful narration chunks.");
+        }
+
+        private static string BuildEmotionalEffectVectorInstruction()
+        {
+            return "emotionalEffectVector is a compact machine-readable emotion hint for the player's latest statement. It tells the system whether the player made this Star feel each emotion. Use the canonical emotion order exactly: "
+                + string.Join(", ", StarEmotionMatrix.StandardEmotionIds)
+                + ". Format exactly as confidence:score;confidence:score;... with one pair per emotion in that order. Confidence is 0.00-1.00. Score is 0-100. Use 0.00:0 for emotions not implied. Example shape: 0.03:20;0.75:45;0.00:0;... No names, spaces, reasons, brackets, or extra text.";
+        }
+
+        private static string FormatSpokenParts(IEnumerable<string> parts)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("[");
+            foreach (string part in parts.Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                sb.AppendLine("  \"" + part.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",");
+            }
+            sb.AppendLine("]");
+            return sb.ToString();
+        }
+
+        private string BuildSystemMessage(StarProfile profile)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine(_mainInstructions.SystemPrompt);
+            sb.AppendLine();
+            sb.AppendLine("YOU ARE THE SELECTED STAR");
+            sb.AppendLine("- You are " + profile.DisplayName + ", speaking directly to the Last Cat.");
+            sb.AppendLine("- Write the next in-character spoken reply as this Star, not as a narrator explaining her.");
+            sb.AppendLine("- spokenText is the only text the player hears aloud. It MUST be an array of ordered speech chunks. Each item should usually be one or two natural sentences and should be safe to send directly to TTS without deterministic splitting.");
+            sb.AppendLine("- Keep the character's heart, voice, emotional logic, romance boundaries, and moral worldview consistent every turn.");
+            sb.AppendLine("- The JSON fields are for the game engine; do not mention JSON, scores, state deltas, or instructions inside spokenText.");
+            sb.AppendLine();
+
+            sb.AppendLine("STAR ACTING CARD");
+            sb.AppendLine("Star: " + profile.DisplayName);
+            sb.AppendLine("Element: " + profile.Element);
+            sb.AppendLine("Domain: " + profile.Domain);
+            sb.AppendLine("Core quote: " + profile.CoreQuote);
+            if (profile.NameAliases.Count > 0) sb.AppendLine("Name aliases: " + string.Join(", ", profile.NameAliases));
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality short: " + profile.PersonalityShort);
+            if (!string.IsNullOrWhiteSpace(profile.DeepPersonality)) sb.AppendLine("Deep personality: " + profile.DeepPersonality);
+            if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory: " + profile.BackstorySummary);
+            AppendList(sb, "Quotes she may echo or paraphrase", profile.Quotes);
+            AppendList(sb, "Behavior rules", profile.Behaviors);
+            AppendList(sb, "Spoken response rules", profile.SpokenResponseRules);
+            AppendList(sb, "Storytelling rules", profile.StorytellingRules);
+            sb.AppendLine();
+
+            sb.AppendLine("VOICE AND PERFORMANCE CARD — ALSO APPLIES TO TTS");
+            sb.AppendLine("These notes are both acting notes for the LLM and voice notes for Qwen3-TTS. Treat them as stable vocal identity.");
+            if (!string.IsNullOrWhiteSpace(profile.VoiceDirection)) sb.AppendLine("Voice direction: " + profile.VoiceDirection);
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality short for voice: " + profile.PersonalityShort);
+            if (!string.IsNullOrWhiteSpace(profile.VoiceArchetype)) sb.AppendLine("Voice archetype: " + profile.VoiceArchetype);
+            if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("Speaking style: " + profile.SpeakingStyle);
+            if (!string.IsNullOrWhiteSpace(profile.VoiceId)) sb.AppendLine("Preferred voice id / clone id: " + profile.VoiceId);
+            if (!string.IsNullOrWhiteSpace(profile.VoiceDesignPrompt)) sb.AppendLine("Qwen voice design prompt: " + profile.VoiceDesignPrompt);
+            AppendList(sb, "Voice style rules", profile.VoiceStyleRules);
+            AppendList(sb, "Voice generation rules", profile.VoiceGenerationRules);
+            if (profile.EmotionVoiceHints.Count > 0)
+            {
+                sb.AppendLine("Emotion voice hints:");
+                foreach (KeyValuePair<string, string> hint in profile.EmotionVoiceHints)
+                {
+                    sb.AppendLine("- " + hint.Key + ": " + hint.Value);
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("PEOPLE SHE KNOWS");
+            foreach (KnownPerson person in profile.PeopleKnown)
+            {
+                sb.AppendLine("- " + person.DisplayName + " [" + person.Relationship + "]: " + person.Summary);
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("FULL PROFILE LORE AVAILABLE TO HER");
+            sb.AppendLine("Angel stories and past stories:");
+            foreach (StarLoreEntry story in profile.AngelStories)
+            {
+                sb.AppendLine("- " + story.Id + " [unlock bond " + story.UnlockedAtBond + "]: " + story.Title + " — " + story.Summary);
+            }
+            sb.AppendLine("Story memory deck:");
+            foreach (StoryMemoryCard card in profile.StoryDeck)
+            {
+                sb.AppendLine("- " + card.Id + " [" + card.Kind + ", unlock bond " + card.UnlockedAtBond + "]: " + card.Summary);
+                if (card.Themes.Count > 0) sb.AppendLine("  themes: " + string.Join(", ", card.Themes));
+                if (card.AllowedUses.Count > 0) sb.AppendLine("  allowed uses: " + string.Join(", ", card.AllowedUses));
+                if (card.ForbiddenUses.Count > 0) sb.AppendLine("  forbidden uses: " + string.Join(", ", card.ForbiddenUses));
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("REQUIRED MEMORY OUTPUT EVERY TURN");
+            sb.AppendLine("- conversationSummary: always return an updated compact summary of the ongoing shared conversation. Include what the player and Star have been talking about, the emotional direction, and any durable relationship context. This replaces/updates the durable Star state summary.");
+            sb.AppendLine("- changesSummary: always return 1-3 sentences about what changed this turn: what the player just said/did, how she reacted, and whether memory/relationship/status shifted.");
+            sb.AppendLine("- importantPlayerQuotes: include exact player quotes only when they are emotionally impactful, romantic, wise, cruel, funny, instructive, secret-unlocking, relationship-changing, or likely useful for future story-building. Preserve the player's wording exactly.");
+            sb.AppendLine("- memoryNotes: include durable notes she should remember later: preferences, promises, private shared jokes, story seeds, work context, screen/vision context, and relationship facts.");
+            sb.AppendLine("- Use prior conversation history and existing summary; do not behave like this is the first message unless there truly is no memory.");
+            sb.AppendLine();
+
+            sb.AppendLine("NO HEAVY EMOTION SCORES");
+            sb.AppendLine("Do not return emotionScores in this response. Relationship meaning should be expressed through suggestedStateDeltas, detectedCombos, changesSummary, conversationSummary, memoryNotes, and durable relationship fields only.");
+            sb.AppendLine();
+            sb.AppendLine(_mainInstructions.ResponseContractNotes);
+            sb.AppendLine();
+            sb.AppendLine("VOICE DIRECTIVE REQUIREMENTS");
+            sb.AppendLine("Also fill voiceDirective for Qwen3-TTS. voiceDirective.deliveryInstructions must be natural-language acting direction for the exact spokenText array. Include tone, emotion, pace, and intensity. voiceDirective.language must be only one real language name from: Auto, English, Chinese, French, German, Spanish, Italian, Japanese, Korean, Portuguese, Russian. Do not put tone/style text such as warm, poetic, gentle, or radiant in language; those belong in deliveryInstructions/prosody. The runtime will inject the stable profile voice identity into TTS, but you should make deliveryInstructions fit this exact line. Use personalityShort, voiceArchetype, speakingStyle, voiceStyleRules, and voiceGenerationRules above when deciding how she speaks. Do not put private debug information into spokenText; deliveryInstructions can mention performance style only.");
+            return sb.ToString();
+        }
+
+        private string BuildUserMessage(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            StringBuilder sb = new StringBuilder();
+            string requestType = request.RequestType.ToString();
+            _mainInstructions.TaskInstructions.TryGetValue(requestType, out string? taskInstruction);
+
+            sb.AppendLine("LIVE SCENE BRIEF");
+            sb.AppendLine("You are " + profile.DisplayName + ". You are talking to the Last Cat, the player, in an ongoing desktop companion session.");
+            sb.AppendLine("He has just said:");
+            sb.AppendLine(QuoteBlock(request.PlayerText));
+            sb.AppendLine("He wants: " + BuildRequestGoal(profile, request));
+            sb.AppendLine("You were just talking about: " + BuildRecentConversationOneLine(state));
+            sb.AppendLine("Your relationship status: " + BuildRelationshipStatus(state));
+            sb.AppendLine("Shared memory together: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "No durable summary yet; establish continuity from this turn and the recent turns below." : state.ConversationSummary.Trim()));
+            sb.AppendLine("Latest screen/vision update: " + BuildLatestScreenOneLine(request.RecentScreenCaptures));
+            sb.AppendLine();
+
+            sb.AppendLine("CURRENT TASK");
+            sb.AppendLine(string.IsNullOrWhiteSpace(taskInstruction) ? "Respond to the player as the selected Star." : taskInstruction);
+            sb.AppendLine();
+            sb.AppendLine("INTERACTION MODE");
+            sb.AppendLine("RequestType: " + request.RequestType);
+            if (request.RequestType == RequestType.Chat)
+            {
+                sb.AppendLine("- Normal mode: respond directly to the player's message as " + profile.DisplayName + ".");
+                sb.AppendLine("- This is the desktop companion default: a typed message such as hi, a compliment, poetry about her eyes, work banter, or a relationship test should receive one natural in-character reply for TTS.");
+            }
+            else if (request.RequestType == RequestType.Story)
+            {
+                sb.AppendLine("- Story mode: the player wants " + profile.DisplayName + " to tell a story aloud, so she should begin narrating the actual story immediately.");
+                sb.AppendLine("- Do not open with a setup promise such as 'let me tell you' or 'the story begins'; make the first spokenText chunk the first one-or-two-sentence story passage.");
+                sb.AppendLine("- Use the player's story suggestion below when it is provided, but keep canon, personality, and relationship state intact.");
+                sb.AppendLine("- The story should still sound like something she is saying to the Last Cat, not a detached narrator.");
+            }
+            else
+            {
+                sb.AppendLine("- Use the selected request type while staying in character.");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("PLAYER INPUT");
+            sb.AppendLine(request.PlayerText ?? string.Empty);
+            sb.AppendLine();
+
+            if (request.RequestType == RequestType.Story)
+            {
+                sb.AppendLine("STORY OPTIONS");
+                sb.AppendLine("Length: " + request.StoryOptions.Length);
+                sb.AppendLine("Tone: " + request.StoryOptions.Tone);
+                sb.AppendLine("CanonStrictness: " + request.StoryOptions.CanonStrictness);
+                sb.AppendLine("UseUnlockedSecrets: " + request.StoryOptions.UseUnlockedSecrets);
+                sb.AppendLine("AllowPoetry: " + request.StoryOptions.AllowPoetry);
+                sb.AppendLine("AskFollowupAfter: " + request.StoryOptions.AskFollowupAfter);
+                sb.AppendLine("TargetMinutes: " + request.StoryOptions.TargetMinutes);
+                sb.AppendLine("TargetChunkCount: " + request.StoryOptions.TargetChunkCount);
+                sb.AppendLine("MaxSentencesPerChunk: " + request.StoryOptions.MaxSentencesPerChunk);
+                if (!string.IsNullOrWhiteSpace(request.StoryOptions.PlayerSuggestion))
+                {
+                    sb.AppendLine("Player story suggestion / seed:");
+                    sb.AppendLine(request.StoryOptions.PlayerSuggestion.Trim());
+                }
+                else
+                {
+                    sb.AppendLine("Player story suggestion / seed: none provided; choose a fitting story from her personality, lore, memories, screen context, or relationship state.");
+                }
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("GAME CONTEXT AND CURRENT PLAYER STATS");
+            sb.AppendLine("Session: " + request.SessionId);
+            sb.AppendLine("Speaker: " + request.Speaker);
+            sb.AppendLine("RequestType: " + request.RequestType);
+            sb.AppendLine("Area: " + request.GameContext.Area);
+            sb.AppendLine("Quest: " + request.GameContext.Quest);
+            sb.AppendLine("BattleState: " + request.GameContext.BattleState);
+            sb.AppendLine("RomanceMode: " + request.GameContext.RomanceMode);
+            sb.AppendLine("BenaveilPressureLevel: " + request.GameContext.BenaveilPressureLevel);
+            AppendList(sb, "EquippedStars", request.GameContext.EquippedStars);
+            AppendList(sb, "RecentEvents", request.GameContext.RecentEvents);
+            if (request.GameContext.Flags.Count > 0)
+            {
+                sb.AppendLine("Flags / stats / input metadata:");
+                foreach (KeyValuePair<string, string> flag in request.GameContext.Flags)
+                {
+                    sb.AppendLine("- " + flag.Key + ": " + flag.Value);
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("CURRENT RELATIONSHIP STATUS");
+            sb.AppendLine(BuildRelationshipStatus(state));
+            sb.AppendLine("Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", BenaveilInfluence=" + state.BenaveilInfluence);
+            sb.AppendLine("InteractionCount=" + state.InteractionCount + ", PositiveSuccession=" + state.PositiveSuccessionCount + ", RomanticSuccession=" + state.RomanticSuccessionCount + ", HurtSuccession=" + state.HurtSuccessionCount);
+            sb.AppendLine("IsGirlfriend=" + state.IsGirlfriend);
+
+            sb.AppendLine();
+            sb.AppendLine("ONGOING SHARED MEMORY SUMMARY AND IMPORTANT POINTS");
+            if (!string.IsNullOrWhiteSpace(state.ConversationSummary)) sb.AppendLine("Existing conversation summary: " + state.ConversationSummary);
+            else sb.AppendLine("Existing conversation summary: none yet; create one this turn.");
+            AppendList(sb, "Important exact player quotes she may remember and quote back", state.ImportantPlayerQuotes.Take(Clamp(_options.ImportantQuoteCount, 1, 200)).ToList());
+            AppendList(sb, "Memory notes", state.MemoryNotes.Take(Clamp(_options.MemoryNoteCount, 1, 300)).ToList());
+            if (state.StoryHistory.Count > 0)
+            {
+                sb.AppendLine("Stories already told by this Star — avoid repeating them:");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(20))
+                {
+                    sb.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 260));
+                }
+            }
+            AppendList(sb, "Secrets already unlocked", state.SecretsUnlocked);
+            AppendList(sb, "Relationship events", state.RelationshipEvents.Take(Clamp(_options.RelationshipEventCount, 1, 200)).ToList());
+            AppendList(sb, "Girlfriend history", state.GirlfriendHistory.Take(Clamp(_options.GirlfriendHistoryCount, 1, 100)).ToList());
+            AppendList(sb, "Pet names the player uses for her", state.PetNamesPlayerUsesForStar);
+            AppendList(sb, "Pet names she uses for the player", state.PetNamesStarUsesForPlayer);
+            if (state.LearnedFunctions.Count > 0)
+            {
+                sb.AppendLine("Functions/lessons she has learned from the player:");
+                foreach (StarLearnedFunction learned in state.LearnedFunctions.Take(Clamp(_options.LearnedFunctionCount, 1, 200)))
+                {
+                    sb.AppendLine("- " + learned.Id + " | " + learned.Name + " | " + learned.Description + " | quote: " + learned.SourcePlayerQuote);
+                }
+            }
+            if (state.SecretStates.Count > 0)
+            {
+                sb.AppendLine("Detailed secret states available for continuity:");
+                foreach (StarSecretState secret in state.SecretStates.Take(Clamp(_options.SecretStateCount, 1, 200)))
+                {
+                    sb.AppendLine("- " + secret.Id + " | " + secret.Title + " | " + secret.Summary + " | knownByPlayer=" + secret.KnownByPlayer + " | source=" + secret.Source);
+                }
+            }
+            if (state.RelationshipCombos.Count > 0)
+            {
+                sb.AppendLine("Known relationship combos/succession patterns:");
+                foreach (RelationshipComboState combo in state.RelationshipCombos.Take(Clamp(_options.RelationshipComboCount, 1, 200)))
+                {
+                    sb.AppendLine("- " + combo.Id + " x" + combo.Count + " | " + combo.Summary);
+                }
+            }
+
+            AppendAccessibleLore(sb, profile, state, request);
+
+            int historyCount = Clamp(_options.RecentHistoryCount, 1, 200);
+            sb.AppendLine();
+            sb.AppendLine("LAST " + historyCount + " CONVERSATION TURNS — ALWAYS USE FOR CONTINUITY");
+            if (state.MemoryLog.Count == 0)
+            {
+                sb.AppendLine("No prior turns are recorded for this Star yet.");
+            }
+            else
+            {
+                int i = 1;
+                foreach (ConversationLogEntry entry in state.MemoryLog.Take(historyCount))
+                {
+                    sb.AppendLine("Turn " + i + " (" + (i == 1 ? "most recent" : "older") + ")");
+                    sb.AppendLine("- Time: " + entry.CreatedAt.ToString("o"));
+                    sb.AppendLine("- RequestType: " + entry.RequestType);
+                    sb.AppendLine("- Player said: " + Truncate(entry.PlayerText, 360));
+                    sb.AppendLine("- " + profile.DisplayName + " replied: " + Truncate(entry.StarResponse, 360));
+                    if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.AppendLine("- Turn summary: " + Truncate(entry.Summary, 360));
+                    if (entry.ImportantQuotes.Count > 0) sb.AppendLine("- Impactful quotes from that turn: " + string.Join(" | ", entry.ImportantQuotes.Take(6)));
+                    if (entry.RelationshipEvents.Count > 0) sb.AppendLine("- Relationship events: " + string.Join(" | ", entry.RelationshipEvents.Take(6)));
+                    if (entry.Tags.Count > 0) sb.AppendLine("- Tags/combos: " + string.Join(" | ", entry.Tags.Take(8)));
+                    i++;
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("RECENT SCREEN CONTEXT / PLAYER VISION");
+            IReadOnlyList<ScreenCaptureSummary> screens = request.RecentScreenCaptures;
+            if (screens.Count == 0)
+            {
+                sb.AppendLine("No recent screen captures were provided.");
+            }
+            else
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                List<ScreenCaptureSummary> lastFiveMinutes = screens
+                    .Where(x => now - x.CapturedAt <= TimeSpan.FromMinutes(5))
+                    .Take(Clamp(_options.ScreenCaptureCount, 1, 20))
+                    .ToList();
+                if (lastFiveMinutes.Count > 0)
+                {
+                    sb.AppendLine("Update from the last five minutes:");
+                    foreach (ScreenCaptureSummary screen in lastFiveMinutes)
+                    {
+                        AppendScreen(sb, screen);
+                    }
+                }
+                else
+                {
+                    sb.AppendLine("No screen summary from the last five minutes; most recent available summaries:");
+                }
+
+                foreach (ScreenCaptureSummary screen in screens.Take(Clamp(_options.ScreenCaptureCount, 1, 20)))
+                {
+                    AppendScreen(sb, screen);
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("FINAL RESPONSE CONTRACT");
+            sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, how she reacted, and whether memory/relationship/status shifted. importantPlayerQuotes must preserve exact player quotes that emotionally affected her, taught her something, changed romance, unlocked secrets, or should be remembered for later story-building. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are the model's recommendation only; the game may compute final deltas deterministically. Do not include emotionScores anywhere in this response.");
+            return sb.ToString();
+        }
+
+        private void AppendAccessibleLore(StringBuilder sb, StarProfile profile, StarState state, StarInteractionRequest request)
+        {
+            int bond = Math.Max(Math.Max(state.Heart, state.Trust), state.Romance);
+            bool storyCanUseUnlockedSecrets = request.RequestType == RequestType.Story && request.StoryOptions.UseUnlockedSecrets;
+            sb.AppendLine();
+            sb.AppendLine("PROFILE SECRETS / STORY DETAILS AVAILABLE THIS TURN");
+            sb.AppendLine("Bond score used for unlock checks: " + bond + ". Use locked items only as hidden internal context unless the player has earned or requested an unlock and the story option allows it.");
+            foreach (StarLoreEntry story in profile.AngelStories)
+            {
+                bool available = story.UnlockedAtBond <= bond || state.SecretsUnlocked.Any(x => MatchesIdOrTitle(x, story.Id, story.Title)) || storyCanUseUnlockedSecrets;
+                sb.AppendLine("- " + story.Id + " | available=" + available + " | unlockBond=" + story.UnlockedAtBond + " | " + story.Title + ": " + story.Summary);
+            }
+            foreach (StoryMemoryCard card in profile.StoryDeck)
+            {
+                bool available = card.UnlockedAtBond <= bond || state.SecretsUnlocked.Any(x => MatchesIdOrTitle(x, card.Id, card.Summary)) || storyCanUseUnlockedSecrets;
+                sb.AppendLine("- " + card.Id + " | available=" + available + " | unlockBond=" + card.UnlockedAtBond + " | kind=" + card.Kind + " | " + card.Summary);
+            }
+        }
+
+        private static bool MatchesIdOrTitle(string value, string id, string titleOrSummary)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            string trimmed = value.Trim();
+            return string.Equals(trimmed, id, StringComparison.OrdinalIgnoreCase)
+                || (!string.IsNullOrWhiteSpace(titleOrSummary) && titleOrSummary.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0)
+                || (!string.IsNullOrWhiteSpace(id) && trimmed.IndexOf(id, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static void AppendScreen(StringBuilder sb, ScreenCaptureSummary screen)
+        {
+            sb.AppendLine("- " + screen.CapturedAt.ToString("o") + " | " + screen.ActiveApp + " | " + screen.ActivityType + " | " + screen.Sensitivity + " | " + screen.CompanionSafeSummary);
+            if (screen.VisibleTextHighlights.Count > 0) sb.AppendLine("  text: " + string.Join("; ", screen.VisibleTextHighlights.Take(8)));
+            if (screen.VisibleProblems.Count > 0) sb.AppendLine("  problems: " + string.Join("; ", screen.VisibleProblems.Take(5)));
+        }
+
+        private static string BuildRequestGoal(StarProfile profile, StarInteractionRequest request)
+        {
+            if (request.RequestType == RequestType.Story)
+            {
+                if (!string.IsNullOrWhiteSpace(request.StoryOptions.PlayerSuggestion))
+                {
+                    return "hear a story from " + profile.DisplayName + " using this seed: " + Truncate(request.StoryOptions.PlayerSuggestion, 180);
+                }
+                return "hear a story from " + profile.DisplayName + ".";
+            }
+
+            if (request.RequestType == RequestType.Chat)
+            {
+                return "receive a direct in-character reply, companionship, banter, comfort, flirtation, or wisdom depending on his words.";
+            }
+
+            return "complete the " + request.RequestType + " interaction mode.";
+        }
+
+        private static string BuildRecentConversationOneLine(StarState state)
+        {
+            if (state.MemoryLog.Count > 0)
+            {
+                ConversationLogEntry mostRecent = state.MemoryLog[0];
+                if (!string.IsNullOrWhiteSpace(mostRecent.Summary)) return Truncate(mostRecent.Summary, 240);
+                return "player said " + QuoteInline(Truncate(mostRecent.PlayerText, 120)) + " and she answered " + QuoteInline(Truncate(mostRecent.StarResponse, 120)) + ".";
+            }
+
+            return string.IsNullOrWhiteSpace(state.ConversationSummary) ? "nothing recorded yet" : Truncate(state.ConversationSummary, 240);
+        }
+
+        private static string BuildRelationshipStatus(StarState state)
+        {
+            string stage;
+            if (state.IsGirlfriend)
+            {
+                stage = "girlfriend / committed romantic bond";
+            }
+            else if (state.Romance >= 70)
+            {
+                stage = "strong romantic tension and deep affection";
+            }
+            else if (state.Romance >= 35)
+            {
+                stage = "warm flirtation and growing romantic possibility";
+            }
+            else if (state.Trust >= 70 || state.Heart >= 70)
+            {
+                stage = "trusted close companion";
+            }
+            else if (state.Trust >= 35 || state.Heart >= 35)
+            {
+                stage = "growing trust and friendship";
+            }
+            else if (state.HurtSuccessionCount > 0)
+            {
+                stage = "recently hurt or cautious";
+            }
+            else
+            {
+                stage = "early bond / still learning each other";
+            }
+
+            return stage + " (Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", BenaveilInfluence " + state.BenaveilInfluence + ").";
+        }
+
+        private static string BuildLatestScreenOneLine(IReadOnlyList<ScreenCaptureSummary> screens)
+        {
+            if (screens.Count == 0) return "no recent screen vision provided";
+            ScreenCaptureSummary latest = screens.OrderByDescending(x => x.CapturedAt).First();
+            return latest.CapturedAt.ToString("o") + " in " + latest.ActiveApp + ": " + Truncate(latest.CompanionSafeSummary, 220);
+        }
+
+        private static string QuoteBlock(string? value)
+        {
+            string text = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
+            return "> " + text.Replace("\r", "").Replace("\n", "\n> ");
+        }
+
+        private static string QuoteInline(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\"", "'") + "\"";
+        }
+
+        private static string Truncate(string value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string trimmed = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (trimmed.Length <= maxLength) return trimmed;
+            return trimmed.Substring(0, maxLength).Trim() + "...";
+        }
+
+        private static int Clamp(int value, int min, int max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
+
+        private static void AppendList(StringBuilder sb, string title, IEnumerable<string> values)
+        {
+            List<string> list = values.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+            if (list.Count == 0) return;
+            sb.AppendLine(title + ":");
+            foreach (string value in list)
+            {
+                sb.AppendLine("- " + value);
+            }
+        }
+    }
+}

@@ -1,0 +1,37 @@
+using System.Collections.Generic;
+using Wds.SixStars.Api.Stories;
+
+namespace Wds.SixStars.Api.Stars
+{
+    public sealed class StarProfile
+    {
+        public string StarId { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string Element { get; set; } = string.Empty;
+        public string Domain { get; set; } = string.Empty;
+        public string CoreQuote { get; set; } = string.Empty;
+        public string VoiceDirection { get; set; } = string.Empty;
+        public string VoiceArchetype { get; set; } = string.Empty;
+        public string SpeakingStyle { get; set; } = string.Empty;
+        public string PersonalityShort { get; set; } = string.Empty;
+        public List<string> NameAliases { get; set; } = new List<string>();
+        public string VoiceId { get; set; } = string.Empty;
+        public string VoiceDesignPrompt { get; set; } = string.Empty;
+        public string VoiceCloneAudioFile { get; set; } = string.Empty;
+        public string VoiceCloneRefText { get; set; } = string.Empty;
+        public List<string> VoiceStyleRules { get; set; } = new List<string>();
+        public List<string> VoiceGenerationRules { get; set; } = new List<string>();
+        public Dictionary<string, string> EmotionVoiceHints { get; set; } = new Dictionary<string, string>();
+        public string DeepPersonality { get; set; } = string.Empty;
+        public string BackstorySummary { get; set; } = string.Empty;
+        public List<string> Quotes { get; set; } = new List<string>();
+        public List<string> Behaviors { get; set; } = new List<string>();
+        public List<string> SpokenResponseRules { get; set; } = new List<string>();
+        public List<string> StorytellingRules { get; set; } = new List<string>();
+        public List<string> StoryThinkingPhrases { get; set; } = new List<string>();
+        public List<KnownPerson> PeopleKnown { get; set; } = new List<KnownPerson>();
+        public List<StarLoreEntry> AngelStories { get; set; } = new List<StarLoreEntry>();
+        public List<StarEmotionDefinition> Emotions { get; set; } = new List<StarEmotionDefinition>();
+        public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
+    }
+}
