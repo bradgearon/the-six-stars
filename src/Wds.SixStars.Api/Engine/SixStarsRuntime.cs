@@ -22,6 +22,7 @@ namespace Wds.SixStars.Api.Engine
         private readonly int _recentHistoryCount;
         private readonly object _backgroundGate = new object();
         private CancellationTokenSource? _backgroundAnalysisCts;
+        private CancellationTokenSource? _backgroundStoryGenerationCts;
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
         private static readonly object StoryRandomGate = new object();
@@ -142,12 +143,15 @@ namespace Wds.SixStars.Api.Engine
                 {
                     _backgroundAnalysisCts?.Cancel();
                     _backgroundAnalysisCts?.Dispose();
+                    _backgroundStoryGenerationCts?.Cancel();
+                    _backgroundStoryGenerationCts?.Dispose();
                     _pendingBackgroundAnalysis.Clear();
                 }
                 catch
                 {
                 }
                 _backgroundAnalysisCts = new CancellationTokenSource();
+                _backgroundStoryGenerationCts = new CancellationTokenSource();
             }
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis cancelled: " + reason);
         }
@@ -288,17 +292,107 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
+        private static StarInteractionRequest CloneRequestForBackgroundStory(StarInteractionRequest request)
+        {
+            return new StarInteractionRequest
+            {
+                SessionId = request.SessionId,
+                StarId = request.StarId,
+                Speaker = request.Speaker,
+                RequestType = RequestType.Story,
+                PlayerText = request.PlayerText,
+                GameContext = CloneGameContext(request.GameContext),
+                StoryOptions = CloneStoryOptions(request.StoryOptions),
+                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+            };
+        }
+
+        private static GameContext CloneGameContext(GameContext context)
+        {
+            return new GameContext
+            {
+                Area = context.Area,
+                Quest = context.Quest,
+                BattleState = context.BattleState,
+                RomanceMode = context.RomanceMode,
+                BenaveilPressureLevel = context.BenaveilPressureLevel,
+                EquippedStars = context.EquippedStars.ToList(),
+                RecentEvents = context.RecentEvents.ToList(),
+                Flags = new Dictionary<string, string>(context.Flags, StringComparer.OrdinalIgnoreCase)
+            };
+        }
+
+        private static StoryOptions CloneStoryOptions(StoryOptions options)
+        {
+            return new StoryOptions
+            {
+                Length = options.Length,
+                Tone = options.Tone,
+                CanonStrictness = options.CanonStrictness,
+                UseUnlockedSecrets = options.UseUnlockedSecrets,
+                AllowPoetry = options.AllowPoetry,
+                AskFollowupAfter = options.AskFollowupAfter,
+                TargetMinutes = options.TargetMinutes,
+                TargetChunkCount = options.TargetChunkCount,
+                MaxSentencesPerChunk = options.MaxSentencesPerChunk,
+                PlayerSuggestion = options.PlayerSuggestion,
+                ContinueActiveStory = options.ContinueActiveStory,
+                ActiveStoryId = options.ActiveStoryId,
+                ActiveStoryTitle = options.ActiveStoryTitle,
+                ActiveStoryMarkdown = options.ActiveStoryMarkdown,
+                ActiveStorySummary = options.ActiveStorySummary,
+                StoryProgressSoFar = options.StoryProgressSoFar,
+                LastStorySpokenText = options.LastStorySpokenText,
+                NextStoryChunkMarkdown = options.NextStoryChunkMarkdown,
+                NextStoryPartIndex = options.NextStoryPartIndex,
+                StoriesAlreadyTold = options.StoriesAlreadyTold.ToList()
+            };
+        }
+
+        private static ScreenCaptureSummary CloneScreenCaptureSummary(ScreenCaptureSummary capture)
+        {
+            return new ScreenCaptureSummary
+            {
+                CapturedAt = capture.CapturedAt,
+                ActiveApp = capture.ActiveApp,
+                ActivityType = capture.ActivityType,
+                LikelyActivity = capture.LikelyActivity,
+                CompanionSafeSummary = capture.CompanionSafeSummary,
+                VisibleTextHighlights = capture.VisibleTextHighlights.ToList(),
+                VisibleProblems = capture.VisibleProblems.ToList(),
+                Sensitivity = capture.Sensitivity,
+                ImageReference = capture.ImageReference,
+                ImageBase64Jpeg = capture.ImageBase64Jpeg,
+                Confidence = capture.Confidence
+            };
+        }
+
         private void QueueStoryGenerationAfterThinkingResponse(StarProfile profile, StarInteractionRequest request, StarState state, StarRequestIntentResult? requestIntent, CancellationToken cancellationToken)
         {
-            request.GameContext.Flags["storyGenerationWorker"] = "true";
-            request.GameContext.RecentEvents.Add("The Star already answered with a preprogrammed story-thinking phrase; now generate the actual story silently until it is ready to speak.");
+            // Clone the original request before leaving the foreground turn. The UI will immediately
+            // start a separate TTS playback operation for the quick thinking phrase, and voice/VAD can
+            // begin more operations while this long story LLM call is still running. A detached worker
+            // request prevents later UI mutations or operation-token cancellation from corrupting the
+            // actual story generation payload.
+            StarInteractionRequest workerRequest = CloneRequestForBackgroundStory(request);
+            workerRequest.GameContext.Flags["storyGenerationWorker"] = "true";
+            workerRequest.GameContext.RecentEvents.Add("The Star already answered with a preprogrammed story-thinking phrase; now generate the actual story silently until it is ready to speak.");
+
+            CancellationToken storyToken;
+            lock (_backgroundGate)
+            {
+                _backgroundStoryGenerationCts?.Cancel();
+                _backgroundStoryGenerationCts?.Dispose();
+                _backgroundStoryGenerationCts = new CancellationTokenSource();
+                storyToken = _backgroundStoryGenerationCts.Token;
+            }
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ".");
-                    StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ". This is detached from the quick-thinking TTS operation token so the placeholder voice cannot cancel the story LLM call.");
+                    StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, storyToken).ConfigureAwait(false);
                     if (requestIntent != null)
                     {
                         storyResponse.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
@@ -311,7 +405,7 @@ namespace Wds.SixStars.Api.Engine
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
                             Type = "BackgroundStarAnalysisQueued",
-                            Target = request.StarId,
+                            Target = workerRequest.StarId,
                             Data =
                             {
                                 { "speechParts", storyResponse.SpokenParts.Count.ToString() },
@@ -324,7 +418,7 @@ namespace Wds.SixStars.Api.Engine
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
                             Type = "BackgroundStarAnalysisWaitingForVoice",
-                            Target = request.StarId,
+                            Target = workerRequest.StarId,
                             Data =
                             {
                                 { "backgroundAnalysisId", backgroundAnalysisId },
@@ -332,13 +426,13 @@ namespace Wds.SixStars.Api.Engine
                             }
                         });
                         storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting for story voice completion.");
-                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, request, state, storyResponse);
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, state, storyResponse);
                     }
 
                     storyResponse.UnityEvents.Add(new UnityEventEnvelope
                     {
                         Type = "StoryGenerationCompleted",
-                        Target = request.StarId,
+                        Target = workerRequest.StarId,
                         Data =
                         {
                             { "storyId", storyResponse.StoryId ?? string.Empty },

@@ -201,10 +201,23 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
 
     private static async Task PlayWithDirectSoundAsync(byte[] wav, string? mimeType, CancellationToken cancellationToken)
     {
+        // DirectSoundOut can throw "Object contains references" on some .NET 8/driver combinations
+        // when it is fed a WaveFileReader directly. Decode the WAV to a stable PCM byte buffer first,
+        // then feed DirectSoundOut through BufferedWaveProvider. This keeps the requested DirectSound
+        // output path while avoiding the fragile reader-as-provider path.
         using MemoryStream memoryStream = new MemoryStream(wav, writable: false);
         using WaveStream reader = CreateReader(memoryStream, mimeType);
+        byte[] pcm = ReadAllPcmBytes(reader);
+        BufferedWaveProvider provider = new BufferedWaveProvider(reader.WaveFormat)
+        {
+            DiscardOnBufferOverflow = false,
+            BufferDuration = reader.TotalTime + TimeSpan.FromSeconds(1),
+            ReadFully = false
+        };
+        provider.AddSamples(pcm, 0, pcm.Length);
+
         using DirectSoundOut output = new DirectSoundOut(100);
-        await PlayInitializedOutputAsync(output, reader, cancellationToken).ConfigureAwait(false);
+        await PlayInitializedOutputAsync(output, provider, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task PlayWithWaveOutEventAsync(byte[] wav, string? mimeType, CancellationToken cancellationToken)
@@ -266,6 +279,19 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
         await completed.Task.ConfigureAwait(false);
 
         System.Diagnostics.Debug.WriteLine("[NaudioPlayback] Playback task completed successfully");
+    }
+
+    private static byte[] ReadAllPcmBytes(WaveStream reader)
+    {
+        using MemoryStream pcm = new MemoryStream();
+        byte[] buffer = new byte[Math.Max(reader.WaveFormat.AverageBytesPerSecond / 4, 4096)];
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            pcm.Write(buffer, 0, read);
+        }
+
+        return pcm.ToArray();
     }
 
     private static WaveStream CreateReader(Stream stream, string? mimeType)

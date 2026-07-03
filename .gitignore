@@ -68,7 +68,10 @@ pnpm-debug.log*
 # -----------------------------------------------------------------------------
 # Generated audio / local runtime artifacts
 # -----------------------------------------------------------------------------
-voice/*.wav
+*.wav
+*.mp3
+*.flac
+*.ogg
 tts-debug/
 logs/
 *.log
@@ -102,3 +105,4 @@ _package_staging/
 Thumbs.db
 Desktop.ini
 /.history
+/models

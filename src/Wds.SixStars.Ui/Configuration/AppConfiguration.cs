@@ -4,6 +4,7 @@ namespace Wds.SixStars.Ui.Configuration
 {
     public sealed class AppConfiguration
     {
+        public LocalModelsConfig LocalModels { get; set; } = new LocalModelsConfig();
         public OpenWakeWordConfig OpenWakeWord { get; set; } = new OpenWakeWordConfig();
         public VoiceInputConfig VoiceInput { get; set; } = new VoiceInputConfig();
         public LlmConfig LLM { get; set; } = new LlmConfig();
@@ -14,6 +15,28 @@ namespace Wds.SixStars.Ui.Configuration
         public CompanionConfig Companion { get; set; } = new CompanionConfig();
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
+    }
+
+
+    public sealed class LocalModelsConfig
+    {
+        /// <summary>Repository-local models folder shared by LLM, faster-whisper, and Qwen TTS.</summary>
+        public string Root { get; set; } = "models";
+        public string HuggingFaceHome { get; set; } = "models/hf";
+        public string HuggingFaceHubCache { get; set; } = "models/hf/hub";
+
+        /// <summary>Local OpenAI-compatible LLM endpoint launched by scripts/local_llm_openai_server.py.</summary>
+        public string LlmEndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
+        public string LlmModel { get; set; } = "google/gemma-4-E2B-it";
+        public string LlmLocalPath { get; set; } = string.Empty;
+
+        public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
+        public string WhisperModel { get; set; } = "tiny.en";
+        public string WhisperLocalPath { get; set; } = string.Empty;
+
+        public string QwenTtsWebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
+        public string QwenTtsModel { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        public string QwenTtsLocalPath { get; set; } = string.Empty;
     }
 
     public sealed class OpenWakeWordConfig
@@ -50,8 +73,8 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class LlmConfig
     {
-        public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = "local-model";
+        public string EndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
+        public string Model { get; set; } = "google/gemma-4-E2B-it";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = true;
 
@@ -85,11 +108,11 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class TtsConfig
     {
         public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = string.Empty;
+        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
         public string? ApiKey { get; set; }
         public string PayloadShape { get; set; } = "OpenAiSpeech";
         public string TaskType { get; set; } = "VoiceClone";
-        public string DefaultLanguage { get; set; } = "Auto";
+        public string DefaultLanguage { get; set; } = "English";
     }
 
     public sealed class WebSocketTtsConfig
@@ -100,14 +123,14 @@ namespace Wds.SixStars.Ui.Configuration
         /// </summary>
         public bool Enabled { get; set; } = true;
         public string WebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
-        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
+        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
         public string DefaultLanguage { get; set; } = "English";
         public string ResponseFormat { get; set; } = "wav";
         public string TaskType { get; set; } = "VoiceClone";
         public int MaxWordsPerChunk { get; set; } = 30;
         public int MaxSentencesPerChunk { get; set; } = 2;
-        public string ChunkGenerationMode { get; set; } = "parallel";
-        public int MaxParallelChunks { get; set; } = 0;
+        public string ChunkGenerationMode { get; set; } = "first_then_prefetch";
+        public int MaxParallelChunks { get; set; } = 1;
     }
 
     public sealed class VoiceOutputConfig
@@ -163,8 +186,8 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class ScreenLlmConfig
     {
-        public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = string.Empty;
+        public string EndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
+        public string Model { get; set; } = "google/gemma-4-E2B-it";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = true;
     }

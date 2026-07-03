@@ -17,6 +17,7 @@ using Wds.SixStars.Api.Ai;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.LocalModels;
 using Wds.SixStars.Api.Runtime;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Speech;
@@ -100,6 +101,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _stateChangeTracker = new StateChangeTracker();
         _appConfig = LoadConfiguration();
+        ConfigureLocalModelEnvironment();
         _selectedStarId = ResolveDefaultStarId(Environment.GetEnvironmentVariable("SIX_STARS_DEFAULT_STAR_ID") ?? _appConfig.Companion.DefaultStarId);
         _playerText = _selectedStarId + ", hi. Stay close and say something gentle while I work.";
         _operationController = new SixStarsRuntimeOperationController();
@@ -494,9 +496,47 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    private void ConfigureLocalModelEnvironment()
+    {
+        LocalModelServiceOptions options = LocalModelPaths.BuildDefaultServiceOptions(_appConfig.LocalModels.Root);
+        if (!string.IsNullOrWhiteSpace(_appConfig.LocalModels.HuggingFaceHome))
+        {
+            options.HuggingFaceHome = Path.IsPathRooted(_appConfig.LocalModels.HuggingFaceHome)
+                ? _appConfig.LocalModels.HuggingFaceHome
+                : Path.Combine(options.ModelsRoot, "hf");
+        }
+        if (!string.IsNullOrWhiteSpace(_appConfig.LocalModels.HuggingFaceHubCache))
+        {
+            options.HuggingFaceHubCache = Path.IsPathRooted(_appConfig.LocalModels.HuggingFaceHubCache)
+                ? _appConfig.LocalModels.HuggingFaceHubCache
+                : Path.Combine(options.HuggingFaceHome, "hub");
+        }
+
+        LocalModelPaths.ApplyEnvironment(options);
+        System.Diagnostics.Debug.WriteLine("[LocalModels] Models root: " + options.ModelsRoot);
+        System.Diagnostics.Debug.WriteLine("[LocalModels] HF_HOME: " + options.HuggingFaceHome);
+        System.Diagnostics.Debug.WriteLine("[LocalModels] HF_HUB_CACHE: " + options.HuggingFaceHubCache);
+    }
+
+    private LocalModelServiceOptions CreateLocalModelServiceOptions(LocalChatModelOptions chatOptions)
+    {
+        LocalModelServiceOptions options = LocalModelPaths.BuildDefaultServiceOptions(_appConfig.LocalModels.Root);
+        options.Chat = chatOptions;
+        options.Chat.EndpointUrl = string.IsNullOrWhiteSpace(options.Chat.EndpointUrl) ? _appConfig.LocalModels.LlmEndpointUrl : options.Chat.EndpointUrl;
+        options.Chat.Model = string.IsNullOrWhiteSpace(options.Chat.Model) ? _appConfig.LocalModels.LlmModel : options.Chat.Model;
+        options.Whisper.EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT") ?? _appConfig.Whisper.EndpointUrl ?? _appConfig.LocalModels.WhisperEndpointUrl;
+        options.Whisper.ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH") ?? _appConfig.Whisper.ModelPath ?? _appConfig.LocalModels.WhisperLocalPath;
+        options.Tts.WebSocketUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL") ?? _appConfig.WebSocketTTS.WebSocketUrl ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
+        options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL") ?? _appConfig.WebSocketTTS.Model ?? _appConfig.LocalModels.QwenTtsModel;
+        LocalModelPaths.ApplyEnvironment(options);
+        return options;
+    }
+
     private IStarAgent CreateStarAgent()
     {
-        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_LLM_ENDPOINT") ?? _appConfig.LLM.EndpointUrl;
+        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_LLM_ENDPOINT")
+            ?? _appConfig.LLM.EndpointUrl
+            ?? _appConfig.LocalModels.LlmEndpointUrl;
         if (string.IsNullOrWhiteSpace(endpoint))
         {
             System.Diagnostics.Debug.WriteLine("[LLM] No endpoint configured. Using MockStarAgent.");
@@ -508,7 +548,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         LocalChatModelOptions options = new LocalChatModelOptions
         {
             EndpointUrl = endpoint,
-            Model = Environment.GetEnvironmentVariable("SIX_STARS_LLM_MODEL") ?? _appConfig.LLM.Model,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_LLM_MODEL")
+                ?? _appConfig.LLM.Model
+                ?? _appConfig.LocalModels.LlmModel,
             ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_LLM_API_KEY") ?? _appConfig.LLM.ApiKey,
             UseJsonSchemaResponseFormat = GetBooleanSetting(
                 Environment.GetEnvironmentVariable("SIX_STARS_LLM_USE_JSON_SCHEMA"),
@@ -543,7 +585,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         System.Diagnostics.Debug.WriteLine($"[PromptMemory] RecentHistoryCount: {promptOptions.RecentHistoryCount}, ImportantQuotes: {promptOptions.ImportantQuoteCount}, MemoryNotes: {promptOptions.MemoryNoteCount}");
 
-        OpenAiCompatibleChatModelClient client = new OpenAiCompatibleChatModelClient(options);
+        LocalModelServiceOptions localOptions = CreateLocalModelServiceOptions(options);
+        LocalAiClient client = new LocalAiClient(localOptions);
         client.ExchangeLogged += (_, args) => AppendLlmDebugLog(args.FormattedText);
 
         // When an LLM endpoint is configured, do not silently fall back to mock Star data.
@@ -560,7 +603,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IWhisperSpeechStreamer CreateWhisperStreamer()
     {
-        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT") ?? _appConfig.Whisper.EndpointUrl;
+        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")
+            ?? _appConfig.Whisper.EndpointUrl
+            ?? _appConfig.LocalModels.WhisperEndpointUrl;
         bool useMockWhisper = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_USE_MOCK_WHISPER"), false);
         if (useMockWhisper)
         {
@@ -579,7 +624,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Provider = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_PROVIDER") ?? _appConfig.Whisper.Provider,
             EndpointUrl = endpoint,
-            ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH") ?? _appConfig.Whisper.ModelPath,
+            ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH")
+                ?? (!string.IsNullOrWhiteSpace(_appConfig.Whisper.ModelPath) ? _appConfig.Whisper.ModelPath : _appConfig.LocalModels.WhisperLocalPath),
             ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_API_KEY") ?? _appConfig.Whisper.ApiKey,
             Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
             TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_TIMEOUT_SECONDS"), _appConfig.Whisper.TimeoutSeconds)
@@ -636,7 +682,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStreamingVoiceGenerator CreateStreamingVoiceGenerator()
     {
-        string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL") ?? _appConfig.WebSocketTTS.WebSocketUrl;
+        string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
+            ?? _appConfig.WebSocketTTS.WebSocketUrl
+            ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
         if (string.IsNullOrWhiteSpace(wsUrl))
         {
             wsUrl = "ws://localhost:8100/tts/stream";
@@ -646,7 +694,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return new WebSocketTtsVoiceGenerator(new WebSocketTtsOptions
         {
             WebSocketUrl = wsUrl,
-            Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL") ?? _appConfig.WebSocketTTS.Model,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
+                ?? _appConfig.WebSocketTTS.Model
+                ?? _appConfig.LocalModels.QwenTtsModel,
             DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE") ?? _appConfig.WebSocketTTS.DefaultLanguage,
             ResponseFormat = _appConfig.WebSocketTTS.ResponseFormat,
             TaskType = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE") ?? _appConfig.WebSocketTTS.TaskType,
@@ -659,7 +709,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IScreenSummarizer CreateScreenSummarizer()
     {
-        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENDPOINT") ?? _appConfig.ScreenLLM.EndpointUrl;
+        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENDPOINT")
+            ?? _appConfig.ScreenLLM.EndpointUrl
+            ?? _appConfig.LocalModels.LlmEndpointUrl;
         if (string.IsNullOrWhiteSpace(endpoint))
         {
             System.Diagnostics.Debug.WriteLine("[Screen LLM] No endpoint configured. Using mock screen summarizer.");
@@ -670,7 +722,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return new OpenAiCompatibleVisionScreenSummarizer(new LocalChatModelOptions
         {
             EndpointUrl = endpoint,
-            Model = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MODEL") ?? _appConfig.ScreenLLM.Model,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MODEL")
+                ?? _appConfig.ScreenLLM.Model
+                ?? _appConfig.LocalModels.LlmModel,
             ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_API_KEY") ?? _appConfig.ScreenLLM.ApiKey,
             UseJsonSchemaResponseFormat = _appConfig.ScreenLLM.UseJsonSchemaResponseFormat
         });

@@ -37,6 +37,10 @@ from typing import Any
 from flask import Flask, Response, jsonify, request
 from faster_whisper import WhisperModel
 
+from model_paths import MODELS_ROOT, configure_model_environment, resolve_model_ref
+
+configure_model_environment()
+
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("WHISPER_LOG_LEVEL", "INFO").upper(), logging.INFO),
@@ -71,15 +75,19 @@ DEFAULT_LANGUAGE = os.environ.get("WHISPER_DEFAULT_LANGUAGE", "en").strip() or "
 DEFAULT_BEAM_SIZE = parse_int(os.environ.get("WHISPER_BEAM_SIZE"), 5)
 DEFAULT_VAD_FILTER = parse_bool(os.environ.get("WHISPER_VAD_FILTER"), True)
 PRELOAD_MODEL = parse_bool(os.environ.get("WHISPER_PRELOAD"), False)
+DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT", str(MODELS_ROOT / "asr")).strip()
 API_KEY = os.environ.get("WHISPER_API_KEY", "").strip()
 
 _model: WhisperModel | None = None
 
 
 def configured_model_name() -> str:
-    if MODEL_PATH:
-        return MODEL_PATH
-    return MODEL_ID
+    return resolve_model_ref(
+        "asr",
+        MODEL_ID,
+        MODEL_PATH,
+        aliases=["faster-whisper-" + MODEL_ID, MODEL_ID.replace("/", "__"), MODEL_ID.replace("/", "_")],
+    )
 
 
 def require_api_key() -> Response | None:
@@ -119,6 +127,7 @@ def get_model() -> WhisperModel:
         "device": DEVICE,
         "compute_type": COMPUTE_TYPE,
         "num_workers": NUM_WORKERS,
+        "download_root": DOWNLOAD_ROOT,
     }
     if CPU_THREADS > 0:
         kwargs["cpu_threads"] = CPU_THREADS

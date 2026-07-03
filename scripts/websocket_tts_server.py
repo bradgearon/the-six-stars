@@ -48,6 +48,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from model_paths import MODELS_ROOT, configure_model_environment, resolve_model_ref
+
+configure_model_environment()
+
 import numpy as np
 
 try:
@@ -73,10 +77,13 @@ logger = logging.getLogger(__name__)
 
 HOST = os.environ.get("QWEN_TTS_HOST", "0.0.0.0")
 PORT = int(os.environ.get("QWEN_TTS_PORT", "8100"))
-MODEL_PATH = (
+MODEL_PATH = resolve_model_ref(
+    "tts",
     os.environ.get("QWEN_TTS_MODEL_PATH")
     or os.environ.get("QWEN_MODEL_PATH")
-    or "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    or "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    os.environ.get("QWEN_TTS_LOCAL_PATH", ""),
+    aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"],
 )
 DEVICE = os.environ.get(
     "QWEN_TTS_DEVICE",
