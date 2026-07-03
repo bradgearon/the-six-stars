@@ -15,8 +15,8 @@ namespace Wds.SixStars.Api.LocalModels
         public string HuggingFaceHubCache { get; set; } = "models/hf/hub";
         public LocalChatModelOptions Chat { get; set; } = new LocalChatModelOptions
         {
-            EndpointUrl = "http://localhost:8200/v1/chat/completions",
-            Model = "google/gemma-4-E2B-it",
+            EndpointUrl = "http://localhost:8080/v1/chat/completions",
+            Model = "local-model",
             TimeoutSeconds = 600,
             MaxTokens = 0,
             Temperature = 0.65,

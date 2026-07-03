@@ -25,9 +25,9 @@ namespace Wds.SixStars.Ui.Configuration
         public string HuggingFaceHome { get; set; } = "models/hf";
         public string HuggingFaceHubCache { get; set; } = "models/hf/hub";
 
-        /// <summary>Local OpenAI-compatible LLM endpoint launched by scripts/local_llm_openai_server.py.</summary>
-        public string LlmEndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
-        public string LlmModel { get; set; } = "google/gemma-4-E2B-it";
+        /// <summary>OpenAI-compatible LLM endpoint. Defaults to LM Studio for speed; the Python Gemma server is optional.</summary>
+        public string LlmEndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
+        public string LlmModel { get; set; } = "local-model";
         public string LlmLocalPath { get; set; } = string.Empty;
 
         public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
@@ -73,8 +73,8 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class LlmConfig
     {
-        public string EndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
-        public string Model { get; set; } = "google/gemma-4-E2B-it";
+        public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
+        public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = true;
 
@@ -186,8 +186,8 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class ScreenLlmConfig
     {
-        public string EndpointUrl { get; set; } = "http://localhost:8200/v1/chat/completions";
-        public string Model { get; set; } = "google/gemma-4-E2B-it";
+        public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
+        public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = true;
     }

@@ -254,6 +254,9 @@ def main() -> int:
 
     oww_port = os.environ.get("OWW_PORT", "9000")
     whisper_port = os.environ.get("WHISPER_PORT", "8000")
+    # LM Studio is the default LLM again because it is much faster for this workflow.
+    # Set SIX_STARS_START_LOCAL_LLM=true only when explicitly testing scripts/local_llm_openai_server.py.
+    external_llm_endpoint = os.environ.get("SIX_STARS_LLM_ENDPOINT", "http://localhost:8080/v1/chat/completions")
     llm_port = os.environ.get("LOCAL_LLM_PORT", os.environ.get("LLM_PORT", "8200"))
     tts_port = os.environ.get("QWEN_TTS_PORT", os.environ.get("TTS_PORT", "8100"))
 
@@ -305,9 +308,12 @@ def main() -> int:
         )
 
     local_llm_script = ROOT / "scripts" / "local_llm_openai_server.py"
-    local_llm_setting = os.environ.get("SIX_STARS_START_LOCAL_LLM", os.environ.get("LOCAL_LLM_ENABLED", "true"))
-    if falsy(local_llm_setting):
-        print("SKIP    Local LLM disabled by SIX_STARS_START_LOCAL_LLM=false")
+    local_llm_setting = os.environ.get("SIX_STARS_START_LOCAL_LLM", os.environ.get("LOCAL_LLM_ENABLED", "false"))
+    local_llm_enabled = not falsy(local_llm_setting)
+    if not local_llm_enabled:
+        print("SKIP    Local Gemma LLM disabled. Using external LM Studio/OpenAI-compatible endpoint instead.")
+        print(f"        LLM endpoint: {external_llm_endpoint}")
+        print("        To test the Python Gemma server later, set SIX_STARS_START_LOCAL_LLM=true.")
     elif not local_llm_script.exists():
         print(f"SKIP    Local LLM script missing: {local_llm_script}")
     else:
@@ -378,14 +384,20 @@ def main() -> int:
     print("External services expected by the WPF app")
     print("-" * 72)
     print(f"Whisper: http://localhost:{whisper_port}/v1/audio/transcriptions or your configured endpoint")
-    print(f"LLM:     http://localhost:{llm_port}/v1/chat/completions")
+    active_llm_endpoint = f"http://localhost:{llm_port}/v1/chat/completions" if local_llm_enabled else external_llm_endpoint
+    print(f"LLM:     {active_llm_endpoint}")
     print(f"Models:  {MODELS_ROOT}")
     print()
 
     llm_key = load_llm_api_key()
     headers = {"Authorization": f"Bearer {llm_key}"} if llm_key else None
-    wait_for_llm_health(llm_port, headers=headers)
-    print_probe("LLM models", f"http://localhost:{llm_port}/v1/models", headers=headers)
+    if local_llm_enabled:
+        wait_for_llm_health(llm_port, headers=headers)
+        print_probe("LLM models", f"http://localhost:{llm_port}/v1/models", headers=headers)
+    else:
+        models_url = external_llm_endpoint.rsplit("/v1/chat/completions", 1)[0].rstrip("/") + "/v1/models"
+        print_probe("External LLM models", models_url, headers=headers)
+        print("        LM Studio must have a model loaded. If this check says no connection or no models, open LM Studio and load/start the model.")
     print()
 
     manager.wait()

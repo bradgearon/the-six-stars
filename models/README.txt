@@ -1,17 +1,26 @@
 Six Stars local model folder
 ============================
 
-All local sidecar services now share this root folder. You can either let the
-services auto-download from Hugging Face into models/hf, or manually place model
-folders here.
+All local sidecar services share this root folder. Whisper and Qwen TTS can
+auto-download into models/hf, or you can manually place model folders here.
+
+The default LLM path is back to LM Studio at:
+
+  http://localhost:8080/v1/chat/completions
+
+That is intentionally external because LM Studio's GGUF/accelerated runtime is
+much faster for the current Six Stars dialogue/story workflow than the Python
+Transformers Gemma server. Start LM Studio and load a model before using the WPF
+app. The app sends model="local-model" by default, which LM Studio accepts when
+one model is loaded.
 
 Recommended layout:
 
   models/
     hf/
-      hub/                         Hugging Face cache used by Transformers
+      hub/                         Hugging Face cache used by sidecar services
     llm/
-      gemma-4-E2B-it/                 Optional local Gemma chat model folder
+      gemma-4-E2B-it/              Optional local Gemma folder if testing Python LLM
       gemma-3-4b-it/               Optional alternate Gemma folder
     tts/
       qwen3-tts-0.6b/              Optional Qwen/Qwen3-TTS-12Hz-0.6B-Base files
@@ -28,10 +37,15 @@ Environment variables:
   HF_HOME                          Default: ./models/hf
   HF_HUB_CACHE                     Default: ./models/hf/hub
 
-LLM:
-  LOCAL_LLM_MODEL                  Default: google/gemma-4-E2B-it
-  LOCAL_LLM_MODEL_PATH             Explicit local folder/file path. Wins over aliases.
-  LOCAL_LLM_PORT                   Default: 8200
+LLM defaults:
+  SIX_STARS_START_LOCAL_LLM        Default: false
+  SIX_STARS_LLM_ENDPOINT           Default: http://localhost:8080/v1/chat/completions
+  SIX_STARS_LLM_MODEL              Default: local-model
+
+Optional Python Gemma server test mode:
+  set SIX_STARS_START_LOCAL_LLM=true
+  set LOCAL_LLM_MODEL=google/gemma-4-E2B-it
+  set LOCAL_LLM_PORT=8200
 
 Whisper:
   WHISPER_MODEL                    Default: tiny.en
