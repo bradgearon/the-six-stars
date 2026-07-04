@@ -42,6 +42,8 @@ namespace Wds.SixStars.Api.Ai
         public string ChangesSummary { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
+        public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
+        public List<string> ReferencedMemoryMarkerIds { get; set; } = new List<string>();
         public List<string> SecretsUnlocked { get; set; } = new List<string>();
         public List<StarLearnedFunction> LearnedFunctions { get; set; } = new List<StarLearnedFunction>();
         public List<string> RelationshipEvents { get; set; } = new List<string>();

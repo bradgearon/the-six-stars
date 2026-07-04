@@ -15,7 +15,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "spokenText", "storyTitle", "storyKind", "canonSourcesUsed", "emotionalPurpose", "voiceDirective",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "importantPlayerQuotes", "memoryNotes", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
@@ -40,6 +40,8 @@ namespace Wds.SixStars.Api.Ai
                         { "changesSummary", StringProperty(700) },
                         { "importantPlayerQuotes", StringArray(8) },
                         { "memoryNotes", StringArray(10) },
+                        { "rememberedMarkers", RememberedMarkerArray(4) },
+                        { "referencedMemoryMarkerIds", StringArray(6) },
                         { "secretsUnlocked", StringArray(6) },
                         { "learnedFunctions", LearnedFunctionArray(6) },
                         { "relationshipEvents", StringArray(8) },
@@ -87,7 +89,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "spokenText", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "importantPlayerQuotes", "memoryNotes", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
@@ -107,6 +109,8 @@ namespace Wds.SixStars.Api.Ai
                         { "changesSummary", StringProperty(450) },
                         { "importantPlayerQuotes", StringArray(4) },
                         { "memoryNotes", StringArray(6) },
+                        { "rememberedMarkers", RememberedMarkerArray(4) },
+                        { "referencedMemoryMarkerIds", StringArray(6) },
                         { "secretsUnlocked", StringArray(3) },
                         { "learnedFunctions", LearnedFunctionArray(3) },
                         { "relationshipEvents", StringArray(4) },
@@ -203,6 +207,39 @@ namespace Wds.SixStars.Api.Ai
                     }
                 }
             };
+        }
+
+
+        private static Dictionary<string, object> RememberedMarkerArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", false },
+                        { "required", new[] { "id", "markerName", "description", "locationText", "coordinates", "area", "sourcePlayerQuote", "reminderText", "confidence", "isActive", "tags" } },
+                        { "properties", new Dictionary<string, object>
+                            {
+                                { "id", StringProperty(140) },
+                                { "markerName", StringProperty(160) },
+                                { "description", StringProperty(500) },
+                                { "locationText", StringProperty(300) },
+                                { "coordinates", StringProperty(120) },
+                                { "area", StringProperty(120) },
+                                { "sourcePlayerQuote", StringProperty(500) },
+                                { "reminderText", StringProperty(600) },
+                                { "confidence", NumberProperty(0, 1) },
+                                { "isActive", new Dictionary<string, object> { { "type", "boolean" } } },
+                                { "tags", StringArray(6) }
+                            }
+                        }
+                    }
+                }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
         }
 
         private static Dictionary<string, object> LearnedFunctionArray(int maxItems = 0)

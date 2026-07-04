@@ -43,6 +43,10 @@ namespace Wds.SixStars.Api.Models
         public string ConversationSummary { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
+
+        /// <summary>Exact things the player explicitly asked this Star to remember: coordinates, location markers, descriptions, and named points of interest.</summary>
+        public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
+
         public List<string> SecretsUnlocked { get; set; } = new List<string>();
         public List<StarSecretState> SecretStates { get; set; } = new List<StarSecretState>();
         public List<StarLearnedFunction> LearnedFunctions { get; set; } = new List<StarLearnedFunction>();

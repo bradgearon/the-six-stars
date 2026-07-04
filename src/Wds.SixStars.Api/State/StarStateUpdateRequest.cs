@@ -23,6 +23,8 @@ namespace Wds.SixStars.Api.State
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
+        public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
+        public List<string> ReferencedMemoryMarkerIds { get; set; } = new List<string>();
         public List<string> SecretsUnlocked { get; set; } = new List<string>();
         public List<string> DetectedCombos { get; set; } = new List<string>();
         public List<StarLearnedFunction> LearnedFunctions { get; set; } = new List<StarLearnedFunction>();

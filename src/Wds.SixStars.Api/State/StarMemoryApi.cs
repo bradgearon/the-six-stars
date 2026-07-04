@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Engine;
@@ -92,6 +93,9 @@ namespace Wds.SixStars.Api.State
 
             AddUnique(state.ImportantPlayerQuotes, request.ImportantPlayerQuotes, _options.MaxImportantQuotes);
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
+            List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
+            UpsertRememberedMarkers(state, markersToStore, now);
+            MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
             AddUnique(state.SecretsUnlocked, request.SecretsUnlocked, _options.MaxSecrets);
             AddUnique(state.RelationshipEvents, request.RelationshipEvents, _options.MaxRelationshipEvents);
             AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
@@ -129,6 +133,8 @@ namespace Wds.SixStars.Api.State
             };
             entry.ImportantQuotes.AddRange(request.ImportantPlayerQuotes);
             if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
+            entry.RememberedMarkers.AddRange(markersToStore);
+            entry.ReferencedMemoryMarkerIds.AddRange(request.ReferencedMemoryMarkerIds);
             entry.Tags.AddRange(request.DetectedCombos);
             entry.RelationshipEvents.AddRange(request.RelationshipEvents);
             entry.AcceptedPositiveSignals.AddRange(request.AcceptedPositiveSignals);
@@ -160,6 +166,31 @@ namespace Wds.SixStars.Api.State
                         { "title", request.StoryTitle ?? string.Empty },
                         { "finished", request.StoryFinished.ToString() }
                     }
+                });
+            }
+            foreach (StarRememberedMarker marker in markersToStore)
+            {
+                result.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "StarMemoryMarkerRemembered",
+                    Target = request.StarId,
+                    Data =
+                    {
+                        { "markerId", marker.Id ?? string.Empty },
+                        { "markerName", marker.MarkerName ?? string.Empty },
+                        { "coordinates", marker.Coordinates ?? string.Empty },
+                        { "locationText", marker.LocationText ?? string.Empty },
+                        { "description", marker.Description ?? string.Empty }
+                    }
+                });
+            }
+            foreach (string markerId in request.ReferencedMemoryMarkerIds.Where(x => !string.IsNullOrWhiteSpace(x)))
+            {
+                result.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "StarMemoryMarkerReferenced",
+                    Target = request.StarId,
+                    Data = { { "markerId", markerId } }
                 });
             }
             foreach (string combo in request.DetectedCombos)
@@ -226,6 +257,189 @@ namespace Wds.SixStars.Api.State
         }
 
 
+
+
+
+        private List<StarRememberedMarker> PrepareRememberedMarkers(StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            List<StarRememberedMarker> markers = (request.RememberedMarkers ?? new List<StarRememberedMarker>())
+                .Where(x => x != null)
+                .ToList();
+
+            if (markers.Count == 0)
+            {
+                StarRememberedMarker? heuristic = TryCreateHeuristicRememberedMarker(request, now);
+                if (heuristic != null)
+                {
+                    markers.Add(heuristic);
+                }
+            }
+
+            foreach (StarRememberedMarker marker in markers)
+            {
+                marker.StarId = string.IsNullOrWhiteSpace(marker.StarId) ? request.StarId : marker.StarId.Trim();
+                marker.SourcePlayerQuote = string.IsNullOrWhiteSpace(marker.SourcePlayerQuote) ? (request.PlayerText ?? string.Empty).Trim() : marker.SourcePlayerQuote.Trim();
+                marker.MarkerName = CleanMarkerText(marker.MarkerName, 160);
+                marker.Description = CleanMarkerText(marker.Description, 500);
+                marker.LocationText = CleanMarkerText(marker.LocationText, 300);
+                marker.Coordinates = CleanMarkerText(marker.Coordinates, 120);
+                marker.Area = CleanMarkerText(marker.Area, 120);
+                marker.ReminderText = CleanMarkerText(marker.ReminderText, 600);
+                if (marker.Confidence <= 0) marker.Confidence = 0.75;
+                if (marker.Confidence > 1) marker.Confidence = 1;
+                if (marker.CreatedAt == default(DateTimeOffset)) marker.CreatedAt = now;
+                marker.UpdatedAt = now;
+                marker.IsActive = true;
+                marker.Tags ??= new List<string>();
+                if (string.IsNullOrWhiteSpace(marker.Id))
+                {
+                    marker.Id = BuildMarkerId(marker, request);
+                }
+                else
+                {
+                    marker.Id = Slugify(marker.Id);
+                }
+            }
+
+            return markers.Where(x => !string.IsNullOrWhiteSpace(x.Description)
+                    || !string.IsNullOrWhiteSpace(x.LocationText)
+                    || !string.IsNullOrWhiteSpace(x.Coordinates)
+                    || !string.IsNullOrWhiteSpace(x.MarkerName))
+                .ToList();
+        }
+
+        private static StarRememberedMarker? TryCreateHeuristicRememberedMarker(StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            string text = request.PlayerText ?? string.Empty;
+            if (!LooksLikeRememberRequest(text)) return null;
+
+            string coordinates = ExtractCoordinates(text);
+            string markerName = ExtractMarkerName(text);
+            string description = ExtractRememberDescription(text);
+            if (string.IsNullOrWhiteSpace(description) && string.IsNullOrWhiteSpace(coordinates)) return null;
+
+            return new StarRememberedMarker
+            {
+                StarId = request.StarId,
+                MarkerName = string.IsNullOrWhiteSpace(markerName) ? "remembered marker" : markerName,
+                Description = string.IsNullOrWhiteSpace(description) ? text.Trim() : description,
+                LocationText = ExtractLocationText(text, coordinates),
+                Coordinates = coordinates,
+                Area = string.Empty,
+                SourcePlayerQuote = text.Trim(),
+                ReminderText = text.Trim(),
+                Confidence = string.IsNullOrWhiteSpace(coordinates) ? 0.62 : 0.78,
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Tags = new List<string> { "remember-request", "heuristic" }
+            };
+        }
+
+        private void UpsertRememberedMarkers(StarState state, List<StarRememberedMarker> markers, DateTimeOffset now)
+        {
+            if (markers.Count == 0) return;
+            state.RememberedMarkers ??= new List<StarRememberedMarker>();
+            foreach (StarRememberedMarker marker in markers)
+            {
+                StarRememberedMarker? existing = state.RememberedMarkers.FirstOrDefault(x =>
+                    (!string.IsNullOrWhiteSpace(marker.Id) && string.Equals(x.Id, marker.Id, StringComparison.OrdinalIgnoreCase))
+                    || (!string.IsNullOrWhiteSpace(marker.MarkerName)
+                        && string.Equals(x.MarkerName, marker.MarkerName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.Coordinates, marker.Coordinates, StringComparison.OrdinalIgnoreCase)));
+
+                if (existing == null)
+                {
+                    state.RememberedMarkers.Insert(0, marker);
+                }
+                else
+                {
+                    existing.MarkerName = string.IsNullOrWhiteSpace(marker.MarkerName) ? existing.MarkerName : marker.MarkerName;
+                    existing.Description = string.IsNullOrWhiteSpace(marker.Description) ? existing.Description : marker.Description;
+                    existing.LocationText = string.IsNullOrWhiteSpace(marker.LocationText) ? existing.LocationText : marker.LocationText;
+                    existing.Coordinates = string.IsNullOrWhiteSpace(marker.Coordinates) ? existing.Coordinates : marker.Coordinates;
+                    existing.Area = string.IsNullOrWhiteSpace(marker.Area) ? existing.Area : marker.Area;
+                    existing.SourcePlayerQuote = string.IsNullOrWhiteSpace(marker.SourcePlayerQuote) ? existing.SourcePlayerQuote : marker.SourcePlayerQuote;
+                    existing.ReminderText = string.IsNullOrWhiteSpace(marker.ReminderText) ? existing.ReminderText : marker.ReminderText;
+                    existing.Confidence = Math.Max(existing.Confidence, marker.Confidence);
+                    existing.IsActive = marker.IsActive;
+                    existing.UpdatedAt = now;
+                    AddUnique(existing.Tags, marker.Tags, 20);
+                }
+            }
+            Trim(state.RememberedMarkers, _options.MaxRememberedMarkers);
+        }
+
+        private static void MarkReferencedMemoryMarkers(StarState state, IEnumerable<string>? markerIds, DateTimeOffset now)
+        {
+            if (markerIds == null || state.RememberedMarkers == null || state.RememberedMarkers.Count == 0) return;
+            foreach (string raw in markerIds)
+            {
+                string id = (raw ?? string.Empty).Trim();
+                if (id.Length == 0) continue;
+                StarRememberedMarker? marker = state.RememberedMarkers.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                if (marker != null)
+                {
+                    marker.LastReferencedAt = now;
+                    marker.UpdatedAt = now;
+                }
+            }
+        }
+
+        private static bool LooksLikeRememberRequest(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            return Regex.IsMatch(text, @"\b(remember|mark|save|pin|note|remind\s+me\s+later|keep\s+track)\b", RegexOptions.IgnoreCase);
+        }
+
+        private static string ExtractCoordinates(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            Match match = Regex.Match(text, @"(?:(?:coords?|coordinates?|position|pos|x\s*[,=:]\s*y|at)\s*(?:are|is|=|:)?\s*)?(?<coords>[-+]?\d{1,6}(?:\.\d+)?\s*[,/]\s*[-+]?\d{1,6}(?:\.\d+)?(?:\s*[,/]\s*[-+]?\d{1,6}(?:\.\d+)?)?)", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["coords"].Value.Trim() : string.Empty;
+        }
+
+        private static string ExtractMarkerName(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            Match quoted = Regex.Match(text, "[\\\"'“](?<name>[^\\\"'”]{2,80})[\\\"'”]");
+            if (quoted.Success) return quoted.Groups["name"].Value.Trim();
+            Match named = Regex.Match(text, @"(?:called|named|marker(?:\s+name)?\s*(?:is|=|:)|label(?:ed)?\s*(?:as)?)[\s:]+(?<name>[A-Za-z0-9 _\-]{2,80})", RegexOptions.IgnoreCase);
+            if (named.Success) return named.Groups["name"].Value.Trim().Trim('.', ',');
+            return string.Empty;
+        }
+
+        private static string ExtractRememberDescription(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            string cleaned = Regex.Replace(text.Trim(), @"^.*?\b(?:remember|mark|save|pin|note)\b\s*(?:that|this|down|for me|the)?\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
+            return CleanMarkerText(string.IsNullOrWhiteSpace(cleaned) ? text : cleaned, 500);
+        }
+
+        private static string ExtractLocationText(string text, string coordinates)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return coordinates ?? string.Empty;
+            Match loc = Regex.Match(text, @"\b(?:at|in|near|by|inside|under|above|beside)\s+(?<loc>[A-Za-z0-9 _'\-]+?)(?:\s+(?:at|coords?|coordinates?|x|y)\b|[\.,;]|$)", RegexOptions.IgnoreCase);
+            if (loc.Success) return loc.Groups["loc"].Value.Trim();
+            return coordinates ?? string.Empty;
+        }
+
+        private static string BuildMarkerId(StarRememberedMarker marker, StarStateUpdateRequest request)
+        {
+            string basis = !string.IsNullOrWhiteSpace(marker.MarkerName) ? marker.MarkerName : marker.Description;
+            if (!string.IsNullOrWhiteSpace(marker.Coordinates)) basis += " " + marker.Coordinates;
+            if (string.IsNullOrWhiteSpace(basis)) basis = request.StarId + " marker " + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            return Slugify(basis);
+        }
+
+        private static string CleanMarkerText(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            while (cleaned.Contains("  ", StringComparison.Ordinal)) cleaned = cleaned.Replace("  ", " ");
+            if (cleaned.Length <= maxLength) return cleaned;
+            return cleaned.Substring(0, maxLength).Trim();
+        }
 
         private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter)
         {

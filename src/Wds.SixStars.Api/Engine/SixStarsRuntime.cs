@@ -694,6 +694,8 @@ namespace Wds.SixStars.Api.Engine
                 EmotionScores = response.EmotionScores,
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
+                RememberedMarkers = response.RememberedMarkers,
+                ReferencedMemoryMarkerIds = response.ReferencedMemoryMarkerIds,
                 SecretsUnlocked = response.SecretsUnlocked,
                 DetectedCombos = response.DetectedCombos,
                 LearnedFunctions = response.LearnedFunctions,
@@ -738,7 +740,9 @@ namespace Wds.SixStars.Api.Engine
                     { "acceptedPositiveSignals", string.Join(", ", response.AcceptedPositiveEmotionSignals) },
                     { "acceptedNegativeSignals", string.Join(", ", response.AcceptedNegativeEmotionSignals) },
                     { "acceptedCombos", string.Join(", ", response.AcceptedRelationshipCombos) },
-                    { "deterministicEmotionSummary", response.DeterministicEmotionUpdateSummary ?? string.Empty }
+                    { "deterministicEmotionSummary", response.DeterministicEmotionUpdateSummary ?? string.Empty },
+                    { "rememberedMarkers", string.Join(", ", response.RememberedMarkers.Select(x => string.IsNullOrWhiteSpace(x.MarkerName) ? x.Id : x.MarkerName)) },
+                    { "referencedMemoryMarkerIds", string.Join(", ", response.ReferencedMemoryMarkerIds) }
                 }
             });
 

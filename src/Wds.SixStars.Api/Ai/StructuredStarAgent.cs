@@ -232,6 +232,8 @@ namespace Wds.SixStars.Api.Ai
             response.DetectedCombos.AddRange(model.DetectedCombos);
             response.ImportantPlayerQuotes.AddRange(model.ImportantPlayerQuotes);
             response.MemoryNotes.AddRange(model.MemoryNotes);
+            response.RememberedMarkers.AddRange(model.RememberedMarkers);
+            response.ReferencedMemoryMarkerIds.AddRange(model.ReferencedMemoryMarkerIds);
             response.SecretsUnlocked.AddRange(model.SecretsUnlocked);
             response.LearnedFunctions.AddRange(model.LearnedFunctions);
             response.RelationshipEvents.AddRange(model.RelationshipEvents);
@@ -244,6 +246,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM compact background emotion/memory review.");
             response.Debug.Notes.Add($"Impact emotions evaluated: {response.EmotionScores.Count} emotions");
             response.Debug.Notes.Add($"Background kept foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
+            response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
         }
@@ -661,6 +664,8 @@ namespace Wds.SixStars.Api.Ai
             model.SuggestedStateDeltas ??= RelationshipDelta.Zero();
             model.ImportantPlayerQuotes ??= new List<string>();
             model.MemoryNotes ??= new List<string>();
+            model.RememberedMarkers ??= new List<StarRememberedMarker>();
+            model.ReferencedMemoryMarkerIds ??= new List<string>();
             model.SecretsUnlocked ??= new List<string>();
             model.LearnedFunctions ??= new List<StarLearnedFunction>();
             model.RelationshipEvents ??= new List<string>();

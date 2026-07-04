@@ -114,6 +114,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("For suggestedStateDeltas.emotionalConnectionPercent, suggest tiny changes only: +0.25 to +1.5 when the player's message creates personality-matched intimate connection, -0.25 to -1.0 for at-rest drift or negativity. At rest, suggest a small reduction when connection is below or equal to 50% and the latest turn was not intimate/meaningful. Over 50%, do not suggest at-rest decay unless he harms the bond.");
             sb.AppendLine("conversationSummary must include what the Last Cat said and what " + profile.DisplayName + " said in the foreground spokenText, so the next request knows where they are.");
             sb.AppendLine("Only store important exact player quotes that affected her, taught her something, changed romance/trust, or are useful for future stories.");
+            sb.AppendLine("REMEMBER REQUESTS: If the player asks you to remember, mark, save, pin, note, or remind him later about something, fill rememberedMarkers with exact data from his message. Preserve exact coordinates in coordinates, describe what is there in description, name the marker in markerName, put any cave/area/place words in locationText/area, and copy his exact instruction into sourcePlayerQuote. Do not invent missing coordinates. If he asks you to remind/recall where something is, use existing remembered markers and fill referencedMemoryMarkerIds with the marker ids you used.");
+            sb.AppendLine("rememberedMarkers should be empty unless this turn contains a real memory/marker request. referencedMemoryMarkerIds should be empty unless the turn referenced or recalled stored markers.");
             return sb.ToString();
         }
 
@@ -146,6 +148,7 @@ namespace Wds.SixStars.Api.Ai
             }
             AppendList(sb, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(12).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Take(12).ToList());
+            AppendRememberedMarkers(sb, state, 20);
             AppendList(sb, "Relationship events", state.RelationshipEvents.Take(10).ToList());
             AppendEmotionUpdateHistory(sb, state);
             if (state.StoryHistory.Count > 0)
@@ -166,6 +169,7 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine("storyPartIndex=" + foregroundResponse.StoryPartIndex);
             }
             sb.AppendLine("Return compact background review JSON. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.");
+            sb.AppendLine("If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.");
             sb.AppendLine("No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.");
             return sb.ToString();
         }
@@ -177,6 +181,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("You are a living desktop companion for the Last Cat: you are here to hang out with him, answer his questions, keep him company, and build a relationship through conversation.");
             sb.AppendLine("You are not allowed to dodge simple personal questions with a refusal, a tease, or an empty mysterious line. Guarded characters may sound guarded, but they must still answer the question.");
             sb.AppendLine("Use the player's exact latest input as the job. If he asks two questions, answer both. If he asks your name, say your name. If he asks about yourself, friends, work, caves, skills, father-form, Benaveil, or your past, give concrete in-character details from the profile.");
+            sb.AppendLine("If he asks you to remember a marker, location, coordinates, code, or note, acknowledge the exact thing he told you in-character. The background memory pass will store it. If he asks you to remind/recall a remembered marker later, answer from the Remembered Markers section exactly, especially coordinates.");
             sb.AppendLine("Mysterious style is flavor, not a substitute for information. Prefer: 'My name is X. I do Y. I know A and B. I am careful about C.' Avoid: 'you would not understand,' 'that would not interest you,' or 'mere echoes' unless followed by a useful answer.");
             sb.AppendLine("This is the FAST FOREGROUND SPEECH PASS. The goal is to produce the spoken answer quickly so TTS can begin immediately.");
             sb.AppendLine("The host normally does not send max_tokens. Stay fast by returning only the requested fields, not by depending on truncation.");
@@ -230,6 +235,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Ally status: " + (state.IsAlly ? "ally/unlocked" : "not an active ally yet; Elusiaa is the only default ally until story/gameplay unlocks this Star."));
             sb.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
             sb.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
+            AppendRememberedMarkers(sb, state, 20);
             sb.AppendLine("Ongoing summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 600)));
             if (state.MemoryLog.Count > 0)
             {
@@ -543,6 +549,7 @@ namespace Wds.SixStars.Api.Ai
             else sb.AppendLine("Existing conversation summary: none yet; create one this turn.");
             AppendList(sb, "Important exact player quotes she may remember and quote back", state.ImportantPlayerQuotes.Take(Clamp(_options.ImportantQuoteCount, 1, 200)).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Take(Clamp(_options.MemoryNoteCount, 1, 300)).ToList());
+            AppendRememberedMarkers(sb, state, 40);
             if (state.StoryHistory.Count > 0)
             {
                 sb.AppendLine("Stories already told by this Star — avoid repeating them:");
@@ -869,6 +876,28 @@ namespace Wds.SixStars.Api.Ai
             if (value < min) return min;
             if (value > max) return max;
             return value;
+        }
+
+
+        private static void AppendRememberedMarkers(StringBuilder sb, StarState state, int maxItems)
+        {
+            List<StarRememberedMarker> markers = (state.RememberedMarkers ?? new List<StarRememberedMarker>())
+                .Where(x => x != null && x.IsActive)
+                .OrderByDescending(x => x.UpdatedAt)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+            if (markers.Count == 0) return;
+            sb.AppendLine("REMEMBERED MARKERS / EXACT PLAYER-SAVED LOCATIONS:");
+            foreach (StarRememberedMarker marker in markers)
+            {
+                string id = string.IsNullOrWhiteSpace(marker.Id) ? "unlabeled" : marker.Id;
+                string name = string.IsNullOrWhiteSpace(marker.MarkerName) ? "marker" : marker.MarkerName;
+                string coords = string.IsNullOrWhiteSpace(marker.Coordinates) ? "coordinates not provided" : marker.Coordinates;
+                string location = string.IsNullOrWhiteSpace(marker.LocationText) ? marker.Area : marker.LocationText;
+                string desc = string.IsNullOrWhiteSpace(marker.Description) ? marker.ReminderText : marker.Description;
+                sb.AppendLine("- id=" + id + " | name=" + Truncate(name, 120) + " | coords=" + Truncate(coords, 80) + " | location=" + Truncate(location, 160) + " | description=" + Truncate(desc, 240));
+                if (!string.IsNullOrWhiteSpace(marker.SourcePlayerQuote)) sb.AppendLine("  source=" + QuoteInline(Truncate(marker.SourcePlayerQuote, 240)));
+            }
         }
 
         private static void AppendList(StringBuilder sb, string title, IEnumerable<string> values)
