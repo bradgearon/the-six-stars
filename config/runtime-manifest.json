@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "ports": {
+    "llm": 8080,
+    "asr": 8000,
+    "tts": 8100
+  },
+  "selectionOrder": {
+    "llm": [
+      "llama-cpp-dynamic-nvidia",
+      "llama-cpp-dynamic-vulkan",
+      "llama-cpp-dynamic-cpu"
+    ],
+    "asr": [
+      "faster-whisper-nvidia-cu12",
+      "faster-whisper-cpu"
+    ],
+    "tts": [
+      "qwen3-tts-nvidia-cu12",
+      "qwen3-tts-cpu"
+    ]
+  },
+  "packs": [
+    {
+      "id": "llama-cpp-dynamic-nvidia",
+      "kind": "llm",
+      "vendor": "nvidia",
+      "path": "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe",
+      "workingDirectory": "engines/llm/llama-cpp-dynamic-win-x64",
+      "args": "--host 127.0.0.1 --port 8080 --ctx-size 8192 --n-gpu-layers 999 --jinja",
+      "healthUrl": "http://127.0.0.1:8080/health",
+      "openAiChatUrl": "http://127.0.0.1:8080/v1/chat/completions"
+    },
+    {
+      "id": "llama-cpp-dynamic-vulkan",
+      "kind": "llm",
+      "vendor": "generic-gpu",
+      "path": "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe",
+      "workingDirectory": "engines/llm/llama-cpp-dynamic-win-x64",
+      "args": "--host 127.0.0.1 --port 8080 --ctx-size 8192 --n-gpu-layers 999 --jinja",
+      "healthUrl": "http://127.0.0.1:8080/health",
+      "openAiChatUrl": "http://127.0.0.1:8080/v1/chat/completions"
+    },
+    {
+      "id": "llama-cpp-dynamic-cpu",
+      "kind": "llm",
+      "vendor": "cpu",
+      "path": "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe",
+      "workingDirectory": "engines/llm/llama-cpp-dynamic-win-x64",
+      "args": "--host 127.0.0.1 --port 8080 --ctx-size 8192 --n-gpu-layers 0 --jinja",
+      "healthUrl": "http://127.0.0.1:8080/health",
+      "openAiChatUrl": "http://127.0.0.1:8080/v1/chat/completions"
+    },
+    {
+      "id": "faster-whisper-nvidia-cu12",
+      "kind": "asr",
+      "vendor": "nvidia",
+      "path": "engines/asr/faster-whisper-nvidia-cu12-win-x64/faster_whisper_openai_server.exe",
+      "workingDirectory": "engines/asr/faster-whisper-nvidia-cu12-win-x64",
+      "args": "",
+      "healthUrl": "http://127.0.0.1:8000/health"
+    },
+    {
+      "id": "faster-whisper-cpu",
+      "kind": "asr",
+      "vendor": "cpu",
+      "path": "engines/asr/faster-whisper-cpu-win-x64/faster_whisper_openai_server.exe",
+      "workingDirectory": "engines/asr/faster-whisper-cpu-win-x64",
+      "args": "",
+      "healthUrl": "http://127.0.0.1:8000/health"
+    },
+    {
+      "id": "qwen3-tts-nvidia-cu12",
+      "kind": "tts",
+      "vendor": "nvidia",
+      "path": "engines/tts/qwen3-tts-nvidia-cu12-win-x64/websocket_tts_server.exe",
+      "workingDirectory": "engines/tts/qwen3-tts-nvidia-cu12-win-x64",
+      "args": "",
+      "healthUrl": "ws://127.0.0.1:8100/tts/stream"
+    },
+    {
+      "id": "qwen3-tts-cpu",
+      "kind": "tts",
+      "vendor": "cpu",
+      "path": "engines/tts/qwen3-tts-cpu-win-x64/websocket_tts_server.exe",
+      "workingDirectory": "engines/tts/qwen3-tts-cpu-win-x64",
+      "args": "",
+      "healthUrl": "ws://127.0.0.1:8100/tts/stream"
+    }
+  ]
+}

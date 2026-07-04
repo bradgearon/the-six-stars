@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "models": {
+    "llm": {
+      "id": "gemma-e4b-it-gguf",
+      "preferredMode": "llama-hf",
+      "hfSpecifier": "unsloth/gemma-3n-E4B-it-GGUF:UD-Q4_K_XL",
+      "localPath": "models/llm/gemma-e4b-it.gguf",
+      "openAiModelName": "local-model",
+      "notes": "The launcher will use localPath when the GGUF exists; otherwise it passes hfSpecifier to llama.cpp -hf so llama.cpp can download/cache the model. Replace hfSpecifier/localPath with the exact Gemma E4B-it GGUF you decide to ship."
+    },
+    "asr": {
+      "id": "faster-whisper-large-v3-turbo",
+      "modelName": "large-v3-turbo",
+      "localPath": "models/asr/large-v3-turbo",
+      "liteModelName": "tiny.en",
+      "notes": "Use tiny/base/small for low-end machines; use large-v3-turbo for best quality on CUDA."
+    },
+    "tts": {
+      "id": "qwen3-tts-12hz-0.6b-base",
+      "modelName": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "localPath": "models/tts/qwen3-tts-0.6b-base",
+      "notes": "The WebSocket TTS server still uses your current faster-qwen3/Qwen adapter. CUDA pack uses faster-qwen3 when available."
+    }
+  }
+}
