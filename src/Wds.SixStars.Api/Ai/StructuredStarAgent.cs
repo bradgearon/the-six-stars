@@ -132,6 +132,7 @@ namespace Wds.SixStars.Api.Ai
                 StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId,
                 EmotionalPurpose = "Foreground spoken reply only; background emotion/memory review pending.",
                 EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
                 VoiceDirective = BuildDefaultVoiceDirective(profile, request),
                 SuggestedStateDeltas = RelationshipDelta.Zero(),
                 ConversationSummary = BuildFallbackConversationSummary(state, request, model.SpokenText),
@@ -156,6 +157,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add("No per-pass max_tokens cap is sent unless explicitly configured; output size is controlled by compact schema and prompts.");
             response.Debug.Notes.Add($"Speech parts: {response.SpokenParts.Count}; joined length: {response.SpokenText.Length} characters.");
             response.Debug.Notes.Add($"Foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length} characters.");
+            response.Debug.Notes.Add($"Foreground negativeEmotionVector length: {response.NegativeEmotionVector.Length} characters.");
             if (isStory)
             {
                 int storyChunks = ExtractAllMarkdownChunks(response.StoryMarkdown).Count;
@@ -190,6 +192,8 @@ namespace Wds.SixStars.Api.Ai
                 model.SpokenParts.AddRange(foregroundResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)));
             }
             StarInteractionResponse response = BuildInteractionResponseFromModel(profile, request, state, model);
+            response.EmotionalEffectVector = foregroundResponse.EmotionalEffectVector ?? string.Empty;
+            response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
             return response;
@@ -239,6 +243,7 @@ namespace Wds.SixStars.Api.Ai
             TrimEmotionScoresToImpactfulSet(response, 9);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM compact background emotion/memory review.");
             response.Debug.Notes.Add($"Impact emotions evaluated: {response.EmotionScores.Count} emotions");
+            response.Debug.Notes.Add($"Background kept foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
         }

@@ -13,5 +13,6 @@ namespace Wds.SixStars.Api.State
         Task<SixStarsSaveData> ExportSaveDataAsync(string sessionId, CancellationToken cancellationToken);
         Task ImportSaveDataAsync(SixStarsSaveData saveData, CancellationToken cancellationToken);
         Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken);
+        Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken);
     }
 }

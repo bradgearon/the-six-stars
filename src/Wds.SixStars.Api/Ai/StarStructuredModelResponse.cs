@@ -31,6 +31,7 @@ namespace Wds.SixStars.Api.Ai
         public int StoryPartIndex { get; set; }
         public List<string> CanonSourcesUsed { get; set; } = new List<string>();
         public string EmotionalPurpose { get; set; } = string.Empty;
+        public string NegativeEmotionVector { get; set; } = string.Empty;
 
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]

@@ -7,6 +7,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -96,6 +97,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private int _nextStoryPartIndex;
     private bool _suppressStoryContinuationOnce;
     private string _pendingBackgroundAnalysisId = string.Empty;
+    private bool _selectedStarIsAlly = true;
+    private bool _isLoadingSelectedStarState;
 
     public MainViewModel()
     {
@@ -125,11 +128,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Environment.GetEnvironmentVariable("SIX_STARS_RECENT_HISTORY_FOR_PROMPT"),
             _appConfig.Memory.RecentHistoryForPrompt);
 
+        JsonStarStateStore stateStore = JsonStarStateStore.CreateDefaultLocalDevStore();
+        System.Diagnostics.Debug.WriteLine("[Memory] Local state file: " + stateStore.FilePath);
+
         _runtime = new SixStarsRuntime(
             profiles,
             CreateStarAgent(),
             new RelationshipDeltaCalculator(),
-            JsonStarStateStore.CreateDefaultLocalDevStore(),
+            stateStore,
             _screenContextStore,
             recentScreenCount: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_CAPTURES_FOR_PROMPT"), _appConfig.Memory.ScreenCapturesForPrompt),
             recentHistoryCount: recentHistoryForPrompt,
@@ -138,6 +144,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes));
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
+        _ = RefreshSelectedStarStateForUiAsync("startup");
 
         _speechRequireWakeWord = GetBooleanSetting(
             Environment.GetEnvironmentVariable("SIX_STARS_REQUIRE_WAKE_WORD"),
@@ -213,8 +220,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 response.StateDeltas.Heart,
                 response.StateDeltas.Trust,
                 response.StateDeltas.Romance,
-                response.StateDeltas.BenaveilInfluence);
-            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ".";
+                response.StateDeltas.BenaveilInfluence,
+                response.StateDeltas.EmotionalConnectionPercent);
+            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
+            DebugJson = _llmDebugLog.ToString()
+                + "\n================ BACKGROUND DETERMINISTIC EMOTION UPDATE ================\n"
+                + CreateEnhancedDebugOutput(new { backgroundUpdate = true, starId = response.StarId }, response);
         });
         _runtime.BackgroundAnalysisFailed += (_, ex) => OnUiThread(() =>
         {
@@ -331,6 +342,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     InterruptStory("Selected Star changed.");
                 }
                 UpdateSpeechOptions();
+                _ = RefreshSelectedStarStateForUiAsync("selected star changed");
             }
         }
     }
@@ -369,6 +381,18 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _romanceMode;
         set => SetProperty(ref _romanceMode, value);
+    }
+
+    public bool SelectedStarIsAlly
+    {
+        get => _selectedStarIsAlly;
+        set
+        {
+            if (SetProperty(ref _selectedStarIsAlly, value) && !_isLoadingSelectedStarState)
+            {
+                _ = SetSelectedStarAllyAsync(value);
+            }
+        }
     }
 
     public bool SpeechRequireWakeWord
@@ -830,12 +854,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 args.Response.StateDeltas.Heart,
                 args.Response.StateDeltas.Trust,
                 args.Response.StateDeltas.Romance,
-                args.Response.StateDeltas.BenaveilInfluence);
+                args.Response.StateDeltas.BenaveilInfluence,
+                args.Response.StateDeltas.EmotionalConnectionPercent);
 
             // Enhanced debug output with state tracking
             DebugJson = CreateEnhancedDebugOutput(args.RecognizedSpeech, args.Response);
 
-            Status = "Voice processed. Heart Δ " + args.Response.StateDeltas.Heart + ", Trust Δ " + args.Response.StateDeltas.Trust + ", Romance Δ " + args.Response.StateDeltas.Romance + ". Generating Star voice...";
+            Status = "Voice processed. Heart Δ " + args.Response.StateDeltas.Heart + ", Trust Δ " + args.Response.StateDeltas.Trust + ", Romance Δ " + args.Response.StateDeltas.Romance + ", Connection Δ " + args.Response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + ". Generating Star voice...";
             CancellationToken token = _operationController.BeginNewOperation("speech transcript reply");
             IsProcessingRuntime = true;
             _ = SpeakStarResponseAsync(args.Response, token);
@@ -1752,6 +1777,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _stateChangeTracker.Reset(starId);
             OnUiThread(() =>
             {
+                _isLoadingSelectedStarState = true;
+                try
+                {
+                    SelectedStarIsAlly = state.IsAlly;
+                }
+                finally
+                {
+                    _isLoadingSelectedStarState = false;
+                }
                 StarOutput = string.Empty;
                 LastTranscript = string.Empty;
                 Status = "Cleared local conversation history and relationship state for " + starId + ".";
@@ -1968,7 +2002,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 response.StateDeltas.Heart,
                 response.StateDeltas.Trust,
                 response.StateDeltas.Romance,
-                response.StateDeltas.BenaveilInfluence);
+                response.StateDeltas.BenaveilInfluence,
+                response.StateDeltas.EmotionalConnectionPercent);
 
             TrackStoryFromResponse(response);
             StarOutput = FormatStarOutput(response);
@@ -1978,7 +2013,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             // Update status with clear indication of LLM vs Mock
             string dataSource = usedRealLlm ? "✓ REAL LLM" : (isFromMock ? "⚠ MOCK DATA" : "? UNKNOWN");
-            Status = $"{dataSource} Response. Heart Δ {response.StateDeltas.Heart}, Trust Δ {response.StateDeltas.Trust}, Romance Δ {response.StateDeltas.Romance}, Benaveil Δ {response.StateDeltas.BenaveilInfluence}. Generating voice...";
+            Status = $"{dataSource} Response. Heart Δ {response.StateDeltas.Heart}, Trust Δ {response.StateDeltas.Trust}, Romance Δ {response.StateDeltas.Romance}, Benaveil Δ {response.StateDeltas.BenaveilInfluence}, Connection Δ {response.StateDeltas.EmotionalConnectionPercent:0.00}. Generating voice...";
 
             System.Diagnostics.Debug.WriteLine("\n=== DETERMINISTIC STATE CHANGE ===");
             System.Diagnostics.Debug.WriteLine($"Data Source: {(usedRealLlm ? "REAL LLM" : "MOCK DATA")}");
@@ -1988,6 +2023,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Diagnostics.Debug.WriteLine($"Trust Delta: {response.StateDeltas.Trust} (Suggested: {response.SuggestedStateDeltas.Trust})");
             System.Diagnostics.Debug.WriteLine($"Romance Delta: {response.StateDeltas.Romance} (Suggested: {response.SuggestedStateDeltas.Romance})");
             System.Diagnostics.Debug.WriteLine($"Benaveil Delta: {response.StateDeltas.BenaveilInfluence} (Suggested: {response.SuggestedStateDeltas.BenaveilInfluence})");
+            System.Diagnostics.Debug.WriteLine($"Emotional Connection Delta: {response.StateDeltas.EmotionalConnectionPercent:0.00} (Suggested: {response.SuggestedStateDeltas.EmotionalConnectionPercent:0.00}); Before={response.EmotionalConnectionPercentBefore:0.0}%, After={response.EmotionalConnectionPercentAfter:0.0}%, GirlfriendReady={response.IsGirlfriendReadyAfter}");
+            System.Diagnostics.Debug.WriteLine($"Girlfriend Readiness: {response.GirlfriendReadinessSummary}");
             System.Diagnostics.Debug.WriteLine($"Foreground EmotionalEffectVector: {response.EmotionalEffectVector}");
             System.Diagnostics.Debug.WriteLine($"Emotions Evaluated: {response.EmotionScores.Count}");
             foreach (var emotion in response.EmotionScores)
@@ -2404,6 +2441,56 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _speechOptions.StoryOptions = CreateStoryOptions();
     }
 
+
+
+    private async Task RefreshSelectedStarStateForUiAsync(string reason)
+    {
+        try
+        {
+            string starId = ResolveDefaultStarId(SelectedStarId);
+            StarState state = await _runtime.GetStarStateAsync(DefaultSessionId, starId, CancellationToken.None);
+            OnUiThread(() =>
+            {
+                _isLoadingSelectedStarState = true;
+                try
+                {
+                    SelectedStarIsAlly = state.IsAlly;
+                }
+                finally
+                {
+                    _isLoadingSelectedStarState = false;
+                }
+                Status = starId + " state loaded (ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + ").";
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[Memory] Could not refresh selected star state after " + reason + ": " + ex.Message);
+        }
+    }
+
+    private async Task SetSelectedStarAllyAsync(bool isAlly)
+    {
+        try
+        {
+            string starId = ResolveDefaultStarId(SelectedStarId);
+            StarState state = await _runtime.SetStarAllyAsync(DefaultSessionId, starId, isAlly, CancellationToken.None);
+            OnUiThread(() =>
+            {
+                Status = starId + " ally flag set to " + state.IsAlly + ". Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, girlfriend ready " + state.IsGirlfriendReady + ". This is now saved in the root state file.";
+                DebugJson = JsonSerializer.Serialize(new { action = "set_star_ally", starId, isAlly = state.IsAlly, state }, _jsonOptions);
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                Status = "Could not update ally flag: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
     private GameContext CreateGameContext(string recentEvent)
     {
         GameContext context = new GameContext
@@ -2422,6 +2509,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         context.Flags["qwenTtsEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_TTS_ENDPOINT")) ? "false" : "true";
         context.Flags["whisperEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")) ? "false" : "true";
         context.Flags["screenEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENDPOINT")) ? "false" : "true";
+        context.Flags["selectedStarIsAlly"] = SelectedStarIsAlly ? "true" : "false";
+        context.Flags["emotionalConnectionSkillLevel"] = "interested_private_potential_partner";
         return context;
     }
 
@@ -2544,21 +2633,41 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            string configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "appsettings.json");
-            if (!File.Exists(configPath))
-            {
-                System.Diagnostics.Debug.WriteLine($"[Config] appsettings.json not found at {configPath}. Using defaults.");
-                return new AppConfiguration();
-            }
+            string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string configPath = Path.Combine(baseDirectory, "appsettings.json");
+            string localConfigPath = Path.Combine(baseDirectory, "appsettings.Local.json");
 
-            string json = File.ReadAllText(configPath);
-            AppConfiguration? config = JsonSerializer.Deserialize<AppConfiguration>(json, new JsonSerializerOptions
+            JsonSerializerOptions jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
-            });
+            };
 
-            System.Diagnostics.Debug.WriteLine($"[Config] Loaded configuration from {configPath}");
+            JsonNode? mergedRoot = null;
+
+            if (File.Exists(configPath))
+            {
+                mergedRoot = JsonNode.Parse(File.ReadAllText(configPath));
+                System.Diagnostics.Debug.WriteLine($"[Config] Loaded base configuration from {configPath}");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[Config] appsettings.json not found at {configPath}. Using defaults/local overrides.");
+            }
+
+            if (File.Exists(localConfigPath))
+            {
+                JsonNode? localRoot = JsonNode.Parse(File.ReadAllText(localConfigPath));
+                mergedRoot = MergeJsonNodes(mergedRoot, localRoot);
+                System.Diagnostics.Debug.WriteLine($"[Config] Loaded local configuration override from {localConfigPath}");
+            }
+
+            if (mergedRoot is null)
+            {
+                return new AppConfiguration();
+            }
+
+            AppConfiguration? config = mergedRoot.Deserialize<AppConfiguration>(jsonOptions);
             return config ?? new AppConfiguration();
         }
         catch (Exception ex)
@@ -2566,6 +2675,33 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Diagnostics.Debug.WriteLine($"[Config] Error loading configuration: {ex.Message}");
             return new AppConfiguration();
         }
+    }
+
+    private static JsonNode? MergeJsonNodes(JsonNode? baseNode, JsonNode? overrideNode)
+    {
+        if (overrideNode is null)
+        {
+            return baseNode?.DeepClone();
+        }
+
+        if (baseNode is null)
+        {
+            return overrideNode.DeepClone();
+        }
+
+        if (baseNode is JsonObject baseObject && overrideNode is JsonObject overrideObject)
+        {
+            JsonObject mergedObject = (JsonObject)baseObject.DeepClone();
+            foreach (KeyValuePair<string, JsonNode?> property in overrideObject)
+            {
+                JsonNode? existingValue = mergedObject[property.Key];
+                mergedObject[property.Key] = MergeJsonNodes(existingValue, property.Value);
+            }
+
+            return mergedObject;
+        }
+
+        return overrideNode.DeepClone();
     }
 
     private string CreateEnhancedDebugOutput(object request, StarInteractionResponse response)
@@ -2580,6 +2716,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 spokenText = response.SpokenText,
                 emotionalPurpose = response.EmotionalPurpose,
                 emotionalEffectVector = response.EmotionalEffectVector,
+                negativeEmotionVector = response.NegativeEmotionVector,
+                deterministicEmotionUpdateSummary = response.DeterministicEmotionUpdateSummary,
+                acceptedPositiveEmotionSignals = response.AcceptedPositiveEmotionSignals,
+                acceptedNegativeEmotionSignals = response.AcceptedNegativeEmotionSignals,
+                acceptedRelationshipCombos = response.AcceptedRelationshipCombos,
                 storyKind = response.StoryKind,
                 storyTitle = response.StoryTitle,
                 storyId = response.StoryId,

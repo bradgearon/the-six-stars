@@ -21,7 +21,8 @@
                     <ComboBox ItemsSource="{Binding StarIds}" SelectedItem="{Binding SelectedStarId}" Width="140" Margin="0,0,16,0" />
                     <TextBlock Text="Request" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox ItemsSource="{Binding RequestTypes}" SelectedItem="{Binding SelectedRequestType}" Width="140" Margin="0,0,16,0" />
-                    <CheckBox Content="Romance Mode" IsChecked="{Binding RomanceMode}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <CheckBox Content="Romance Mode" IsChecked="{Binding RomanceMode}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <CheckBox Content="Selected Star Is Ally" IsChecked="{Binding SelectedStarIsAlly}" VerticalAlignment="Center" Margin="0,0,16,0" />
                     <TextBlock Text="Area" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <TextBox Text="{Binding Area, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,16,0" />
                     <TextBlock Text="Quest" VerticalAlignment="Center" Margin="0,0,6,0" />

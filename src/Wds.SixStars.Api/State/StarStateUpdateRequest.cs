@@ -14,6 +14,12 @@ namespace Wds.SixStars.Api.State
         public string ChangesSummary { get; set; } = string.Empty;
         public RelationshipDelta ActualDelta { get; set; } = RelationshipDelta.Zero();
         public RelationshipDelta SuggestedDelta { get; set; } = RelationshipDelta.Zero();
+        public string EmotionalEffectVector { get; set; } = string.Empty;
+        public string NegativeEmotionVector { get; set; } = string.Empty;
+        public string DeterministicEmotionSummary { get; set; } = string.Empty;
+        public List<string> AcceptedPositiveSignals { get; set; } = new List<string>();
+        public List<string> AcceptedNegativeSignals { get; set; } = new List<string>();
+        public List<string> AcceptedCombos { get; set; } = new List<string>();
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();

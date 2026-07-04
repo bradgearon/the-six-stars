@@ -17,6 +17,7 @@ namespace Wds.SixStars.Api.Engine
     public sealed class JsonStarStateStore : IStarStateStore
     {
         private readonly string _filePath;
+        public string FilePath => _filePath;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly JsonSerializerOptions _jsonOptions;
         private SixStarsSaveData? _cache;
@@ -36,10 +37,83 @@ namespace Wds.SixStars.Api.Engine
 
         public static JsonStarStateStore CreateDefaultLocalDevStore()
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            if (string.IsNullOrWhiteSpace(appData)) appData = AppContext.BaseDirectory;
-            string folder = Path.Combine(appData, "Wds", "SixStars");
+            string? explicitPath = Environment.GetEnvironmentVariable("SIX_STARS_STATE_FILE");
+            if (!string.IsNullOrWhiteSpace(explicitPath))
+            {
+                return new JsonStarStateStore(Path.GetFullPath(explicitPath));
+            }
+
+            string root = FindProjectRoot(AppContext.BaseDirectory);
+            string folder = Path.Combine(root, "state");
             return new JsonStarStateStore(Path.Combine(folder, "six-stars-local-dev-state.json"));
+        }
+
+        private static string FindProjectRoot(string start)
+        {
+            DirectoryInfo? dir = new DirectoryInfo(string.IsNullOrWhiteSpace(start) ? Environment.CurrentDirectory : start);
+            while (dir != null)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "SixStars.sln")) || Directory.Exists(Path.Combine(dir.FullName, "src")))
+                {
+                    return dir.FullName;
+                }
+                dir = dir.Parent;
+            }
+            return Environment.CurrentDirectory;
+        }
+
+        private static bool IsDefaultAlly(string starId)
+        {
+            return string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static StarState CreateDefaultState(string starId)
+        {
+            return new StarState
+            {
+                StarId = starId,
+                IsAlly = IsDefaultAlly(starId),
+                EmotionalConnectionSkillLevel = "interested_private_potential_partner",
+                EmotionalConnectionPercent = 0,
+                GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
+            };
+        }
+
+        private static bool NormalizeStateDefaults(StarState state)
+        {
+            bool changed = false;
+            if (string.IsNullOrWhiteSpace(state.StarId)) return false;
+            if (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel))
+            {
+                state.EmotionalConnectionSkillLevel = "interested_private_potential_partner";
+                changed = true;
+            }
+
+            if (state.EmotionalConnectionPercent < 0)
+            {
+                state.EmotionalConnectionPercent = 0;
+                changed = true;
+            }
+            if (state.EmotionalConnectionPercent > 100)
+            {
+                state.EmotionalConnectionPercent = 100;
+                changed = true;
+            }
+            if (string.IsNullOrWhiteSpace(state.GirlfriendReadinessSummary))
+            {
+                state.GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12.";
+                changed = true;
+            }
+
+            // Backward compatibility for older local state files that had no IsAlly field.
+            // Elusiaa is the only default ally; the other Stars remain locked/not ally until gameplay updates them.
+            bool explicitlyRemoved = state.RelationshipEvents.Any(x => x.IndexOf("Ally flag removed", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (IsDefaultAlly(state.StarId) && !state.IsAlly && !explicitlyRemoved)
+            {
+                state.IsAlly = true;
+                changed = true;
+            }
+            return changed;
         }
 
         public async Task<StarState> GetAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -51,8 +125,12 @@ namespace Wds.SixStars.Api.Engine
                 StarState? state = data.Stars.FirstOrDefault(x => string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase));
                 if (state == null)
                 {
-                    state = new StarState { StarId = starId };
+                    state = CreateDefaultState(starId);
                     data.Stars.Add(state);
+                    await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
+                }
+                else if (NormalizeStateDefaults(state))
+                {
                     await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
                 }
                 return state;
@@ -123,7 +201,7 @@ namespace Wds.SixStars.Api.Engine
             {
                 SixStarsSaveData data = await LoadAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 int index = data.Stars.FindIndex(x => string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase));
-                StarState reset = new StarState { StarId = starId };
+                StarState reset = CreateDefaultState(starId);
                 if (index >= 0) data.Stars[index] = reset;
                 else data.Stars.Add(reset);
                 await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);

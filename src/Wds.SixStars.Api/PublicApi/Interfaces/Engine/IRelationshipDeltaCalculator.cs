@@ -5,6 +5,6 @@ namespace Wds.SixStars.Api.Engine
 {
     public interface IRelationshipDeltaCalculator
     {
-        RelationshipDelta Calculate(StarProfile profile, StarInteractionRequest request, StarInteractionResponse response);
+        RelationshipDelta Calculate(StarProfile profile, StarInteractionRequest request, StarInteractionResponse response, StarState currentState);
     }
 }

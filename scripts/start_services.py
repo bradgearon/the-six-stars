@@ -141,11 +141,19 @@ def load_llm_api_key() -> Optional[str]:
     if env_key:
         return env_key
 
-    for path in [ROOT / "src" / "Wds.SixStars.Ui" / "appsettings.json", ROOT / "appsettings.json"]:
+    config_paths = [
+        ROOT / "src" / "Wds.SixStars.Ui" / "appsettings.Local.json",
+        ROOT / "src" / "Wds.SixStars.Ui" / "bin" / "Debug" / "net8.0-windows" / "appsettings.Local.json",
+        ROOT / "src" / "Wds.SixStars.Ui" / "appsettings.json",
+        ROOT / "appsettings.Local.json",
+        ROOT / "appsettings.json",
+    ]
+
+    for path in config_paths:
         if not path.exists():
             continue
         try:
-            settings = json.loads(path.read_text(encoding="utf-8"))
+            settings = json.loads(path.read_text(encoding="utf-8-sig"))
             api_key = first_non_empty(
                 settings.get("LLM", {}).get("ApiKey"),
                 settings.get("ScreenLLM", {}).get("ApiKey"),

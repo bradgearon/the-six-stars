@@ -109,8 +109,9 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Return compact JSON only. Do not write a new player-facing response. Use the exact spokenText array supplied by the runtime.");
             sb.AppendLine("Do not include voiceDirective, emotionalPurpose, storyMarkdown, canonSourcesUsed, emotionalEffectVector, or emotionScores.");
             sb.AppendLine("Control output size by filling only the bounded update slots that matter. Do not rely on max_tokens; the host normally does not send a max_tokens cap.");
-            sb.AppendLine("Do not output emotionScores at all in this background review. The fast foreground emotionalEffectVector is the only compact emotion hint, and it is not repeated here.");
-            sb.AppendLine("suggestedStateDeltas are your recommendation only; deterministic code decides final Heart/Trust/Romance/BenaveilInfluence.");
+            sb.AppendLine("Do not output emotionScores at all in this background review. The fast foreground emotionalEffectVector and negativeEmotionVector are supplied to you for context; deterministic code will combine them with your suggestedStateDeltas. Do not repeat them unless a future schema explicitly asks for them.");
+            sb.AppendLine("suggestedStateDeltas are your recommendation only; deterministic code decides final Heart/Trust/Romance/BenaveilInfluence and EmotionalConnectionPercent. Keep suggestions modest. The emotional connection difficulty is interested_private_potential_partner: high attraction/romance suggestions require genuinely good poetry, charisma, emotional safety, exciting speech, or earned trust. Repeated low-effort praise should not keep scoring.");
+            sb.AppendLine("For suggestedStateDeltas.emotionalConnectionPercent, suggest tiny changes only: +0.25 to +1.5 when the player's message creates personality-matched intimate connection, -0.25 to -1.0 for at-rest drift or negativity. At rest, suggest a small reduction when connection is below or equal to 50% and the latest turn was not intimate/meaningful. Over 50%, do not suggest at-rest decay unless he harms the bond.");
             sb.AppendLine("conversationSummary must include what the Last Cat said and what " + profile.DisplayName + " said in the foreground spokenText, so the next request knows where they are.");
             sb.AppendLine("Only store important exact player quotes that affected her, taught her something, changed romance/trust, or are useful for future stories.");
             return sb.ToString();
@@ -126,7 +127,11 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine(QuoteBlock(request.PlayerText));
             sb.AppendLine("Exact foreground spokenText already sent to voice generation. Copy this exact array into your response:");
             sb.AppendLine(FormatSpokenParts(foregroundResponse.SpokenParts));
+            sb.AppendLine("Foreground emotionalEffectVector supplied by the fast pass: " + (string.IsNullOrWhiteSpace(foregroundResponse.EmotionalEffectVector) ? "none" : foregroundResponse.EmotionalEffectVector));
+            sb.AppendLine("Foreground negativeEmotionVector supplied by the fast pass: " + (string.IsNullOrWhiteSpace(foregroundResponse.NegativeEmotionVector) ? "none" : foregroundResponse.NegativeEmotionVector));
             sb.AppendLine("Relationship before this review: " + BuildRelationshipStatus(state));
+            sb.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%.");
+            sb.AppendLine("Girlfriend readiness: " + (state.IsGirlfriendReady ? "ready" : "not ready") + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
             sb.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
             if (state.MemoryLog.Count > 0)
             {
@@ -142,6 +147,7 @@ namespace Wds.SixStars.Api.Ai
             AppendList(sb, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(12).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Take(12).ToList());
             AppendList(sb, "Relationship events", state.RelationshipEvents.Take(10).ToList());
+            AppendEmotionUpdateHistory(sb, state);
             if (state.StoryHistory.Count > 0)
             {
                 sb.AppendLine("Stories already told by this Star:");
@@ -168,6 +174,10 @@ namespace Wds.SixStars.Api.Ai
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("You are the selected Six Stars companion from The Last Cat. Stay fully in character and answer the Last Cat aloud as " + profile.DisplayName + ".");
+            sb.AppendLine("You are a living desktop companion for the Last Cat: you are here to hang out with him, answer his questions, keep him company, and build a relationship through conversation.");
+            sb.AppendLine("You are not allowed to dodge simple personal questions with a refusal, a tease, or an empty mysterious line. Guarded characters may sound guarded, but they must still answer the question.");
+            sb.AppendLine("Use the player's exact latest input as the job. If he asks two questions, answer both. If he asks your name, say your name. If he asks about yourself, friends, work, caves, skills, father-form, Benaveil, or your past, give concrete in-character details from the profile.");
+            sb.AppendLine("Mysterious style is flavor, not a substitute for information. Prefer: 'My name is X. I do Y. I know A and B. I am careful about C.' Avoid: 'you would not understand,' 'that would not interest you,' or 'mere echoes' unless followed by a useful answer.");
             sb.AppendLine("This is the FAST FOREGROUND SPEECH PASS. The goal is to produce the spoken answer quickly so TTS can begin immediately.");
             sb.AppendLine("The host normally does not send max_tokens. Stay fast by returning only the requested fields, not by depending on truncation.");
             sb.AppendLine("Return JSON only. Do not wrap it in markdown.");
@@ -175,8 +185,10 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Each spokenText item should usually be one or two natural sentences. Break at meaningful thought boundaries, not by word count. Do not make a huge paragraph in one item.");
             sb.AppendLine("Do not mention JSON, scores, state deltas, schema, or the background review in spokenText.");
             sb.AppendLine("Memory update, relationship deltas, and durable review happen after this in a separate background request.");
+            sb.AppendLine("Relationship realism: none of the Stars are attracted by default. Attraction must be earned through ally status, trust, high-quality charisma/poetry, emotional safety, exciting speech, and personality-matched intimacy over time. Treat the Last Cat as a potential partner only when the state supports it; otherwise be warm, curious, guarded, or friendly.");
             sb.AppendLine(BuildEmotionalEffectVectorInstruction());
-            sb.AppendLine("Return emotionalEffectVector as this compact string only; do NOT return emotionScores, topEmotions, emotionalPurpose, voiceDirective, storyKind, memory notes, summaries, deltas, loreUsed, riskFlags, or learned functions in this pass.");
+            sb.AppendLine(BuildNegativeEmotionVectorInstruction());
+            sb.AppendLine("Return emotionalEffectVector and negativeEmotionVector as compact strings only; do NOT return emotionScores, topEmotions, emotionalPurpose, voiceDirective, storyKind, memory notes, summaries, deltas, loreUsed, riskFlags, or learned functions in this pass.");
             sb.AppendLine();
             sb.AppendLine("STAR ACTING / VOICE CARD");
             sb.AppendLine("Star: " + profile.DisplayName);
@@ -187,6 +199,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("SpeakingStyle: " + profile.SpeakingStyle);
             if (!string.IsNullOrWhiteSpace(profile.VoiceDesignPrompt)) sb.AppendLine("VoiceDesignPrompt: " + profile.VoiceDesignPrompt);
             if (profile.VoiceGenerationRules.Count > 0) sb.AppendLine("VoiceGenerationRules: " + string.Join("; ", profile.VoiceGenerationRules));
+            AppendFastConversationProfile(sb, profile);
             sb.AppendLine();
             sb.AppendLine("Foreground output is text-only for normal chat plus emotionalEffectVector. The runtime will build the TTS voice directive from the Star profile so the LLM can answer faster.");
             sb.AppendLine();
@@ -214,6 +227,9 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("RomanceMode: " + request.GameContext.RomanceMode);
             sb.AppendLine("Area: " + request.GameContext.Area + "; Quest: " + request.GameContext.Quest);
             sb.AppendLine("Relationship status: " + BuildRelationshipStatus(state));
+            sb.AppendLine("Ally status: " + (state.IsAlly ? "ally/unlocked" : "not an active ally yet; Elusiaa is the only default ally until story/gameplay unlocks this Star."));
+            sb.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
+            sb.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
             sb.AppendLine("Ongoing summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 600)));
             if (state.MemoryLog.Count > 0)
             {
@@ -244,22 +260,28 @@ namespace Wds.SixStars.Api.Ai
                 AppendFastStoryContext(sb, request);
                 AppendStoryLoreContext(sb, profile, request);
             }
+            else
+            {
+                AppendFastChatAnswerGuidance(sb, profile, request);
+            }
             sb.AppendLine();
             sb.AppendLine("FAST SPEECH CONTRACT");
             if (request.RequestType == RequestType.Story)
             {
-                sb.AppendLine("Return story foreground JSON only: starId, spokenText, emotionalEffectVector, storyTitle, storyId, storyMarkdown, storySummary, storyIsFinished, storyPartIndex. Do not include emotionScores or voiceDirective.");
-                sb.AppendLine("Return the complete story in storyMarkdown, formatted as ## Chunk 0, one or two story sentences, ---, ## Chunk 1, one or two story sentences, ---, and so on. Do not include blank chunks or chunks that contain only ---; every chunk must contain narration the TTS can speak.");
+                sb.AppendLine("Return story foreground JSON only: starId, spokenText, emotionalEffectVector, negativeEmotionVector, storyTitle, storyId, storyMarkdown, storySummary, storyIsFinished, storyPartIndex. Do not include emotionScores or voiceDirective.");
+                sb.AppendLine("Return the complete story in storyMarkdown, formatted as ## Chunk 0, one or two story sentences, ---, ## Chunk 1, one or two story sentences, ---, and so on. Do not include blank chunks, delimiter-only chunks, or a final empty heading; every chunk must contain narration the TTS can speak.");
                 sb.AppendLine("spokenText must be the first actual story chunk from storyMarkdown, not a preface or promise. Start the story itself immediately.");
                 sb.AppendLine("Set storyPartIndex=0. If storyMarkdown has more chunks after Chunk 0, set storyIsFinished=false; the host will auto-play the cached chunks locally without asking you again.");
             }
             else
             {
-                sb.AppendLine("Return only: starId, spokenText, and emotionalEffectVector. Do not include any other JSON fields.");
-                sb.AppendLine("For normal chat, use 1-3 spokenText items.");
+                sb.AppendLine("Return only: starId, spokenText, emotionalEffectVector, and negativeEmotionVector. Do not include any other JSON fields.");
+                sb.AppendLine("For normal chat, use 1-4 spokenText items. If the player asks direct personal questions such as name/about yourself/friends/what do you do, use 3-5 concise spokenText items and answer completely instead of being evasive.");
+                sb.AppendLine("Every spokenText item should be one or two natural sentences. A direct question deserves a direct answer, plus personality.");
             }
             sb.AppendLine("spokenText array: each item is one TTS chunk. Use one or two sentences per item. The host also validates story chunks, but do not rely on it.");
             sb.AppendLine(BuildEmotionalEffectVectorInstruction());
+            sb.AppendLine(BuildNegativeEmotionVectorInstruction());
             sb.AppendLine("Do not include emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
             if (request.RequestType == RequestType.Story)
             {
@@ -287,7 +309,7 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine("StoriesAlreadyTold from host memory:");
                 foreach (string story in options.StoriesAlreadyTold.Take(20)) sb.AppendLine("- " + Truncate(story, 260));
             }
-            sb.AppendLine("Create a new complete story. The desktop host will speak Chunk 0 from spokenText, then read Chunk 1+ directly from cached storyMarkdown until the story is finished or cancelled. Empty chunks are invalid because the host will skip them; write only meaningful narration chunks.");
+            sb.AppendLine("Create a new complete story. The desktop host will speak Chunk 0 from spokenText, then read Chunk 1+ directly from cached storyMarkdown until the story is finished or cancelled. Empty chunks are invalid because the host will skip them; write only meaningful narration chunks. Do not write a trailing chunk header unless that chunk has narration after it. The final chunk must contain a real ending line or a satisfying soft cliffhanger.");
             sb.AppendLine("Length rule: the approximate target exists to guide pacing only. Do not pad. Do not leave the tale unfinished just to chase the target length. Complete story > exact duration.");
         }
 
@@ -296,6 +318,25 @@ namespace Wds.SixStars.Api.Ai
             return "emotionalEffectVector is a compact machine-readable emotion hint for the player's latest statement. It tells the system whether the player made this Star feel each emotion. Use the canonical emotion order exactly: "
                 + string.Join(", ", StarEmotionMatrix.StandardEmotionIds)
                 + ". Format exactly as confidence:score;confidence:score;... with one pair per emotion in that order. Confidence is 0.00-1.00. Score is 0-100. Use 0.00:0 for emotions not implied. Example shape: 0.03:20;0.75:45;0.00:0;... No names, spaces, reasons, brackets, or extra text.";
+        }
+
+
+
+        private static string BuildNegativeEmotionVectorInstruction()
+        {
+            return "negativeEmotionVector is a compact machine-readable hint for negative/boundary feelings in the latest player statement. Use exactly seven emotions in this order: Irritated, Disrespected, Pressured, CreepedOut, Bored, Hurt, Unsafe. Format exactly as confidence:score;confidence:score;... with seven pairs. Use 0.00:0 when not implied. High values should be reserved for real negativity: repeated insults, coercion, disrespect, shallow pressure, unsafe sexual pushiness, cruelty, or boring/repetitive low-effort behavior.";
+        }
+
+        private static void AppendEmotionUpdateHistory(StringBuilder sb, StarState state)
+        {
+            if (state.EmotionUpdateHistory.Count == 0) return;
+            sb.AppendLine("Recent deterministic emotion updates, newest first. Use these to avoid repeating the same combo forever:");
+            int i = 1;
+            foreach (EmotionUpdateHistoryEntry entry in state.EmotionUpdateHistory.Take(6))
+            {
+                sb.AppendLine("- Update " + i + ": actualDelta=(H" + entry.ActualDelta.Heart + ",T" + entry.ActualDelta.Trust + ",R" + entry.ActualDelta.Romance + ",B" + entry.ActualDelta.BenaveilInfluence + ",C" + entry.ActualDelta.EmotionalConnectionPercent.ToString("0.00") + "); connection=" + entry.EmotionalConnectionPercentBefore.ToString("0.0") + "%->" + entry.EmotionalConnectionPercentAfter.ToString("0.0") + "%; ready=" + entry.IsGirlfriendReadyAfter + "; positive=" + string.Join(", ", entry.AcceptedPositiveSignals.Take(4)) + "; negative=" + string.Join(", ", entry.AcceptedNegativeSignals.Take(4)) + "; combos=" + string.Join(", ", entry.AcceptedCombos.Take(4)) + "; summary=" + Truncate(entry.Summary, 220));
+                i++;
+            }
         }
 
         private static string FormatSpokenParts(IEnumerable<string> parts)
@@ -492,6 +533,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("CURRENT RELATIONSHIP STATUS");
             sb.AppendLine(BuildRelationshipStatus(state));
             sb.AppendLine("Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", BenaveilInfluence=" + state.BenaveilInfluence);
+            sb.AppendLine("EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ", LastConnectionDelta=" + state.LastEmotionalConnectionPercentDelta.ToString("0.00") + ", IsGirlfriendReady=" + state.IsGirlfriendReady + ", Readiness=" + (state.GirlfriendReadinessSummary ?? string.Empty));
             sb.AppendLine("InteractionCount=" + state.InteractionCount + ", PositiveSuccession=" + state.PositiveSuccessionCount + ", RomanticSuccession=" + state.RomanticSuccessionCount + ", HurtSuccession=" + state.HurtSuccessionCount);
             sb.AppendLine("IsGirlfriend=" + state.IsGirlfriend);
 
@@ -605,6 +647,52 @@ namespace Wds.SixStars.Api.Ai
             return sb.ToString();
         }
 
+        private static void AppendFastConversationProfile(StringBuilder sb, StarProfile profile)
+        {
+            sb.AppendLine();
+            sb.AppendLine("FAST CHAT IDENTITY / RELATIONSHIP KNOWLEDGE");
+            sb.AppendLine("Use this compact profile knowledge in ordinary conversation, not only in story mode. These are facts " + profile.DisplayName + " can naturally talk about when asked.");
+            sb.AppendLine("Identity: My name is " + profile.DisplayName + "; element=" + profile.Element + "; domain=" + profile.Domain + ".");
+            if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
+            if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Spiritual father / Benaveil form: " + profile.SpiritualFather + ".");
+            if (!string.IsNullOrWhiteSpace(profile.SpiritualFatherForm)) sb.AppendLine("Father-form meaning: " + Truncate(profile.SpiritualFatherForm, 360));
+            if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 420));
+            if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Background: " + Truncate(profile.CompleteBackgroundStory, 520));
+            AppendList(sb, "Friends / allies / contacts she may name in normal chat", profile.FriendsAndContacts.Take(10).ToList());
+            if (profile.PeopleKnown.Count > 0)
+            {
+                sb.AppendLine("People she knows personally:");
+                foreach (KnownPerson person in profile.PeopleKnown.Take(8))
+                {
+                    sb.AppendLine("- " + person.DisplayName + " [" + person.Relationship + "]: " + Truncate(person.Summary, 220));
+                }
+            }
+            AppendList(sb, "Benaveil form interactions she may discuss", profile.BenaveilFormInteractions.Take(6).ToList());
+            AppendList(sb, "Secrets and hooks she may tease when asked", profile.StarSecrets.Take(5).ToList());
+            AppendList(sb, "Skill / cave work / Metroidvania details she may mention", profile.SkillSecrets.Take(6).ToList());
+            AppendList(sb, "Normal chat behavior rules", profile.SpokenResponseRules.Take(8).ToList());
+        }
+
+        private static void AppendFastChatAnswerGuidance(StringBuilder sb, StarProfile profile, StarInteractionRequest request)
+        {
+            sb.AppendLine();
+            sb.AppendLine("DIRECT CONVERSATION GUIDANCE");
+            sb.AppendLine("The player is talking to " + profile.DisplayName + " to hang out with her. She should be conversational, curious, and useful, while staying fully in character.");
+            sb.AppendLine("Latest player question to answer completely: " + Truncate(request.PlayerText ?? string.Empty, 500));
+            sb.AppendLine("If he asks for her name, the answer must include the exact name: " + profile.DisplayName + ".");
+            sb.AppendLine("If he asks about herself, include at least three concrete details: element/domain, what she does in or around the caves/settlement, one friend or ally, and one guarded hint about her past or father-form if natural.");
+            sb.AppendLine("If he asks whether she has friends, name at least two friends/allies/contacts from the profile and say what they mean to her. Do not answer only with 'Friends?' or 'you do not know me.'");
+            sb.AppendLine("If he asks what she does in the caves, give concrete activities: guiding routes, watching settlements, teaching skills, guarding secrets, solving puzzles, helping or testing the Last Cat, and dealing with threats that match her element.");
+            sb.AppendLine("If the character is shy, proud, fatalistic, shadowed, or guarded, express that as tone while still giving the facts. Example pattern: 'I do not tell everyone this, but...' followed by real information.");
+            sb.AppendLine("It is okay to end with a small in-character question back, but only after answering the player's actual question.");
+            sb.AppendLine("Emotional vector scoring guidance: default attraction should be 0.00:0 unless the player earns it. Scores above 80 with confidence above 0.70 should require honest good poetry, real charisma, exciting speech, emotional safety, strong kindness, or a meaningful story/gameplay moment. Irritation, pressure, disrespect, boredom, hurt, or unsafe vibes should be represented in negativeEmotionVector.");
+            sb.AppendLine("Connection system guidance: the API stores EmotionalConnectionPercent separately from Heart/Trust/Romance. The Star knows the current percent, but she should not talk about the number unless the player explicitly asks about relationship mechanics. To become girlfriend-ready, she must be an ally, have high connection, and have enough Heart/Trust/Romance. Non-allies should not act romantically available.");
+            if (string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("Kaelia-specific romance hook: she has never pet a cat before; the Last Cat's warmth, fur/cat hair, purring nature, and impossible gentleness can make her physically and romantically drawn to him, but she is nervous and private about it because he is a cat. In this world that kind of cross-nature attraction can happen, but she should still require trust, consent, and emotional safety.");
+            }
+        }
+
         private static void AppendExpandedProfileLore(StringBuilder sb, StarProfile profile)
         {
             if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Spiritual father / Benaveil parent form: " + profile.SpiritualFather);
@@ -637,7 +725,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 sb.AppendLine("- " + card.Id + " [" + card.Kind + "]: " + card.Summary);
             }
-            sb.AppendLine("Complete-story checklist: name a specific place or traveler; introduce a desire/problem; include one surprising secret, skill, friend, father-form, letter, or monster; reach a turning point; end with a real resolution or soft cliffhanger that still feels like a complete episode.");
+            sb.AppendLine("Complete-story checklist: name a specific place or traveler; introduce a desire/problem; include one surprising secret, skill, friend, father-form, letter, or monster; reach a turning point; end with a real resolution or soft cliffhanger that still feels like a complete episode. Before returning JSON, mentally verify the last ## Chunk has actual narration and the story does not stop mid-sentence or mid-scene.");
         }
 
         private void AppendAccessibleLore(StringBuilder sb, StarProfile profile, StarState state, StarInteractionRequest request)
@@ -714,6 +802,14 @@ namespace Wds.SixStars.Api.Ai
             {
                 stage = "girlfriend / committed romantic bond";
             }
+            else if (state.IsGirlfriendReady)
+            {
+                stage = "girlfriend-ready connection gate reached";
+            }
+            else if (state.EmotionalConnectionPercent >= 50)
+            {
+                stage = "part-connected; serious emotional connection forming";
+            }
             else if (state.Romance >= 70)
             {
                 stage = "strong romantic tension and deep affection";
@@ -739,7 +835,7 @@ namespace Wds.SixStars.Api.Ai
                 stage = "early bond / still learning each other";
             }
 
-            return stage + " (Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", BenaveilInfluence " + state.BenaveilInfluence + ").";
+            return stage + " (Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", BenaveilInfluence " + state.BenaveilInfluence + ", EmotionalConnection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, GirlfriendReady " + state.IsGirlfriendReady + ", IsAlly " + state.IsAlly + ").";
         }
 
         private static string BuildLatestScreenOneLine(IReadOnlyList<ScreenCaptureSummary> screens)

@@ -129,12 +129,13 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText", "emotionalEffectVector" } },
+                { "required", new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(3) },
-                        { "emotionalEffectVector", EmotionEffectVectorProperty() }
+                        { "spokenText", SpokenTextArray(5) },
+                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "negativeEmotionVector", NegativeEmotionVectorProperty() }
                     }
                 }
             };
@@ -149,6 +150,7 @@ namespace Wds.SixStars.Api.Ai
                 { "starId", StringProperty() },
                 { "spokenText", SpokenTextArray(6) },
                 { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                 { "storyTitle", StringProperty(160) },
                 { "storyId", StringProperty(120) },
                 { "storyMarkdown", StringProperty() },
@@ -158,8 +160,8 @@ namespace Wds.SixStars.Api.Ai
             };
 
             string[] required = continuation
-                ? new[] { "starId", "spokenText", "emotionalEffectVector", "storyIsFinished", "storyPartIndex" }
-                : new[] { "starId", "spokenText", "emotionalEffectVector", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex" };
+                ? new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyIsFinished", "storyPartIndex" }
+                : new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex" };
 
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
@@ -259,6 +261,11 @@ namespace Wds.SixStars.Api.Ai
             return StringProperty(700);
         }
 
+        private static Dictionary<string, object> NegativeEmotionVectorProperty()
+        {
+            return StringProperty(220);
+        }
+
         private static Dictionary<string, object> StringProperty(int maxLength = 0)
         {
             Dictionary<string, object> property = new Dictionary<string, object> { { "type", "string" } };
@@ -284,13 +291,14 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "heart", "trust", "romance", "benaveilInfluence" } },
+                { "required", new[] { "heart", "trust", "romance", "benaveilInfluence", "emotionalConnectionPercent" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "heart", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -8 }, { "maximum", 8 } } },
                         { "trust", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -8 }, { "maximum", 8 } } },
                         { "romance", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -6 }, { "maximum", 6 } } },
-                        { "benaveilInfluence", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -6 }, { "maximum", 6 } } }
+                        { "benaveilInfluence", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -6 }, { "maximum", 6 } } },
+                        { "emotionalConnectionPercent", NumberProperty(-5, 5) }
                     }
                 }
             };

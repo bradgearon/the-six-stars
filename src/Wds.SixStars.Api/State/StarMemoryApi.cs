@@ -71,8 +71,19 @@ namespace Wds.SixStars.Api.State
             state.InteractionCount += 1;
             state.LastInteractionAt = now;
 
-            RelationshipDelta applied = _options.AcceptModelSuggestedDeltas ? request.SuggestedDelta : request.ActualDelta;
+            RelationshipDelta sourceDelta = _options.AcceptModelSuggestedDeltas ? request.SuggestedDelta : request.ActualDelta;
+            RelationshipDelta applied = new RelationshipDelta
+            {
+                Heart = sourceDelta.Heart,
+                Trust = sourceDelta.Trust,
+                Romance = sourceDelta.Romance,
+                BenaveilInfluence = sourceDelta.BenaveilInfluence,
+                // The connection meter is always deterministic even if a dev toggle accepts model heart/trust/romance suggestions.
+                EmotionalConnectionPercent = request.ActualDelta.EmotionalConnectionPercent
+            };
+            double emotionalConnectionBefore = state.EmotionalConnectionPercent;
             ApplyRelationshipDelta(state, applied);
+            UpdateGirlfriendReadiness(state, now);
 
             if (!string.IsNullOrWhiteSpace(request.ConversationSummary))
             {
@@ -90,6 +101,7 @@ namespace Wds.SixStars.Api.State
             UpsertSecrets(state, request.SecretsUnlocked, now);
             UpdateCombos(state, request.DetectedCombos, now);
             UpdateSuccessionCounters(state, applied, request, now);
+            UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
             UpdateStoryHistory(state, request, now);
 
             string autoQuote = TryCreateAutoQuote(request, applied);
@@ -107,12 +119,21 @@ namespace Wds.SixStars.Api.State
                 Summary = string.IsNullOrWhiteSpace(request.ChangesSummary) ? request.ConversationSummary : request.ChangesSummary,
                 ActualDelta = request.ActualDelta,
                 SuggestedDelta = request.SuggestedDelta,
+                EmotionalConnectionPercentBefore = emotionalConnectionBefore,
+                EmotionalConnectionPercentAfter = state.EmotionalConnectionPercent,
+                IsGirlfriendReadyAfter = state.IsGirlfriendReady,
+                EmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty,
+                DeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty,
                 WisdomScore = request.WisdomScore
             };
             entry.ImportantQuotes.AddRange(request.ImportantPlayerQuotes);
             if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
             entry.Tags.AddRange(request.DetectedCombos);
             entry.RelationshipEvents.AddRange(request.RelationshipEvents);
+            entry.AcceptedPositiveSignals.AddRange(request.AcceptedPositiveSignals);
+            entry.AcceptedNegativeSignals.AddRange(request.AcceptedNegativeSignals);
+            entry.AcceptedCombos.AddRange(request.AcceptedCombos);
             entry.LearnedFunctionIds.AddRange(request.LearnedFunctions.Select(x => x.Id).Where(x => !string.IsNullOrWhiteSpace(x)));
             entry.SecretsUnlocked.AddRange(request.SecretsUnlocked);
 
@@ -127,7 +148,7 @@ namespace Wds.SixStars.Api.State
                 LogEntry = entry
             };
             result.UnityEvents.Add(CreateMemoryUpdatedEvent(request.StarId, state, entry, applied, _options.AcceptModelSuggestedDeltas));
-            if (!string.IsNullOrWhiteSpace(request.StoryTitle) || !string.IsNullOrWhiteSpace(request.StoryId))
+            if (IsStoryRequest(request.RequestType) && (!string.IsNullOrWhiteSpace(request.StoryTitle) || !string.IsNullOrWhiteSpace(request.StoryId)))
             {
                 result.UnityEvents.Add(new UnityEventEnvelope
                 {
@@ -192,8 +213,57 @@ namespace Wds.SixStars.Api.State
             return await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
         }
 
+
+
+        public async Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            state.IsAlly = isAlly;
+            state.RelationshipEvents.Insert(0, (isAlly ? "Became ally" : "Ally flag removed") + " via host/gameplay state.");
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+
+
+        private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter)
+        {
+            state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
+            state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
+            state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel))
+            {
+                state.EmotionalConnectionSkillLevel = "interested_private_potential_partner";
+            }
+
+            state.EmotionUpdateHistory.Insert(0, new EmotionUpdateHistoryEntry
+            {
+                CreatedAt = now,
+                RequestType = request.RequestType,
+                PlayerText = request.PlayerText ?? string.Empty,
+                EmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty,
+                AcceptedPositiveSignals = request.AcceptedPositiveSignals.ToList(),
+                AcceptedNegativeSignals = request.AcceptedNegativeSignals.ToList(),
+                AcceptedCombos = request.AcceptedCombos.ToList(),
+                SuggestedDelta = request.SuggestedDelta,
+                ActualDelta = applied,
+                EmotionalConnectionPercentBefore = emotionalConnectionBefore,
+                EmotionalConnectionPercentAfter = emotionalConnectionAfter,
+                IsGirlfriendReadyAfter = state.IsGirlfriendReady,
+                Summary = request.DeterministicEmotionSummary ?? string.Empty
+            });
+            Trim(state.EmotionUpdateHistory, 80);
+        }
+
         private static void UpdateStoryHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
         {
+            if (!IsStoryRequest(request.RequestType))
+            {
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(request.StoryTitle)
                 && string.IsNullOrWhiteSpace(request.StorySummary)
                 && string.IsNullOrWhiteSpace(request.StoryId))
@@ -225,12 +295,48 @@ namespace Wds.SixStars.Api.State
             Trim(state.StoryHistory, 80);
         }
 
+
+        private static bool IsStoryRequest(string requestType)
+        {
+            return string.Equals(requestType, RequestType.Story.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
+
         private static void ApplyRelationshipDelta(StarState state, RelationshipDelta delta)
         {
             state.Heart += delta.Heart;
             state.Trust += delta.Trust;
             state.Romance += delta.Romance;
             state.BenaveilInfluence += delta.BenaveilInfluence;
+            state.LastEmotionalConnectionPercentDelta = delta.EmotionalConnectionPercent;
+            state.EmotionalConnectionPercent = ClampPercent(state.EmotionalConnectionPercent + delta.EmotionalConnectionPercent);
+        }
+
+        private static void UpdateGirlfriendReadiness(StarState state, DateTimeOffset now)
+        {
+            bool ready = state.IsGirlfriend || (state.IsAlly && state.EmotionalConnectionPercent >= 85 && state.Heart >= 20 && state.Trust >= 15 && state.Romance >= 12);
+            if (ready && !state.IsGirlfriendReady)
+            {
+                state.IsGirlfriendReady = true;
+                state.GirlfriendReadySince = now;
+                state.RelationshipEvents.Insert(0, "Girlfriend readiness gate reached: ally + emotional connection + heart/trust/romance thresholds.");
+            }
+            else if (!ready && state.IsGirlfriendReady && !state.IsGirlfriend)
+            {
+                state.IsGirlfriendReady = false;
+                state.GirlfriendReadySince = null;
+                state.RelationshipEvents.Insert(0, "Girlfriend readiness gate no longer met after connection/relationship change.");
+            }
+
+            state.GirlfriendReadinessSummary = ready
+                ? "Ready for girlfriend path if the story/game allows it."
+                : "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12.";
+        }
+
+        private static double ClampPercent(double value)
+        {
+            if (value < 0) return 0;
+            if (value > 100) return 100;
+            return value;
         }
 
         private void UpsertLearnedFunctions(StarState state, IEnumerable<StarLearnedFunction> functions)
@@ -310,8 +416,12 @@ namespace Wds.SixStars.Api.State
         {
             bool positive = delta.Heart > 0 || delta.Trust > 0 || delta.Romance > 0;
             bool negative = delta.Heart < 0 || delta.Trust < 0 || delta.Romance < 0;
-            bool romantic = delta.Romance > 0 || request.EmotionScores.Any(x => IsRomanceEmotion(x.Key) && x.Value.Score >= 70 && x.Value.Confidence >= 0.70);
-            bool hurtful = delta.Heart < -1 || delta.Trust < -1 || request.EmotionScores.Any(x => IsHurtEmotion(x.Key) && x.Value.Score >= 75 && x.Value.Confidence >= 0.70);
+            bool romantic = delta.Romance > 0
+                || request.EmotionScores.Any(x => IsRomanceEmotion(x.Key) && x.Value.Score >= 70 && x.Value.Confidence >= 0.70)
+                || request.AcceptedPositiveSignals.Any(x => StartsWithAny(x, "Flattered", "Attracted", "Tender", "Yearning", "Affectionate"));
+            bool hurtful = delta.Heart < -1 || delta.Trust < -1
+                || request.EmotionScores.Any(x => IsHurtEmotion(x.Key) && x.Value.Score >= 75 && x.Value.Confidence >= 0.70)
+                || request.AcceptedNegativeSignals.Any(x => StartsWithAny(x, "Hurt", "Unsafe", "CreepedOut", "Disrespected", "Pressured"));
 
             state.PositiveSuccessionCount = positive && !negative ? state.PositiveSuccessionCount + 1 : 0;
             state.RomanticSuccessionCount = romantic ? state.RomanticSuccessionCount + 1 : 0;
@@ -330,7 +440,8 @@ namespace Wds.SixStars.Api.State
 
             bool strongDelta = Math.Abs(delta.Heart) >= 4 || Math.Abs(delta.Trust) >= 4 || Math.Abs(delta.Romance) >= 3;
             bool secretUnlocked = request.SecretsUnlocked.Count > 0;
-            bool highEmotion = request.EmotionScores.Any(x => x.Value.Score >= 88 && x.Value.Confidence >= 0.80);
+            bool highEmotion = request.EmotionScores.Any(x => x.Value.Score >= 88 && x.Value.Confidence >= 0.80)
+                || Math.Abs(delta.EmotionalConnectionPercent) >= 1.5;
             if (!strongDelta && !secretUnlocked && !highEmotion) return string.Empty;
 
             return text;
@@ -351,9 +462,25 @@ namespace Wds.SixStars.Api.State
                     { "trustDelta", delta.Trust.ToString() },
                     { "romanceDelta", delta.Romance.ToString() },
                     { "benaveilInfluenceDelta", delta.BenaveilInfluence.ToString() },
-                    { "acceptedModelSuggestedDeltas", acceptedModelDelta ? "true" : "false" }
+                    { "emotionalConnectionPercentDelta", delta.EmotionalConnectionPercent.ToString("0.00") },
+                    { "emotionalConnectionPercent", state.EmotionalConnectionPercent.ToString("0.0") },
+                    { "isGirlfriendReady", state.IsGirlfriendReady ? "true" : "false" },
+                    { "girlfriendReadinessSummary", state.GirlfriendReadinessSummary ?? string.Empty },
+                    { "acceptedModelSuggestedDeltas", acceptedModelDelta ? "true" : "false" },
+                    { "isAlly", state.IsAlly ? "true" : "false" },
+                    { "emotionalConnectionSkillLevel", state.EmotionalConnectionSkillLevel ?? string.Empty },
+                    { "deterministicEmotionSummary", entry.DeterministicEmotionSummary ?? string.Empty }
                 }
             };
+        }
+
+        private static bool StartsWithAny(string value, params string[] prefixes)
+        {
+            foreach (string prefix in prefixes)
+            {
+                if ((value ?? string.Empty).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         private static bool IsRomanceEmotion(string key)

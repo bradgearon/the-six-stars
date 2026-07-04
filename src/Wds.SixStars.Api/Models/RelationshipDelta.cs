@@ -7,6 +7,9 @@ namespace Wds.SixStars.Api.Models
         public int Romance { get; set; }
         public int BenaveilInfluence { get; set; }
 
+        /// <summary>Deterministic percentage-point change to the deeper girlfriend-readiness connection meter.</summary>
+        public double EmotionalConnectionPercent { get; set; }
+
         public static RelationshipDelta Zero()
         {
             return new RelationshipDelta();

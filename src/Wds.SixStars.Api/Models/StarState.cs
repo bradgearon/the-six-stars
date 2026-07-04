@@ -14,6 +14,29 @@ namespace Wds.SixStars.Api.Models
         public int Trust { get; set; }
         public int Romance { get; set; }
         public int BenaveilInfluence { get; set; }
+
+        /// <summary>True once the game/story has made this Star an active ally. Elusiaa defaults true; other Stars default false until unlocked by story/gameplay.</summary>
+        public bool IsAlly { get; set; }
+
+        /// <summary>How strict the deterministic romance/connection gate should be for this Star.</summary>
+        public string EmotionalConnectionSkillLevel { get; set; } = "interested_private_potential_partner";
+
+        /// <summary>0-100 deeper emotional connection meter. This rises only after ally unlock plus repeated personality-matched intimate/charismatic/high-safety signals.</summary>
+        public double EmotionalConnectionPercent { get; set; }
+
+        /// <summary>Last deterministic percentage-point change applied to EmotionalConnectionPercent.</summary>
+        public double LastEmotionalConnectionPercentDelta { get; set; }
+
+        /// <summary>True when ally status, connection percent, and relationship point gates indicate she is ready to become the player's girlfriend if the story allows it.</summary>
+        public bool IsGirlfriendReady { get; set; }
+
+        public DateTimeOffset? GirlfriendReadySince { get; set; }
+        public string GirlfriendReadinessSummary { get; set; } = string.Empty;
+
+        public string LastEmotionalEffectVector { get; set; } = string.Empty;
+        public string LastNegativeEmotionVector { get; set; } = string.Empty;
+        public string LastDeterministicEmotionSummary { get; set; } = string.Empty;
+
         public int InteractionCount { get; set; }
         public DateTimeOffset? LastInteractionAt { get; set; }
         public string CurrentConversationId { get; set; } = string.Empty;
@@ -40,6 +63,9 @@ namespace Wds.SixStars.Api.Models
         public DateTimeOffset? LastHurtInteractionAt { get; set; }
 
         public List<ConversationLogEntry> MemoryLog { get; set; } = new List<ConversationLogEntry>();
+
+        /// <summary>Recent deterministic emotion updates used to prevent repeated cheap scoring and to detect longer-term combos.</summary>
+        public List<EmotionUpdateHistoryEntry> EmotionUpdateHistory { get; set; } = new List<EmotionUpdateHistoryEntry>();
 
         /// <summary>
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.

@@ -125,6 +125,11 @@ namespace Wds.SixStars.Api.Engine
             return _memoryApi.ResetStarMemoryAsync(sessionId, starId, cancellationToken);
         }
 
+        public Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken)
+        {
+            return _memoryApi.SetStarAllyAsync(sessionId, starId, isAlly, cancellationToken);
+        }
+
         public async Task AddScreenCaptureAsync(string sessionId, ScreenCaptureSummary capture, CancellationToken cancellationToken)
         {
             if (_screenContextStore == null)
@@ -538,7 +543,8 @@ namespace Wds.SixStars.Api.Engine
                 // exact stories, which could cause local models to ramble, truncate, or never finish.
                 // Aim for roughly 1-2 chunks per requested minute, but cap the first-pass plan so the
                 // model can return a complete episode with a real ending.
-                options.TargetChunkCount = Math.Max(8, Math.Min(48, (int)Math.Ceiling(options.TargetMinutes * 1.5)));
+                int flexibleMinuteTarget = Math.Max(2, Math.Min(35, options.TargetMinutes));
+                options.TargetChunkCount = Math.Max(8, Math.Min(24, (int)Math.Ceiling(flexibleMinuteTarget * 0.8)));
             }
 
             options.Length = "flexible_random_" + options.TargetMinutes + "_minute_complete_story_" + options.TargetChunkCount + "_chunks";
@@ -662,8 +668,11 @@ namespace Wds.SixStars.Api.Engine
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)
         {
-            RelationshipDelta delta = _deltaCalculator.Calculate(_profileProvider.GetProfile(request.StarId), request, response);
+            StarState currentState = await _memoryApi.GetStarStateAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+            response.EmotionalConnectionPercentBefore = currentState.EmotionalConnectionPercent;
+            RelationshipDelta delta = _deltaCalculator.Calculate(_profileProvider.GetProfile(request.StarId), request, response, currentState);
             response.StateDeltas = delta;
+            bool isStoryTurn = request.RequestType == RequestType.Story;
 
             StarStateUpdateResult update = await _memoryApi.UpdateStarWithInteractionAsync(new StarStateUpdateRequest
             {
@@ -676,6 +685,12 @@ namespace Wds.SixStars.Api.Engine
                 ChangesSummary = response.ChangesSummary,
                 ActualDelta = delta,
                 SuggestedDelta = response.SuggestedStateDeltas,
+                EmotionalEffectVector = response.EmotionalEffectVector,
+                NegativeEmotionVector = response.NegativeEmotionVector,
+                DeterministicEmotionSummary = response.DeterministicEmotionUpdateSummary,
+                AcceptedPositiveSignals = response.AcceptedPositiveEmotionSignals,
+                AcceptedNegativeSignals = response.AcceptedNegativeEmotionSignals,
+                AcceptedCombos = response.AcceptedRelationshipCombos,
                 EmotionScores = response.EmotionScores,
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
@@ -687,12 +702,16 @@ namespace Wds.SixStars.Api.Engine
                 PetNamesPlayerUsesForStar = response.PetNamesPlayerUsesForStar,
                 PetNamesStarUsesForPlayer = response.PetNamesStarUsesForPlayer,
                 WisdomScore = response.Debug.WisdomScore,
-                StoryId = response.StoryId ?? string.Empty,
-                StoryTitle = response.StoryTitle ?? string.Empty,
-                StorySummary = response.StorySummary ?? string.Empty,
-                StoryFinished = response.StoryIsFinished,
-                StorySeed = request.StoryOptions?.PlayerSuggestion ?? string.Empty
+                StoryId = isStoryTurn ? (response.StoryId ?? string.Empty) : string.Empty,
+                StoryTitle = isStoryTurn ? (response.StoryTitle ?? string.Empty) : string.Empty,
+                StorySummary = isStoryTurn ? (response.StorySummary ?? string.Empty) : string.Empty,
+                StoryFinished = isStoryTurn && response.StoryIsFinished,
+                StorySeed = isStoryTurn ? (request.StoryOptions?.PlayerSuggestion ?? string.Empty) : string.Empty
             }, cancellationToken).ConfigureAwait(false);
+
+            response.EmotionalConnectionPercentAfter = update.State.EmotionalConnectionPercent;
+            response.IsGirlfriendReadyAfter = update.State.IsGirlfriendReady;
+            response.GirlfriendReadinessSummary = update.State.GirlfriendReadinessSummary ?? string.Empty;
 
             response.UnityEvents.Add(new UnityEventEnvelope
             {
@@ -704,10 +723,22 @@ namespace Wds.SixStars.Api.Engine
                     { "trustDelta", delta.Trust.ToString() },
                     { "romanceDelta", delta.Romance.ToString() },
                     { "benaveilInfluenceDelta", delta.BenaveilInfluence.ToString() },
+                    { "emotionalConnectionPercentDelta", delta.EmotionalConnectionPercent.ToString("0.00") },
+                    { "emotionalConnectionPercentBefore", response.EmotionalConnectionPercentBefore.ToString("0.0") },
+                    { "emotionalConnectionPercentAfter", response.EmotionalConnectionPercentAfter.ToString("0.0") },
+                    { "isGirlfriendReadyAfter", response.IsGirlfriendReadyAfter ? "true" : "false" },
+                    { "girlfriendReadinessSummary", response.GirlfriendReadinessSummary ?? string.Empty },
                     { "suggestedHeartDelta", response.SuggestedStateDeltas.Heart.ToString() },
                     { "suggestedTrustDelta", response.SuggestedStateDeltas.Trust.ToString() },
                     { "suggestedRomanceDelta", response.SuggestedStateDeltas.Romance.ToString() },
-                    { "suggestedBenaveilDelta", response.SuggestedStateDeltas.BenaveilInfluence.ToString() }
+                    { "suggestedBenaveilDelta", response.SuggestedStateDeltas.BenaveilInfluence.ToString() },
+                    { "suggestedEmotionalConnectionPercentDelta", response.SuggestedStateDeltas.EmotionalConnectionPercent.ToString("0.00") },
+                    { "emotionalEffectVector", response.EmotionalEffectVector ?? string.Empty },
+                    { "negativeEmotionVector", response.NegativeEmotionVector ?? string.Empty },
+                    { "acceptedPositiveSignals", string.Join(", ", response.AcceptedPositiveEmotionSignals) },
+                    { "acceptedNegativeSignals", string.Join(", ", response.AcceptedNegativeEmotionSignals) },
+                    { "acceptedCombos", string.Join(", ", response.AcceptedRelationshipCombos) },
+                    { "deterministicEmotionSummary", response.DeterministicEmotionUpdateSummary ?? string.Empty }
                 }
             });
 

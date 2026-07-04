@@ -68,6 +68,18 @@ namespace Wds.SixStars.Api.Models
         /// </summary>
         public string EmotionalEffectVector { get; set; } = string.Empty;
 
+        /// <summary>Seven-entry compact negative vector: Irritated, Disrespected, Pressured, CreepedOut, Bored, Hurt, Unsafe.</summary>
+        public string NegativeEmotionVector { get; set; } = string.Empty;
+
+        public string DeterministicEmotionUpdateSummary { get; set; } = string.Empty;
+        public double EmotionalConnectionPercentBefore { get; set; }
+        public double EmotionalConnectionPercentAfter { get; set; }
+        public bool IsGirlfriendReadyAfter { get; set; }
+        public string GirlfriendReadinessSummary { get; set; } = string.Empty;
+        public List<string> AcceptedPositiveEmotionSignals { get; set; } = new List<string>();
+        public List<string> AcceptedNegativeEmotionSignals { get; set; } = new List<string>();
+        public List<string> AcceptedRelationshipCombos { get; set; } = new List<string>();
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> DetectedCombos { get; set; } = new List<string>();

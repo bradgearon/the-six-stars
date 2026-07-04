@@ -7,7 +7,7 @@ namespace Wds.SixStars.Ui.ViewModels
     {
         private readonly Dictionary<string, StarStateTotals> _starTotals = new Dictionary<string, StarStateTotals>();
 
-        public void RecordStateChange(string starId, int heartDelta, int trustDelta, int romanceDelta, int benaveilDelta)
+        public void RecordStateChange(string starId, int heartDelta, int trustDelta, int romanceDelta, int benaveilDelta, double connectionDelta = 0)
         {
             if (!_starTotals.ContainsKey(starId))
             {
@@ -19,6 +19,7 @@ namespace Wds.SixStars.Ui.ViewModels
             totals.TotalTrustChanges += trustDelta;
             totals.TotalRomanceChanges += romanceDelta;
             totals.TotalBenaveilChanges += benaveilDelta;
+            totals.TotalConnectionPercentChanges += connectionDelta;
             totals.InteractionCount++;
             totals.LastInteractionTime = DateTimeOffset.Now;
 
@@ -63,6 +64,7 @@ namespace Wds.SixStars.Ui.ViewModels
                    $"  Trust: {FormatDelta(totals.TotalTrustChanges)} ({totals.PositiveTrustCount}+ / {totals.NegativeTrustCount}-)\n" +
                    $"  Romance: {FormatDelta(totals.TotalRomanceChanges)} ({totals.PositiveRomanceCount}+ / {totals.NegativeRomanceCount}-)\n" +
                    $"  Benaveil: {FormatDelta(totals.TotalBenaveilChanges)}\n" +
+                   $"  Connection Δ: {FormatDoubleDelta(totals.TotalConnectionPercentChanges)}%\n" +
                    $"  Last: {totals.LastInteractionTime:HH:mm:ss}";
         }
 
@@ -78,6 +80,7 @@ namespace Wds.SixStars.Ui.ViewModels
             int totalTrust = 0;
             int totalRomance = 0;
             int totalBenaveil = 0;
+            double totalConnection = 0;
 
             foreach (var totals in _starTotals.Values)
             {
@@ -86,6 +89,7 @@ namespace Wds.SixStars.Ui.ViewModels
                 totalTrust += totals.TotalTrustChanges;
                 totalRomance += totals.TotalRomanceChanges;
                 totalBenaveil += totals.TotalBenaveilChanges;
+                totalConnection += totals.TotalConnectionPercentChanges;
             }
 
             string summary = $"=== COMBINED SESSION TOTALS ===\n" +
@@ -93,7 +97,8 @@ namespace Wds.SixStars.Ui.ViewModels
                            $"Combined Heart: {FormatDelta(totalHeart)}\n" +
                            $"Combined Trust: {FormatDelta(totalTrust)}\n" +
                            $"Combined Romance: {FormatDelta(totalRomance)}\n" +
-                           $"Combined Benaveil: {FormatDelta(totalBenaveil)}\n\n" +
+                           $"Combined Benaveil: {FormatDelta(totalBenaveil)}\n" +
+                           $"Combined Connection Δ: {FormatDoubleDelta(totalConnection)}%\n\n" +
                            $"=== PER-STAR BREAKDOWN ===\n";
 
             foreach (var kvp in _starTotals)
@@ -108,6 +113,11 @@ namespace Wds.SixStars.Ui.ViewModels
         {
             return value >= 0 ? $"+{value}" : value.ToString();
         }
+
+        private static string FormatDoubleDelta(double value)
+        {
+            return value >= 0 ? $"+{value:0.00}" : value.ToString("0.00");
+        }
     }
 
     public sealed class StarStateTotals
@@ -118,6 +128,7 @@ namespace Wds.SixStars.Ui.ViewModels
         public int TotalTrustChanges { get; set; }
         public int TotalRomanceChanges { get; set; }
         public int TotalBenaveilChanges { get; set; }
+        public double TotalConnectionPercentChanges { get; set; }
         public int PositiveHeartCount { get; set; }
         public int NegativeHeartCount { get; set; }
         public int PositiveTrustCount { get; set; }

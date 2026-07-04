@@ -33,6 +33,10 @@ namespace Wds.SixStars.Api.Ai
         [JsonPropertyName("emotionalEffectVector")]
         public string EmotionalEffectVector { get; set; } = string.Empty;
 
+        /// <summary>Seven-entry compact negative vector: Irritated, Disrespected, Pressured, CreepedOut, Bored, Hurt, Unsafe.</summary>
+        [JsonPropertyName("negativeEmotionVector")]
+        public string NegativeEmotionVector { get; set; } = string.Empty;
+
         [JsonIgnore]
         public string SpokenText
         {

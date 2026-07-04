@@ -35,6 +35,11 @@ namespace Wds.SixStars.Api.Engine
             return _runtime.GetStarInteractionHistoryAsync(sessionId, starId, skip, take, cancellationToken);
         }
 
+        public Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken)
+        {
+            return _runtime.SetStarAllyAsync(sessionId, starId, isAlly, cancellationToken);
+        }
+
         public Task<SixStarsSaveData> ExportSaveDataAsync(string sessionId, CancellationToken cancellationToken)
         {
             return _runtime.ExportSaveDataAsync(sessionId, cancellationToken);
