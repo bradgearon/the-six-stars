@@ -2,11 +2,24 @@
 # Install from the repository root with:
 #   python -m pip install -r requirements.txt
 #
-# Notes:
-# - PyTorch wheels vary by CPU/CUDA. If this install gives you a CPU torch but you want CUDA,
-#   install the correct torch build from https://pytorch.org/get-started/locally/ first, then re-run this file.
-# - If you run Qwen3-TTS entirely through Pinokio, you may not need qwen_tts in this env.
-# - openwakeword may have platform-specific extras; Porcupine can be used from .NET instead.
+# This file installs the CUDA PyTorch build used by local Qwen voice/TTS.
+# It uses PyTorch's CUDA 12.6 wheel index so pip does not accidentally install
+# a CPU-only torch build from normal PyPI.
+#
+# If your NVIDIA driver needs CUDA 12.8 instead, run:
+#   set TORCH_CUDA_INDEX=cu128
+#   scripts\install_cuda_torch.cmd
+#
+# LM Studio remains the default LLM. Python services handle Whisper + Qwen TTS.
+
+# Keep PyPI as the main package index, but allow CUDA torch wheels from PyTorch.
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# CUDA PyTorch for local Qwen voice/TTS. These +cu126 pins prevent the
+# "Torch not compiled with CUDA enabled" failure caused by CPU-only torch.
+torch==2.7.0+cu126
+torchvision==0.22.0+cu126
+torchaudio==2.7.0+cu126
 
 flask>=3.0.0
 requests>=2.31.0
@@ -21,7 +34,7 @@ websockets>=12.0
 faster-whisper>=1.0.0
 ctranslate2>=4.4.0
 
-# Wake word sidecar option. You can skip this if using Porcupine in .NET.
+# Wake word sidecar option. You can skip this if using the amplitude VAD path.
 openwakeword>=0.6.0
 onnxruntime>=1.17.0
 
@@ -29,9 +42,9 @@ onnxruntime>=1.17.0
 edge-tts>=6.1.0
 pyttsx3>=2.90
 
-# Qwen / transformer model helpers. Torch is intentionally unpinned for CPU/CUDA compatibility.
-torch
-transformers>=4.53.0
+# Qwen / transformer model helpers.
+# Qwen3-TTS is currently happiest with Transformers 4.57.3 in this project.
+transformers==4.57.3
 accelerate>=0.34.0
 huggingface-hub>=0.24.0
 safetensors>=0.4.0
@@ -39,8 +52,8 @@ sentencepiece>=0.2.0
 protobuf>=4.25.0
 packaging>=24.0
 
-# Optional: install manually if your Pinokio/Qwen3-TTS package exposes this package to pip.
+# Qwen TTS packages come after CUDA torch so their dependencies do not pull a
+# CPU-only torch build. If these ever conflict, use scripts\install_cuda_torch.cmd
+# to repair torch and reinstall the voice packages in the safe order.
 qwen-tts
-
-# Voice Clone Studio parity: CUDA graph accelerated Qwen3-TTS backend.
 faster-qwen3-tts

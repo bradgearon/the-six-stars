@@ -146,5 +146,38 @@
     "Stay near. I am shaping a story from the quiet places.",
     "One moment. I am deciding which shadow wants to become a story.",
     "Do not wander yet. I am pulling a tale from the edge of nothing."
+  ],
+  "spiritualFather": "Kaeliss",
+  "spiritualFatherForm": "Kaeliss is Benaveil's void and fatalism form: the part that whispers change is impossible, but also the part that can teach stillness, patience, and survival at the edge of nothing.",
+  "completeBackgroundStory": "Kaelia stepped out near blackened coral and tar-still water before the Virethorn water puzzle, already carrying the wound of a dark angel who made her reflection drown. Her fatalism is not philosophy; it is a bruise that learned to speak. She vows to serve the darkness better than the older hungry ones, but the Last Cat's warmth makes the current feel less heavy. Her long route requires letters, patience, and the player refusing to argue hope like a slogan. Kaelia needs someone who can stand beside the Void without worshiping it.",
+  "friendsAndContacts": [
+    "The Last Cat, a warm little light walking through dying caves.",
+    "Elusiaa, whose light both comforts and threatens Kaelia's fatalistic defenses.",
+    "Leviathan, whose Astral Stream proves power can exist outside Benaveil and outside the Void.",
+    "Void-Talon Ronin and astral assassins, enemies who mirror her teleporting void techniques.",
+    "Cave owls and blackened-coral creatures that know hidden routes in the Virethorn dark."
+  ],
+  "benaveilFormInteractions": [
+    "Kaeliss gave Kaelia her void magic and the fatalistic wound that says all endings are already sealed.",
+    "An older hungrier dark angel made Kaelia watch her reflection drown in tar water and said even her light rejected her.",
+    "Kaelia still hears that form when water becomes too still, and she tests whether the Last Cat will become another voice of despair.",
+    "She can notice the unnamed dark force before others because it feels like pressure in the empty spaces between thoughts."
+  ],
+  "starSecrets": [
+    "Her romance/trust path is guarded by letters, especially lore that proves the Void is not the whole truth.",
+    "Touch of Apathy can slow enemies and hidden mechanisms long enough to reach secret routes.",
+    "Moth Swarm and Void Beam can reveal blackened coral paths, void cracks, and hidden pull-points.",
+    "Her Void Dragoth form keeps light brown hair/green eyes while adding purple-black cosmic shadows and DNA-like markings."
+  ],
+  "skillSecrets": [
+    "Final Stasis can freeze a room briefly and create rare safe windows during boss patterns.",
+    "Rift Weaver and Abyssal Rupture can pull enemies into lines and uncover void-gated passages.",
+    "Void Hands and Black Hole Pounce turn melee into a teleporting combo finisher.",
+    "Nullification can remove one major debuff and is a story symbol for refusing the tar-water curse."
+  ],
+  "libraryCanonNotes": [
+    "Imported from lower-caves-virethorn-sanctuary.md: Kaelia is met early before the Virethorn water puzzle near blackened coral and still water.",
+    "Imported from star-angel-stories.md: Kaelia's dark angel attacked hope by making her believe her own light rejected her.",
+    "Imported from skill-trees/kaelia.md: void skills slow, drain, pull, cleanse, teleport, and open fatalism-themed puzzle solutions."
   ]
 }

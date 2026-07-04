@@ -165,6 +165,11 @@ namespace Wds.SixStars.Api.Ai
                     {
                         string preview = body.Substring(0, Math.Min(500, body.Length));
                         System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Error response: {preview}");
+                        if ((int)response.StatusCode == 401 && string.IsNullOrWhiteSpace(_options.ApiKey))
+                        {
+                            throw new InvalidOperationException("LLM endpoint returned 401 Unauthorized and no API key was configured. LM Studio may require a token. Set LM_API_TOKEN or SIX_STARS_LLM_API_KEY, or disable API key requirement in LM Studio. Raw response: " + preview);
+                        }
+
                         throw new InvalidOperationException($"LLM endpoint returned {(int)response.StatusCode} {response.StatusCode}: {preview}");
                     }
 

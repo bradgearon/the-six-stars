@@ -248,6 +248,7 @@ namespace Wds.SixStars.Api.Engine
             response.SetSpokenParts(new[] { phrase });
             response.Debug.Notes.Add("Story request quick-response path used. The full story is being generated in the background, then will be raised through StoryGenerationCompleted.");
             response.Debug.Notes.Add("Story-thinking phrase source: StarProfile.StoryThinkingPhrases JSON/fallback.");
+            response.Debug.Notes.Add(BuildStoryLengthDebugNote(request.StoryOptions));
             if (requestIntent != null)
             {
                 response.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
@@ -260,7 +261,10 @@ namespace Wds.SixStars.Api.Engine
                 Data =
                 {
                     { "note", "Spoke a preprogrammed story-thinking phrase immediately. Full story LLM generation is running in the background." },
-                    { "playerText", request.PlayerText ?? string.Empty }
+                    { "playerText", request.PlayerText ?? string.Empty },
+                    { "approxTargetMinutes", (request.StoryOptions?.TargetMinutes ?? 0).ToString() },
+                    { "approxTargetChunkCount", (request.StoryOptions?.TargetChunkCount ?? 0).ToString() },
+                    { "storyLengthIsFlexible", "true" }
                 }
             });
 
@@ -426,6 +430,7 @@ namespace Wds.SixStars.Api.Engine
                             }
                         });
                         storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting for story voice completion.");
+                        storyResponse.Debug.Notes.Add(BuildStoryLengthDebugNote(workerRequest.StoryOptions));
                         StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, state, storyResponse);
                     }
 
@@ -438,6 +443,9 @@ namespace Wds.SixStars.Api.Engine
                             { "storyId", storyResponse.StoryId ?? string.Empty },
                             { "storyTitle", storyResponse.StoryTitle ?? string.Empty },
                             { "storyPartIndex", storyResponse.StoryPartIndex.ToString() },
+                            { "approxTargetMinutes", (workerRequest.StoryOptions?.TargetMinutes ?? 0).ToString() },
+                            { "approxTargetChunkCount", (workerRequest.StoryOptions?.TargetChunkCount ?? 0).ToString() },
+                            { "storyLengthIsFlexible", "true" },
                             { "note", "The full story response is ready and should now be spoken." }
                         }
                     });
@@ -520,18 +528,20 @@ namespace Wds.SixStars.Api.Engine
             {
                 lock (StoryRandomGate)
                 {
-                    options.TargetMinutes = StoryRandom.Next(2, 46);
+                    options.TargetMinutes = StoryRandom.Next(2, 36);
                 }
             }
 
             if (options.TargetChunkCount <= 0)
             {
-                // At natural narrated TTS pacing, a one-or-two-sentence chunk is roughly 12-18 seconds.
-                // Four chunks per minute gives enough planned material for the requested 2-45 minute range.
-                options.TargetChunkCount = Math.Max(8, options.TargetMinutes * 4);
+                // The target is intentionally flexible. Earlier builds asked for very large 2-45 minute
+                // exact stories, which could cause local models to ramble, truncate, or never finish.
+                // Aim for roughly 1-2 chunks per requested minute, but cap the first-pass plan so the
+                // model can return a complete episode with a real ending.
+                options.TargetChunkCount = Math.Max(8, Math.Min(48, (int)Math.Ceiling(options.TargetMinutes * 1.5)));
             }
 
-            options.Length = "random_" + options.TargetMinutes + "_minute_serial_story_" + options.TargetChunkCount + "_chunks";
+            options.Length = "flexible_random_" + options.TargetMinutes + "_minute_complete_story_" + options.TargetChunkCount + "_chunks";
             if (string.IsNullOrWhiteSpace(options.Tone)) options.Tone = "comforting, adventurous, cave-travel friendly";
             if (string.IsNullOrWhiteSpace(options.CanonStrictness)) options.CanonStrictness = "high";
 
@@ -547,6 +557,23 @@ namespace Wds.SixStars.Api.Engine
             request.GameContext.Flags["storyTargetMinutes"] = options.TargetMinutes.ToString();
             request.GameContext.Flags["storyTargetChunkCount"] = options.TargetChunkCount.ToString();
             request.GameContext.Flags["storyMaxSentencesPerChunk"] = options.MaxSentencesPerChunk.ToString();
+            request.GameContext.Flags["storyLengthIsFlexible"] = "true";
+        }
+
+        private static string BuildStoryLengthDebugNote(StoryOptions? options)
+        {
+            if (options == null)
+            {
+                return "Story randomizer: no StoryOptions were attached.";
+            }
+
+            return "Story randomizer: approximate target "
+                + options.TargetMinutes
+                + " minute(s), "
+                + options.TargetChunkCount
+                + " chunk(s), max "
+                + (options.MaxSentencesPerChunk <= 0 ? 2 : options.MaxSentencesPerChunk)
+                + " sentence(s) per chunk. Flexible target: complete story is more important than exact duration.";
         }
 
         private void StorePendingBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)

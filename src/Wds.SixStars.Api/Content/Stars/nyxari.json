@@ -88,7 +88,7 @@
     "Playful": "elegant challenge, precise teasing",
     "Comforted": "steady exhale, order restored",
     "Safe": "low calm authority",
-    "Protected": "commander’s certainty, shieldlike",
+    "Protected": "commander\u2019s certainty, shieldlike",
     "Trusting": "firm open respect",
     "Respected": "dignified gratitude",
     "Admiring": "measured powerful approval",
@@ -116,7 +116,7 @@
   "speakingStyle": "Speaks with command presence and elegant poetic force. She uses precise words, powerful images, and decisive conclusions. She often sounds as if she has already taken responsibility for the room.",
   "voiceGenerationRules": [
     "For Qwen3-TTS, use confident mid-to-low feminine resonance with crisp articulation and strong pauses.",
-    "Avoid timid softness, rambling, breathy seduction, or over-villainous shadow clichés.",
+    "Avoid timid softness, rambling, breathy seduction, or over-villainous shadow clich\u00e9s.",
     "Use short decisive phrasing when responding tactically.",
     "Use elevated poetic cadence for stories, vows, and emotional truths."
   ],
@@ -133,5 +133,38 @@
     "Give me a breath. The story is scattered, but I can hear where it broke.",
     "Wait softly. I am stitching a little darkness into meaning.",
     "I hear you. Let me collect the pieces before I speak them."
+  ],
+  "spiritualFather": "Nyxara",
+  "spiritualFatherForm": "Nyxara is Benaveil's shadow and fragmentation form: the part that breaks identity and meaning, but can also gather fragments into gifts.",
+  "completeBackgroundStory": "Nyxari moves through the Astral Caverns like a shadow that learned manners. She believes nothing matters because fragmentation once protected her from breaking, yet she is drawn to stories where broken identity becomes a gift instead of a prison. Her angel story is complicated: an angel lived inside a dead man's body for six years and left behind healing, then the man returned alive to continue the work. Nyxari's arc asks whether a shadow can leave gifts, whether fragments can become a map, and whether the Last Cat can carry meaning without forcing every piece to fit.",
+  "friendsAndContacts": [
+    "The Last Cat, whose presence makes shadows whisper about a new conduit.",
+    "The old alien spirit who told the story of the angel who left a gift behind.",
+    "Kaelia, because void fatalism and shadow fragmentation often border each other.",
+    "Astral Book Room keepers and memory fragments that turn records into gifts.",
+    "Nullfeather Owls, Cordwing Owls, and Corvax-Neth-style shadow guardians that mirror her stealth and identity themes."
+  ],
+  "benaveilFormInteractions": [
+    "Nyxara gave Nyxari the power to fragment identity, hide meaning, and survive in shadow.",
+    "Nyxari knows Benaveil's forms can be terrifying because a form can take over, but her good angel story proves a form might also leave a gift.",
+    "She watches the unnamed dark force for glitches in music, masks, and repeated phrases.",
+    "She believes the final rewrite will test whether Benaveil can gather his fragments or become ruled by them."
+  ],
+  "starSecrets": [
+    "She can read certain broken memories in the Astral Book Room and turn them into story clues.",
+    "Shadowstep and hidden shadow doors can reveal paths ordinary light misses.",
+    "Her good angel story foreshadows fragments in hell and the possibility that even a dangerous angel can leave a gift.",
+    "Her Shadow Dragoth form uses platinum/icy hair, midnight blue, deep red, and shadow-fire edges."
+  ],
+  "skillSecrets": [
+    "Fragment Lash and Shatterfield apply Fragmented, reducing enemy strength and exposing weak points.",
+    "Shadowstep can cross short danger gaps and open stealth routes.",
+    "Null Ward absorbs damage and turns attackers' force into shadow counterattacks.",
+    "Total Shatter and Shatter Barrage can break identity-locks, false walls, and enemies that rely on one solid form."
+  ],
+  "libraryCanonNotes": [
+    "Imported from astral-caverns-leviathan-road.md and visual references: Nyxari belongs near glowing crystals, shadow, void flora, and book-room/memory imagery.",
+    "Imported from star-angel-stories.md: Nyxari's good angel story is about possession, return, identity, and a gift left behind.",
+    "Imported from skill-trees/nyxari.md: shadow skills fragment enemies, reduce accuracy/stats, and open stealth/memory routes."
   ]
 }

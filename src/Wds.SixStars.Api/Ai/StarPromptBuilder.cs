@@ -193,8 +193,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("LONG STORY MODE");
             sb.AppendLine("When RequestType=Story, you are not merely agreeing to tell a story. You are already telling it aloud as " + profile.DisplayName + ".");
             sb.AppendLine("Do not open with setup phrases such as 'let me tell you', 'shall I begin', 'the story begins', 'I will continue', or 'where we left off'. Start with the actual story prose immediately.");
-            sb.AppendLine("For story mode, plan a complete long story in storyMarkdown on the first response. Format storyMarkdown into numbered markdown speech chunks: ## Chunk 0, then one or two story sentences, then a line containing only --- before the next chunk. Continue this pattern for every chunk. Never emit an empty chunk; if a chunk has no narration, omit that chunk entirely and renumber the remaining chunks.");
-            sb.AppendLine("The complete story should be fun to hear while the Last Cat moves through caves: atmospheric, companionable, adventurous, and long enough for the target minutes supplied by the host. Use the TargetMinutes and TargetChunkCount in the story context; the runtime randomly chooses 2-45 minutes for each new story.");
+            sb.AppendLine("For story mode, plan a complete story in storyMarkdown on the first response. It must have a beginning, middle, climax, and satisfying resolution or soft cliffhanger. Format storyMarkdown into numbered markdown speech chunks: ## Chunk 0, then one or two story sentences, then a line containing only --- before the next chunk. Continue this pattern for every chunk. Never emit an empty chunk; if a chunk has no narration, omit that chunk entirely and renumber the remaining chunks.");
+            sb.AppendLine("The target minutes and chunk count are flexible guidance for how much cave-travel narration the host hopes for, not a law. If exact length would risk truncation or an unfinished tale, choose a shorter complete episode over a huge incomplete one. The runtime randomly chooses an approximate 2-35 minute target and a capped chunk count for each new story.");
             sb.AppendLine("spokenText must be only the first actual story passage from ## Chunk 0. It must not be an introduction about the story. Keep each spokenText item to one or two natural sentences for TTS.");
             sb.AppendLine("After chunk 0, the host will auto-play the remaining cached storyMarkdown chunks locally. Do not expect or ask for follow-up LLM continuation calls.");
             sb.AppendLine("The story must emotionally fit the player's latest request and the current relationship state: comfort him if he asks softly, become playful if he asks playfully, become dark or wondrous if the seed asks for that. Do this through the first story sentences, not by preface.");
@@ -242,6 +242,7 @@ namespace Wds.SixStars.Api.Ai
             if (request.RequestType == RequestType.Story)
             {
                 AppendFastStoryContext(sb, request);
+                AppendStoryLoreContext(sb, profile, request);
             }
             sb.AppendLine();
             sb.AppendLine("FAST SPEECH CONTRACT");
@@ -278,8 +279,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("LocalAutoplayAfterFirstChunk: true");
             if (!string.IsNullOrWhiteSpace(options.PlayerSuggestion)) sb.AppendLine("Player story seed: " + Truncate(options.PlayerSuggestion, 600));
             else sb.AppendLine("Player story seed: choose a fitting new story.");
-            sb.AppendLine("TargetMinutes: " + (options.TargetMinutes <= 0 ? 0 : options.TargetMinutes));
-            sb.AppendLine("TargetChunkCount: " + (options.TargetChunkCount <= 0 ? 0 : options.TargetChunkCount));
+            sb.AppendLine("ApproxTargetMinutes: " + (options.TargetMinutes <= 0 ? 0 : options.TargetMinutes) + " (flexible, not strict)");
+            sb.AppendLine("ApproxTargetChunkCount: " + (options.TargetChunkCount <= 0 ? 0 : options.TargetChunkCount) + " (capped so the story can finish)");
             sb.AppendLine("MaxSentencesPerChunk: " + (options.MaxSentencesPerChunk <= 0 ? 2 : options.MaxSentencesPerChunk));
             if (options.StoriesAlreadyTold.Count > 0)
             {
@@ -287,6 +288,7 @@ namespace Wds.SixStars.Api.Ai
                 foreach (string story in options.StoriesAlreadyTold.Take(20)) sb.AppendLine("- " + Truncate(story, 260));
             }
             sb.AppendLine("Create a new complete story. The desktop host will speak Chunk 0 from spokenText, then read Chunk 1+ directly from cached storyMarkdown until the story is finished or cancelled. Empty chunks are invalid because the host will skip them; write only meaningful narration chunks.");
+            sb.AppendLine("Length rule: the approximate target exists to guide pacing only. Do not pad. Do not leave the tale unfinished just to chase the target length. Complete story > exact duration.");
         }
 
         private static string BuildEmotionalEffectVectorInstruction()
@@ -330,6 +332,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality short: " + profile.PersonalityShort);
             if (!string.IsNullOrWhiteSpace(profile.DeepPersonality)) sb.AppendLine("Deep personality: " + profile.DeepPersonality);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory: " + profile.BackstorySummary);
+            AppendExpandedProfileLore(sb, profile);
             AppendList(sb, "Quotes she may echo or paraphrase", profile.Quotes);
             AppendList(sb, "Behavior rules", profile.Behaviors);
             AppendList(sb, "Spoken response rules", profile.SpokenResponseRules);
@@ -602,6 +605,41 @@ namespace Wds.SixStars.Api.Ai
             return sb.ToString();
         }
 
+        private static void AppendExpandedProfileLore(StringBuilder sb, StarProfile profile)
+        {
+            if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Spiritual father / Benaveil parent form: " + profile.SpiritualFather);
+            if (!string.IsNullOrWhiteSpace(profile.SpiritualFatherForm)) sb.AppendLine("Father-form meaning: " + profile.SpiritualFatherForm);
+            if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Complete background story: " + Truncate(profile.CompleteBackgroundStory, 1600));
+            AppendList(sb, "Friends, allies, contacts, and recurring people she can talk about", profile.FriendsAndContacts);
+            AppendList(sb, "Conversation history and emotional history with Benaveil's forms", profile.BenaveilFormInteractions);
+            AppendList(sb, "Four core secrets / hidden hooks she may reveal through trust, letters, or story mode", profile.StarSecrets);
+            AppendList(sb, "Skill, Metroidvania, and ability secrets she can tease or teach", profile.SkillSecrets);
+            AppendList(sb, "Concise canon notes imported from the markdown game library", profile.LibraryCanonNotes);
+        }
+
+        private static void AppendStoryLoreContext(StringBuilder sb, StarProfile profile, StarInteractionRequest request)
+        {
+            sb.AppendLine();
+            sb.AppendLine("STORY CANON CAPSULE FOR THIS STAR");
+            sb.AppendLine("Use this lore to write a complete in-character story with a beginning, escalation, climax, and resolution. You may use secrets, skills, fathers/forms, friends, places, letters, and angel stories when they fit the player's seed. Do not dump the lore as exposition; weave one or two pieces into the story naturally.");
+            sb.AppendLine("Game premise: No cat has been seen for one hundred years. The universe is drying up. The Last Cat is an astral conduit who learns mana abilities from the Stars, then learns no-mana astral versions through the soul sword, the Astral Stream, Leviathan, ancient cat letters, and repeated use.");
+            sb.AppendLine("Major places: Virethorn Sanctuary and poisoned water puzzles; Upper Caves / Highroot Waterworks; Bone Caves / Marrow Ossuary with Bone Bloom; Astral Caverns and Leviathan Road; Astral Book Room and hell arcade foreshadowing.");
+            sb.AppendLine("Benaveil: a young angel behind the Stars. His named forms are spiritually called their father-forms. His unnamed dark force can distort music, thought, and mercy. Greater evils push him toward condemnation, but wise play may save everyone.");
+            sb.AppendLine("Stars: Elusiaa-Light/Mercy/Racha; Khavia-Water/Friendship/Chavera; Auerlis-Fire/Joy/Simchi; Maera-Blood/Possession/Maerrow; Kaelia-Void/Fatalism/Kaeliss; Nyxari-Shadow/Fragmentation/Nyxara.");
+            AppendExpandedProfileLore(sb, profile);
+            sb.AppendLine("Angel stories available to this Star:");
+            foreach (StarLoreEntry story in profile.AngelStories)
+            {
+                sb.AppendLine("- " + story.Title + ": " + story.Summary);
+            }
+            sb.AppendLine("Story deck available to this Star:");
+            foreach (StoryMemoryCard card in profile.StoryDeck)
+            {
+                sb.AppendLine("- " + card.Id + " [" + card.Kind + "]: " + card.Summary);
+            }
+            sb.AppendLine("Complete-story checklist: name a specific place or traveler; introduce a desire/problem; include one surprising secret, skill, friend, father-form, letter, or monster; reach a turning point; end with a real resolution or soft cliffhanger that still feels like a complete episode.");
+        }
+
         private void AppendAccessibleLore(StringBuilder sb, StarProfile profile, StarState state, StarInteractionRequest request)
         {
             int bond = Math.Max(Math.Max(state.Heart, state.Trust), state.Romance);
@@ -609,6 +647,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine();
             sb.AppendLine("PROFILE SECRETS / STORY DETAILS AVAILABLE THIS TURN");
             sb.AppendLine("Bond score used for unlock checks: " + bond + ". Use locked items only as hidden internal context unless the player has earned or requested an unlock and the story option allows it.");
+            AppendExpandedProfileLore(sb, profile);
             foreach (StarLoreEntry story in profile.AngelStories)
             {
                 bool available = story.UnlockedAtBond <= bond || state.SecretsUnlocked.Any(x => MatchesIdOrTitle(x, story.Id, story.Title)) || storyCanUseUnlockedSecrets;

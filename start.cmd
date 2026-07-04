@@ -37,6 +37,10 @@ if not defined LOCAL_LLM_MODEL set "LOCAL_LLM_MODEL=google/gemma-4-E2B-it"
 if not defined LOCAL_LLM_PRELOAD set "LOCAL_LLM_PRELOAD=true"
 if not defined SIX_STARS_LLM_ENDPOINT set "SIX_STARS_LLM_ENDPOINT=http://localhost:8080/v1/chat/completions"
 if not defined SIX_STARS_LLM_MODEL set "SIX_STARS_LLM_MODEL=local-model"
+rem LM Studio Developer Server may require an API token. Set LM_API_TOKEN before launch,
+rem or set SIX_STARS_LLM_API_KEY directly. The WPF app also reads both names.
+if not defined SIX_STARS_LLM_API_KEY if defined LM_API_TOKEN set "SIX_STARS_LLM_API_KEY=%LM_API_TOKEN%"
+if not defined SIX_STARS_SCREEN_LLM_API_KEY if defined SIX_STARS_LLM_API_KEY set "SIX_STARS_SCREEN_LLM_API_KEY=%SIX_STARS_LLM_API_KEY%"
 if not defined QWEN_TTS_DEVICE set "QWEN_TTS_DEVICE=cuda"
 if not defined QWEN_TTS_LANGUAGE set "QWEN_TTS_LANGUAGE=English"
 if not defined QWEN_TTS_MODEL_PATH set "QWEN_TTS_MODEL_PATH=Qwen/Qwen3-TTS-12Hz-0.6B-Base"
@@ -66,12 +70,12 @@ if /I not "%SIX_STARS_SKIP_PIP_INSTALL%"=="true" (
       echo installed>".venv\.sixstars_requirements_installed"
     )
   )
-  python -c "import faster_qwen3_tts" 2>nul
-  if errorlevel 1 (
-    echo Installing faster-qwen3-tts for Qwen3 CUDA graph acceleration...
-    python -m pip install faster-qwen3-tts
+  if /I not "%SIX_STARS_SKIP_CUDA_TORCH_INSTALL%"=="true" (
+    python scripts\verify_torch_cuda.py --quiet
     if errorlevel 1 (
-      echo WARNING: faster-qwen3-tts install failed. The TTS server will fall back to slower qwen_tts.
+      echo Installing CUDA PyTorch and Qwen3 voice packages...
+      call scripts\install_cuda_torch.cmd /nopause
+      if errorlevel 1 exit /b 1
     )
   )
 )

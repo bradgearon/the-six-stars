@@ -13,5 +13,6 @@
   <ItemGroup>
     <Content Include="Content\**\*.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Content\VoiceClones\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Content\LoreLibrary\**\*.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

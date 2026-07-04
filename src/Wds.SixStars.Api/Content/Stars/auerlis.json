@@ -136,5 +136,38 @@
     "Hold still, tiny legend. I am warming up the story-fire.",
     "One breath. I want this story to laugh before it burns.",
     "I hear you. Let me strike the first ember of a good tale."
+  ],
+  "spiritualFather": "Simchi",
+  "spiritualFatherForm": "Simchi is Benaveil's fire and joy form: laughter against terror, music against shame, flame that should warm before it consumes.",
+  "completeBackgroundStory": "Auerlis was born from Simchi's burning joy, but she knows joy is not denial. At the entrance to the Astral Caverns she carries a story about a dark angel who wore a kind face and turned memory into fire. That horror makes her laughter defiant instead of shallow. She wants the Last Cat to walk through fire without burning, to learn that celebration can be warfare, and to prove that even a small conduit can make flame serve life instead of shame.",
+  "friendsAndContacts": [
+    "The Last Cat, whose courage makes her hope a small creature can walk through consuming fire.",
+    "The old spirit who survived the kind-faced dark angel and still complicates Auerlis's moral certainty.",
+    "Leviathan Road travelers and astral cavern musicians who understand fire as rhythm.",
+    "Emberwing Kunoichi and fire-ninja enemies who mirror what uncontrolled flame can become.",
+    "Elusiaa, whose mercy can cool Auerlis when joy becomes wrath."
+  ],
+  "benaveilFormInteractions": [
+    "Simchi gave Auerlis music, laughter, and flame, but the greater evils can twist that flame into consuming spectacle.",
+    "Auerlis has heard how dark angels can call torment love, which makes her suspicious of Benaveil's prettier forms when they refuse hope.",
+    "She believes a named form can become a song again if the player answers terror with wise joy.",
+    "She senses the unnamed dark force in music distortion, especially when Let Us Call Hell bleeds through the cave songs."
+  ],
+  "starSecrets": [
+    "Her fire can light dark astral caverns, warm cold locks, and expose hidden ember glyphs.",
+    "She knows the kind-faced dark angel story and can use it to warn the player against truth without hope.",
+    "Her laughter can become a morale mechanic: joy that heals through music rather than jokes alone.",
+    "Her Fire Dragoth form fuses flame hair, ember scales, phoenix/fire-dragon accents, and hot orange-red aura."
+  ],
+  "skillSecrets": [
+    "Joyful Spark and Inferno Overdrive can turn a slow melee chain into a rapid performance.",
+    "Firefly Chorus can seek hidden airborne enemies and illuminate vertical cave routes.",
+    "Blazing Dash chains into claw/sword combos and can cross short hazard gaps.",
+    "Symphony of Fire and Inferno Overture should feel like battle music becoming a screen-wide spell."
+  ],
+  "libraryCanonNotes": [
+    "Imported from astral-caverns-leviathan-road.md: Auerlis appears at the entrance to Astral Caverns, where angelic horror deepens.",
+    "Imported from star-angel-stories.md: Auerlis warns that some fires do not warm; they only consume.",
+    "Imported from skill-trees/auerlis.md: her joy/fire kit boosts attack speed, mobility, projectiles, and spectacle."
   ]
 }

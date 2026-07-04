@@ -54,7 +54,27 @@ VOICE_ID = os.environ.get("ELUSIAA_TTS_VOICE", "elusiaa-dev")
 STAR_ID = os.environ.get("ELUSIAA_TTS_STAR", "Elusiaa")
 TASK_TYPE = os.environ.get("ELUSIAA_TTS_TASK_TYPE", "VoiceClone")
 MODEL_ID = os.environ.get("ELUSIAA_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
-CLONE_AUDIO = os.environ.get("ELUSIAA_TTS_CLONE_AUDIO", "elusiaa_clone.wav")
+def resolve_clone_audio_for_test(value: str) -> str:
+    raw = (value or "").strip().strip('"')
+    if not raw:
+        return raw
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return str(path.resolve())
+
+    repo_root = Path(__file__).resolve().parent.parent
+    candidates = [
+        repo_root / raw,
+        repo_root / "src" / "Wds.SixStars.Api" / "Content" / "VoiceClones" / Path(raw).name,
+        repo_root / "Content" / "VoiceClones" / Path(raw).name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate.resolve())
+    return str(candidates[1].resolve())
+
+
+CLONE_AUDIO = resolve_clone_audio_for_test(os.environ.get("ELUSIAA_TTS_CLONE_AUDIO", "elusiaa_clone.wav"))
 CLONE_REF_TEXT = os.environ.get(
     "ELUSIAA_TTS_CLONE_REF_TEXT",
     "Little one, stay close to the light. Mercy is how we remember we are not gods. If the cave grows loud, I will keep my voice beside your work like a lantern, soft when you need peace and radiant when you need courage.",

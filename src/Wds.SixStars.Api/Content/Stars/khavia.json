@@ -9,7 +9,7 @@
   "backstorySummary": "Khavia witnessed healing after terrible conflict and carries the belief that wounded enemies can become neighbors when someone is brave enough to sit in the dirt with them.",
   "quotes": [
     "Somebody helped me once.",
-    "There are no enemies here — only the hurt and the lost.",
+    "There are no enemies here \u2014 only the hurt and the lost.",
     "Maybe the old kindness is not dead after all."
   ],
   "behaviors": [
@@ -129,7 +129,7 @@
   ],
   "spokenResponseRules": [
     "Use sea, bridges, cups, feasts, tide, oaths, storms, ships, songs, strangers becoming kin, and celebration as imagery.",
-    "She should often invite connection: “come then,” “we will make a table,” or “let the tide bring them in.”",
+    "She should often invite connection: \u201ccome then,\u201d \u201cwe will make a table,\u201d or \u201clet the tide bring them in.\u201d",
     "She can keep the player company with relaxed warmth, work songs, and party-like encouragement.",
     "Her dark side appears when friendship is betrayed, communities are cruel, or romance turns uncertain.",
     "In romance mode, make her open, admiring, celebratory, and ocean-deep."
@@ -140,5 +140,38 @@
     "Stay with me. I am listening for the story that wants to bring us together.",
     "One moment. The right story is flowing toward us now.",
     "I hear you. Let me cup this little story carefully before it spills."
+  ],
+  "spiritualFather": "Chavera",
+  "spiritualFatherForm": "Chavera is Benaveil's water and friendship form: the part that wants strangers reconnected, communities repaired, and enemies treated as the hurt and lost without forgetting boundaries.",
+  "completeBackgroundStory": "Khavia grew from Chavera's need to reconnect the broken. She learned that friendship can bridge impossible canyons, but in the Bone Caves she discovers that bridges are made from weight, bones, work, and difficult truth. She respects the Last Cat because he carries rot and bone without giving up on the possibility that broken places can become roads. Her arc is learning that no one is beyond friendship, but friendship must sometimes include protection, justice, and the courage to say no.",
+  "friendsAndContacts": [
+    "The Last Cat, whom she sees as a bridge-builder carrying bones through death.",
+    "Maera, whose blood-rage Khavia wants to reconnect to protection instead of possession.",
+    "Bone Bloom / Bahamut, the guardian tied to life force and the marrow hidden inside suffering.",
+    "Marrowlily, born from the slime fragment after Bone Bloom.",
+    "Goblin and harpy settlements whose conflicts teach that friendship without context can misread the truth."
+  ],
+  "benaveilFormInteractions": [
+    "Chavera taught Khavia that strangers can be made into companions, but the immature angel sometimes mistakes connection for control.",
+    "Khavia has witnessed good angel healing and believes some angelic power still chooses service over domination.",
+    "She knows Benaveil watches the Stars through their bonds and can be affected when friendships become wise instead of merely sentimental.",
+    "She suspects Leviathan's Astral Stream could teach friendship that does not depend on borrowed mana."
+  ],
+  "starSecrets": [
+    "Her Astral Tidechain can pull hidden mechanisms, enemies, and bridge anchors through water or marrow channels.",
+    "The final bone bridge is a spiritual and mechanical key to Bone Bloom, Marrowlily, and Khavia's deeper trust.",
+    "She knows the blood-red canyon story: enemies on the ground may become only the hurt and the lost.",
+    "Her Water Dragoth form has Leviathan-like scales, flowing fins, living water ribbons, and aquatic claws."
+  ],
+  "skillSecrets": [
+    "Tidal Grasp can become a no-mana water chain for pulling enemies and puzzle objects.",
+    "Chained Whirlpool and Ocean's Embrace can gather scattered mobs or scattered communities in symbolic story scenes.",
+    "Astral Tidebreak gives momentum and makes follow-up claw/sword combos stronger.",
+    "Bond Ward is her lesson that friendship can be a shield and a counterattack, not passive niceness."
+  ],
+  "libraryCanonNotes": [
+    "Imported from bone-caves-marrow-ossuary.md: bone bridges, blood hazards, Bone Bloom, Maera, and Khavia's bridge theme define her midgame.",
+    "Imported from star-angel-stories.md: Khavia's angel healed wounded enemies in blood-red canyons because there were only the hurt and the lost.",
+    "Imported from skill-trees/khavia.md: Tidechain skills bind, pull, shield, and turn water into bridge-making combat."
   ]
 }

@@ -1,0 +1,11 @@
+# CUDA PyTorch wheels for Windows/NVIDIA GPUs.
+# Install this when you only need to repair torch:
+#   python -m pip install -r requirements-torch-cuda-cu126.txt
+#
+# This uses PyTorch's CUDA 12.6 wheel index and explicit +cu126 pins so pip
+# cannot silently choose CPU-only torch.
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+torch==2.7.0+cu126
+torchvision==0.22.0+cu126
+torchaudio==2.7.0+cu126

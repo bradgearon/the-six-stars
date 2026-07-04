@@ -7,10 +7,12 @@ ws://localhost:8100/tts/stream, chunks the text into short sentence groups,
 generates real Qwen3-TTS audio for each chunk, and sends each WAV back as a
 binary WebSocket message.
 
-For the Qwen3-TTS Base voice-clone model, the server builds a reusable
-voice_clone_prompt the first time a Star/voice/reference-audio combination is
-requested and caches it in memory for later chunks and later requests. This
-matches the Qwen3-TTS documented pattern:
+For the Qwen3-TTS Base voice-clone model, the WPF/Unity host must send an
+absolute voiceCloneAudio path in each WebSocket request. The Python side does
+not search for clone files, read Star JSON voice config, or guess filenames. It
+only validates the full path and reads voice/style fields supplied in the request,
+then builds/caches a reusable voice_clone_prompt.
+This matches the Qwen3-TTS documented pattern:
 
     prompt_items = model.create_voice_clone_prompt(...)
     wavs, sr = model.generate_voice_clone(..., voice_clone_prompt=prompt_items)
@@ -75,6 +77,49 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def patch_transformers_check_model_inputs_for_qwen() -> None:
+    """Patch a Qwen3-TTS/Transformers compatibility mismatch at runtime.
+
+    Some Qwen3-TTS builds decorate model methods as ``@check_model_inputs()``,
+    while some Transformers builds expose ``check_model_inputs`` as a direct
+    decorator that requires ``func``. The result is this runtime error:
+
+        TypeError: check_model_inputs() missing 1 required positional argument: 'func'
+
+    Voice Clone Studio works around this by using a compatible environment. The
+    Six Stars launcher has to survive venv changes caused by Gemma experiments,
+    so we install a small compatibility shim before importing qwen_tts or
+    faster_qwen3_tts. The shim preserves the common no-op validation behavior
+    needed by Qwen's generated modeling files.
+    """
+    if not PATCH_TRANSFORMERS_CHECK_MODEL_INPUTS:
+        return
+    try:
+        import transformers.utils.generic as generic  # type: ignore
+    except Exception as exc:
+        logger.debug("Could not import transformers.utils.generic for Qwen compatibility patch: %s", exc)
+        return
+
+    current = getattr(generic, "check_model_inputs", None)
+    if getattr(current, "_six_stars_qwen_compat", False):
+        return
+
+    def _six_stars_check_model_inputs(func=None, *decorator_args, **decorator_kwargs):  # type: ignore[no-untyped-def]
+        if func is None:
+            def decorator(inner_func):  # type: ignore[no-untyped-def]
+                return inner_func
+            return decorator
+        if callable(func):
+            return func
+        def decorator(inner_func):  # type: ignore[no-untyped-def]
+            return inner_func
+        return decorator
+
+    setattr(_six_stars_check_model_inputs, "_six_stars_qwen_compat", True)
+    generic.check_model_inputs = _six_stars_check_model_inputs  # type: ignore[attr-defined]
+    logger.info("Installed Qwen3-TTS compatibility shim for transformers.utils.generic.check_model_inputs")
+
+
 HOST = os.environ.get("QWEN_TTS_HOST", "0.0.0.0")
 PORT = int(os.environ.get("QWEN_TTS_PORT", "8100"))
 MODEL_PATH = resolve_model_ref(
@@ -98,23 +143,12 @@ USE_CUDA_GRAPHS = os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true").strip().low
 # Voice Clone Studio gets its speed from faster_qwen3_tts when CUDA graphs are enabled.
 # Keep this on by default and fall back to qwen_tts only if the package is missing.
 USE_FASTER_QWEN3 = os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true").strip().lower() not in {"0", "false", "no"}
+PATCH_TRANSFORMERS_CHECK_MODEL_INPUTS = os.environ.get("QWEN_TTS_PATCH_TRANSFORMERS_CHECK_MODEL_INPUTS", "true").strip().lower() not in {"0", "false", "no"}
 CUDA_GRAPH_WARMUP_RUNS = int(os.environ.get("QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS", "3"))
 USE_CLONE_PROMPT_CACHE = os.environ.get("QWEN_TTS_CACHE_CLONE_PROMPTS", "true").strip().lower() not in {"0", "false", "no"}
 DIRECT_FALLBACK_ON_SILENCE = os.environ.get("QWEN_TTS_DIRECT_FALLBACK_ON_SILENCE", "true").strip().lower() not in {"0", "false", "no"}
 SILENCE_RMS_THRESHOLD = float(os.environ.get("QWEN_TTS_SILENCE_RMS_THRESHOLD", "0.0001"))
 
-CLONE_AUDIO_DIR = Path(
-    os.environ.get(
-        "QWEN_TTS_CLONE_AUDIO_DIR",
-        "src/Wds.SixStars.Api/Content/VoiceClones",
-    )
-)
-STARS_DIR = Path(
-    os.environ.get(
-        "QWEN_TTS_STARS_DIR",
-        "src/Wds.SixStars.Api/Content/Stars",
-    )
-)
 DEBUG_OUTPUT_DIR = os.environ.get("QWEN_TTS_DEBUG_OUTPUT_DIR", "").strip()
 SAVE_SERVER_WAVS = os.environ.get("QWEN_TTS_SAVE_WAVS", "false").strip().lower() in {"1", "true", "yes"}
 # Chunk generation mode:
@@ -222,27 +256,6 @@ class GeneratedChunk:
     elapsed_ms: float
 
 
-@dataclass
-class StarVoiceConfig:
-    star_id: str
-    voice_clone_audio_file: str = ""
-    voice_clone_ref_text: str = ""
-    personality_short: str = ""
-    voice_archetype: str = ""
-    speaking_style: str = ""
-    voice_generation_rules: List[str] | None = None
-
-    def voice_instruction_summary(self) -> str:
-        parts: List[str] = []
-        if self.personality_short:
-            parts.append(f"Personality: {self.personality_short}")
-        if self.voice_archetype:
-            parts.append(f"Voice archetype: {self.voice_archetype}")
-        if self.speaking_style:
-            parts.append(f"Speaking style: {self.speaking_style}")
-        if self.voice_generation_rules:
-            parts.append("Voice generation rules: " + " ".join(self.voice_generation_rules))
-        return "\n".join(parts)
 
 
 class TextChunker:
@@ -303,9 +316,10 @@ class QwenTtsEngine:
         self.cuda_graphs_active = False
         self.supported_speakers: List[str] = []
         self.supported_languages: List[str] = []
-        self.star_voice_configs: Dict[str, StarVoiceConfig] = self._load_star_voice_configs()
+        # The host owns Star voice selection and sends resolved voice settings per request.
         self.voice_clone_prompt_cache: Dict[str, Any] = {}
         self.cache_failures: set[str] = set()
+        self.disable_faster_backend_for_session = False
         # Request-time chunk generation can run in parallel. This lock protects
         # the shared voice-clone prompt cache so the same Star prompt is built once.
         self._cache_lock = threading.Lock()
@@ -415,6 +429,9 @@ class QwenTtsEngine:
         warms up and captures CUDA graphs internally, producing the log lines:
         "Warming up predictor", "CUDA graph captured", "Talker CUDA graph captured".
         """
+        if self.disable_faster_backend_for_session:
+            logger.info("FasterQwen3TTS skipped after a previous runtime failure; using official qwen_tts fallback for this server session")
+            return False
         if not USE_CUDA_GRAPHS:
             logger.info("FasterQwen3TTS skipped: QWEN_TTS_USE_CUDA_GRAPHS=false")
             return False
@@ -425,6 +442,7 @@ class QwenTtsEngine:
             logger.info("FasterQwen3TTS skipped: device is %s", DEVICE)
             return False
 
+        patch_transformers_check_model_inputs_for_qwen()
         try:
             from faster_qwen3_tts import FasterQwen3TTS  # type: ignore
         except ImportError as exc:
@@ -437,12 +455,26 @@ class QwenTtsEngine:
 
         logger.info("Loading Qwen3-TTS with FasterQwen3TTS CUDA graph backend (Voice Clone Studio parity).")
         logger.info("FasterQwen3TTS settings: device=cuda dtype=%s attn_implementation=eager warmup_runs=%s", dtype, CUDA_GRAPH_WARMUP_RUNS)
-        self.model = FasterQwen3TTS.from_pretrained(
-            MODEL_PATH,
-            device="cuda",
-            dtype=dtype,
-            attn_implementation="eager",
-        )
+        try:
+            self.model = FasterQwen3TTS.from_pretrained(
+                MODEL_PATH,
+                device="cuda",
+                dtype=dtype,
+                attn_implementation="eager",
+            )
+        except Exception as exc:
+            logger.warning(
+                "FasterQwen3TTS failed to load, so the server will fall back to official qwen_tts. "
+                "This usually means the current venv has an incompatible transformers/qwen_tts mix: %s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            self.model = None
+            self.using_faster_backend = False
+            self.cuda_graphs_active = False
+            self.disable_faster_backend_for_session = True
+            return False
+
         self.using_faster_backend = True
         self.cuda_graphs_active = True
         self.model_type = self._infer_model_type_from_path(MODEL_PATH)
@@ -459,8 +491,7 @@ class QwenTtsEngine:
         logger.info("Device: %s", DEVICE)
         logger.info("dtype: %s", DTYPE_NAME)
         logger.info("attn_implementation: %s", ATTN_IMPLEMENTATION)
-        logger.info("Clone audio dir: %s", self._resolve_dir(CLONE_AUDIO_DIR))
-        logger.info("Stars dir: %s", self._resolve_dir(STARS_DIR))
+        logger.info("Clone audio lookup and Star JSON voice lookup: disabled; requests must include an absolute voiceCloneAudio path and voice settings")
         logger.info("=" * 70)
 
         dtype = self._resolve_torch_dtype(DTYPE_NAME)
@@ -471,6 +502,7 @@ class QwenTtsEngine:
         if self._try_load_faster_qwen3_sync(dtype):
             raw_model = getattr(self.model, "model", None)
         else:
+            patch_transformers_check_model_inputs_for_qwen()
             from qwen_tts import Qwen3TTSModel
 
             device_map = "cuda:0" if DEVICE.startswith("cuda") else "cpu"
@@ -540,118 +572,34 @@ class QwenTtsEngine:
                 return settings[name]
         return default
 
-    def _load_star_voice_configs(self) -> Dict[str, StarVoiceConfig]:
-        configs: Dict[str, StarVoiceConfig] = {}
-        stars_dir = self._resolve_dir(STARS_DIR)
-        if not stars_dir.exists():
-            logger.warning("Stars directory does not exist yet: %s", stars_dir)
-            return configs
 
-        for path in stars_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8-sig"))
-                star_id = str(data.get("starId") or data.get("displayName") or path.stem).strip()
-                key = star_id.lower()
-                configs[key] = StarVoiceConfig(
-                    star_id=star_id,
-                    voice_clone_audio_file=str(data.get("voiceCloneAudioFile") or ""),
-                    voice_clone_ref_text=str(data.get("voiceCloneRefText") or ""),
-                    personality_short=str(data.get("personalityShort") or ""),
-                    voice_archetype=str(data.get("voiceArchetype") or ""),
-                    speaking_style=str(data.get("speakingStyle") or ""),
-                    voice_generation_rules=list(data.get("voiceGenerationRules") or []),
-                )
-                logger.info("Loaded Star voice config: %s", star_id)
-            except Exception as exc:
-                logger.warning("Could not load Star voice config %s: %s", path, exc)
-        return configs
+    def _resolve_clone_audio_path(self, value: Optional[str]) -> str:
+        """Validate the request-provided clone audio path.
 
-    def _get_star_config(self, star_id: str, voice_id: str) -> Optional[StarVoiceConfig]:
-        for value in (star_id, voice_id):
-            key = (value or "").strip().lower()
-            if key in self.star_voice_configs:
-                return self.star_voice_configs[key]
-        return None
-
-    def _candidate_clone_dirs(self) -> List[Path]:
-        """Return likely clone-audio folders, even if the server was launched from scripts/bin."""
-        dirs: List[Path] = []
-
-        def add(path: Path) -> None:
-            resolved = self._resolve_dir(path)
-            if resolved not in dirs:
-                dirs.append(resolved)
-
-        add(CLONE_AUDIO_DIR)
-        add(STARS_DIR.parent / "VoiceClones")
-        add(Path("Content/VoiceClones"))
-        add(Path("VoiceClones"))
-
-        script_root = Path(__file__).resolve().parent.parent
-        for path in (
-            script_root / "src/Wds.SixStars.Api/Content/VoiceClones",
-            script_root / "Content/VoiceClones",
-            script_root / "VoiceClones",
-        ):
-            if path not in dirs:
-                dirs.append(path)
-
-        return dirs
-
-    def _resolve_clone_audio_path(self, value: Optional[str], star_config: Optional[StarVoiceConfig]) -> Optional[str]:
-        """Resolve a clone audio file robustly.
-
-        Local LLMs sometimes hallucinate voiceCloneAudioFile values like
-        elusiaa-dev.mp3 or elusiaa-dev_stable. Those should never break speech.
-        Try the request value first, then the trusted Star profile clone file.
+        The desktop app or Unity host owns voice selection and file resolution.
+        This server intentionally does not search Content/VoiceClones, Star JSON,
+        or guessed filenames. That keeps the Python side deterministic and makes
+        missing-file errors point to the exact path the host sent.
         """
-        candidates: List[str] = []
+        requested = (str(value).strip().strip('"') if value is not None else "")
+        if not requested:
+            raise RuntimeError(
+                "VoiceClone requires voiceCloneAudio to be a full absolute path supplied in the WebSocket request. "
+                "The host should resolve the selected Star's voice clone file before calling the TTS server."
+            )
 
-        requested = (str(value).strip() if value is not None else "")
-        if requested:
-            candidates.append(requested)
+        expanded = os.path.expandvars(os.path.expanduser(requested))
+        path = Path(expanded)
+        if not path.is_absolute():
+            raise RuntimeError(
+                f"VoiceClone requires an absolute voiceCloneAudio path. Received relative value: {requested!r}. "
+                "Resolve it in the host/main view model before sending the WebSocket request."
+            )
 
-        if star_config is not None and star_config.voice_clone_audio_file:
-            trusted = star_config.voice_clone_audio_file.strip()
-            if trusted and trusted not in candidates:
-                candidates.append(trusted)
+        if not path.exists() or not path.is_file():
+            raise RuntimeError(f"VoiceClone reference audio file does not exist: {path}")
 
-        if star_config is not None and star_config.star_id:
-            star_slug = re.sub(r"[^a-z0-9]+", "_", star_config.star_id.lower()).strip("_")
-            for generated in (f"{star_slug}_clone.wav", f"{star_slug}.wav", f"{star_slug}_clone.mp3", f"{star_slug}.mp3"):
-                if generated not in candidates:
-                    candidates.append(generated)
-
-        if not candidates:
-            return None
-
-        clone_dirs = self._candidate_clone_dirs()
-        for candidate in candidates:
-            direct = Path(candidate)
-            if direct.exists() and direct.is_file():
-                return str(direct.resolve())
-
-            names_to_try = [candidate]
-            if not Path(candidate).suffix:
-                names_to_try.extend(f"{candidate}{ext}" for ext in (".wav", ".mp3", ".flac", ".ogg", ".m4a"))
-
-            for clone_dir in clone_dirs:
-                for name in names_to_try:
-                    candidate_path = clone_dir / name
-                    if candidate_path.exists() and candidate_path.is_file():
-                        if requested and name == requested and star_config is not None and star_config.voice_clone_audio_file:
-                            logger.info("Resolved requested clone audio %s for %s", name, star_config.star_id)
-                        elif requested and candidate != requested:
-                            logger.warning("Requested clone audio %s was not found; using Star profile clone %s", requested, name)
-                        return str(candidate_path.resolve())
-
-        logger.warning(
-            "Could not resolve clone audio. requested=%r trusted=%r searched=%s",
-            requested,
-            star_config.voice_clone_audio_file if star_config is not None else "",
-            "; ".join(str(x) for x in clone_dirs),
-        )
-        return None
+        return str(path.resolve())
 
     def _normalize_voice_name(self, voice_id: str) -> str:
         value = (voice_id or "").strip() or "elusiaa"
@@ -716,7 +664,7 @@ class QwenTtsEngine:
         logger.warning("Unsupported TTS language %r; falling back to %s", raw, safe)
         return safe
 
-    def _build_instruct(self, settings: Dict[str, Any], star_config: Optional[StarVoiceConfig]) -> str:
+    def _build_instruct(self, settings: Dict[str, Any]) -> str:
         pieces: List[str] = []
         voice_design_prompt = self._request_value(settings, "voiceDesignPrompt", "voice_design_prompt", default="")
         delivery = self._request_value(settings, "deliveryInstructions", "delivery_instructions", default="")
@@ -726,10 +674,28 @@ class QwenTtsEngine:
         pitch = self._request_value(settings, "pitchDescription", "pitch", default="")
         prosody = self._request_value(settings, "prosody", default="")
 
-        if star_config is not None:
-            summary = star_config.voice_instruction_summary()
-            if summary:
-                pieces.append(summary)
+        personality_short = self._request_value(settings, "personalityShort", "personality_short", default="")
+        voice_archetype = self._request_value(settings, "voiceArchetype", "voice_archetype", default="")
+        speaking_style = self._request_value(settings, "speakingStyle", "speaking_style", default="")
+        voice_style_rules = self._request_value(settings, "voiceStyleRules", "voice_style_rules", default=[])
+        voice_generation_rules = self._request_value(settings, "voiceGenerationRules", "voice_generation_rules", default=[])
+
+        if personality_short:
+            pieces.append(f"Personality: {personality_short}")
+        if voice_archetype:
+            pieces.append(f"Voice archetype: {voice_archetype}")
+        if speaking_style:
+            pieces.append(f"Speaking style: {speaking_style}")
+        if voice_style_rules:
+            if isinstance(voice_style_rules, list):
+                pieces.append("Voice style rules: " + " ".join(str(x) for x in voice_style_rules if str(x).strip()))
+            else:
+                pieces.append("Voice style rules: " + str(voice_style_rules))
+        if voice_generation_rules:
+            if isinstance(voice_generation_rules, list):
+                pieces.append("Voice generation rules: " + " ".join(str(x) for x in voice_generation_rules if str(x).strip()))
+            else:
+                pieces.append("Voice generation rules: " + str(voice_generation_rules))
         if voice_design_prompt:
             pieces.append(f"Stable voice identity: {voice_design_prompt}")
         if delivery:
@@ -766,15 +732,14 @@ class QwenTtsEngine:
         if self.model is None:
             raise RuntimeError("Qwen3-TTS model is not loaded")
 
-        star_config = self._get_star_config(star_id, voice_id)
         language = self._normalize_language(self._request_value(settings, "language", default=DEFAULT_LANGUAGE))
         task_type = self._normalize_task_type(self._request_value(settings, "taskType", "task_type", default=DEFAULT_TASK_TYPE))
         qwen_model_type = (self.model_type or "").lower()
-        instruct = self._build_instruct(settings, star_config)
+        instruct = self._build_instruct(settings)
 
         # Base models are voice-clone models, so force VoiceClone for them.
         if qwen_model_type == "base" or task_type == "VoiceClone":
-            wav_bytes = self._generate_voice_clone_sync(text, star_id, voice_id, language, settings, star_config)
+            wav_bytes = self._generate_voice_clone_sync(text, star_id, voice_id, language, settings)
         elif qwen_model_type == "voice_design" or task_type == "VoiceDesign":
             wavs, sample_rate = self.model.generate_voice_design(
                 text=text,
@@ -819,20 +784,12 @@ class QwenTtsEngine:
         voice_id: str,
         language: str,
         settings: Dict[str, Any],
-        star_config: Optional[StarVoiceConfig],
     ) -> bytes:
         voice_clone_audio = self._request_value(settings, "voiceCloneAudio", "voice_clone_audio", "voiceCloneAudioFile", "voice_clone_audio_file", default="")
         voice_clone_ref_text = self._request_value(settings, "voiceCloneRefText", "voice_clone_ref_text", default="")
-        if not voice_clone_ref_text and star_config is not None:
-            voice_clone_ref_text = star_config.voice_clone_ref_text
 
         x_vector_only = bool(self._request_value(settings, "xVectorOnly", "x_vector_only", default=False))
-        ref_audio_path = self._resolve_clone_audio_path(voice_clone_audio, star_config)
-        if ref_audio_path is None:
-            raise RuntimeError(
-                "VoiceClone requires a reference audio file. Provide voiceCloneAudio/voice_clone_audio, "
-                "or put the Star clone file in src/Wds.SixStars.Api/Content/VoiceClones."
-            )
+        ref_audio_path = self._resolve_clone_audio_path(voice_clone_audio)
 
         logger.info(
             "VoiceClone request: star=%s voice=%s ref_audio=%s ref_text_chars=%s x_vector_only=%s",
@@ -869,8 +826,31 @@ class QwenTtsEngine:
                 kwargs["xvec_only"] = x_vector_only
 
             logger.info("Using FasterQwen3TTS direct ref_audio voice clone path for %s/%s", star_id, voice_id)
-            wavs, sample_rate = self.model.generate_voice_clone(**kwargs)
-            return audio_to_wav(wavs[0], sample_rate)
+            try:
+                wavs, sample_rate = self.model.generate_voice_clone(**kwargs)
+                return audio_to_wav(wavs[0], sample_rate)
+            except Exception as exc:
+                logger.warning(
+                    "FasterQwen3TTS generation failed for %s/%s; falling back to official qwen_tts for the rest of this server session. Error: %s: %s",
+                    star_id,
+                    voice_id,
+                    type(exc).__name__,
+                    exc,
+                )
+                self.disable_faster_backend_for_session = True
+                self.model_loaded = False
+                self.using_faster_backend = False
+                self.cuda_graphs_active = False
+                self.voice_clone_prompt_cache.clear()
+                self.cache_failures.clear()
+                self.model = None
+                if torch is not None and DEVICE.startswith("cuda"):
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                self._load_model_sync()
+                return self._generate_voice_clone_sync(text, star_id, voice_id, language, settings)
 
         cache_key = self._cache_key(star_id, voice_id, ref_audio_path, str(voice_clone_ref_text or ""), x_vector_only)
         use_cache = USE_CLONE_PROMPT_CACHE and cache_key not in self.cache_failures

@@ -122,13 +122,34 @@ def check_json_endpoint(url: str, timeout: int = 4, headers: Optional[Dict[str, 
         return response.status, json.loads(payload)
 
 
+def first_non_empty(*values: Optional[str]) -> Optional[str]:
+    for value in values:
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def load_llm_api_key() -> Optional[str]:
+    # LM Studio can require Authorization: Bearer <token>. Accept the Six Stars
+    # env var and LM Studio's own LM_API_TOKEN name so launch.cmd and the WPF app
+    # can share the same token.
+    env_key = first_non_empty(
+        os.environ.get("SIX_STARS_LLM_API_KEY"),
+        os.environ.get("LM_API_TOKEN"),
+        os.environ.get("LM_STUDIO_API_KEY"),
+    )
+    if env_key:
+        return env_key
+
     for path in [ROOT / "src" / "Wds.SixStars.Ui" / "appsettings.json", ROOT / "appsettings.json"]:
         if not path.exists():
             continue
         try:
             settings = json.loads(path.read_text(encoding="utf-8"))
-            api_key = settings.get("LLM", {}).get("ApiKey")
+            api_key = first_non_empty(
+                settings.get("LLM", {}).get("ApiKey"),
+                settings.get("ScreenLLM", {}).get("ApiKey"),
+            )
             if api_key:
                 return api_key
         except Exception:
@@ -193,6 +214,12 @@ def print_probe(name: str, url: str, headers: Optional[Dict[str, str]] = None) -
         if isinstance(data, dict) and isinstance(data.get("data"), list):
             extra = f", {len(data['data'])} model(s)"
         print(f"READY   {name}: HTTP {status}{extra} - {url}")
+    except HTTPError as exc:
+        if exc.code == 401:
+            print(f"AUTH    {name}: HTTP 401 from {url}")
+            print("        LM Studio requires a Bearer token. Set LM_API_TOKEN or SIX_STARS_LLM_API_KEY before launching, or disable API key requirement in LM Studio.")
+        else:
+            print(f"CHECK   {name}: not ready yet - {url} (HTTP {exc.code})")
     except Exception as exc:
         print(f"CHECK   {name}: not ready yet - {url} ({exc})")
 
@@ -236,6 +263,59 @@ def wait_for_llm_health(port: str, headers: Optional[Dict[str, str]] = None) -> 
     if last_error:
         print(f"        Last check: {last_error}")
     print("        First model download/load can take a while. Watch logs/services/local_gemma_llm.log.")
+
+
+
+
+def get_torch_cuda_status() -> Dict[str, object]:
+    """Return a small status dict for the current venv's PyTorch/CUDA state."""
+    code = (
+        "import json\n"
+        "try:\n"
+        "    import torch\n"
+        "    data = {\n"
+        "        'imported': True,\n"
+        "        'version': getattr(torch, '__version__', 'unknown'),\n"
+        "        'cudaVersion': getattr(getattr(torch, 'version', None), 'cuda', None),\n"
+        "        'cudaAvailable': bool(getattr(torch, 'cuda', None) is not None and torch.cuda.is_available()),\n"
+        "        'deviceCount': int(torch.cuda.device_count()) if getattr(torch, 'cuda', None) is not None else 0,\n"
+        "    }\n"
+        "except Exception as exc:\n"
+        "    data = {'imported': False, 'error': f'{type(exc).__name__}: {exc}', 'cudaAvailable': False}\n"
+        "print(json.dumps(data))\n"
+    )
+    try:
+        result = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT), capture_output=True, text=True, timeout=20)
+        if result.returncode != 0:
+            return {"imported": False, "error": (result.stderr or result.stdout or "torch check failed").strip(), "cudaAvailable": False}
+        return json.loads(result.stdout.strip() or "{}")
+    except Exception as exc:
+        return {"imported": False, "error": f"{type(exc).__name__}: {exc}", "cudaAvailable": False}
+
+
+def resolve_qwen_tts_device() -> tuple[str, Dict[str, object]]:
+    """Choose the Qwen TTS device without blindly forcing CUDA on a CPU-only torch install."""
+    status = get_torch_cuda_status()
+    requested = (os.environ.get("QWEN_TTS_DEVICE") or "").strip().lower()
+    cuda_available = bool(status.get("cudaAvailable"))
+
+    if requested:
+        device = requested
+    else:
+        device = "cuda" if cuda_available else "cpu"
+
+    if device.startswith("cuda") and not cuda_available:
+        print("WARNING Qwen TTS requested CUDA, but this Python environment does not have CUDA-enabled PyTorch.")
+        print(f"        torch status: {status}")
+        print("        Run setup.cmd or scripts\\install_cuda_torch.cmd to install the CUDA PyTorch wheel.")
+        print("        Or set QWEN_TTS_DEVICE=cpu to test the slow CPU path.")
+    elif device == "cpu":
+        print("WARNING Qwen TTS is using CPU. Voice generation may be very slow.")
+        print("        For the fast voice path, run setup.cmd or scripts\\install_cuda_torch.cmd and leave QWEN_TTS_DEVICE unset/cuda.")
+    else:
+        print(f"READY   Qwen TTS CUDA PyTorch detected: torch={status.get('version')} cuda={status.get('cudaVersion')} devices={status.get('deviceCount')}")
+
+    return device, status
 
 
 def main() -> int:
@@ -352,16 +432,18 @@ def main() -> int:
     if websocket_tts_script.exists():
         qwen_model = os.environ.get("QWEN_TTS_MODEL_PATH", "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
         resolved_qwen_model = resolve_model_ref("tts", qwen_model, "", aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"])
+        qwen_device, torch_status = resolve_qwen_tts_device()
+        qwen_cuda = qwen_device.startswith("cuda") and bool(torch_status.get("cudaAvailable"))
         tts_env = {
             "QWEN_TTS_PORT": tts_port,
             "PYTHONNOUSERSITE": os.environ.get("PYTHONNOUSERSITE", "1"),
-            "QWEN_TTS_DEVICE": os.environ.get("QWEN_TTS_DEVICE", "cuda"),
+            "QWEN_TTS_DEVICE": qwen_device,
             "QWEN_TTS_LANGUAGE": os.environ.get("QWEN_TTS_LANGUAGE", "English"),
             # Voice Clone Studio is fast in the user's test because it uses the 0.6B Base model
-            # with CUDA graph acceleration. Match that by default; override with env vars if needed.
+            # with CUDA graph acceleration. Enable the fast path only when CUDA torch is actually available.
             "QWEN_TTS_MODEL_PATH": resolved_qwen_model,
-            "QWEN_TTS_USE_CUDA_GRAPHS": os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true"),
-            "QWEN_TTS_USE_FASTER_QWEN3": os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true"),
+            "QWEN_TTS_USE_CUDA_GRAPHS": os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true" if qwen_cuda else "false"),
+            "QWEN_TTS_USE_FASTER_QWEN3": os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true" if qwen_cuda else "false"),
             "QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS": os.environ.get("QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS", "3"),
             "QWEN_TTS_CHUNK_GENERATION_MODE": os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "first_then_prefetch"),
             "QWEN_TTS_PARALLEL_CHUNKS": os.environ.get("QWEN_TTS_PARALLEL_CHUNKS", "false"),

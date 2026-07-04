@@ -532,6 +532,41 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return options;
     }
 
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (string? value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string? GetLlmApiKey(string? configuredApiKey)
+    {
+        // LM Studio's newer developer server can require Authorization: Bearer <token>.
+        // Support both the Six Stars env var and LM Studio's own LM_API_TOKEN name so the
+        // WPF app works whether it is launched from Visual Studio, launch.cmd, or a terminal.
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_LLM_API_KEY"),
+            Environment.GetEnvironmentVariable("LM_API_TOKEN"),
+            Environment.GetEnvironmentVariable("LM_STUDIO_API_KEY"),
+            configuredApiKey);
+    }
+
+    private static string? GetScreenLlmApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_API_KEY"),
+            Environment.GetEnvironmentVariable("SIX_STARS_LLM_API_KEY"),
+            Environment.GetEnvironmentVariable("LM_API_TOKEN"),
+            Environment.GetEnvironmentVariable("LM_STUDIO_API_KEY"),
+            configuredApiKey);
+    }
+
     private IStarAgent CreateStarAgent()
     {
         string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_LLM_ENDPOINT")
@@ -551,7 +586,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Model = Environment.GetEnvironmentVariable("SIX_STARS_LLM_MODEL")
                 ?? _appConfig.LLM.Model
                 ?? _appConfig.LocalModels.LlmModel,
-            ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_LLM_API_KEY") ?? _appConfig.LLM.ApiKey,
+            ApiKey = GetLlmApiKey(_appConfig.LLM.ApiKey),
             UseJsonSchemaResponseFormat = GetBooleanSetting(
                 Environment.GetEnvironmentVariable("SIX_STARS_LLM_USE_JSON_SCHEMA"),
                 _appConfig.LLM.UseJsonSchemaResponseFormat),
@@ -725,7 +760,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Model = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MODEL")
                 ?? _appConfig.ScreenLLM.Model
                 ?? _appConfig.LocalModels.LlmModel,
-            ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_API_KEY") ?? _appConfig.ScreenLLM.ApiKey,
+            ApiKey = GetScreenLlmApiKey(_appConfig.ScreenLLM.ApiKey),
             UseJsonSchemaResponseFormat = _appConfig.ScreenLLM.UseJsonSchemaResponseFormat
         });
     }
@@ -962,6 +997,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
         }
+
+        PrepareVoiceCloneReferenceForTts(response);
 
         bool completedNormally = false;
         bool storyPrefetchHandledEntireStory = false;
@@ -1294,8 +1331,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private static VoiceSynthesisRequest CreateVoiceSynthesisRequest(StarInteractionResponse response)
+    private VoiceSynthesisRequest CreateVoiceSynthesisRequest(StarInteractionResponse response)
     {
+        PrepareVoiceCloneReferenceForTts(response);
+
         return new VoiceSynthesisRequest
         {
             SessionId = DefaultSessionId,
@@ -1312,7 +1351,84 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
     }
 
-    private static StarVoiceSettings CreateStoryVoiceSettingsFromResponse(StarInteractionResponse response)
+    private void PrepareVoiceCloneReferenceForTts(StarInteractionResponse response)
+    {
+        if (response == null || response.VoiceDirective == null)
+        {
+            return;
+        }
+
+        string configured = response.VoiceDirective.VoiceCloneAudioFile ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return;
+        }
+
+        string fullPath = ResolveVoiceCloneAudioPath(configured);
+        if (!string.IsNullOrWhiteSpace(fullPath))
+        {
+            response.VoiceDirective.VoiceCloneAudioFile = fullPath;
+            System.Diagnostics.Debug.WriteLine("[VoiceClone] Resolved reference audio path for " + (response.StarId ?? "star") + ": " + fullPath);
+        }
+    }
+
+    private string ResolveVoiceCloneAudioPath(string configuredPath)
+    {
+        string value = (configuredPath ?? string.Empty).Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        value = Environment.ExpandEnvironmentVariables(value);
+        try
+        {
+            if (Path.IsPathFullyQualified(value))
+            {
+                return Path.GetFullPath(value);
+            }
+        }
+        catch
+        {
+            return value;
+        }
+
+        string fileName = Path.GetFileName(value);
+        List<string> candidates = new List<string>();
+
+        void AddCandidate(string candidate)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && !candidates.Any(x => string.Equals(x, candidate, StringComparison.OrdinalIgnoreCase)))
+            {
+                candidates.Add(candidate);
+            }
+        }
+
+        string baseDir = AppContext.BaseDirectory;
+        AddCandidate(Path.Combine(baseDir, value));
+        AddCandidate(Path.Combine(baseDir, "Content", "VoiceClones", fileName));
+        AddCandidate(Path.Combine(baseDir, "Wds.SixStars.Api", "Content", "VoiceClones", fileName));
+
+        DirectoryInfo? current = new DirectoryInfo(baseDir);
+        for (int i = 0; i < 8 && current != null; i++)
+        {
+            AddCandidate(Path.Combine(current.FullName, "Content", "VoiceClones", fileName));
+            AddCandidate(Path.Combine(current.FullName, "src", "Wds.SixStars.Api", "Content", "VoiceClones", fileName));
+            current = current.Parent;
+        }
+
+        string? found = candidates.FirstOrDefault(File.Exists);
+        if (!string.IsNullOrWhiteSpace(found))
+        {
+            return Path.GetFullPath(found);
+        }
+
+        // Return the most likely full path even if the file is missing so the Python side can
+        // report the exact missing path instead of silently searching random clone folders.
+        return Path.GetFullPath(Path.Combine(baseDir, "Content", "VoiceClones", fileName));
+    }
+
+    private StarVoiceSettings CreateStoryVoiceSettingsFromResponse(StarInteractionResponse response)
     {
         string strongestEmotion = response.EmotionScores
             .OrderByDescending(x => x.Value.Score * x.Value.Confidence)
@@ -1335,7 +1451,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             PrimaryEmotion = primaryEmotion ?? "neutral",
             EmotionIntensity = directiveIntensity,
             VoiceDesignPrompt = directive.VoiceDesignPrompt ?? string.Empty,
-            VoiceCloneAudioFile = directive.VoiceCloneAudioFile ?? string.Empty,
+            VoiceCloneAudioFile = ResolveVoiceCloneAudioPath(directive.VoiceCloneAudioFile ?? string.Empty),
             VoiceCloneRefText = directive.VoiceCloneRefText ?? string.Empty,
             XVectorOnly = directive.XVectorOnly,
             DeliveryInstructions = directive.DeliveryInstructions ?? string.Empty,
@@ -1731,7 +1847,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         // reads Chunk 1+ directly from the cached markdown instead of calling the LLM again.
         StoryOptions options = new StoryOptions
         {
-            Length = "random_2_to_45_minute_serial_story",
+            Length = "flexible_random_2_to_35_minute_complete_story",
             Tone = "comforting, adventurous, cave-travel friendly",
             CanonStrictness = "high",
             UseUnlockedSecrets = true,

@@ -16,7 +16,7 @@ namespace Wds.SixStars.Api.Models
         public string VoiceDesignPrompt { get; set; } = string.Empty;
 
         /// <summary>
-        /// Optional clone reference audio filename/path resolved by the TTS sidecar.
+        /// Clone reference audio path. Desktop/Unity should resolve this to a full absolute path before sending it to the Python TTS sidecar.
         /// </summary>
         public string VoiceCloneAudioFile { get; set; } = string.Empty;
 

@@ -156,6 +156,19 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add("No per-pass max_tokens cap is sent unless explicitly configured; output size is controlled by compact schema and prompts.");
             response.Debug.Notes.Add($"Speech parts: {response.SpokenParts.Count}; joined length: {response.SpokenText.Length} characters.");
             response.Debug.Notes.Add($"Foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length} characters.");
+            if (isStory)
+            {
+                int storyChunks = ExtractAllMarkdownChunks(response.StoryMarkdown).Count;
+                response.Debug.Notes.Add("Story plan debug: approximate target "
+                    + (request.StoryOptions?.TargetMinutes ?? 0)
+                    + " minute(s), "
+                    + (request.StoryOptions?.TargetChunkCount ?? 0)
+                    + " requested/capped chunk(s), actual markdown chunks="
+                    + storyChunks
+                    + ", markdown chars="
+                    + (string.IsNullOrWhiteSpace(response.StoryMarkdown) ? 0 : response.StoryMarkdown.Length)
+                    + ". Target is flexible; complete story arc is preferred over exact duration.");
+            }
             return response;
         }
 
@@ -347,6 +360,16 @@ namespace Wds.SixStars.Api.Ai
             }
 
             bool continuation = options.ContinueActiveStory;
+            if (!continuation && string.IsNullOrWhiteSpace(model.StoryMarkdown) && model.SpokenParts.Count > 0)
+            {
+                // Some local OpenAI-compatible backends may ignore the storyMarkdown field under
+                // response_format pressure. Preserve a valid local-autoplay shape rather than
+                // allowing story mode to collapse into an intro or empty story. The prompt still
+                // asks for a full story, but this salvage prevents a hard failure.
+                model.StoryMarkdown = NormalizeStoryMarkdownIntoShortChunks(string.Join(" ", model.SpokenParts), maxSentences);
+                model.StoryIsFinished = true;
+            }
+
             int expectedIndex = continuation ? Math.Max(0, options.NextStoryPartIndex) : 0;
             string expectedChunk = continuation
                 ? FirstNonEmpty(options.NextStoryChunkMarkdown, ExtractMarkdownChunk(options.ActiveStoryMarkdown, expectedIndex))
