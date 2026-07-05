@@ -188,21 +188,32 @@ internal static class Program
     internal static void ApplySharedEnvironment(IDictionary<string, string?> env, string root, ModelManifest models)
     {
         var modelsRoot = Path.Combine(root, "models");
+        env["SIX_STARS_APP_ROOT"] = root;
+        env["SIX_STARS_REPO_ROOT"] = root;
         env["SIX_STARS_MODELS_ROOT"] = modelsRoot;
         env["HF_HOME"] = Path.Combine(modelsRoot, "hf");
         env["HF_HUB_CACHE"] = Path.Combine(modelsRoot, "hf", "hub");
         env["PYTHONNOUSERSITE"] = "1";
         env["WHISPER_PORT"] = "8000";
         env["WHISPER_HOST"] = "127.0.0.1";
+        env["SIX_STARS_REQUIRE_CUDA"] = "true";
         env["WHISPER_MODEL"] = models.Models.Asr?.ModelName ?? "large-v3-turbo";
+        env["WHISPER_DEVICE"] = "cuda";
+        env["WHISPER_COMPUTE_TYPE"] = "float16";
         env["WHISPER_DOWNLOAD_ROOT"] = Path.Combine(modelsRoot, "asr");
         env["QWEN_TTS_PORT"] = "8100";
         env["QWEN_TTS_MODEL_PATH"] = models.Models.Tts?.LocalPath is { Length: > 0 } ttsPath
             ? FullPath(root, ttsPath)
             : (models.Models.Tts?.ModelName ?? "Qwen/Qwen3-TTS-12Hz-0.6B-Base");
+        env["QWEN_TTS_MODEL_NAME"] = models.Models.Tts?.ModelName ?? "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        env["QWEN_TTS_CLONE_AUDIO_DIR"] = FullPath(root, Path.Combine("src", "Wds.SixStars.Api", "Content", "VoiceClones"));
+        env["QWEN_TTS_STARS_DIR"] = FullPath(root, Path.Combine("src", "Wds.SixStars.Api", "Content", "Stars"));
         env["QWEN_TTS_LANGUAGE"] = "English";
-        env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "first_then_prefetch";
-        env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "1";
+        env["SIX_STARS_REQUIRE_CUDA"] = "true";
+        env["QWEN_TTS_DEVICE"] = "cuda";
+        env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "parallel";
+        env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "0";
+        env["QWEN_TTS_PARALLEL_CHUNKS"] = "true";
         env["QWEN_TTS_USE_FASTER_QWEN3"] = env.TryGetValue("QWEN_TTS_USE_FASTER_QWEN3", out var faster) ? faster : "true";
         env["QWEN_TTS_USE_CUDA_GRAPHS"] = env.TryGetValue("QWEN_TTS_USE_CUDA_GRAPHS", out var graphs) ? graphs : "true";
     }
@@ -321,16 +332,27 @@ internal sealed class RuntimeSupervisor : IDisposable
             }
         }
 
-        Console.WriteLine($"WARNING No {kind} service started. The UI may fail or run in text-only/fallback mode.");
+        string message = $"No {kind} CUDA/GPU service started. " + (_manifest.GpuPolicy.HostedServiceMessage ?? "Install/configure NVIDIA CUDA engines or use a hosted service option.");
+        if (_manifest.GpuPolicy.RequireCuda && !_manifest.GpuPolicy.AllowCpuFallback)
+        {
+            throw new InvalidOperationException(message);
+        }
+        Console.WriteLine("WARNING " + message);
     }
 
     private bool IsCompatible(RuntimePack pack)
     {
-        return pack.Vendor.ToLowerInvariant() switch
+        var vendor = pack.Vendor.ToLowerInvariant();
+        if (_manifest.GpuPolicy.RequireCuda && !_manifest.GpuPolicy.AllowCpuFallback)
+        {
+            return vendor == "nvidia" && _hardware.HasNvidia;
+        }
+
+        return vendor switch
         {
             "nvidia" => _hardware.HasNvidia,
             "generic-gpu" => _hardware.HasVulkan || _hardware.HasNvidia,
-            "cpu" => true,
+            "cpu" => _manifest.GpuPolicy.AllowCpuFallback,
             _ => true
         };
     }
@@ -379,17 +401,17 @@ internal sealed class RuntimeSupervisor : IDisposable
     {
         if (pack.Id.Contains("nvidia", StringComparison.OrdinalIgnoreCase))
         {
+            env["SIX_STARS_REQUIRE_CUDA"] = "true";
             env["WHISPER_DEVICE"] = "cuda";
             env["WHISPER_COMPUTE_TYPE"] = "float16";
             env["QWEN_TTS_DEVICE"] = "cuda";
+            env["QWEN_TTS_PARALLEL_CHUNKS"] = "true";
+            env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "parallel";
+            env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "0";
         }
         else if (pack.Id.Contains("cpu", StringComparison.OrdinalIgnoreCase))
         {
-            env["WHISPER_DEVICE"] = "cpu";
-            env["WHISPER_COMPUTE_TYPE"] = "int8";
-            env["QWEN_TTS_DEVICE"] = "cpu";
-            env["QWEN_TTS_USE_CUDA_GRAPHS"] = "false";
-            env["QWEN_TTS_USE_FASTER_QWEN3"] = "false";
+            throw new InvalidOperationException(_manifest.GpuPolicy.HostedServiceMessage ?? "CPU runtime packs are disabled. Configure NVIDIA CUDA engines or use a hosted service option.");
         }
 
         if (pack.Kind == "llm")
@@ -599,10 +621,18 @@ internal sealed record HardwareInfo(bool HasNvidia, bool HasVulkan, string OsDes
 internal sealed class RuntimeManifest
 {
     [JsonPropertyName("version")] public int Version { get; set; }
+    [JsonPropertyName("gpuPolicy")] public RuntimeGpuPolicy GpuPolicy { get; set; } = new();
     [JsonPropertyName("selectionOrder")] public Dictionary<string, List<string>> SelectionOrder { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     [JsonPropertyName("packs")] public List<RuntimePack> Packs { get; set; } = new();
     public static RuntimeManifest Load(string path) => JsonSerializer.Deserialize<RuntimeManifest>(File.ReadAllText(path), JsonOptions()) ?? new RuntimeManifest();
     internal static JsonSerializerOptions JsonOptions() => new() { PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+}
+
+internal sealed class RuntimeGpuPolicy
+{
+    [JsonPropertyName("requireCuda")] public bool RequireCuda { get; set; } = true;
+    [JsonPropertyName("allowCpuFallback")] public bool AllowCpuFallback { get; set; } = false;
+    [JsonPropertyName("hostedServiceMessage")] public string? HostedServiceMessage { get; set; } = "CUDA/GPU is required for local Six Stars ASR/TTS/LLM. Install/configure NVIDIA CUDA engines or use a hosted service option.";
 }
 
 internal sealed class RuntimePack

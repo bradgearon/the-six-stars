@@ -53,7 +53,13 @@ namespace Wds.SixStars.Api.Models
         public DateTimeOffset? LastInteractionAt { get; set; }
         public string CurrentConversationId { get; set; } = string.Empty;
         public string ConversationSummary { get; set; } = string.Empty;
+
+        /// <summary>Small distilled prompt-facing quote list. Keep this bounded so the ongoing conversation context never grows huge.</summary>
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
+
+        /// <summary>Durable source archive of important player quotes for nostalgia / old-memory retrieval. The prompt only receives selected slices.</summary>
+        public List<StarImportantQuoteRecord> AllImportantPlayerQuotes { get; set; } = new List<StarImportantQuoteRecord>();
+
         public List<string> MemoryNotes { get; set; } = new List<string>();
 
         /// <summary>Exact things the player explicitly asked this Star to remember: coordinates, location markers, descriptions, and named points of interest.</summary>
@@ -78,7 +84,11 @@ namespace Wds.SixStars.Api.Models
         public DateTimeOffset? LastRomanticInteractionAt { get; set; }
         public DateTimeOffset? LastHurtInteractionAt { get; set; }
 
+        /// <summary>Recent active conversation turns only. Older turns are moved to OldConversationArchives after the configured age window.</summary>
         public List<ConversationLogEntry> MemoryLog { get; set; } = new List<ConversationLogEntry>();
+
+        /// <summary>Summarized archived conversation blocks with source entries retained for explicit old-memory retrieval.</summary>
+        public List<StarConversationArchiveEntry> OldConversationArchives { get; set; } = new List<StarConversationArchiveEntry>();
 
         /// <summary>Recent deterministic emotion updates used to prevent repeated cheap scoring and to detect longer-term combos.</summary>
         public List<EmotionUpdateHistoryEntry> EmotionUpdateHistory { get; set; } = new List<EmotionUpdateHistoryEntry>();

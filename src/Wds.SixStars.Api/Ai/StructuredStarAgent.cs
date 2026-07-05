@@ -143,6 +143,8 @@ namespace Wds.SixStars.Api.Ai
                 StorySummary = string.IsNullOrWhiteSpace(model.StorySummary) && request.StoryOptions != null ? request.StoryOptions.ActiveStorySummary : model.StorySummary ?? string.Empty,
                 StoryIsFinished = request.RequestType == RequestType.Story ? model.StoryIsFinished : true,
                 StoryPartIndex = request.StoryOptions?.NextStoryPartIndex ?? model.StoryPartIndex,
+                NeedsMoreInformation = model.NeedsMoreInformation,
+                InformationNeeds = model.InformationNeeds ?? new List<InformationNeedVectorItem>(),
                 Debug = new DebugInfo
                 {
                     DetectedIntent = request.RequestType.ToString(),
@@ -159,6 +161,10 @@ namespace Wds.SixStars.Api.Ai
                 : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
             response.Debug.Notes.Add($"Speech parts: {response.SpokenParts.Count}; joined length: {response.SpokenText.Length} characters.");
             response.Debug.Notes.Add("Foreground pass does not request emotionalEffectVector or negativeEmotionVector; background review computes them.");
+            if (response.NeedsMoreInformation || response.InformationNeeds.Count > 0)
+            {
+                response.Debug.Notes.Add("Foreground pass requested extra information: " + string.Join(", ", response.InformationNeeds.Select(x => x.DataType + ":" + x.Subject + "@" + x.Confidence.ToString("0.00"))));
+            }
             if (isStory)
             {
                 int storyChunks = ExtractAllMarkdownChunks(response.StoryMarkdown).Count;

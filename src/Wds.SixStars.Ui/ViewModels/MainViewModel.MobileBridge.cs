@@ -10,10 +10,12 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.Speech;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
+using Wds.SixStars.Api.State;
 
 namespace Wds.SixStars.Ui.ViewModels;
 
@@ -129,7 +131,9 @@ public sealed partial class MainViewModel
             ProcessMobileAudioAsync,
             ProcessMobileTestAudioAsync,
             CreateMobileHealthPayload,
-            CreateMobileStarsPayload);
+            CreateMobileStarsPayload,
+            CreateMobileStatePayloadAsync,
+            _mobileBridgeDispatcher);
         _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
         {
             MobileBridgeStatus = message + " HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
@@ -193,6 +197,265 @@ public sealed partial class MainViewModel
             stars = StarIds.ToArray(),
             requestTypes = RequestTypes.Select(x => x.ToString()).ToArray()
         };
+    }
+
+    private async Task<object> CreateMobileStatePayloadAsync(CancellationToken cancellationToken)
+    {
+        List<object> states = new List<object>();
+        foreach (string starId in StarIds)
+        {
+            StarState state = await _runtime.GetStarStateAsync("android-phone-dev", starId, cancellationToken).ConfigureAwait(false);
+            states.Add(CreateMobileStarStateDto(state));
+        }
+
+        return new
+        {
+            ok = true,
+            selectedStarId = SelectedStarId,
+            sessionId = "android-phone-dev",
+            stars = states,
+            latestEventSequence = _mobileBridgeDispatcher.GetEventsAfter(long.MaxValue).LatestSequence,
+            time = DateTimeOffset.Now
+        };
+    }
+
+    private async Task<MobileBridgeDispatchResult> HandleMobileBridgeCommandAsync(MobileBridgeDispatchCommand command, CancellationToken cancellationToken)
+    {
+        string commandType = string.IsNullOrWhiteSpace(command.CommandType) ? "RefreshState" : command.CommandType;
+        string sessionId = string.IsNullOrWhiteSpace(command.SessionId) ? "android-phone-dev" : command.SessionId;
+        string starId = ResolveDefaultStarId(command.StarId);
+
+        switch (commandType)
+        {
+            case "SelectStar":
+            {
+                OnUiThread(() =>
+                {
+                    _suppressMobileBridgeSelectedStarBroadcast = true;
+                    try
+                    {
+                        SelectedStarId = starId;
+                    }
+                    finally
+                    {
+                        _suppressMobileBridgeSelectedStarBroadcast = false;
+                    }
+                });
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Android selected " + starId + "."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Elusiaa shifted the phone focus to " + starId + ".");
+            }
+            case "SetMet":
+            {
+                bool isMet = command.IsMet ?? true;
+                StarState state = await _runtime.SetStarMetAsync(sessionId, starId, isMet, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " met=" + state.IsMet + ", ally=" + state.IsAlly + "."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + (state.IsMet ? " is now marked met." : " is no longer marked met."));
+            }
+            case "SetAlly":
+            {
+                bool isAlly = command.IsAlly ?? true;
+                StarState state = await _runtime.SetStarWorldStateAsync(new StarWorldStateUpdateRequest
+                {
+                    SessionId = sessionId,
+                    StarId = starId,
+                    IsAlly = isAlly,
+                    IsMet = isAlly ? true : (bool?)null,
+                    Reason = string.IsNullOrWhiteSpace(command.Reason) ? "Android bridge ally toggle" : command.Reason
+                }, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " ally=" + state.IsAlly + ", met=" + state.IsMet + "."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + (state.IsAlly ? " joined as an ally." : " ally flag was removed."));
+            }
+            case "ClearHistory":
+            {
+                StarState state = await _runtime.ResetStarMemoryAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                _stateChangeTracker.Reset(starId);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(state, "Cleared Android bridge history for " + starId + ".");
+                    if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        StarOutput = string.Empty;
+                        LastTranscript = string.Empty;
+                    }
+                });
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Khavia washed the Android conversation history clean for " + starId + ".");
+            }
+
+            case "ClearAllData":
+            {
+                StarState selectedState = null!;
+                foreach (string star in StarIds.ToList())
+                {
+                    StarState reset = await _runtime.ResetStarMemoryAsync(sessionId, star, cancellationToken).ConfigureAwait(false);
+                    _stateChangeTracker.Reset(star);
+                    if (string.Equals(star, starId, StringComparison.OrdinalIgnoreCase) || string.Equals(star, SelectedStarId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedState = reset;
+                    }
+                    _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                    {
+                        EventType = "StarHistoryCleared",
+                        CommandId = command.CommandId,
+                        SourceClientId = command.SourceClientId,
+                        SessionId = sessionId,
+                        StarId = star,
+                        SelectedStarId = SelectedStarId,
+                        IsMet = reset.IsMet,
+                        IsAlly = reset.IsAlly,
+                        Heart = reset.Heart,
+                        Trust = reset.Trust,
+                        Romance = reset.Romance,
+                        EmotionalConnectionPercent = reset.EmotionalConnectionPercent,
+                        IsGirlfriendReady = reset.IsGirlfriendReady,
+                        Message = "Elusiaa helped clear all local Android Star data for " + star + "."
+                    });
+                }
+                if (selectedState == null) selectedState = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(selectedState, "Cleared all Android bridge Star data.");
+                    StarOutput = string.Empty;
+                    LastTranscript = string.Empty;
+                });
+                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept every Android Star memory shelf clean and refreshed the state.");
+            }
+            case "RefreshState":
+            default:
+            {
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Refreshed Android bridge state for " + starId + "."));
+                return PublishMobileCommandResult(command, true, "RefreshState", starId, sessionId, state, "Nyxari checked the current state for " + starId + ".");
+            }
+        }
+    }
+
+    private void ApplyMobileStateToSelectedStarUi(StarState state, string status)
+    {
+        if (state == null) return;
+        if (string.Equals(SelectedStarId, state.StarId, StringComparison.OrdinalIgnoreCase))
+        {
+            _isLoadingSelectedStarState = true;
+            try
+            {
+                SelectedStarIsMet = state.IsMet;
+                SelectedStarIsAlly = state.IsAlly;
+            }
+            finally
+            {
+                _isLoadingSelectedStarState = false;
+            }
+        }
+        MobileBridgeStatus = status;
+        AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%");
+    }
+
+    private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message)
+    {
+        MobileBridgeDispatchResult result = new MobileBridgeDispatchResult
+        {
+            Ok = ok,
+            CommandId = command.CommandId,
+            CommandType = commandType,
+            StarId = starId,
+            SelectedStarId = SelectedStarId,
+            IsMet = state.IsMet,
+            IsAlly = state.IsAlly,
+            State = state,
+            Message = message
+        };
+
+        result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+        {
+            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
+            CommandId = command.CommandId,
+            SourceClientId = command.SourceClientId,
+            SessionId = sessionId,
+            StarId = starId,
+            SelectedStarId = SelectedStarId,
+            IsMet = state.IsMet,
+            IsAlly = state.IsAlly,
+            Heart = state.Heart,
+            Trust = state.Trust,
+            Romance = state.Romance,
+            EmotionalConnectionPercent = state.EmotionalConnectionPercent,
+            IsGirlfriendReady = state.IsGirlfriendReady,
+            Message = message
+        });
+        return result;
+    }
+
+    private async Task PublishMobileSelectedStarUpdateAsync(string reason)
+    {
+        try
+        {
+            string starId = ResolveDefaultStarId(SelectedStarId);
+            StarState state = await _runtime.GetStarStateAsync("android-phone-dev", starId, CancellationToken.None).ConfigureAwait(false);
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "SelectedStarChanged",
+                SourceClientId = "desktop-ui",
+                SessionId = "android-phone-dev",
+                StarId = starId,
+                SelectedStarId = starId,
+                IsMet = state.IsMet,
+                IsAlly = state.IsAlly,
+                Heart = state.Heart,
+                Trust = state.Trust,
+                Romance = state.Romance,
+                EmotionalConnectionPercent = state.EmotionalConnectionPercent,
+                IsGirlfriendReady = state.IsGirlfriendReady,
+                Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish selected Star update: " + ex.Message);
+        }
+    }
+
+    private static object CreateMobileStarStateDto(StarState state)
+    {
+        return new
+        {
+            starId = state.StarId,
+            isMet = state.IsMet,
+            isAlly = state.IsAlly,
+            heart = state.Heart,
+            trust = state.Trust,
+            romance = state.Romance,
+            emotionalConnectionPercent = state.EmotionalConnectionPercent,
+            isGirlfriendReady = state.IsGirlfriendReady,
+            interactionCount = state.InteractionCount
+        };
+    }
+
+    private void PublishMobileBridgeStateEventFromDesktop(string eventType, StarState state, string message)
+    {
+        if (state == null) return;
+        try
+        {
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = string.IsNullOrWhiteSpace(eventType) ? "StarStateChanged" : eventType,
+                SourceClientId = "desktop-ui",
+                SessionId = DefaultSessionId,
+                StarId = state.StarId,
+                SelectedStarId = SelectedStarId,
+                IsMet = state.IsMet,
+                IsAlly = state.IsAlly,
+                Heart = state.Heart,
+                Trust = state.Trust,
+                Romance = state.Romance,
+                EmotionalConnectionPercent = state.EmotionalConnectionPercent,
+                IsGirlfriendReady = state.IsGirlfriendReady,
+                Message = message
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish desktop state event: " + ex.Message);
+        }
     }
 
     private void AppendMobileBridgeVoiceDebug(string title, string details)

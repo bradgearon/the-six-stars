@@ -49,7 +49,7 @@
                 <GroupBox Grid.Row="0" Header="Message To Selected Star — default companion mode">
                     <DockPanel Margin="8">
                         <TextBlock DockPanel.Dock="Top"
-                                   Text="Type normal chat here: hi, work banter, poetry about her eyes, moral questions, romance tests, or anything the Last Cat says. Click Send Message for plain chat."
+                                   Text="Type normal chat here, then send. This box starts blank and clears after the request is queued."
                                    TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
                         <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True" TextWrapping="Wrap"
@@ -59,10 +59,10 @@
                     </DockPanel>
                 </GroupBox>
 
-                <GroupBox Grid.Row="2" Header="Optional Story Suggestion">
+                <GroupBox Grid.Row="2" Header="Optional Story Seed">
                     <DockPanel Margin="8">
                         <TextBlock DockPanel.Dock="Top"
-                                   Text="When you click Tell Me A Story, this optional seed is sent as StoryOptions.PlayerSuggestion. Leave it blank and she chooses her own story."
+                                   Text="Optional. Leave this blank and the selected Star chooses the story herself. This box clears after the request is queued."
                                    TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
                         <TextBox Text="{Binding StorySuggestion, UpdateSourceTrigger=PropertyChanged}"
                                  AcceptsReturn="True" TextWrapping="Wrap"
@@ -81,7 +81,8 @@
                     <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Margin="0,0,0,8" Height="36" />
                     <Button Content="Interrupt Story" Command="{Binding InterruptStoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
-                    <TextBlock Text="Send Message keeps RequestType=Chat. Tell Me A Story sets RequestType=Story and sends the optional story suggestion above. Interrupt Story stops local cached story autoplay. Clear Selected Star History resets the local memory/relationship state for the selected Star." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />
+                    <TextBlock Text="Send Message keeps RequestType=Chat and requires typed text. Tell Me A Story sets RequestType=Story; with blank message/seed, the selected Star invents the story herself. Interrupt Story stops local cached story autoplay. Clear Selected Star History resets one Star. Clear All Star Data resets every Star state saved locally and refreshes both desktop and Android dev sessions." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Separator Margin="0,8,0,8" />
                     <TextBlock Text="Scenario Tests" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Goblin / Harpy Discernment" Command="{Binding GoblinHarpiesCommand}" Margin="0,0,0,8" Height="34" />

@@ -9,6 +9,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Wds.SixStars.Api.Mobile;
 
 namespace Wds.SixStars.Ui.Networking;
 
@@ -19,6 +20,8 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly Func<CancellationToken, Task<object>> _testAudioHandler;
     private readonly Func<object> _healthFactory;
     private readonly Func<object> _starsFactory;
+    private readonly Func<CancellationToken, Task<object>> _stateFactory;
+    private readonly MobileBridgeDispatcher _dispatcher;
     private readonly JsonSerializerOptions _jsonOptions;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -36,7 +39,9 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> audioHandler,
         Func<CancellationToken, Task<object>> testAudioHandler,
         Func<object> healthFactory,
-        Func<object> starsFactory)
+        Func<object> starsFactory,
+        Func<CancellationToken, Task<object>> stateFactory,
+        MobileBridgeDispatcher dispatcher)
     {
         Port = port;
         _messageHandler = messageHandler;
@@ -44,6 +49,8 @@ public sealed class MobileBridgeHttpServer : IDisposable
         _testAudioHandler = testAudioHandler;
         _healthFactory = healthFactory;
         _starsFactory = starsFactory;
+        _stateFactory = stateFactory;
+        _dispatcher = dispatcher;
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -131,6 +138,31 @@ public sealed class MobileBridgeHttpServer : IDisposable
                     return;
                 }
 
+                if (request.Method == "GET" && request.Path == "/api/mobile/state")
+                {
+                    object response = await _stateFactory(serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, 200, response, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "GET" && request.Path == "/api/mobile/events")
+                {
+                    long after = 0;
+                    int max = 50;
+                    if (request.Query.TryGetValue("after", out string? afterText)) long.TryParse(afterText, out after);
+                    if (request.Query.TryGetValue("max", out string? maxText)) int.TryParse(maxText, out max);
+                    await WriteJsonAsync(stream, 200, _dispatcher.GetEventsAfter(after, max), serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "POST" && request.Path == "/api/mobile/dispatch")
+                {
+                    MobileBridgeDispatchCommand? command = JsonSerializer.Deserialize<MobileBridgeDispatchCommand>(request.Body, _jsonOptions);
+                    MobileBridgeDispatchResult response = await _dispatcher.DispatchAsync(command ?? new MobileBridgeDispatchCommand(), serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
                 if (request.Method == "POST" && request.Path == "/api/mobile/message")
                 {
                     MobileBridgeRequest? mobileRequest = JsonSerializer.Deserialize<MobileBridgeRequest>(request.Body, _jsonOptions);
@@ -188,14 +220,30 @@ public sealed class MobileBridgeHttpServer : IDisposable
             ? await ReadExactlyAsync(stream, contentLength, cancellationToken).ConfigureAwait(false)
             : Array.Empty<byte>();
 
-        string path = first[1];
+        string rawPath = first[1];
+        string path = rawPath;
+        Dictionary<string, string> query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int question = path.IndexOf('?');
-        if (question >= 0) path = path.Substring(0, question);
+        if (question >= 0)
+        {
+            string queryText = path.Substring(question + 1);
+            path = path.Substring(0, question);
+            foreach (string pair in queryText.Split('&'))
+            {
+                if (string.IsNullOrWhiteSpace(pair)) continue;
+                int equals = pair.IndexOf('=');
+                string key = equals >= 0 ? pair.Substring(0, equals) : pair;
+                string value = equals >= 0 ? pair.Substring(equals + 1) : string.Empty;
+                if (key.Length == 0) continue;
+                query[Uri.UnescapeDataString(key)] = Uri.UnescapeDataString(value.Replace("+", " "));
+            }
+        }
 
         return new HttpRequest
         {
             Method = first[0].ToUpperInvariant(),
             Path = path,
+            Query = query,
             Headers = headers,
             Body = Encoding.UTF8.GetString(bodyBytes)
         };
@@ -261,6 +309,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
     {
         public string Method { get; set; } = string.Empty;
         public string Path { get; set; } = string.Empty;
+        public Dictionary<string, string> Query { get; set; } = new Dictionary<string, string>();
         public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
         public string Body { get; set; } = string.Empty;
     }

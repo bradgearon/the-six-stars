@@ -107,21 +107,13 @@ namespace Wds.SixStars.Api.Voice
                     outputKeepAlive = keepAliveEndpoint.StartOutputKeepAlive("streaming speech generation and playback", linkedCts.Token);
                 }
 
-                if(string.IsNullOrEmpty(response.SpokenText) && (response.SpokenParts == null || response.SpokenParts.Count == 0))
-                {
-                    Debug.WriteLine("[StreamingStarVoiceResponsePipeline] No spoken text or parts provided; skipping speech generation.");
-                    return;
-                }
-
-                var text = response.SpokenText ?? "";
-
                 VoiceSynthesisRequest request = new VoiceSynthesisRequest
                 {
                     SessionId = sessionId,
                     StarId = response.StarId,
                     // Preserve the LLM-provided speech array. Each spokenText item is one intentional
                     // TTS/breath chunk. The server must not re-split or merge these parts.
-                    Text = text,
+                    Text = response.SpokenText,
                     TextParts = response.SpokenParts
                         .Where(x => !string.IsNullOrWhiteSpace(x))
                         .Select(x => x.Trim())
@@ -190,19 +182,31 @@ namespace Wds.SixStars.Api.Voice
                 _expectedTotalChunks = e.TotalChunks;
             }
 
-            Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Audio chunk {e.ChunkIndex + 1}/{e.TotalChunks} received ({e.AudioData.Length} bytes)");
+            byte[] audioCopy = CopyBytes(e.AudioData);
+            AudioChunkEventArgs queuedChunk = new AudioChunkEventArgs
+            {
+                ChunkIndex = e.ChunkIndex,
+                TotalChunks = e.TotalChunks,
+                AudioData = audioCopy,
+                MimeType = e.MimeType,
+                Text = e.Text,
+                StarId = e.StarId,
+                VoiceId = e.VoiceId
+            };
+
+            Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Audio chunk {queuedChunk.ChunkIndex + 1}/{queuedChunk.TotalChunks} received ({queuedChunk.AudioData.Length} bytes, copied to owned buffer)");
 
             _queueLock.Wait();
             try
             {
-                _audioQueue[e.ChunkIndex] = e;
+                _audioQueue[queuedChunk.ChunkIndex] = queuedChunk;
             }
             finally
             {
                 _queueLock.Release();
             }
 
-            ChunkReceived?.Invoke(this, e);
+            ChunkReceived?.Invoke(this, queuedChunk);
         }
 
         private void OnGenerationComplete(object? sender, GenerationCompleteEventArgs e)
@@ -276,7 +280,7 @@ namespace Wds.SixStars.Api.Voice
                             {
                                 StarId = chunk.StarId,
                                 VoiceId = chunk.VoiceId,
-                                WavAudio = chunk.AudioData,
+                                WavAudio = CopyBytes(chunk.AudioData),
                                 MimeType = chunk.MimeType,
                                 Instructions = chunk.Text,
                                 Source = "streaming-websocket"
@@ -451,6 +455,18 @@ namespace Wds.SixStars.Api.Voice
             }
 
             return settings;
+        }
+
+        private static byte[] CopyBytes(byte[]? source)
+        {
+            if (source == null || source.Length == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            byte[] copy = new byte[source.Length];
+            Buffer.BlockCopy(source, 0, copy, 0, source.Length);
+            return copy;
         }
 
         public void Dispose()

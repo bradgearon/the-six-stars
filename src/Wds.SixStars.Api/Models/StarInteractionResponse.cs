@@ -60,6 +60,13 @@ namespace Wds.SixStars.Api.Models
         public List<string> CanonSourcesUsed { get; set; } = new List<string>();
         public string EmotionalPurpose { get; set; } = string.Empty;
 
+        /// <summary>True when the foreground Star says she needs old history, quotes, markers, lore, bestiary, character, or world data.</summary>
+        public bool NeedsMoreInformation { get; set; }
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
+        public bool InformationFollowupAttempted { get; set; }
+        public bool InformationFollowupSucceeded { get; set; }
+        public string InformationFollowupContextSummary { get; set; } = string.Empty;
+
         /// <summary>
         /// Compact emotion hint returned by the fast foreground LLM pass for experimentation.
         /// Format: confidence:score;confidence:score;... in the canonical StarEmotionMatrix.StandardEmotionIds order.

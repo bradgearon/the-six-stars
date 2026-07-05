@@ -2,7 +2,13 @@
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-echo Starting Six Stars local AI services only. The desktop app will NOT be launched.
-echo Leave this window open while using the desktop UI or Android bridge.
+rem Full AI companion launcher.
+rem This is the redistributable/prebuilt-engine path: it starts the local engine
+rem services through the integrated launcher and opens the desktop app.
+rem
+rem Use run-ai-services.cmd when you only want the services window and want the
+rem Python services to run from the repo .venv for debugging.
+echo Starting Six Stars AI Companion using the prebuilt engine launcher.
+echo This should start the local LLM/ASR/TTS engine services and open the desktop app.
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Run-AiCompanionLauncher.ps1 -NoUi %*
+call launch.cmd %*

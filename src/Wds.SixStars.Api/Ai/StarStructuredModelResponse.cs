@@ -33,6 +33,8 @@ namespace Wds.SixStars.Api.Ai
         public string EmotionalPurpose { get; set; } = string.Empty;
         public string EmotionalEffectVector { get; set; } = string.Empty;
         public string NegativeEmotionVector { get; set; } = string.Empty;
+        public bool NeedsMoreInformation { get; set; }
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
 
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]

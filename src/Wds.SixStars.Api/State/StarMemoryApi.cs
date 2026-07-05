@@ -106,6 +106,7 @@ namespace Wds.SixStars.Api.State
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
             UpsertRememberedMarkers(state, markersToStore, now);
+            AddImportantQuoteSourceRecords(state, request, request.ImportantPlayerQuotes, markersToStore, applied, now, "model-important-quote");
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
             AddUnique(state.SecretsUnlocked, request.SecretsUnlocked, _options.MaxSecrets);
             AddUnique(state.RelationshipEvents, request.RelationshipEvents, _options.MaxRelationshipEvents);
@@ -124,6 +125,7 @@ namespace Wds.SixStars.Api.State
             if (!string.IsNullOrWhiteSpace(autoQuote))
             {
                 AddUnique(state.ImportantPlayerQuotes, new[] { autoQuote }, _options.MaxImportantQuotes);
+                AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, "auto-emotion-marker-quote");
             }
 
             ConversationLogEntry entry = new ConversationLogEntry
@@ -156,6 +158,7 @@ namespace Wds.SixStars.Api.State
             entry.SecretsUnlocked.AddRange(request.SecretsUnlocked);
 
             state.MemoryLog.Insert(0, entry);
+            ArchiveOldConversationTurns(state, now);
             Trim(state.MemoryLog, _options.MaxMemoryLogEntries);
 
             await _stateStore.SaveAsync(request.SessionId, state, cancellationToken).ConfigureAwait(false);
@@ -915,6 +918,93 @@ namespace Wds.SixStars.Api.State
             state.LastPositiveInteractionAt = positive && !negative ? now : state.LastPositiveInteractionAt;
             state.LastRomanticInteractionAt = romantic ? now : state.LastRomanticInteractionAt;
             state.LastHurtInteractionAt = hurtful ? now : state.LastHurtInteractionAt;
+        }
+
+
+        private void AddImportantQuoteSourceRecords(StarState state, StarStateUpdateRequest request, IEnumerable<string> quotes, IEnumerable<StarRememberedMarker> markers, RelationshipDelta applied, DateTimeOffset now, string reason)
+        {
+            state.AllImportantPlayerQuotes ??= new List<StarImportantQuoteRecord>();
+            foreach (string raw in quotes ?? Array.Empty<string>())
+            {
+                string quote = CleanMarkerText(raw, 700);
+                if (string.IsNullOrWhiteSpace(quote)) continue;
+                if (state.AllImportantPlayerQuotes.Any(x => string.Equals(x.Quote, quote, StringComparison.OrdinalIgnoreCase))) continue;
+                StarImportantQuoteRecord record = new StarImportantQuoteRecord
+                {
+                    Id = Slugify(quote + " " + now.ToUnixTimeMilliseconds()),
+                    CreatedAt = now,
+                    StarId = request.StarId,
+                    Quote = quote,
+                    Reason = reason,
+                    RequestType = request.RequestType ?? string.Empty,
+                    EmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty,
+                    NegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty,
+                    WisdomScore = request.WisdomScore,
+                    ActualDelta = applied
+                };
+                record.Tags.AddRange(request.DetectedCombos.Where(x => !string.IsNullOrWhiteSpace(x)).Take(10));
+                record.MarkerIds.AddRange((markers ?? Array.Empty<StarRememberedMarker>()).Select(x => x.Id).Where(x => !string.IsNullOrWhiteSpace(x)).Take(10));
+                state.AllImportantPlayerQuotes.Insert(0, record);
+            }
+            Trim(state.AllImportantPlayerQuotes, _options.MaxAllImportantQuoteRecords);
+        }
+
+        private void ArchiveOldConversationTurns(StarState state, DateTimeOffset now)
+        {
+            if (state.MemoryLog == null || state.MemoryLog.Count == 0) return;
+            state.OldConversationArchives ??= new List<StarConversationArchiveEntry>();
+            int minutes = Math.Max(5, _options.ArchiveConversationAfterMinutes);
+            DateTimeOffset cutoff = now.AddMinutes(-minutes);
+            List<ConversationLogEntry> oldEntries = state.MemoryLog
+                .Where(x => x != null && x.CreatedAt < cutoff)
+                .OrderBy(x => x.CreatedAt)
+                .Take(Math.Max(1, _options.MaxArchivedTurnsPerArchive))
+                .ToList();
+            if (oldEntries.Count == 0) return;
+
+            HashSet<ConversationLogEntry> oldSet = new HashSet<ConversationLogEntry>(oldEntries);
+            state.MemoryLog = state.MemoryLog.Where(x => !oldSet.Contains(x)).ToList();
+
+            DateTimeOffset start = oldEntries.First().CreatedAt;
+            DateTimeOffset end = oldEntries.Last().CreatedAt;
+            StarConversationArchiveEntry archive = new StarConversationArchiveEntry
+            {
+                Id = Slugify(state.StarId + " conversation " + start.ToUnixTimeSeconds() + " " + end.ToUnixTimeSeconds()),
+                StarId = state.StarId,
+                StartedAt = start,
+                EndedAt = end,
+                ArchivedAt = now,
+                EntryCount = oldEntries.Count,
+                Summary = BuildArchiveSummary(oldEntries),
+                Entries = oldEntries
+            };
+            foreach (string tag in oldEntries.SelectMany(x => x.Tags ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(20))
+            {
+                archive.TopicTags.Add(tag);
+            }
+            state.OldConversationArchives.Insert(0, archive);
+            Trim(state.OldConversationArchives, _options.MaxOldConversationArchives);
+        }
+
+        private static string BuildArchiveSummary(List<ConversationLogEntry> entries)
+        {
+            if (entries == null || entries.Count == 0) return string.Empty;
+            List<string> summaries = entries
+                .Select(x => string.IsNullOrWhiteSpace(x.Summary) ? ("Player: " + TruncateLocal(x.PlayerText, 120) + " / Star: " + TruncateLocal(x.StarResponse, 120)) : x.Summary)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(8)
+                .ToList();
+            string start = entries.First().CreatedAt.ToString("u");
+            string end = entries.Last().CreatedAt.ToString("u");
+            return "Archived conversation from " + start + " to " + end + " with " + entries.Count + " turn(s). " + string.Join(" ", summaries.Select(x => TruncateLocal(x, 220)));
+        }
+
+        private static string TruncateLocal(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (cleaned.Length <= maxLength) return cleaned;
+            return cleaned.Substring(0, maxLength).Trim() + "...";
         }
 
         private string TryCreateAutoQuote(StarStateUpdateRequest request, RelationshipDelta delta)

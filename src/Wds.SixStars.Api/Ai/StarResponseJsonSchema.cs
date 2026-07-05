@@ -137,11 +137,13 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText" } },
+                { "required", new[] { "starId", "spokenText", "needsMoreInformation", "informationNeeds" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(5) }
+                        { "spokenText", SpokenTextArray(5) },
+                        { "needsMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "informationNeeds", InformationNeedArray(6) }
                     }
                 }
             };
@@ -209,6 +211,33 @@ namespace Wds.SixStars.Api.Ai
             };
         }
 
+
+
+        private static Dictionary<string, object> InformationNeedArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", false },
+                        { "required", new[] { "dataType", "subject", "confidence", "score", "reason" } },
+                        { "properties", new Dictionary<string, object>
+                            {
+                                { "dataType", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "history", "quotes", "markers", "lore", "bestiary", "characters", "world", "screen", "story" } } } },
+                                { "subject", StringProperty(160) },
+                                { "confidence", NumberProperty(0, 1) },
+                                { "score", NumberProperty(0, 100) },
+                                { "reason", StringProperty(320) }
+                            }
+                        }
+                    }
+                }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
+        }
 
         private static Dictionary<string, object> RememberedMarkerArray(int maxItems = 0)
         {

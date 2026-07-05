@@ -87,7 +87,8 @@ HOST = os.environ.get("LOCAL_LLM_HOST", "0.0.0.0")
 PORT = parse_int(os.environ.get("LOCAL_LLM_PORT") or os.environ.get("LLM_PORT"), 8200)
 MODEL_ID = normalize_llm_model_id(os.environ.get("LOCAL_LLM_MODEL") or os.environ.get("SIX_STARS_LLM_MODEL"))
 MODEL_PATH = os.environ.get("LOCAL_LLM_MODEL_PATH", "").strip()
-DEVICE = os.environ.get("LOCAL_LLM_DEVICE", "auto")
+REQUIRE_CUDA = os.environ.get("SIX_STARS_REQUIRE_CUDA", "true").strip().lower() not in {"0", "false", "no", "off"}
+DEVICE = os.environ.get("LOCAL_LLM_DEVICE", "cuda:0").strip() or "cuda:0"
 DTYPE = os.environ.get("LOCAL_LLM_DTYPE", "auto")
 ATTN_IMPLEMENTATION = os.environ.get("LOCAL_LLM_ATTN_IMPLEMENTATION", "auto")
 PRELOAD = parse_bool(os.environ.get("LOCAL_LLM_PRELOAD"), True)
@@ -133,6 +134,21 @@ def resolved_model_ref() -> str:
             "google_gemma-4-E2B-it",
         ],
     )
+
+
+def require_cuda_runtime(torch_module) -> None:
+    if not REQUIRE_CUDA:
+        return
+    if DEVICE == "auto" or DEVICE.startswith("cpu"):
+        raise RuntimeError(
+            "Six Stars source LLM is configured for CPU/auto. This build requires CUDA/GPU. "
+            "Use the llama.cpp NVIDIA engine pack in config/runtime-manifest.json or use a hosted service option."
+        )
+    if not getattr(torch_module, "cuda", None) or not torch_module.cuda.is_available():
+        raise RuntimeError(
+            "Six Stars source LLM requires CUDA/GPU, but torch.cuda.is_available() is false. "
+            "Use the llama.cpp NVIDIA engine pack or use a hosted service option."
+        )
 
 
 def torch_dtype_from_name(torch_module):
@@ -325,6 +341,7 @@ def get_model():
             return _model, _tokenizer
 
         import torch
+        require_cuda_runtime(torch)
 
         model_ref = resolved_model_ref()
         _model_loading = True
@@ -352,12 +369,7 @@ def get_model():
         else:
             kwargs["torch_dtype"] = "auto"
 
-        if DEVICE == "auto":
-            kwargs["device_map"] = "auto"
-        elif DEVICE.startswith("cuda"):
-            kwargs["device_map"] = DEVICE
-        elif DEVICE == "cpu":
-            kwargs["device_map"] = {"": "cpu"}
+        kwargs["device_map"] = DEVICE
 
         if ATTN_IMPLEMENTATION and ATTN_IMPLEMENTATION.lower() != "auto":
             kwargs["attn_implementation"] = ATTN_IMPLEMENTATION

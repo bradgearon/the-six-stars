@@ -374,7 +374,14 @@ def audio_to_wav(audio_data, sample_rate: int = SAMPLE_RATE) -> bytes:
         raise ValueError('audio_to_wav received None audio_data')
 
     if isinstance(audio_data, torch.Tensor):
-        audio_np = audio_data.detach().float().cpu().numpy()
+        if getattr(audio_data, "is_meta", False):
+            raise RuntimeError("Qwen TTS returned a meta tensor with no audio data; check CUDA model loading/device-map configuration.")
+        if getattr(audio_data, "device", None) is not None and audio_data.device.type == "cuda":
+            try:
+                torch.cuda.synchronize(audio_data.device)
+            except Exception:
+                pass
+        audio_np = audio_data.detach().to(device="cpu", dtype=torch.float32, copy=True).contiguous().numpy().copy()
     else:
         audio_np = np.asarray(audio_data)
 

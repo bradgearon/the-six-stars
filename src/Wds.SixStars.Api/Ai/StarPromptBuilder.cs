@@ -279,6 +279,13 @@ namespace Wds.SixStars.Api.Ai
             else
             {
                 AppendFastChatAnswerGuidance(task, profile, request);
+                if (request.GameContext.Flags.TryGetValue("extraInformationContext", out string? extraInformationContext) && !string.IsNullOrWhiteSpace(extraInformationContext))
+                {
+                    task.AppendLine();
+                    task.AppendLine("EXTRA REQUESTED INFORMATION FROM LOCAL STATE / ARCHIVES");
+                    task.AppendLine(extraInformationContext);
+                    task.AppendLine("Use this extra information to answer the same latest player message. If it answers the question, speak naturally as if you remembered or found the old note. If it still does not answer, say you searched your memory and cannot find enough yet.");
+                }
             }
 
             StringBuilder contract = new StringBuilder();
@@ -292,7 +299,10 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId and spokenText. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, and informationNeeds. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+                contract.AppendLine("needsMoreInformation=false and informationNeeds=[] when you can answer from the context provided.");
+                contract.AppendLine("If the player asks for old conversation details, old phrases, markers, bestiary/living-world data, lore, character-profile facts, or anything you cannot safely answer from the prompt, set needsMoreInformation=true and add 1-3 informationNeeds entries. Use dataType one of history, quotes, markers, lore, bestiary, characters, world, screen, story. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
+                contract.AppendLine("When needsMoreInformation=true, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a second pass with the requested archive slice.");
                 contract.AppendLine("For normal chat, use 1-4 spokenText items. If the player asks direct personal questions such as name/about yourself/friends/what do you do, use 3-5 concise spokenText items and answer completely instead of being evasive.");
                 contract.AppendLine("Every spokenText item should be one or two natural sentences. A direct question deserves a direct answer, plus personality.");
                 contract.AppendLine("Answer warmly and directly as " + profile.DisplayName + ".");

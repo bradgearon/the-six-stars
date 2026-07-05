@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using Wds.SixStars.Api.Models;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -23,6 +24,12 @@ namespace Wds.SixStars.Api.Ai
         public string StorySummary { get; set; } = string.Empty;
         public bool StoryIsFinished { get; set; }
         public int StoryPartIndex { get; set; }
+
+        [JsonPropertyName("needsMoreInformation")]
+        public bool NeedsMoreInformation { get; set; }
+
+        [JsonPropertyName("informationNeeds")]
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
 
         /// <summary>
         /// Compact foreground emotion-vector hint for speed tests. Format is one entry per canonical

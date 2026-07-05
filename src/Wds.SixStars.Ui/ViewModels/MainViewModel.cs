@@ -18,6 +18,7 @@ using Wds.SixStars.Api.Ai;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.LocalModels;
 using Wds.SixStars.Api.Runtime;
 using Wds.SixStars.Api.Screen;
@@ -54,13 +55,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly AppConfiguration _appConfig;
     private readonly SpeechInterruptionManager _interruptionManager;
     private readonly SixStarsRuntimeOperationController _operationController;
+    private readonly MobileBridgeDispatcher _mobileBridgeDispatcher = new MobileBridgeDispatcher();
     private readonly bool _useStreamingTts;
     private readonly StringBuilder _llmDebugLog = new StringBuilder();
 
     private string _selectedStarId = "Elusiaa";
     private RequestType _selectedRequestType = RequestType.Chat;
-    private string _playerText = "Elusiaa, hi. Stay close and say something gentle while I work.";
-    private string _storySuggestion = "A gentle cave story about light, mercy, and a little cat who keeps working even when the caves feel heavy.";
+    private string _playerText = string.Empty;
+    private string _storySuggestion = string.Empty;
     private string _area = "VirethornCaves";
     private string _quest = "DesktopDevHarness";
     private bool _romanceMode = true;
@@ -101,6 +103,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _selectedStarIsMet = true;
     private bool _selectedStarIsAlly = true;
     private bool _isLoadingSelectedStarState;
+    private bool _suppressMobileBridgeSelectedStarBroadcast;
 
     public MainViewModel()
     {
@@ -108,7 +111,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _appConfig = LoadConfiguration();
         ConfigureLocalModelEnvironment();
         _selectedStarId = ResolveDefaultStarId(Environment.GetEnvironmentVariable("SIX_STARS_DEFAULT_STAR_ID") ?? _appConfig.Companion.DefaultStarId);
-        _playerText = _selectedStarId + ", hi. Stay close and say something gentle while I work.";
+        _playerText = string.Empty;
+        _storySuggestion = string.Empty;
         _operationController = new SixStarsRuntimeOperationController();
         _selectedAudioBackend = NormalizeAudioBackend(
             Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND") ?? _appConfig.VoiceOutput.AudioBackend);
@@ -146,6 +150,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes));
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
+        _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
+        _mobileBridgeDispatcher.EventPublished += (_, evt) => OnUiThread(() => AppendMobileBridgeVoiceDebug("Mobile bridge event", evt.EventType + " #" + evt.Sequence + " " + evt.StarId + " selected=" + evt.SelectedStarId + " met=" + evt.IsMet + " ally=" + evt.IsAlly));
         _ = RefreshSelectedStarStateForUiAsync("startup");
 
         _speechRequireWakeWord = GetBooleanSetting(
@@ -298,6 +304,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         ToggleRecordingCommand = new RelayCommand(async _ => await ToggleRecordingAsync());
         CancelOrStopRuntimeCommand = new RelayCommand(_ => CancelAllRuntimeOperations("User clicked cancel/stop."));
         ClearSelectedStarHistoryCommand = new RelayCommand(async _ => await ClearSelectedStarHistoryAsync());
+        ClearAllStarDataCommand = new RelayCommand(async _ => await ClearAllStarDataAsync());
         SimulateSpeechCommand = new RelayCommand(async _ => await SimulateSpeechAsync());
         StartScreenAwarenessCommand = new RelayCommand(async _ => await StartScreenAwarenessAsync());
         StopScreenAwarenessCommand = new RelayCommand(async _ => await StopScreenAwarenessAsync());
@@ -327,6 +334,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ToggleRecordingCommand { get; }
     public ICommand CancelOrStopRuntimeCommand { get; }
     public ICommand ClearSelectedStarHistoryCommand { get; }
+    public ICommand ClearAllStarDataCommand { get; }
     public ICommand SimulateSpeechCommand { get; }
     public ICommand StartScreenAwarenessCommand { get; }
     public ICommand StopScreenAwarenessCommand { get; }
@@ -338,7 +346,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _selectedStarId;
         set
         {
-            if (SetProperty(ref _selectedStarId, value))
+            string normalized = ResolveDefaultStarId(value);
+            if (SetProperty(ref _selectedStarId, normalized))
             {
                 if (_activeStoryAutoContinue && !string.Equals(_activeStoryStarId, _selectedStarId, StringComparison.OrdinalIgnoreCase))
                 {
@@ -346,6 +355,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 }
                 UpdateSpeechOptions();
                 _ = RefreshSelectedStarStateForUiAsync("selected star changed");
+                if (!_suppressMobileBridgeSelectedStarBroadcast)
+                {
+                    _ = PublishMobileSelectedStarUpdateAsync("desktop selected star changed");
+                }
             }
         }
     }
@@ -1318,7 +1331,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     StarId = e.StarId,
                     VoiceId = e.VoiceId,
-                    WavAudio = e.AudioData,
+                    WavAudio = CopyBytes(e.AudioData),
                     MimeType = e.MimeType,
                     Instructions = e.Text,
                     Source = "story-prefetch-streaming-websocket"
@@ -1833,6 +1846,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             CancelAllRuntimeOperations("Clearing selected Star history.");
             StarState state = await _runtime.ResetStarMemoryAsync(DefaultSessionId, starId, CancellationToken.None).ConfigureAwait(false);
             _stateChangeTracker.Reset(starId);
+            PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Elusiaa saw the desktop clear history for " + starId + ".");
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -1861,6 +1875,54 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+
+    private async Task ClearAllStarDataAsync()
+    {
+        try
+        {
+            CancelAllRuntimeOperations("Clearing all Star data.");
+            List<object> cleared = new List<object>();
+            foreach (string star in StarIds.ToList())
+            {
+                StarState state = await _runtime.ResetStarMemoryAsync(DefaultSessionId, star, CancellationToken.None).ConfigureAwait(false);
+                // Also clear the Android dev bridge session so both front ends refresh to the same clean local state.
+                await _runtime.ResetStarMemoryAsync("android-phone-dev", star, CancellationToken.None).ConfigureAwait(false);
+                _stateChangeTracker.Reset(star);
+                cleared.Add(new { starId = star, state.IsMet, state.IsAlly });
+                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop clear all local data for " + star + ".");
+            }
+
+            StarState selectedState = await _runtime.GetStarStateAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
+            OnUiThread(() =>
+            {
+                _isLoadingSelectedStarState = true;
+                try
+                {
+                    SelectedStarIsMet = selectedState.IsMet;
+                    SelectedStarIsAlly = selectedState.IsAlly;
+                }
+                finally
+                {
+                    _isLoadingSelectedStarState = false;
+                }
+                StarOutput = string.Empty;
+                LastTranscript = string.Empty;
+                PlayerText = string.Empty;
+                StorySuggestion = string.Empty;
+                Status = "Cleared all local Star data for desktop and Android dev sessions.";
+                DebugJson = JsonSerializer.Serialize(new { action = "clear_all_star_data", cleared }, _jsonOptions);
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                Status = "Could not clear all Star data: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
     private async Task SimulateSpeechAsync()
     {
         UpdateSpeechOptions();
@@ -1878,7 +1940,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             EndedAt = DateTimeOffset.UtcNow
         };
 
-        SpeechStatus = "Simulating recognized transcript from current Player Text. This bypasses microphone and Whisper.";
+        PlayerText = string.Empty;
+        SpeechStatus = "Simulating recognized transcript from current Player Text. The text box has been cleared.";
         await ProcessTranscriptFromSpeechPipelineAsync(transcript).ConfigureAwait(false);
     }
 
@@ -1920,7 +1983,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         SelectedRequestType = RequestType.Chat;
         if (string.IsNullOrWhiteSpace(PlayerText))
         {
-            PlayerText = SelectedStarId + ", hi. Stay close and answer me naturally.";
+            Status = "Type a message first, or use Tell Me A Story for automatic story generation.";
+            return;
         }
 
         await SendAsync();
@@ -1930,7 +1994,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         StopActiveStoryState();
         SelectedRequestType = RequestType.Story;
-        PlayerText = SelectedStarId + ", tell me a new long story while I work and move through the caves.";
         await SendAsync();
     }
 
@@ -2028,16 +2091,30 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 Status = "⚠ Using MOCK data (no LLM endpoint configured)...";
             }
 
+            string playerTextForRequest = PlayerText ?? string.Empty;
+            StoryOptions storyOptionsForRequest = CreateStoryOptions(automaticStoryContinuation);
+            if (!automaticStoryContinuation && SelectedRequestType != RequestType.Story && string.IsNullOrWhiteSpace(playerTextForRequest))
+            {
+                Status = "Type a message first, or choose Tell Me A Story so the selected Star can choose the story automatically.";
+                return;
+            }
+
             StarInteractionRequest request = new StarInteractionRequest
             {
                 SessionId = DefaultSessionId,
                 StarId = SelectedStarId,
                 Speaker = "LastCat",
                 RequestType = SelectedRequestType,
-                PlayerText = PlayerText,
+                PlayerText = playerTextForRequest,
                 GameContext = CreateGameContext("Desktop harness text input used"),
-                StoryOptions = CreateStoryOptions(automaticStoryContinuation)
+                StoryOptions = storyOptionsForRequest
             };
+
+            if (!automaticStoryContinuation)
+            {
+                PlayerText = string.Empty;
+                StorySuggestion = string.Empty;
+            }
 
             ResetLlmDebugLog(request);
 
@@ -2535,6 +2612,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
             StarState state = await _runtime.SetStarMetAsync(DefaultSessionId, starId, isMet, CancellationToken.None);
+            PublishMobileBridgeStateEventFromDesktop("StarStateChanged", state, starId + " met flag changed from the desktop UI.");
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -2574,6 +2652,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 IsMet = isAlly ? true : (bool?)null,
                 Reason = "desktop UI checkbox"
             }, CancellationToken.None);
+            PublishMobileBridgeStateEventFromDesktop("StarStateChanged", state, starId + " ally flag changed from the desktop UI.");
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -2856,6 +2935,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
 
         return JsonSerializer.Serialize(debugData, _jsonOptions);
+    }
+
+    private static byte[] CopyBytes(byte[]? source)
+    {
+        if (source == null || source.Length == 0) return Array.Empty<byte>();
+        byte[] copy = new byte[source.Length];
+        Buffer.BlockCopy(source, 0, copy, 0, source.Length);
+        return copy;
     }
 
     public void Dispose()

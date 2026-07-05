@@ -130,10 +130,8 @@ MODEL_PATH = resolve_model_ref(
     os.environ.get("QWEN_TTS_LOCAL_PATH", ""),
     aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"],
 )
-DEVICE = os.environ.get(
-    "QWEN_TTS_DEVICE",
-    "cuda" if torch is not None and getattr(torch, "cuda", None) is not None and torch.cuda.is_available() else "cpu",
-)
+REQUIRE_CUDA = os.environ.get("SIX_STARS_REQUIRE_CUDA", "true").strip().lower() not in {"0", "false", "no", "off"}
+DEVICE = os.environ.get("QWEN_TTS_DEVICE", "cuda").strip().lower() or "cuda"
 DEFAULT_LANGUAGE = os.environ.get("QWEN_TTS_LANGUAGE", "English")
 DEFAULT_TASK_TYPE = os.environ.get("QWEN_TTS_TASK_TYPE", "VoiceClone")
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
@@ -148,6 +146,30 @@ CUDA_GRAPH_WARMUP_RUNS = int(os.environ.get("QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS", "
 USE_CLONE_PROMPT_CACHE = os.environ.get("QWEN_TTS_CACHE_CLONE_PROMPTS", "true").strip().lower() not in {"0", "false", "no"}
 DIRECT_FALLBACK_ON_SILENCE = os.environ.get("QWEN_TTS_DIRECT_FALLBACK_ON_SILENCE", "true").strip().lower() not in {"0", "false", "no"}
 SILENCE_RMS_THRESHOLD = float(os.environ.get("QWEN_TTS_SILENCE_RMS_THRESHOLD", "0.0001"))
+
+
+def require_cuda_runtime() -> None:
+    if not REQUIRE_CUDA:
+        return
+    if DEVICE.startswith("cpu"):
+        raise RuntimeError(
+            "Six Stars Qwen TTS is configured for CPU. This build requires CUDA/GPU. "
+            "Edit config/runtime-manifest.json to use the qwen3-tts-nvidia-cu12 pack, "
+            "install a CUDA PyTorch runtime, or use a hosted service option."
+        )
+    if torch is None:
+        raise RuntimeError(
+            "Six Stars Qwen TTS requires CUDA/GPU, but PyTorch failed to import. "
+            "Install the CUDA PyTorch runtime or use a hosted service option."
+        )
+    if not getattr(torch, "cuda", None) or not torch.cuda.is_available():
+        raise RuntimeError(
+            "Six Stars Qwen TTS requires CUDA/GPU, but torch.cuda.is_available() is false. "
+            "Install the CUDA PyTorch runtime, check your NVIDIA driver, or use a hosted service option."
+        )
+
+
+require_cuda_runtime()
 
 DEBUG_OUTPUT_DIR = os.environ.get("QWEN_TTS_DEBUG_OUTPUT_DIR", "").strip()
 SAVE_SERVER_WAVS = os.environ.get("QWEN_TTS_SAVE_WAVS", "false").strip().lower() in {"1", "true", "yes"}
@@ -505,7 +527,7 @@ class QwenTtsEngine:
             patch_transformers_check_model_inputs_for_qwen()
             from qwen_tts import Qwen3TTSModel
 
-            device_map = "cuda:0" if DEVICE.startswith("cuda") else "cpu"
+            device_map = "cuda:0"
 
             # Fallback path: official qwen_tts model. This is correct but usually much slower
             # because it does not use FasterQwen3TTS static-cache CUDA graph replay.
@@ -955,10 +977,32 @@ def audio_to_wav(wav: Any, sample_rate: int) -> bytes:
 
 
 def waveform_to_float32_numpy(wav: Any) -> np.ndarray:
+    """Materialize generated audio as an independent CPU float32 numpy array.
+
+    Qwen/FasterQwen can return tensors backed by CUDA storage. The rest of the
+    Six Stars audio path should never hold onto framework/GPU-owned buffers. As
+    soon as a chunk is generated, copy it to a fresh CPU array, then encode WAV
+    bytes from that copy. This keeps desktop playback and Android socket fan-out
+    simple: everyone receives ordinary bytes, not model-owned storage.
+    """
     if torch is not None and isinstance(wav, torch.Tensor):
-        wav = wav.detach().float().cpu().numpy()
+        if getattr(wav, "is_meta", False):
+            raise RuntimeError(
+                "Qwen3-TTS returned a meta tensor with no audio data. This is a model loading/device-map issue, "
+                "not an Android or speaker pipeline issue. Use a CUDA-loaded Qwen TTS model rather than a meta/CPU fallback."
+            )
+
+        # Make the ownership boundary explicit: detach from autograd, materialize
+        # as contiguous float32 CPU storage, convert to numpy, then copy again so
+        # the numpy array does not share storage with the torch tensor.
+        if wav.device.type == "cuda":
+            try:
+                torch.cuda.synchronize(wav.device)
+            except Exception:
+                pass
+        wav = wav.detach().to(device="cpu", dtype=torch.float32, copy=True).contiguous().numpy().copy()
     elif isinstance(wav, np.ndarray):
-        pass
+        wav = wav.astype(np.float32, copy=True)
     elif isinstance(wav, (list, tuple)):
         # Qwen generally returns a single ndarray/tensor. This handles nested chunks.
         if len(wav) == 0:
@@ -966,10 +1010,10 @@ def waveform_to_float32_numpy(wav: Any) -> np.ndarray:
         if len(wav) == 1:
             return waveform_to_float32_numpy(wav[0])
         pieces = [waveform_to_float32_numpy(x).reshape(-1) for x in wav]
-        return np.concatenate(pieces).astype(np.float32)
+        return np.concatenate(pieces).astype(np.float32, copy=True)
     else:
-        wav = np.asarray(wav)
-    return np.asarray(wav, dtype=np.float32)
+        wav = np.asarray(wav, dtype=np.float32).copy()
+    return np.asarray(wav, dtype=np.float32).copy()
 
 
 def wav_stats_from_bytes(wav_bytes: bytes) -> Dict[str, Any]:

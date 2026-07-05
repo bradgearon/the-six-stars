@@ -99,7 +99,8 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             return MobileAudioSendResult.Empty(ClientCount);
         }
 
-        string checksum = Sha256Hex(result.WavAudio);
+        byte[] wavCopy = CopyBytes(result.WavAudio);
+        string checksum = Sha256Hex(wavCopy);
         string header = JsonSerializer.Serialize(new
         {
             chunkIndex,
@@ -107,7 +108,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             starId = result.StarId ?? string.Empty,
             voiceId = result.VoiceId ?? string.Empty,
             mimeType = string.IsNullOrWhiteSpace(result.MimeType) ? "audio/wav" : result.MimeType,
-            bytes = result.WavAudio.Length,
+            bytes = wavCopy.Length,
             sha256 = checksum,
             sha256Short = checksum.Length > 12 ? checksum.Substring(0, 12) : checksum,
             durationMs = result.DurationMs,
@@ -116,10 +117,10 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         }, _jsonOptions);
 
         byte[] headerBytes = Encoding.UTF8.GetBytes(header);
-        byte[] payload = new byte[4 + headerBytes.Length + result.WavAudio.Length];
+        byte[] payload = new byte[4 + headerBytes.Length + wavCopy.Length];
         WriteInt32BigEndian(payload, 0, headerBytes.Length);
         Buffer.BlockCopy(headerBytes, 0, payload, 4, headerBytes.Length);
-        Buffer.BlockCopy(result.WavAudio, 0, payload, 4 + headerBytes.Length, result.WavAudio.Length);
+        Buffer.BlockCopy(wavCopy, 0, payload, 4 + headerBytes.Length, wavCopy.Length);
 
         return await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken).ConfigureAwait(false);
     }
@@ -234,6 +235,18 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         StatusChanged?.Invoke(this, status);
     }
 
+
+    private static byte[] CopyBytes(byte[]? source)
+    {
+        if (source == null || source.Length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        byte[] copy = new byte[source.Length];
+        Buffer.BlockCopy(source, 0, copy, 0, source.Length);
+        return copy;
+    }
 
     private static string Sha256Hex(byte[] bytes)
     {

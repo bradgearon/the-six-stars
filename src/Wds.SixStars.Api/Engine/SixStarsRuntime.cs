@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -223,6 +224,7 @@ namespace Wds.SixStars.Api.Engine
             {
                 response.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
             }
+            response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
 
             if (_agent is IStarTurnAnalyzer analyzer)
@@ -257,6 +259,332 @@ namespace Wds.SixStars.Api.Engine
 
             await ApplyAnalysisAndMemoryUpdateAsync(request, response, cancellationToken).ConfigureAwait(false);
             return response;
+        }
+
+
+        private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
+        {
+            if (request == null || response == null) return response;
+            if (request.GameContext.Flags.TryGetValue("informationFollowup", out string? already) && string.Equals(already, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                return response;
+            }
+
+            List<InformationNeedVectorItem> needs = NormalizeInformationNeeds(response, request.PlayerText);
+            if (needs.Count == 0) return response;
+
+            string context = BuildRequestedInformationContext(profile, state, needs, request.PlayerText, 180000);
+            response.NeedsMoreInformation = true;
+            response.InformationNeeds = needs;
+            response.InformationFollowupAttempted = true;
+            response.InformationFollowupContextSummary = SummarizeInformationNeeds(needs, context);
+
+            if (string.IsNullOrWhiteSpace(context))
+            {
+                response.Debug.Notes.Add("Information-need vector requested extra data, but no matching archive/marker/quote/lore context was available locally.");
+                response.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "InformationNeedNoLocalContext",
+                    Target = request.StarId,
+                    Data =
+                    {
+                        { "needs", SummarizeNeedsForEvent(needs) },
+                        { "note", "The Star asked for more information, but local archives did not have a matching slice." }
+                    }
+                });
+                return response;
+            }
+
+            StarInteractionRequest followupRequest = CloneRequestForInformationFollowup(request, context, needs);
+            try
+            {
+                StarInteractionResponse followup = await _agent.GenerateAsync(profile, followupRequest, state, cancellationToken).ConfigureAwait(false);
+                followup.NeedsMoreInformation = false;
+                followup.InformationNeeds = needs;
+                followup.InformationFollowupAttempted = true;
+                followup.InformationFollowupSucceeded = true;
+                followup.InformationFollowupContextSummary = response.InformationFollowupContextSummary;
+                followup.Debug.Notes.Add("Automatic information follow-up pass used local archive/quote/marker/lore context after the foreground response requested more data.");
+                followup.Debug.Notes.Add("Needs: " + SummarizeNeedsForEvent(needs));
+                followup.Debug.Notes.Add("Extra context chars: " + context.Length);
+                followup.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "InformationFollowupCompleted",
+                    Target = request.StarId,
+                    Data =
+                    {
+                        { "needs", SummarizeNeedsForEvent(needs) },
+                        { "contextChars", context.Length.ToString() },
+                        { "note", "The runtime answered with a second LLM pass using requested local history/data." }
+                    }
+                });
+                return followup;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                response.InformationFollowupSucceeded = false;
+                response.Debug.Notes.Add("Information follow-up failed; returning the original trying-to-remember response. " + ex.Message);
+                response.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "InformationFollowupFailed",
+                    Target = request.StarId,
+                    Data =
+                    {
+                        { "needs", SummarizeNeedsForEvent(needs) },
+                        { "error", ex.Message }
+                    }
+                });
+                return response;
+            }
+        }
+
+        private static StarInteractionRequest CloneRequestForInformationFollowup(StarInteractionRequest request, string context, List<InformationNeedVectorItem> needs)
+        {
+            StarInteractionRequest clone = new StarInteractionRequest
+            {
+                SessionId = request.SessionId,
+                StarId = request.StarId,
+                Speaker = request.Speaker,
+                RequestType = request.RequestType,
+                PlayerText = request.PlayerText,
+                GameContext = CloneGameContext(request.GameContext),
+                StoryOptions = CloneStoryOptions(request.StoryOptions),
+                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+            };
+            clone.GameContext.Flags["informationFollowup"] = "true";
+            clone.GameContext.Flags["extraInformationContext"] = context;
+            clone.GameContext.Flags["informationNeeds"] = SummarizeNeedsForEvent(needs);
+            clone.GameContext.RecentEvents.Add("The previous foreground reply requested more information. Use EXTRA REQUESTED INFORMATION to answer the player's same message now. Speak as if you remembered or checked the local archives; if it still does not answer it, say you could not find enough.");
+            return clone;
+        }
+
+        private static List<InformationNeedVectorItem> NormalizeInformationNeeds(StarInteractionResponse response, string playerText)
+        {
+            List<InformationNeedVectorItem> needs = (response.InformationNeeds ?? new List<InformationNeedVectorItem>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType) && (x.Confidence >= 0.55 || x.Score >= 55 || response.NeedsMoreInformation))
+                .Select(x => new InformationNeedVectorItem
+                {
+                    DataType = NormalizeInformationDataType(x.DataType),
+                    Subject = string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim(),
+                    Confidence = Clamp01(x.Confidence),
+                    Score = ClampScore(x.Score),
+                    Reason = x.Reason ?? string.Empty
+                })
+                .Take(6)
+                .ToList();
+
+            if (needs.Count == 0 && response.NeedsMoreInformation)
+            {
+                needs.Add(new InformationNeedVectorItem { DataType = "history", Subject = "self", Confidence = 0.72, Score = 72, Reason = "Star set needsMoreInformation without a vector." });
+            }
+
+            if (needs.Count == 0 && LooksLikeOldMemoryRequest(playerText))
+            {
+                needs.Add(new InformationNeedVectorItem { DataType = "history", Subject = ExtractLikelySubject(playerText), Confidence = 0.68, Score = 68, Reason = "Heuristic detected old-memory language." });
+            }
+
+            return needs;
+        }
+
+        private static string BuildRequestedInformationContext(StarProfile profile, StarState state, List<InformationNeedVectorItem> needs, string playerText, int maxChars)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("EXTRA REQUESTED INFORMATION");
+            sb.AppendLine("Use this only to answer the player's latest message. Mention naturally that you remembered, found an old marker, or could not find enough detail. Do not dump the archive.");
+            sb.AppendLine("Need vector: " + SummarizeNeedsForEvent(needs));
+
+            bool wantsHistory = Wants(needs, "history") || Wants(needs, "story");
+            bool wantsQuotes = Wants(needs, "quotes") || wantsHistory;
+            bool wantsMarkers = Wants(needs, "markers");
+            bool wantsLore = Wants(needs, "lore") || Wants(needs, "characters") || Wants(needs, "world") || Wants(needs, "bestiary");
+
+            if (wantsQuotes && state.AllImportantPlayerQuotes != null && state.AllImportantPlayerQuotes.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("IMPORTANT PLAYER QUOTE SOURCE ARCHIVE (selected slice):");
+                foreach (StarImportantQuoteRecord quote in SelectQuoteRecords(state.AllImportantPlayerQuotes, needs, playerText, 48))
+                {
+                    sb.AppendLine("- " + quote.CreatedAt.ToString("u") + " | " + quote.Reason + " | " + TruncateForInfo(quote.Quote, 420));
+                }
+            }
+
+            if (wantsMarkers && state.RememberedMarkers != null && state.RememberedMarkers.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("REMEMBERED MARKER SOURCE ARCHIVE (selected slice):");
+                foreach (StarRememberedMarker marker in SelectMarkers(state.RememberedMarkers, needs, playerText, 80))
+                {
+                    sb.AppendLine("- id=" + marker.Id + " | name=" + TruncateForInfo(marker.MarkerName, 120) + " | coords=" + TruncateForInfo(marker.Coordinates, 80) + " | location=" + TruncateForInfo(FirstNonEmpty(marker.LocationText, marker.Area), 160) + " | " + TruncateForInfo(FirstNonEmpty(marker.Description, marker.ReminderText), 420));
+                    if (!string.IsNullOrWhiteSpace(marker.SourcePlayerQuote)) sb.AppendLine("  source quote: " + TruncateForInfo(marker.SourcePlayerQuote, 360));
+                }
+            }
+
+            if (wantsHistory && state.OldConversationArchives != null && state.OldConversationArchives.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("OLD CONVERSATION ARCHIVES (summaries plus selected source turns):");
+                foreach (StarConversationArchiveEntry archive in SelectArchives(state.OldConversationArchives, needs, playerText, 8))
+                {
+                    sb.AppendLine("- archive=" + archive.Id + " | " + archive.StartedAt.ToString("u") + " -> " + archive.EndedAt.ToString("u") + " | turns=" + archive.EntryCount);
+                    sb.AppendLine("  summary: " + TruncateForInfo(archive.Summary, 900));
+                    foreach (ConversationLogEntry entry in SelectArchiveEntries(archive, needs, playerText, 16))
+                    {
+                        sb.AppendLine("  turn " + entry.CreatedAt.ToString("u") + ": player=" + QuoteForInfo(TruncateForInfo(entry.PlayerText, 360)) + " star=" + QuoteForInfo(TruncateForInfo(entry.StarResponse, 360)));
+                    }
+                }
+            }
+
+            if (wantsLore)
+            {
+                sb.AppendLine();
+                sb.AppendLine("CHARACTER / WORLD LORE AVAILABLE LOCALLY:");
+                sb.AppendLine("Star: " + profile.DisplayName + " | element=" + profile.Element + " | domain=" + profile.Domain + " | core quote=" + profile.CoreQuote);
+                if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + TruncateForInfo(profile.PersonalityShort, 500));
+                if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory: " + TruncateForInfo(profile.BackstorySummary, 900));
+                foreach (string note in profile.LibraryCanonNotes.Take(16)) sb.AppendLine("- canon: " + TruncateForInfo(note, 400));
+                foreach (StarLoreEntry story in profile.AngelStories.Take(10)) sb.AppendLine("- lore story: " + story.Title + " — " + TruncateForInfo(story.Summary, 500));
+            }
+
+            string result = sb.ToString().TrimEnd();
+            if (result.Length > maxChars) result = result.Substring(0, maxChars).TrimEnd() + "\n[Extra information clipped by runtime cap.]";
+            return result;
+        }
+
+        private static IEnumerable<StarImportantQuoteRecord> SelectQuoteRecords(List<StarImportantQuoteRecord> quotes, List<InformationNeedVectorItem> needs, string playerText, int max)
+        {
+            return quotes.Where(x => x != null).OrderByDescending(x => RelevanceScore(x.Quote + " " + x.Reason, needs, playerText)).ThenByDescending(x => x.CreatedAt).Take(max);
+        }
+
+        private static IEnumerable<StarRememberedMarker> SelectMarkers(List<StarRememberedMarker> markers, List<InformationNeedVectorItem> needs, string playerText, int max)
+        {
+            return markers.Where(x => x != null && x.IsActive).OrderByDescending(x => RelevanceScore((x.MarkerName ?? "") + " " + (x.Description ?? "") + " " + (x.LocationText ?? "") + " " + (x.SourcePlayerQuote ?? ""), needs, playerText)).ThenByDescending(x => x.UpdatedAt).Take(max);
+        }
+
+        private static IEnumerable<StarConversationArchiveEntry> SelectArchives(List<StarConversationArchiveEntry> archives, List<InformationNeedVectorItem> needs, string playerText, int max)
+        {
+            return archives.Where(x => x != null).OrderByDescending(x => RelevanceScore(x.Summary + " " + string.Join(" ", x.TopicTags ?? new List<string>()), needs, playerText)).ThenByDescending(x => x.EndedAt).Take(max);
+        }
+
+        private static IEnumerable<ConversationLogEntry> SelectArchiveEntries(StarConversationArchiveEntry archive, List<InformationNeedVectorItem> needs, string playerText, int max)
+        {
+            return (archive.Entries ?? new List<ConversationLogEntry>()).OrderByDescending(x => RelevanceScore((x.PlayerText ?? "") + " " + (x.StarResponse ?? "") + " " + (x.Summary ?? ""), needs, playerText)).ThenByDescending(x => x.CreatedAt).Take(max).OrderBy(x => x.CreatedAt);
+        }
+
+        private static int RelevanceScore(string text, List<InformationNeedVectorItem> needs, string playerText)
+        {
+            string hay = (text ?? string.Empty).ToLowerInvariant();
+            int score = 0;
+            foreach (string token in BuildSearchTokens(needs, playerText))
+            {
+                if (hay.Contains(token)) score += token.Length >= 6 ? 3 : 1;
+            }
+            return score;
+        }
+
+        private static List<string> BuildSearchTokens(List<InformationNeedVectorItem> needs, string playerText)
+        {
+            List<string> raw = new List<string>();
+            raw.Add(playerText ?? string.Empty);
+            raw.AddRange(needs.Select(x => x.Subject ?? string.Empty));
+            raw.AddRange(needs.Select(x => x.Reason ?? string.Empty));
+            return Regex.Split(string.Join(" ", raw).ToLowerInvariant(), @"[^a-z0-9_]+")
+                .Where(x => x.Length >= 3 && !IsStopToken(x))
+                .Distinct()
+                .Take(40)
+                .ToList();
+        }
+
+        private static bool IsStopToken(string token)
+        {
+            switch (token)
+            {
+                case "the": case "and": case "you": case "that": case "this": case "what": case "when": case "where": case "about": case "remember": case "history": case "old": case "from": case "with": case "for": case "self":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool Wants(List<InformationNeedVectorItem> needs, string dataType)
+        {
+            return needs.Any(x => string.Equals(NormalizeInformationDataType(x.DataType), dataType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string NormalizeInformationDataType(string value)
+        {
+            string compact = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (compact.Contains("quote")) return "quotes";
+            if (compact.Contains("marker") || compact.Contains("location")) return "markers";
+            if (compact.Contains("bestiary") || compact.Contains("monster") || compact.Contains("creature")) return "bestiary";
+            if (compact.Contains("character") || compact.Contains("profile") || compact.Contains("star")) return "characters";
+            if (compact.Contains("lore")) return "lore";
+            if (compact.Contains("world")) return "world";
+            if (compact.Contains("screen")) return "screen";
+            if (compact.Contains("story")) return "story";
+            return "history";
+        }
+
+        private static bool LooksLikeOldMemoryRequest(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            return Regex.IsMatch(text, @"\b(remember|earlier|before|last time|old|previous|nostalgia|marker|where did|what did i say|what were we talking|conversation from)\b", RegexOptions.IgnoreCase);
+        }
+
+        private static string ExtractLikelySubject(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "self";
+            Match about = Regex.Match(text, @"\b(?:about|called|named|marker)\s+(?<subject>[A-Za-z0-9 _'\-]{2,80})", RegexOptions.IgnoreCase);
+            return about.Success ? about.Groups["subject"].Value.Trim() : "self";
+        }
+
+        private static string SummarizeInformationNeeds(List<InformationNeedVectorItem> needs, string context)
+        {
+            return SummarizeNeedsForEvent(needs) + "; local context chars=" + (context == null ? 0 : context.Length);
+        }
+
+        private static string SummarizeNeedsForEvent(List<InformationNeedVectorItem> needs)
+        {
+            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x => NormalizeInformationDataType(x.DataType) + ":" + (string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject) + "@" + x.Confidence.ToString("0.00")));
+        }
+
+        private static double Clamp01(double value)
+        {
+            if (value < 0) return 0;
+            if (value > 1) return 1;
+            return value;
+        }
+
+        private static double ClampScore(double value)
+        {
+            if (value < 0) return 0;
+            if (value > 100) return 100;
+            return value;
+        }
+
+        private static string TruncateForInfo(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (cleaned.Length <= maxLength) return cleaned;
+            return cleaned.Substring(0, maxLength).Trim() + "...";
+        }
+
+        private static string QuoteForInfo(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\"", "'") + "\"";
+        }
+
+        private static string FirstNonEmpty(params string?[] values)
+        {
+            foreach (string? value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return string.Empty;
         }
 
         private async Task PopulateKnownStarContextAsync(StarInteractionRequest request, CancellationToken cancellationToken)

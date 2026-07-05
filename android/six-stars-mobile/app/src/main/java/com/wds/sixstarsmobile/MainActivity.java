@@ -14,6 +14,8 @@ import android.os.Looper;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
+import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -23,6 +25,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -72,6 +75,15 @@ public final class MainActivity extends Activity {
     private TextView debugText;
     private TextView voiceDebugText;
     private Button recordButton;
+    private Button toggleMetButton;
+    private Button toggleAllyButton;
+    private Button clearHistoryButton;
+    private Button clearAllDataButton;
+    private TextView starStateText;
+    private boolean suppressStarSelectionDispatch;
+    private boolean selectedStarIsMet;
+    private boolean selectedStarIsAlly;
+    private long lastBridgeEventSequence;
     private File lastVoiceAudioFile;
     private String lastVoiceAudioChecksum = "";
     private ByteArrayOutputStream lastVoicePcmAccumulator;
@@ -101,6 +113,15 @@ public final class MainActivity extends Activity {
         }
     };
 
+    private final Runnable bridgeEventLoop = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed) return;
+            pollBridgeEvents();
+            mainHandler.postDelayed(this, 1300);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -109,6 +130,7 @@ public final class MainActivity extends Activity {
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
         mainHandler.postDelayed(healthLoop, 600);
+        mainHandler.postDelayed(bridgeEventLoop, 1200);
     }
 
     @Override
@@ -144,7 +166,7 @@ public final class MainActivity extends Activity {
         root.addView(audioStatusText);
 
         root.addView(label("Desktop bridge URL"));
-        serverUrlEdit = input("http://grasshoppah:8066", false);
+        serverUrlEdit = input("http://192.168.1.217:8066", false);
         root.addView(serverUrlEdit);
 
         LinearLayout connectionButtons = row();
@@ -169,6 +191,36 @@ public final class MainActivity extends Activity {
         selectors.addView(starSpinner, weightParams(1));
         selectors.addView(requestTypeSpinner, weightParams(1));
         root.addView(selectors);
+
+        starSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (suppressStarSelectionDispatch) return;
+                dispatchSelectStar(starSpinner.getSelectedItem().toString());
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) { }
+        });
+
+        starStateText = label("Elusiaa is met and allied by default.");
+        root.addView(starStateText);
+
+        LinearLayout starControlRow = row();
+        toggleMetButton = button("Mark Met");
+        toggleMetButton.setOnClickListener(v -> dispatchToggleMet());
+        toggleAllyButton = button("Mark Ally");
+        toggleAllyButton.setOnClickListener(v -> dispatchToggleAlly());
+        clearHistoryButton = button("Clear History");
+        clearHistoryButton.setOnClickListener(v -> dispatchClearHistory());
+        starControlRow.addView(toggleMetButton, weightParams(1));
+        starControlRow.addView(toggleAllyButton, weightParams(1));
+        starControlRow.addView(clearHistoryButton, weightParams(1));
+        root.addView(starControlRow);
+        clearAllDataButton = button("Clear All Data");
+        clearAllDataButton.setOnClickListener(v -> dispatchClearAllData());
+        root.addView(clearAllDataButton);
+        updateStarStateUi("Elusiaa", true, true, 0, 0, 0, 0.0, false, "Ready");
 
         LinearLayout contextRow = row();
         areaEdit = input("VirethornCaves", false);
@@ -196,7 +248,8 @@ public final class MainActivity extends Activity {
         root.addView(playOnPhoneCheck);
 
         root.addView(label("Message to selected Star"));
-        messageEdit = input("Elusiaa, hi. I am testing from my Android phone. Stay close and answer naturally.", true);
+        messageEdit = input("", true);
+        messageEdit.setHint("Say something to the selected Star. The box clears after Send.");
         messageEdit.setMinLines(4);
         root.addView(messageEdit);
 
@@ -287,7 +340,7 @@ public final class MainActivity extends Activity {
     private String baseUrl() {
         String value = serverUrlEdit.getText().toString().trim();
         if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
-        return value.length() == 0 ? "http://grasshoppah:8066" : value;
+        return value.length() == 0 ? "http://192.168.1.217:8066" : value;
     }
 
     private JSONObject baseRequestJson() throws Exception {
@@ -320,6 +373,7 @@ public final class MainActivity extends Activity {
                 if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
                     ensureAudioSocket(host, audioPort);
                 }
+                fetchMobileState(false);
             } catch (Exception ex) {
                 runOnUiThread(() -> {
                     connectionStatusText.setText("Not connected to " + baseUrl() + " — " + ex.getMessage());
@@ -337,6 +391,177 @@ public final class MainActivity extends Activity {
         } catch (Exception ignored) {
             return 8067;
         }
+    }
+
+    private String selectedStarName() {
+        Object selected = starSpinner == null ? null : starSpinner.getSelectedItem();
+        return selected == null ? "Elusiaa" : selected.toString();
+    }
+
+    private void dispatchSelectStar(String starId) {
+        dispatchBridgeCommand("SelectStar", starId, null, null, "Android Star dropdown changed.");
+    }
+
+    private void dispatchToggleMet() {
+        dispatchBridgeCommand("SetMet", selectedStarName(), !selectedStarIsMet, null, "Android toggled met flag.");
+    }
+
+    private void dispatchToggleAlly() {
+        dispatchBridgeCommand("SetAlly", selectedStarName(), null, !selectedStarIsAlly, "Android toggled ally flag.");
+    }
+
+    private void dispatchClearHistory() {
+        dispatchBridgeCommand("ClearHistory", selectedStarName(), null, null, "Android cleared selected Star history.");
+    }
+
+    private void dispatchClearAllData() {
+        dispatchBridgeCommand("ClearAllData", selectedStarName(), null, null, "Android cleared all local Star data.");
+    }
+
+    private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
+        httpExecutor.execute(() -> {
+            try {
+                JSONObject json = new JSONObject();
+                json.put("commandId", "android-" + System.currentTimeMillis());
+                json.put("commandType", commandType);
+                json.put("sourceClientId", "SixStarsMobileAndroid");
+                json.put("sessionId", "android-phone-dev");
+                json.put("starId", starId == null || starId.length() == 0 ? selectedStarName() : starId);
+                if (isMet != null) json.put("isMet", isMet.booleanValue());
+                if (isAlly != null) json.put("isAlly", isAlly.booleanValue());
+                json.put("reason", reason == null ? "Android bridge command" : reason);
+                runOnUiThread(() -> appendVoiceDebug("Elusiaa sent a bridge command", commandType + " for " + (starId == null ? selectedStarName() : starId)));
+                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 30000);
+                JSONObject response = new JSONObject(body);
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    setDebug("Bridge command complete", clip(response.optString("message", body), 1000));
+                    if (event != null) handleBridgeEvent(event);
+                    appendVoiceDebug("Khavia received the bridge command reply", commandType + " ok=" + response.optBoolean("ok", false));
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    setDebug("Bridge command failed", ex.toString());
+                    appendVoiceDebug("Maera felt a bridge command fail", ex.toString());
+                });
+            }
+        });
+    }
+
+    private void fetchMobileState(boolean manual) {
+        httpExecutor.execute(() -> {
+            try {
+                String body = get(baseUrl() + "/api/mobile/state", 12000);
+                JSONObject json = new JSONObject(body);
+                runOnUiThread(() -> {
+                    applyMobileStatePayload(json);
+                    if (manual) setDebug("Bridge state refreshed", clip(body, 1200));
+                });
+            } catch (Exception ex) {
+                if (manual) runOnUiThread(() -> setDebug("Bridge state failed", ex.toString()));
+            }
+        });
+    }
+
+    private void pollBridgeEvents() {
+        httpExecutor.execute(() -> {
+            try {
+                String body = get(baseUrl() + "/api/mobile/events?after=" + lastBridgeEventSequence + "&max=25", 10000);
+                JSONObject json = new JSONObject(body);
+                JSONArray events = json.optJSONArray("events");
+                long latest = optLongEither(json, "latestSequence", "LatestSequence", lastBridgeEventSequence);
+                runOnUiThread(() -> {
+                    if (events != null) {
+                        for (int i = 0; i < events.length(); i++) {
+                            JSONObject evt = events.optJSONObject(i);
+                            if (evt != null) handleBridgeEvent(evt);
+                        }
+                    }
+                    if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
+                });
+            } catch (Exception ignored) {
+                // Connection status is already shown by the health loop.
+            }
+        });
+    }
+
+    private void applyMobileStatePayload(JSONObject json) {
+        String selected = optStringEither(json, "selectedStarId", "SelectedStarId", selectedStarName());
+        selectStarInSpinner(selected);
+        JSONArray stars = json.optJSONArray("stars");
+        if (stars != null) {
+            for (int i = 0; i < stars.length(); i++) {
+                JSONObject state = stars.optJSONObject(i);
+                if (state == null) continue;
+                String starId = optStringEither(state, "starId", "StarId", "");
+                if (starId.equalsIgnoreCase(selectedStarName())) {
+                    applyStarStateObject(state, "State refresh");
+                    break;
+                }
+            }
+        }
+        long latest = optLongEither(json, "latestEventSequence", "LatestEventSequence", lastBridgeEventSequence);
+        if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
+    }
+
+    private void handleBridgeEvent(JSONObject event) {
+        long seq = optLongEither(event, "sequence", "Sequence", lastBridgeEventSequence);
+        if (seq > lastBridgeEventSequence) lastBridgeEventSequence = seq;
+        String type = optStringEither(event, "eventType", "EventType", "BridgeEvent");
+        String selected = optStringEither(event, "selectedStarId", "SelectedStarId", "");
+        String starId = optStringEither(event, "starId", "StarId", selected.length() > 0 ? selected : selectedStarName());
+        String message = optStringEither(event, "message", "Message", type);
+        if (selected.length() > 0) selectStarInSpinner(selected);
+        applyStarStateObject(event, type);
+        if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
+            responseText.setText(("AllStarsDataCleared".equalsIgnoreCase(type) ? "All Star data cleared." : "History cleared for " + starId + ".") + " The next conversation starts from the refreshed Star memory.");
+            setDebug("History cleared", message);
+        }
+        appendVoiceDebug("Elusiaa received a queued bridge update", "#" + seq + " " + type + " star=" + starId + ", selected=" + selected + ", " + clip(message, 180));
+    }
+
+    private void applyStarStateObject(JSONObject state, String status) {
+        String starId = optStringEither(state, "starId", "StarId", selectedStarName());
+        if (!starId.equalsIgnoreCase(selectedStarName())) return;
+        boolean met = optBooleanEither(state, "isMet", "IsMet", selectedStarIsMet);
+        boolean ally = optBooleanEither(state, "isAlly", "IsAlly", selectedStarIsAlly);
+        int heart = optIntEither(state, "heart", "Heart", 0);
+        int trust = optIntEither(state, "trust", "Trust", 0);
+        int romance = optIntEither(state, "romance", "Romance", 0);
+        double connection = optDoubleEither(state, "emotionalConnectionPercent", "EmotionalConnectionPercent", 0.0);
+        boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
+        updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
+    }
+
+    private void updateStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, String status) {
+        selectedStarIsMet = met;
+        selectedStarIsAlly = ally;
+        if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
+        if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
+        if (starStateText != null) {
+            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status);
+        }
+    }
+
+    private void selectStarInSpinner(String starId) {
+        if (starSpinner == null || starId == null || starId.length() == 0) return;
+        int position = findStarPosition(starId);
+        if (position < 0 || position == starSpinner.getSelectedItemPosition()) return;
+        suppressStarSelectionDispatch = true;
+        try {
+            starSpinner.setSelection(position);
+        } finally {
+            suppressStarSelectionDispatch = false;
+        }
+    }
+
+    private int findStarPosition(String starId) {
+        if (starSpinner == null || starSpinner.getAdapter() == null) return -1;
+        for (int i = 0; i < starSpinner.getAdapter().getCount(); i++) {
+            Object item = starSpinner.getAdapter().getItem(i);
+            if (item != null && item.toString().equalsIgnoreCase(starId)) return i;
+        }
+        return -1;
     }
 
     private void testPhoneAudio() {
@@ -375,13 +600,22 @@ public final class MainActivity extends Activity {
     }
 
     private void sendMessage() {
+        String playerText = messageEdit == null ? "" : messageEdit.getText().toString();
+        String requestType = requestTypeSpinner == null || requestTypeSpinner.getSelectedItem() == null ? "Chat" : requestTypeSpinner.getSelectedItem().toString();
+        if (playerText.trim().length() == 0 && !"Story".equalsIgnoreCase(requestType)) {
+            setDebug("Nothing to send", "Type a message first, choose Story so the Star can invent one, or use Record Voice so Whisper can provide the transcript.");
+            appendVoiceDebug("Elusiaa tilted her head", "The message box was empty, so nothing was sent.");
+            return;
+        }
+        String starName = selectedStarName();
+        if (messageEdit != null) messageEdit.setText("");
         httpExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
-                json.put("playerText", messageEdit.getText().toString());
+                json.put("playerText", playerText);
                 runOnUiThread(() -> {
-                    setDebug("Sending text", "Waiting for Star response. Voice will arrive on phone socket when generated.");
-                    appendVoiceDebug(starSpinner.getSelectedItem().toString() + " received your message", "HTTP /api/mobile/message sent at " + now());
+                    setDebug("Sending text", "Message box cleared. Waiting for Star response. Voice will arrive on phone socket when generated.");
+                    appendVoiceDebug(starName + " received your message", "HTTP /api/mobile/message sent at " + now());
                 });
                 String body = postJson(baseUrl() + "/api/mobile/message", json.toString(), 180000);
                 handleConversationResponse("Text request complete", body);
@@ -802,6 +1036,24 @@ public final class MainActivity extends Activity {
     private static int optIntEither(JSONObject json, String camelName, String pascalName, int fallback) {
         if (json.has(camelName)) return json.optInt(camelName, fallback);
         if (json.has(pascalName)) return json.optInt(pascalName, fallback);
+        return fallback;
+    }
+
+    private static long optLongEither(JSONObject json, String camelName, String pascalName, long fallback) {
+        if (json.has(camelName)) return json.optLong(camelName, fallback);
+        if (json.has(pascalName)) return json.optLong(pascalName, fallback);
+        return fallback;
+    }
+
+    private static boolean optBooleanEither(JSONObject json, String camelName, String pascalName, boolean fallback) {
+        if (json.has(camelName)) return json.optBoolean(camelName, fallback);
+        if (json.has(pascalName)) return json.optBoolean(pascalName, fallback);
+        return fallback;
+    }
+
+    private static double optDoubleEither(JSONObject json, String camelName, String pascalName, double fallback) {
+        if (json.has(camelName)) return json.optDouble(camelName, fallback);
+        if (json.has(pascalName)) return json.optDouble(pascalName, fallback);
         return fallback;
     }
 

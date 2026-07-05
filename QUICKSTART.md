@@ -259,3 +259,50 @@ Environment variables take precedence over `appsettings.json`.
 ## Support
 
 Check the documentation files in the `docs/` folder for detailed information on each feature.
+
+
+## Services launcher note
+
+`run-ai-companion.cmd` is the normal full companion launcher again: it uses the integrated/prebuilt engine launcher (`redist\six-stars-launcher.exe` when built, or the launcher project fallback) to start the local engine services and open the desktop app. Use `run-ai-services.cmd` when you want services-only with the prebuilt engine EXEs, then open the UI separately with `launch-ui-only.cmd`. Use `run-ai-source-services.cmd` or `python scripts\start_services.py` for the repo `.venv` Python debug flow.
+
+
+### Launcher split: prebuilt app vs venv services
+
+- `run-ai-companion.cmd` launches the normal integrated/prebuilt-engine companion app path. It calls `launch.cmd`, which prefers `redist\six-stars-launcher.exe` and falls back to the .NET launcher project for development builds.
+- `run-ai-services.cmd` is services-only and keeps the desktop app closed. It uses the prebuilt engine EXEs from `config/runtime-manifest.json` through `launch.cmd --skip-install --no-ui`.
+- `launch-ui-only.cmd` opens only the desktop UI after services are already running.
+- `run-ai-companion-with-ui.cmd` is the dev/source flow that starts `run-ai-source-services.cmd` in a second window and then opens the UI.
+
+
+## Launcher modes updated: prebuilt app vs source services
+
+- `run-ai-companion.cmd` is the normal full prebuilt companion launcher. It starts the integrated engine services and opens the desktop app.
+- `run-ai-services.cmd` is services-only for the prebuilt engine EXEs. It calls `launch.cmd --skip-install --no-ui` and does not launch the UI.
+- `launch-ui-only.cmd` opens the desktop UI after services are already running.
+- `run-ai-source-services.cmd` is the Python source/venv debug helper for ASR/TTS. It calls `start.cmd`, which activates `.venv` and then runs `python scripts\start_services.py`.
+- Manual Python debug flow is still supported: activate `.venv` yourself and run `python scripts\start_services.py`.
+
+### Android Star state controls
+
+The Android app now has a Star dropdown, met/ally toggles, and Clear History for the selected Star. These go through the API dispatcher:
+
+```text
+POST /api/mobile/dispatch
+GET  /api/mobile/events?after=<sequence>
+GET  /api/mobile/state
+```
+
+Use the voice journal/debug panel on Android to verify queued `SelectedStarChanged`, `StarStateChanged`, and `StarHistoryCleared` events.
+
+## CUDA-only services
+
+`config/runtime-manifest.json` now requires CUDA and disables CPU fallback for LLM, ASR, and TTS. Setup changes should be made in the JSON config; the environment variables you see in logs are only internal values passed from the launcher to child services.
+
+For Python source testing:
+
+```bat
+.venv\Scripts\activate
+python scripts\start_services.py
+```
+
+This path also enforces CUDA for Qwen TTS and faster-whisper. If it would run on CPU, it exits with a hosted-service message instead.
