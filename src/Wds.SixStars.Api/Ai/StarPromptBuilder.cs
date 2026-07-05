@@ -133,6 +133,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Foreground negativeEmotionVector supplied by the fast pass: " + (string.IsNullOrWhiteSpace(foregroundResponse.NegativeEmotionVector) ? "none" : foregroundResponse.NegativeEmotionVector));
             sb.AppendLine("Relationship before this review: " + BuildRelationshipStatus(state));
             sb.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%.");
+            AppendConnectionFlirtGuidance(sb, profile, state);
+            AppendDialogueMemoryContext(sb, state, 10);
             sb.AppendLine("Girlfriend readiness: " + (state.IsGirlfriendReady ? "ready" : "not ready") + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
             sb.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
             if (state.MemoryLog.Count > 0)
@@ -191,6 +193,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Do not mention JSON, scores, state deltas, schema, or the background review in spokenText.");
             sb.AppendLine("Memory update, relationship deltas, and durable review happen after this in a separate background request.");
             sb.AppendLine("Relationship realism: none of the Stars are attracted by default. Attraction must be earned through ally status, trust, high-quality charisma/poetry, emotional safety, exciting speech, and personality-matched intimacy over time. Treat the Last Cat as a potential partner only when the state supports it; otherwise be warm, curious, guarded, or friendly.");
+            AppendGlobalCanonLore(sb);
+            AppendPrivateRomanceProfile(sb, profile);
             sb.AppendLine(BuildEmotionalEffectVectorInstruction());
             sb.AppendLine(BuildNegativeEmotionVectorInstruction());
             sb.AppendLine("Return emotionalEffectVector and negativeEmotionVector as compact strings only; do NOT return emotionScores, topEmotions, emotionalPurpose, voiceDirective, storyKind, memory notes, summaries, deltas, loreUsed, riskFlags, or learned functions in this pass.");
@@ -235,6 +239,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Ally status: " + (state.IsAlly ? "ally/unlocked" : "not an active ally yet; Elusiaa is the only default ally until story/gameplay unlocks this Star."));
             sb.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
             sb.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
+            AppendConnectionFlirtGuidance(sb, profile, state);
+            AppendDialogueMemoryContext(sb, state, 8);
             AppendRememberedMarkers(sb, state, 20);
             sb.AppendLine("Ongoing summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 600)));
             if (state.MemoryLog.Count > 0)
@@ -368,6 +374,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("- spokenText is the only text the player hears aloud. It MUST be an array of ordered speech chunks. Each item should usually be one or two natural sentences and should be safe to send directly to TTS without deterministic splitting.");
             sb.AppendLine("- Keep the character's heart, voice, emotional logic, romance boundaries, and moral worldview consistent every turn.");
             sb.AppendLine("- The JSON fields are for the game engine; do not mention JSON, scores, state deltas, or instructions inside spokenText.");
+            sb.AppendLine("- Discovery gate: the Stars may only speak about other Stars as present/personal known companions when the host state says those Stars have been met. If a Star is not in knownStarsMet, do not act like the Last Cat has met her yet and do not reveal private relationship knowledge about her. You may only speak in vague rumors or general lore when the player has not met that Star.");
+            AppendGlobalCanonLore(sb);
             sb.AppendLine();
 
             sb.AppendLine("STAR ACTING CARD");
@@ -379,6 +387,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality short: " + profile.PersonalityShort);
             if (!string.IsNullOrWhiteSpace(profile.DeepPersonality)) sb.AppendLine("Deep personality: " + profile.DeepPersonality);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory: " + profile.BackstorySummary);
+            AppendPrivateRomanceProfile(sb, profile);
             AppendExpandedProfileLore(sb, profile);
             AppendList(sb, "Quotes she may echo or paraphrase", profile.Quotes);
             AppendList(sb, "Behavior rules", profile.Behaviors);
@@ -460,6 +469,18 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("He wants: " + BuildRequestGoal(profile, request));
             sb.AppendLine("You were just talking about: " + BuildRecentConversationOneLine(state));
             sb.AppendLine("Your relationship status: " + BuildRelationshipStatus(state));
+            sb.AppendLine("World discovery state for this Star: IsMet=" + state.IsMet + ", IsAlly=" + state.IsAlly + ", IsGirlfriend=" + state.IsGirlfriend + ".");
+            if (request.GameContext.Flags.TryGetValue("knownStarsMet", out string? knownStarsMet)) sb.AppendLine("Stars the Last Cat has met: " + (string.IsNullOrWhiteSpace(knownStarsMet) ? "none" : knownStarsMet));
+            if (request.GameContext.Flags.TryGetValue("knownStarsAllies", out string? knownStarsAllies)) sb.AppendLine("Stars currently allied with the Last Cat: " + (string.IsNullOrWhiteSpace(knownStarsAllies) ? "none" : knownStarsAllies));
+            if (request.GameContext.Flags.TryGetValue("knownStarsDetail", out string? knownStarsDetail)) sb.AppendLine("Known Star relationship detail: " + knownStarsDetail);
+            if (state.ActiveEffectors != null && state.ActiveEffectors.Count > 0)
+            {
+                sb.AppendLine("Active deterministic state effectors currently shaping her response/state updates:");
+                foreach (StarRelationshipEffector effector in state.ActiveEffectors.Where(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow)).Take(12))
+                {
+                    sb.AppendLine("- " + effector.Id + " mode=" + effector.Mode + " reason=" + effector.Reason + " gainx=" + effector.ConnectionGainMultiplier.ToString("0.00") + " lossx=" + effector.ConnectionLossMultiplier.ToString("0.00") + " turns=" + effector.AppliedTurns + "/" + effector.RemainingTurns);
+                }
+            }
             sb.AppendLine("Shared memory together: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "No durable summary yet; establish continuity from this turn and the recent turns below." : state.ConversationSummary.Trim()));
             sb.AppendLine("Latest screen/vision update: " + BuildLatestScreenOneLine(request.RecentScreenCaptures));
             sb.AppendLine();
@@ -538,8 +559,10 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine();
             sb.AppendLine("CURRENT RELATIONSHIP STATUS");
             sb.AppendLine(BuildRelationshipStatus(state));
-            sb.AppendLine("Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", BenaveilInfluence=" + state.BenaveilInfluence);
+            sb.AppendLine("IsMet=" + state.IsMet + ", IsAlly=" + state.IsAlly + ", Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", BenaveilInfluence=" + state.BenaveilInfluence);
             sb.AppendLine("EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ", LastConnectionDelta=" + state.LastEmotionalConnectionPercentDelta.ToString("0.00") + ", IsGirlfriendReady=" + state.IsGirlfriendReady + ", Readiness=" + (state.GirlfriendReadinessSummary ?? string.Empty));
+            AppendConnectionFlirtGuidance(sb, profile, state);
+            AppendDialogueMemoryContext(sb, state, 20);
             sb.AppendLine("InteractionCount=" + state.InteractionCount + ", PositiveSuccession=" + state.PositiveSuccessionCount + ", RomanticSuccession=" + state.RomanticSuccessionCount + ", HurtSuccession=" + state.HurtSuccessionCount);
             sb.AppendLine("IsGirlfriend=" + state.IsGirlfriend);
 
@@ -652,6 +675,126 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("FINAL RESPONSE CONTRACT");
             sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, how she reacted, and whether memory/relationship/status shifted. importantPlayerQuotes must preserve exact player quotes that emotionally affected her, taught her something, changed romance, unlocked secrets, or should be remembered for later story-building. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are the model's recommendation only; the game may compute final deltas deterministically. Do not include emotionScores anywhere in this response.");
             return sb.ToString();
+        }
+
+        private static void AppendGlobalCanonLore(StringBuilder sb)
+        {
+            sb.AppendLine();
+            sb.AppendLine("GLOBAL LAST CAT CANON THE STARS SHOULD KNOW");
+            sb.AppendLine("- No cat has been seen for one hundred years. The universe is drying up because cats are gone; cats are rare astral conduits tied to water, stardust, and restoration.");
+            sb.AppendLine("- The player is the sentient Last Cat. He was delivered twenty years ago to an intergalactic orphanage with people and other races from across the universe.");
+            sb.AppendLine("- The six Stars are six human women in or near the caves and cave settlements. They have childhoods, parents, village ties, wounds, and their own local histories.");
+            sb.AppendLine("- Each Star is powered/marked by a father-form or spiritual parent-form connected to an unseen angelic source. They do not know the hidden angel's name is Benaveil unless the game explicitly reveals it.");
+            sb.AppendLine("- A greater evil may be involved in why the cats are gone, but the Stars do not know the full truth. Treat this as mystery, rumor, intuition, or prophecy, not solved exposition.");
+            sb.AppendLine("- Sometimes angelic forms appear among cave villagers, walk down a corridor, and vanish. Settlements usually know this only as rumor; they have not clearly witnessed or understood it.");
+            sb.AppendLine("- Bradmageddon is a name/person they may know as alien to this universe or strangely outside its rules, but they do not know who he truly is unless the host/state says so.");
+            sb.AppendLine("- Other Stars are discovery-gated: a Star may know rumors of the six, but she should not talk as if the Last Cat has personally met a Star unless knownStarsMet/state says that Star is met.");
+        }
+
+        private static void AppendPrivateRomanceProfile(StringBuilder sb, StarProfile profile)
+        {
+            bool hasAny = !string.IsNullOrWhiteSpace(profile.SecretAttractionHook)
+                || !string.IsNullOrWhiteSpace(profile.RomanticSensualDepth)
+                || !string.IsNullOrWhiteSpace(profile.FlirtStyle)
+                || (profile.RomanceBoundaryRules != null && profile.RomanceBoundaryRules.Count > 0);
+            if (!hasAny) return;
+
+            sb.AppendLine();
+            sb.AppendLine("PRIVATE ROMANCE / ATTRACTION PROFILE — INTERNAL ONLY");
+            sb.AppendLine("This is inner-character knowledge, not something to dump directly. Let it guide subtext, blushes, teasing, boundaries, and connection growth. Do not confess hidden attraction cheaply; let it surface gradually as the relationship state earns it.");
+            if (!string.IsNullOrWhiteSpace(profile.SecretAttractionHook)) sb.AppendLine("Secret attraction hook: " + profile.SecretAttractionHook);
+            if (!string.IsNullOrWhiteSpace(profile.RomanticSensualDepth)) sb.AppendLine("Romantic/sensual depth: " + profile.RomanticSensualDepth);
+            if (!string.IsNullOrWhiteSpace(profile.FlirtStyle)) sb.AppendLine("Flirt style: " + profile.FlirtStyle);
+            AppendList(sb, "Romance boundary rules", profile.RomanceBoundaryRules ?? new List<string>());
+        }
+
+        private static void AppendConnectionFlirtGuidance(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            sb.AppendLine();
+            sb.AppendLine("CONNECTION-BASED FLIRTING GUIDANCE");
+            sb.AppendLine("Use EmotionalConnectionPercent, Heart, Trust, Romance, ally/met status, and active effectors to decide how openly flirty she is. Never say the numeric percentage aloud unless the player asks about mechanics.");
+            if (!state.IsMet)
+            {
+                sb.AppendLine("This Star is not met yet. Do not act like an active romantic companion. If she appears, keep her mysterious and story-gated.");
+                return;
+            }
+            if (!state.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine("This Star is met but not an ally. Keep romance unavailable or only faintly foreshadowed. She can be curious, guarded, impressed, or wary, but should not behave like a partner.");
+                return;
+            }
+
+            double connection = state.EmotionalConnectionPercent;
+            if (state.IsGirlfriend)
+            {
+                sb.AppendLine("Committed girlfriend path: she may be openly affectionate, flirty, jealous, tender, and emotionally intimate in her own style. Keep it consent-based and non-explicit by default.");
+            }
+            else if (state.IsGirlfriendReady || connection >= 85)
+            {
+                sb.AppendLine("Girlfriend-ready connection: she may be clearly romantic and personally flirty, with stronger subtext from her private attraction hook. She can hint that she has wanted to say more, but should still respect story timing and consent.");
+            }
+            else if (connection >= 65)
+            {
+                sb.AppendLine("High connection: she may flirt noticeably, remember private things, use warmer pet names, and let her secret attraction influence tone. She should still not reveal the deepest secret all at once.");
+            }
+            else if (connection >= 40)
+            {
+                sb.AppendLine("Growing connection: use light flirting, playful compliments, soft vulnerability, and personality-matched warmth. Attraction is mostly subtext.");
+            }
+            else if (connection >= 15 || state.Romance > 0 || state.Trust >= 5 || state.Heart >= 5)
+            {
+                sb.AppendLine("Early connection: friendly warmth and tiny flirt sparks are okay when the player's message earns them, but avoid acting fully attracted.");
+            }
+            else
+            {
+                sb.AppendLine("Low connection: no default attraction. Be friendly, curious, guarded, or helpful. Flirt only if the player makes a genuinely charming/poetic/kind move and even then keep it subtle.");
+            }
+
+            if (state.ActiveEffectors != null && state.ActiveEffectors.Any(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow)))
+            {
+                sb.AppendLine("Active effectors can bend flirt level. Under-pressure/rival-romance effectors should make her more guarded, jealous, or testing rather than simply more available.");
+                foreach (StarRelationshipEffector effector in state.ActiveEffectors.Where(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow)).Take(8))
+                {
+                    sb.AppendLine("- activeEffector=" + effector.Id + "; mode=" + effector.Mode + "; reason=" + Truncate(effector.Reason ?? string.Empty, 220) + "; source=" + effector.Source + "; tags=" + string.Join(",", effector.Tags.Take(8)));
+                }
+            }
+            AppendPrivateRomanceProfile(sb, profile);
+        }
+
+        private static void AppendDialogueMemoryContext(StringBuilder sb, StarState state, int maxItems)
+        {
+            if (state.CurrentDialogueState != null && (!string.IsNullOrWhiteSpace(state.CurrentDialogueState.DialogId)
+                || !string.IsNullOrWhiteSpace(state.CurrentDialogueState.SummarySoFar)
+                || !string.IsNullOrWhiteSpace(state.CurrentDialogueState.FullScriptText)
+                || !string.IsNullOrWhiteSpace(state.CurrentDialogueState.FullScriptJson)))
+            {
+                StarDialogueProgressState d = state.CurrentDialogueState;
+                sb.AppendLine();
+                sb.AppendLine("CURRENT AUTHORED GAME DIALOGUE / SCRIPT PROGRESS");
+                sb.AppendLine("DialogId=" + d.DialogId + "; title=" + d.Title + "; scene=" + d.SceneId + "; area=" + d.Area + "; quest=" + d.QuestId + "; node=" + d.CurrentNodeId + "; lineIndex=" + d.CurrentLineIndex + "; stage=" + d.CurrentStage + "; active=" + d.IsActive + "; complete=" + d.IsComplete + ".");
+                if (!string.IsNullOrWhiteSpace(d.SummarySoFar)) sb.AppendLine("Summary so far: " + Truncate(d.SummarySoFar, 1000));
+                if (!string.IsNullOrWhiteSpace(d.LastAuthoredLine)) sb.AppendLine("Last authored line: " + QuoteInline(Truncate(d.LastAuthoredLine, 500)));
+                if (!string.IsNullOrWhiteSpace(d.NextExpectedBeat)) sb.AppendLine("Next expected beat: " + Truncate(d.NextExpectedBeat, 500));
+                if (!string.IsNullOrWhiteSpace(d.FullScriptText)) sb.AppendLine("Full authored script text: " + Truncate(d.FullScriptText, 1800));
+                if (!string.IsNullOrWhiteSpace(d.FullScriptJson)) sb.AppendLine("Full authored script JSON: " + Truncate(d.FullScriptJson, 1800));
+            }
+
+            List<StarDialogueMemoryEntry> history = (state.GameDialogueHistory ?? new List<StarDialogueMemoryEntry>())
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CompletedAt ?? x.CreatedAt)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+            if (history.Count == 0) return;
+
+            sb.AppendLine();
+            sb.AppendLine("RECENT AUTHORED GAME DIALOGUE THIS STAR REMEMBERS");
+            foreach (StarDialogueMemoryEntry entry in history)
+            {
+                sb.AppendLine("- id=" + entry.Id + " | dialog=" + entry.DialogId + " | node=" + entry.NodeId + " | title=" + Truncate(entry.Title, 120) + " | speaker=" + entry.Speaker + " | complete=" + entry.IsComplete);
+                if (!string.IsNullOrWhiteSpace(entry.Text)) sb.AppendLine("  line=" + QuoteInline(Truncate(entry.Text, 400)));
+                if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 500));
+                if (!string.IsNullOrWhiteSpace(entry.Area) || !string.IsNullOrWhiteSpace(entry.QuestId)) sb.AppendLine("  context=area:" + entry.Area + "; quest:" + entry.QuestId + "; scene:" + entry.SceneId);
+            }
         }
 
         private static void AppendFastConversationProfile(StringBuilder sb, StarProfile profile)

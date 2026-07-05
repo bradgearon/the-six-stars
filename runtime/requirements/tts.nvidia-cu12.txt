@@ -15,3 +15,4 @@ torchvision==0.22.0+cu126
 torchaudio==2.7.0+cu126
 qwen-tts
 faster-qwen3-tts
+backports.tarfile==1.2.0

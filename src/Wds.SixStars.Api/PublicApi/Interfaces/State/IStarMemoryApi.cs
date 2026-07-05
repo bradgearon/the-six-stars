@@ -14,5 +14,12 @@ namespace Wds.SixStars.Api.State
         Task ImportSaveDataAsync(SixStarsSaveData saveData, CancellationToken cancellationToken);
         Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken);
         Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken);
+        Task<StarState> SetStarMetAsync(string sessionId, string starId, bool isMet, CancellationToken cancellationToken);
+        Task<StarState> SetStarWorldStateAsync(StarWorldStateUpdateRequest request, CancellationToken cancellationToken);
+        Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken);
+        Task<StarState> ClearStarEffectorAsync(string sessionId, string starId, string effectorId, CancellationToken cancellationToken);
+        Task<StarState> AddStarDialogueEntryAsync(StarDialogueMemoryUpdateRequest request, CancellationToken cancellationToken);
+        Task<StarState> SetStarDialogueStateAsync(StarDialogueProgressUpdateRequest request, CancellationToken cancellationToken);
+        Task<StarState> ClearStarDialogueStateAsync(string sessionId, string starId, CancellationToken cancellationToken);
     }
 }

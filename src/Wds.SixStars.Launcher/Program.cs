@@ -152,6 +152,14 @@ internal static class Program
         psi.Environment["SIX_STARS_SCREEN_LLM_ENDPOINT"] = supervisor.OpenAiChatUrl ?? "http://127.0.0.1:8080/v1/chat/completions";
         psi.Environment["SIX_STARS_LLM_MODEL"] = supervisor.ModelManifest.Models.Llm?.OpenAiModelName ?? "local-model";
         psi.Environment["SIX_STARS_SCREEN_LLM_MODEL"] = supervisor.ModelManifest.Models.Llm?.OpenAiModelName ?? "local-model";
+        // llama.cpp + small local Gemma models are more stable with prompt-only JSON
+        // than strict json_schema grammar mode. Keep generation bounded so the model
+        // cannot fill the whole context window and return an empty length stop.
+        psi.Environment["SIX_STARS_LLM_USE_JSON_SCHEMA"] = psi.Environment.TryGetValue("SIX_STARS_LLM_USE_JSON_SCHEMA", out var jsonSchema) ? jsonSchema : "false";
+        psi.Environment["SIX_STARS_LLM_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_MAX_TOKENS", out var maxTokens) ? maxTokens : "768";
+        psi.Environment["SIX_STARS_LLM_SPEECH_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_SPEECH_MAX_TOKENS", out var speechMaxTokens) ? speechMaxTokens : "512";
+        psi.Environment["SIX_STARS_LLM_REVIEW_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_REVIEW_MAX_TOKENS", out var reviewMaxTokens) ? reviewMaxTokens : "768";
+        psi.Environment["SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS", out var storyMaxTokens) ? storyMaxTokens : "3072";
         psi.Environment["SIX_STARS_WHISPER_ENDPOINT"] = "http://127.0.0.1:8000/v1/audio/transcriptions";
         psi.Environment["SIX_STARS_WEBSOCKET_TTS_URL"] = "ws://127.0.0.1:8100/tts/stream";
         psi.Environment["SIX_STARS_USE_STREAMING_TTS"] = "true";

@@ -15,8 +15,20 @@ namespace Wds.SixStars.Api.Models
         public int Romance { get; set; }
         public int BenaveilInfluence { get; set; }
 
-        /// <summary>True once the game/story has made this Star an active ally. Elusiaa defaults true; other Stars default false until unlocked by story/gameplay.</summary>
+        /// <summary>True once the game/story has introduced this Star to the player. Elusiaa defaults true; other Stars default false until met in-game.</summary>
+        public bool IsMet { get; set; }
+
+        /// <summary>True once the game/story has made this Star an active ally. Ally status normally implies met. Elusiaa defaults true; other Stars default false until unlocked by story/gameplay.</summary>
         public bool IsAlly { get; set; }
+
+        /// <summary>Deterministic gameplay modifiers currently changing relationship state updates over time.</summary>
+        public List<StarRelationshipEffector> ActiveEffectors { get; set; } = new List<StarRelationshipEffector>();
+
+        /// <summary>Authored game dialogue lines or beats this Star has finished, newest first.</summary>
+        public List<StarDialogueMemoryEntry> GameDialogueHistory { get; set; } = new List<StarDialogueMemoryEntry>();
+
+        /// <summary>Current authored dialogue/script progress if Unity wants the Star to know exactly where she is in written dialogue.</summary>
+        public StarDialogueProgressState CurrentDialogueState { get; set; } = new StarDialogueProgressState();
 
         /// <summary>How strict the deterministic romance/connection gate should be for this Star.</summary>
         public string EmotionalConnectionSkillLevel { get; set; } = "interested_private_potential_partner";

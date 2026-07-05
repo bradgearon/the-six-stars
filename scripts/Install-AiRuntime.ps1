@@ -28,7 +28,7 @@ New-Item -ItemType Directory -Force -Path "engines", "models", "logs/services" |
 if (!$SkipLlamaBuild) {
   $llamaExe = "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe"
   if ($Force -or !(Test-Path $llamaExe)) {
-    & "$PSScriptRoot/Build-LlamaCppDynamic.ps1" -WithCuda:($resolvedProfile -eq "nvidia-cu12") -WithVulkan:$true
+    & "$PSScriptRoot/Build-LlamaCppDynamic.ps1" -WithCuda:($resolvedProfile -eq "nvidia-cu12") -WithVulkan:$false -Clean:$Force -BuildParallel 2
   } else {
     Write-Host "llama.cpp dynamic runtime already exists: $llamaExe"
   }

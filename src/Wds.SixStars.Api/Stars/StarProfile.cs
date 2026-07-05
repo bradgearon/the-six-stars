@@ -27,6 +27,19 @@ namespace Wds.SixStars.Api.Stars
         public string SpiritualFather { get; set; } = string.Empty;
         public string SpiritualFatherForm { get; set; } = string.Empty;
         public string CompleteBackgroundStory { get; set; } = string.Empty;
+
+        /// <summary>Private attraction hook for the prompt. The Star knows this internally but should not confess it cheaply.</summary>
+        public string SecretAttractionHook { get; set; } = string.Empty;
+
+        /// <summary>How intense/private her romantic or sensual interest can become when connection is earned. Keep non-explicit and consent-based.</summary>
+        public string RomanticSensualDepth { get; set; } = string.Empty;
+
+        /// <summary>How her flirting should sound as connection grows.</summary>
+        public string FlirtStyle { get; set; } = string.Empty;
+
+        /// <summary>Boundaries that keep romance earned, in-character, and safe.</summary>
+        public List<string> RomanceBoundaryRules { get; set; } = new List<string>();
+
         public List<string> FriendsAndContacts { get; set; } = new List<string>();
         public List<string> BenaveilFormInteractions { get; set; } = new List<string>();
         public List<string> StarSecrets { get; set; } = new List<string>();

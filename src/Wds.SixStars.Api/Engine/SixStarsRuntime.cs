@@ -130,6 +130,41 @@ namespace Wds.SixStars.Api.Engine
             return _memoryApi.SetStarAllyAsync(sessionId, starId, isAlly, cancellationToken);
         }
 
+        public Task<StarState> SetStarMetAsync(string sessionId, string starId, bool isMet, CancellationToken cancellationToken)
+        {
+            return _memoryApi.SetStarMetAsync(sessionId, starId, isMet, cancellationToken);
+        }
+
+        public Task<StarState> SetStarWorldStateAsync(StarWorldStateUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _memoryApi.SetStarWorldStateAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken)
+        {
+            return _memoryApi.ApplyStarEffectorAsync(sessionId, starId, effector, cancellationToken);
+        }
+
+        public Task<StarState> ClearStarEffectorAsync(string sessionId, string starId, string effectorId, CancellationToken cancellationToken)
+        {
+            return _memoryApi.ClearStarEffectorAsync(sessionId, starId, effectorId, cancellationToken);
+        }
+
+        public Task<StarState> AddStarDialogueEntryAsync(StarDialogueMemoryUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _memoryApi.AddStarDialogueEntryAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> SetStarDialogueStateAsync(StarDialogueProgressUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _memoryApi.SetStarDialogueStateAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> ClearStarDialogueStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            return _memoryApi.ClearStarDialogueStateAsync(sessionId, starId, cancellationToken);
+        }
+
         public async Task AddScreenCaptureAsync(string sessionId, ScreenCaptureSummary capture, CancellationToken cancellationToken)
         {
             if (_screenContextStore == null)
@@ -169,6 +204,7 @@ namespace Wds.SixStars.Api.Engine
             }
 
             StarProfile profile = _profileProvider.GetProfile(request.StarId);
+            await PopulateKnownStarContextAsync(request, cancellationToken).ConfigureAwait(false);
             StarMemorySnapshot snapshot = await _memoryApi.GetStarMemorySnapshotAsync(request.SessionId, request.StarId, _recentHistoryCount, cancellationToken).ConfigureAwait(false);
             StarState state = snapshot.State;
 
@@ -221,6 +257,32 @@ namespace Wds.SixStars.Api.Engine
 
             await ApplyAnalysisAndMemoryUpdateAsync(request, response, cancellationToken).ConfigureAwait(false);
             return response;
+        }
+
+        private async Task PopulateKnownStarContextAsync(StarInteractionRequest request, CancellationToken cancellationToken)
+        {
+            try
+            {
+                SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+                List<StarState> knownStates = saveData.Stars
+                    .Where(x => x != null && (x.IsMet || x.IsAlly))
+                    .OrderByDescending(x => x.IsAlly)
+                    .ThenBy(x => x.StarId)
+                    .ToList();
+
+                if (knownStates.Count == 0)
+                {
+                    knownStates.Add(new StarState { StarId = "Elusiaa", IsMet = true, IsAlly = true });
+                }
+
+                request.GameContext.Flags["knownStarsMet"] = string.Join(",", knownStates.Where(x => x.IsMet).Select(x => x.StarId));
+                request.GameContext.Flags["knownStarsAllies"] = string.Join(",", knownStates.Where(x => x.IsAlly).Select(x => x.StarId));
+                request.GameContext.Flags["knownStarsDetail"] = string.Join(" | ", knownStates.Select(x => x.StarId + ":met=" + x.IsMet + ",ally=" + x.IsAlly + ",girlfriend=" + x.IsGirlfriend + ",connection=" + x.EmotionalConnectionPercent.ToString("0.0")));
+            }
+            catch (Exception ex)
+            {
+                request.GameContext.Flags["knownStarsContextError"] = ex.Message;
+            }
         }
 
         private static bool IsStoryGenerationWorkerRequest(StarInteractionRequest request)

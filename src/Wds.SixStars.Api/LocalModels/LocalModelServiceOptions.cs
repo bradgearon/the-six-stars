@@ -18,9 +18,9 @@ namespace Wds.SixStars.Api.LocalModels
             EndpointUrl = "http://localhost:8080/v1/chat/completions",
             Model = "local-model",
             TimeoutSeconds = 600,
-            MaxTokens = 0,
+            MaxTokens = 768,
             Temperature = 0.65,
-            UseJsonSchemaResponseFormat = true
+            UseJsonSchemaResponseFormat = false
         };
         public WhisperStreamEndpointOptions Whisper { get; set; } = new WhisperStreamEndpointOptions
         {

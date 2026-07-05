@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,26 @@ from faster_whisper import WhisperModel
 from model_paths import MODELS_ROOT, configure_model_environment, resolve_model_ref
 
 configure_model_environment()
+
+
+if getattr(sys, "frozen", False):
+    exe_dir = os.path.dirname(sys.executable)
+    internal_dir = getattr(sys, "_MEIPASS", "")
+
+    dll_dirs = [
+        exe_dir,
+        internal_dir,
+        os.path.join(exe_dir, "_internal"),
+    ]
+
+    for dll_dir in dll_dirs:
+        if dll_dir and os.path.isdir(dll_dir):
+            try:
+                os.add_dll_directory(dll_dir)
+            except Exception:
+                pass
+
+            os.environ["PATH"] = dll_dir + os.pathsep + os.environ.get("PATH", "")
 
 
 logging.basicConfig(

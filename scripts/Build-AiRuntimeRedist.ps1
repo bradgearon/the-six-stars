@@ -31,7 +31,9 @@ if (Test-Path "models/README.txt") { Copy-Item "models/README.txt" "redist/model
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-six-stars-launcher.exe
+six-stars-launcher.exe --skip-install
+echo.
+pause
 "@ | Set-Content "redist/Launch Six Stars AI Companion.cmd" -Encoding ASCII
 
 $zip = "redist/six-stars-ai-companion-redist.zip"

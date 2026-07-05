@@ -15,7 +15,8 @@ namespace Wds.SixStars.Api.Engine
         public Task<StarState> GetAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             string key = BuildKey(sessionId, starId);
-            StarState state = _states.GetOrAdd(key, _ => new StarState { StarId = starId });
+            StarState state = _states.GetOrAdd(key, _ => CreateDefaultState(starId));
+            NormalizeState(state);
             return Task.FromResult(state);
         }
 
@@ -56,8 +57,25 @@ namespace Wds.SixStars.Api.Engine
         public Task ResetStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             string key = BuildKey(sessionId, starId);
-            _states[key] = new StarState { StarId = starId };
+            _states[key] = CreateDefaultState(starId);
             return Task.CompletedTask;
+        }
+
+        private static StarState CreateDefaultState(string starId)
+        {
+            bool elusiaa = string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+            return new StarState { StarId = starId, IsMet = elusiaa, IsAlly = elusiaa };
+        }
+
+        private static void NormalizeState(StarState state)
+        {
+            if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
+            if (state.IsAlly) state.IsMet = true;
+            if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
+            {
+                state.IsMet = true;
+                state.IsAlly = true;
+            }
         }
 
         private static string BuildKey(string sessionId, string starId)

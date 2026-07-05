@@ -62,6 +62,11 @@ namespace Wds.SixStars.Api.Engine
             return Environment.CurrentDirectory;
         }
 
+        private static bool IsDefaultMet(string starId)
+        {
+            return string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsDefaultAlly(string starId)
         {
             return string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
@@ -72,6 +77,7 @@ namespace Wds.SixStars.Api.Engine
             return new StarState
             {
                 StarId = starId,
+                IsMet = IsDefaultMet(starId),
                 IsAlly = IsDefaultAlly(starId),
                 EmotionalConnectionSkillLevel = "interested_private_potential_partner",
                 EmotionalConnectionPercent = 0,
@@ -99,6 +105,25 @@ namespace Wds.SixStars.Api.Engine
                 state.EmotionalConnectionPercent = 100;
                 changed = true;
             }
+            if (state.ActiveEffectors == null)
+            {
+                state.ActiveEffectors = new List<StarRelationshipEffector>();
+                changed = true;
+            }
+            if (state.IsAlly && !state.IsMet)
+            {
+                state.IsMet = true;
+                changed = true;
+            }
+            if (IsDefaultMet(state.StarId) && !state.IsMet)
+            {
+                bool explicitlyRemovedMet = state.RelationshipEvents.Any(x => x.IndexOf("Met flag removed", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!explicitlyRemovedMet)
+                {
+                    state.IsMet = true;
+                    changed = true;
+                }
+            }
             if (string.IsNullOrWhiteSpace(state.GirlfriendReadinessSummary))
             {
                 state.GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12.";
@@ -111,6 +136,7 @@ namespace Wds.SixStars.Api.Engine
             if (IsDefaultAlly(state.StarId) && !state.IsAlly && !explicitlyRemoved)
             {
                 state.IsAlly = true;
+                state.IsMet = true;
                 changed = true;
             }
             return changed;

@@ -76,7 +76,7 @@ namespace Wds.SixStars.Ui.Configuration
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
-        public bool UseJsonSchemaResponseFormat { get; set; } = true;
+        public bool UseJsonSchemaResponseFormat { get; set; } = false;
 
         /// <summary>
         /// Local models can take a while after the backend reports 100% generation because
@@ -85,12 +85,12 @@ namespace Wds.SixStars.Ui.Configuration
         /// </summary>
         public int TimeoutSeconds { get; set; } = 600;
 
-        /// <summary>0 means do not send max_tokens; let the local backend/model limit apply. Override with SIX_STARS_LLM_MAX_TOKENS.</summary>
-        public int MaxTokens { get; set; } = 0;
+        /// <summary>Default chat max_tokens sent to the local backend. Override with SIX_STARS_LLM_MAX_TOKENS. Use 0 only when intentionally letting the backend limit apply.</summary>
+        public int MaxTokens { get; set; } = 768;
 
-        /// <summary>0 means do not send per-pass max_tokens. The schema/prompt controls output size instead.</summary>
-        public int SpeechMaxTokens { get; set; } = 0;
-        public int ReviewMaxTokens { get; set; } = 0;
+        /// <summary>Per-pass max_tokens for the fast spoken pass and background review. Override with SIX_STARS_LLM_SPEECH_MAX_TOKENS / SIX_STARS_LLM_REVIEW_MAX_TOKENS.</summary>
+        public int SpeechMaxTokens { get; set; } = 512;
+        public int ReviewMaxTokens { get; set; } = 768;
 
         public double Temperature { get; set; } = 0.65;
     }
@@ -189,6 +189,6 @@ namespace Wds.SixStars.Ui.Configuration
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
-        public bool UseJsonSchemaResponseFormat { get; set; } = true;
+        public bool UseJsonSchemaResponseFormat { get; set; } = false;
     }
 }

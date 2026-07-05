@@ -31,14 +31,23 @@ namespace Wds.SixStars.Api.State
             _options = options;
         }
 
-        public Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        public async Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
-            return _stateStore.GetAsync(sessionId, starId, cancellationToken);
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            {
+                await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            }
+            return state;
         }
 
         public async Task<StarMemorySnapshot> GetStarMemorySnapshotAsync(string sessionId, string starId, int recentHistoryCount, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            {
+                await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            }
             int count = recentHistoryCount <= 0 ? _options.MaxRecentHistoryForPrompt : recentHistoryCount;
             return new StarMemorySnapshot
             {
@@ -67,6 +76,8 @@ namespace Wds.SixStars.Api.State
         {
             StarState state = await _stateStore.GetAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            NormalizeWorldDefaults(state);
+            PruneExpiredEffectors(state, now);
 
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? request.StarId : state.StarId;
             state.InteractionCount += 1;
@@ -107,6 +118,7 @@ namespace Wds.SixStars.Api.State
             UpdateSuccessionCounters(state, applied, request, now);
             UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
             UpdateStoryHistory(state, request, now);
+            PruneExpiredEffectors(state, now);
 
             string autoQuote = TryCreateAutoQuote(request, applied);
             if (!string.IsNullOrWhiteSpace(autoQuote))
@@ -246,19 +258,279 @@ namespace Wds.SixStars.Api.State
 
 
 
-        public async Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken)
+        public Task<StarState> SetStarAllyAsync(string sessionId, string starId, bool isAlly, CancellationToken cancellationToken)
         {
-            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            state.IsAlly = isAlly;
-            state.RelationshipEvents.Insert(0, (isAlly ? "Became ally" : "Ally flag removed") + " via host/gameplay state.");
+            return SetStarWorldStateAsync(new StarWorldStateUpdateRequest
+            {
+                SessionId = sessionId,
+                StarId = starId,
+                IsAlly = isAlly,
+                IsMet = isAlly ? true : (bool?)null,
+                Reason = "ally flag changed through host/gameplay API"
+            }, cancellationToken);
+        }
+
+        public Task<StarState> SetStarMetAsync(string sessionId, string starId, bool isMet, CancellationToken cancellationToken)
+        {
+            return SetStarWorldStateAsync(new StarWorldStateUpdateRequest
+            {
+                SessionId = sessionId,
+                StarId = starId,
+                IsMet = isMet,
+                IsAlly = isMet ? (bool?)null : false,
+                Reason = "met flag changed through host/gameplay API"
+            }, cancellationToken);
+        }
+
+        public async Task<StarState> SetStarWorldStateAsync(StarWorldStateUpdateRequest request, CancellationToken cancellationToken)
+        {
+            string sessionId = string.IsNullOrWhiteSpace(request.SessionId) ? "local-dev" : request.SessionId;
+            StarState state = await _stateStore.GetAsync(sessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+
+            if (request.IsMet.HasValue)
+            {
+                state.IsMet = request.IsMet.Value;
+                state.RelationshipEvents.Insert(0, (state.IsMet ? "Met Star" : "Met flag removed") + " via host/gameplay state" + BuildReasonSuffix(request.Reason) + ".");
+            }
+
+            if (request.IsAlly.HasValue)
+            {
+                state.IsAlly = request.IsAlly.Value;
+                if (state.IsAlly) state.IsMet = true;
+                state.RelationshipEvents.Insert(0, (state.IsAlly ? "Became ally" : "Ally flag removed") + " via host/gameplay state" + BuildReasonSuffix(request.Reason) + ".");
+            }
+
+            AddUnique(state.RelationshipEvents, request.RelationshipEvents ?? new List<string>(), _options.MaxRelationshipEvents);
             Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
             await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            PruneExpiredEffectors(state, now);
+
+            StarRelationshipEffector normalized = NormalizeEffector(effector, now);
+            int index = state.ActiveEffectors.FindIndex(x => string.Equals(x.Id, normalized.Id, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) state.ActiveEffectors[index] = normalized;
+            else state.ActiveEffectors.Insert(0, normalized);
+
+            state.RelationshipEvents.Insert(0, "Applied deterministic effector '" + normalized.Id + "'" + BuildReasonSuffix(normalized.Reason) + ".");
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> ClearStarEffectorAsync(string sessionId, string starId, string effectorId, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            if (string.IsNullOrWhiteSpace(effectorId) || string.Equals(effectorId, "*", StringComparison.OrdinalIgnoreCase) || string.Equals(effectorId, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                state.ActiveEffectors.Clear();
+                state.RelationshipEvents.Insert(0, "Cleared all deterministic effectors via host/gameplay state.");
+            }
+            else
+            {
+                string id = Slugify(effectorId);
+                state.ActiveEffectors.RemoveAll(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                state.RelationshipEvents.Insert(0, "Cleared deterministic effector '" + id + "' via host/gameplay state.");
+            }
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> AddStarDialogueEntryAsync(StarDialogueMemoryUpdateRequest request, CancellationToken cancellationToken)
+        {
+            string sessionId = string.IsNullOrWhiteSpace(request.SessionId) ? "local-dev" : request.SessionId;
+            StarState state = await _stateStore.GetAsync(sessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+
+            StarDialogueMemoryEntry entry = NormalizeDialogueEntry(request.Entry, request.StarId, DateTimeOffset.UtcNow);
+            int existingIndex = state.GameDialogueHistory.FindIndex(x => string.Equals(x.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0) state.GameDialogueHistory.RemoveAt(existingIndex);
+            state.GameDialogueHistory.Insert(0, entry);
+            Trim(state.GameDialogueHistory, _options.MaxGameDialogueHistory);
+
+            if (!string.IsNullOrWhiteSpace(entry.DialogId))
+            {
+                state.CurrentDialogueState.DialogId = entry.DialogId;
+                state.CurrentDialogueState.Title = string.IsNullOrWhiteSpace(entry.Title) ? state.CurrentDialogueState.Title : entry.Title;
+                state.CurrentDialogueState.CurrentNodeId = entry.NodeId;
+                state.CurrentDialogueState.CurrentLineIndex = entry.SequenceIndex;
+                state.CurrentDialogueState.Area = string.IsNullOrWhiteSpace(entry.Area) ? state.CurrentDialogueState.Area : entry.Area;
+                state.CurrentDialogueState.QuestId = string.IsNullOrWhiteSpace(entry.QuestId) ? state.CurrentDialogueState.QuestId : entry.QuestId;
+                state.CurrentDialogueState.SceneId = string.IsNullOrWhiteSpace(entry.SceneId) ? state.CurrentDialogueState.SceneId : entry.SceneId;
+                state.CurrentDialogueState.LastAuthoredLine = string.IsNullOrWhiteSpace(entry.Text) ? state.CurrentDialogueState.LastAuthoredLine : entry.Text;
+                state.CurrentDialogueState.SummarySoFar = string.IsNullOrWhiteSpace(entry.Summary) ? state.CurrentDialogueState.SummarySoFar : entry.Summary;
+                state.CurrentDialogueState.IsActive = !entry.IsComplete;
+                state.CurrentDialogueState.IsComplete = entry.IsComplete;
+                state.CurrentDialogueState.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+
+            state.RelationshipEvents.Insert(0, "Recorded game dialogue beat '" + entry.Id + "' for " + state.StarId + ".");
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> SetStarDialogueStateAsync(StarDialogueProgressUpdateRequest request, CancellationToken cancellationToken)
+        {
+            string sessionId = string.IsNullOrWhiteSpace(request.SessionId) ? "local-dev" : request.SessionId;
+            StarState state = await _stateStore.GetAsync(sessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+
+            StarDialogueProgressState dialogueState = NormalizeDialogueProgressState(request.DialogueState, DateTimeOffset.UtcNow);
+            state.CurrentDialogueState = dialogueState;
+            state.RelationshipEvents.Insert(0, "Set full authored dialogue progress '" + (string.IsNullOrWhiteSpace(dialogueState.DialogId) ? "dialogue" : dialogueState.DialogId) + "' for " + state.StarId + ".");
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> ClearStarDialogueStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            string safeSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            StarState state = await _stateStore.GetAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            state.CurrentDialogueState = new StarDialogueProgressState();
+            state.RelationshipEvents.Insert(0, "Cleared current authored dialogue progress for " + state.StarId + ".");
+            Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(safeSessionId, state, cancellationToken).ConfigureAwait(false);
             return state;
         }
 
 
 
 
+
+        private static bool NormalizeWorldDefaults(StarState state)
+        {
+            bool changed = false;
+            if (state.ActiveEffectors == null)
+            {
+                state.ActiveEffectors = new List<StarRelationshipEffector>();
+                changed = true;
+            }
+            if (state.GameDialogueHistory == null)
+            {
+                state.GameDialogueHistory = new List<StarDialogueMemoryEntry>();
+                changed = true;
+            }
+            if (state.CurrentDialogueState == null)
+            {
+                state.CurrentDialogueState = new StarDialogueProgressState();
+                changed = true;
+            }
+            if (state.IsAlly && !state.IsMet)
+            {
+                state.IsMet = true;
+                changed = true;
+            }
+            if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
+            {
+                bool explicitlyRemovedMet = state.RelationshipEvents.Any(x => x.IndexOf("Met flag removed", StringComparison.OrdinalIgnoreCase) >= 0);
+                bool explicitlyRemovedAlly = state.RelationshipEvents.Any(x => x.IndexOf("Ally flag removed", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!state.IsMet && !explicitlyRemovedMet) { state.IsMet = true; changed = true; }
+                if (!state.IsAlly && !explicitlyRemovedAlly) { state.IsAlly = true; changed = true; }
+            }
+            return changed;
+        }
+
+        private static bool PruneExpiredEffectors(StarState state, DateTimeOffset now)
+        {
+            if (state.ActiveEffectors == null)
+            {
+                state.ActiveEffectors = new List<StarRelationshipEffector>();
+                return true;
+            }
+
+            int before = state.ActiveEffectors.Count;
+            state.ActiveEffectors.RemoveAll(x => x == null || x.IsExpired(now));
+            return state.ActiveEffectors.Count != before;
+        }
+
+        private static StarRelationshipEffector NormalizeEffector(StarRelationshipEffector? source, DateTimeOffset now)
+        {
+            StarRelationshipEffector effector = source ?? new StarRelationshipEffector();
+            if (string.IsNullOrWhiteSpace(effector.Id))
+            {
+                effector.Id = string.IsNullOrWhiteSpace(effector.Mode) ? Guid.NewGuid().ToString("N") : effector.Mode;
+            }
+            effector.Id = Slugify(effector.Id);
+            effector.Mode = (effector.Mode ?? string.Empty).Trim();
+            effector.DisplayName = string.IsNullOrWhiteSpace(effector.DisplayName) ? effector.Id : effector.DisplayName.Trim();
+            effector.Source = (effector.Source ?? string.Empty).Trim();
+            effector.Reason = (effector.Reason ?? string.Empty).Trim();
+            if (effector.CreatedAt == default(DateTimeOffset)) effector.CreatedAt = now;
+            if (effector.DurationSeconds > 0 && !effector.ExpiresAt.HasValue) effector.ExpiresAt = now.AddSeconds(effector.DurationSeconds);
+            if (effector.ConnectionGainMultiplier <= 0) effector.ConnectionGainMultiplier = 1.0;
+            if (effector.ConnectionLossMultiplier <= 0) effector.ConnectionLossMultiplier = 1.0;
+            effector.Tags ??= new List<string>();
+            effector.IsActive = true;
+            return effector;
+        }
+
+        private static string BuildReasonSuffix(string reason)
+        {
+            return string.IsNullOrWhiteSpace(reason) ? string.Empty : ": " + reason.Trim();
+        }
+
+        private static StarDialogueMemoryEntry NormalizeDialogueEntry(StarDialogueMemoryEntry? source, string starId, DateTimeOffset now)
+        {
+            StarDialogueMemoryEntry entry = source ?? new StarDialogueMemoryEntry();
+            entry.DialogId = CleanMarkerText(entry.DialogId, 120);
+            entry.NodeId = CleanMarkerText(entry.NodeId, 120);
+            entry.Title = CleanMarkerText(entry.Title, 180);
+            entry.Speaker = string.IsNullOrWhiteSpace(entry.Speaker) ? starId : CleanMarkerText(entry.Speaker, 120);
+            entry.Text = CleanMarkerText(entry.Text, 4000);
+            entry.Summary = CleanMarkerText(entry.Summary, 1000);
+            entry.SceneId = CleanMarkerText(entry.SceneId, 120);
+            entry.Area = CleanMarkerText(entry.Area, 160);
+            entry.QuestId = CleanMarkerText(entry.QuestId, 120);
+            entry.Source = string.IsNullOrWhiteSpace(entry.Source) ? "game" : CleanMarkerText(entry.Source, 80);
+            if (entry.CreatedAt == default(DateTimeOffset)) entry.CreatedAt = now;
+            if (entry.IsComplete && !entry.CompletedAt.HasValue) entry.CompletedAt = now;
+            entry.Tags ??= new List<string>();
+            entry.Metadata ??= new Dictionary<string, string>();
+            if (string.IsNullOrWhiteSpace(entry.Id))
+            {
+                string raw = string.Join("_", new[] { entry.DialogId, entry.NodeId, entry.SequenceIndex.ToString(), entry.Title }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                entry.Id = Slugify(string.IsNullOrWhiteSpace(raw) ? Guid.NewGuid().ToString("N") : raw);
+            }
+            else
+            {
+                entry.Id = Slugify(entry.Id);
+            }
+            return entry;
+        }
+
+        private static StarDialogueProgressState NormalizeDialogueProgressState(StarDialogueProgressState? source, DateTimeOffset now)
+        {
+            StarDialogueProgressState state = source ?? new StarDialogueProgressState();
+            state.DialogId = CleanMarkerText(state.DialogId, 120);
+            state.Title = CleanMarkerText(state.Title, 180);
+            state.SceneId = CleanMarkerText(state.SceneId, 120);
+            state.Area = CleanMarkerText(state.Area, 160);
+            state.QuestId = CleanMarkerText(state.QuestId, 120);
+            state.CurrentNodeId = CleanMarkerText(state.CurrentNodeId, 120);
+            state.CurrentStage = CleanMarkerText(state.CurrentStage, 160);
+            state.SummarySoFar = CleanMarkerText(state.SummarySoFar, 3000);
+            state.LastAuthoredLine = CleanMarkerText(state.LastAuthoredLine, 2000);
+            state.NextExpectedBeat = CleanMarkerText(state.NextExpectedBeat, 1200);
+            state.FullScriptText = CleanMarkerText(state.FullScriptText, 20000);
+            state.FullScriptJson = CleanMarkerText(state.FullScriptJson, 20000);
+            state.UpdatedAt = now;
+            state.Tags ??= new List<string>();
+            state.Metadata ??= new Dictionary<string, string>();
+            if (state.IsComplete) state.IsActive = false;
+            return state;
+        }
 
         private List<StarRememberedMarker> PrepareRememberedMarkers(StarStateUpdateRequest request, DateTimeOffset now)
         {
@@ -681,7 +953,9 @@ namespace Wds.SixStars.Api.State
                     { "isGirlfriendReady", state.IsGirlfriendReady ? "true" : "false" },
                     { "girlfriendReadinessSummary", state.GirlfriendReadinessSummary ?? string.Empty },
                     { "acceptedModelSuggestedDeltas", acceptedModelDelta ? "true" : "false" },
+                    { "isMet", state.IsMet ? "true" : "false" },
                     { "isAlly", state.IsAlly ? "true" : "false" },
+                    { "activeEffectorCount", (state.ActiveEffectors == null ? 0 : state.ActiveEffectors.Count).ToString() },
                     { "emotionalConnectionSkillLevel", state.EmotionalConnectionSkillLevel ?? string.Empty },
                     { "deterministicEmotionSummary", entry.DeterministicEmotionSummary ?? string.Empty }
                 }

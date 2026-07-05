@@ -154,7 +154,7 @@ namespace Wds.SixStars.Api.Ai
             // It returns only the compact emotionalEffectVector; the background review computes impactful emotion scores and deterministic relationship updates.
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM fast foreground speech pass.");
             response.Debug.Notes.Add("Heavy emotion/memory analysis waits until the voice pipeline reports foreground voice generation ready.");
-            response.Debug.Notes.Add("No per-pass max_tokens cap is sent unless explicitly configured; output size is controlled by compact schema and prompts.");
+            response.Debug.Notes.Add($"Per-pass max_tokens cap used: {maxTokens}; this prevents llama-server from filling the whole context window.");
             response.Debug.Notes.Add($"Speech parts: {response.SpokenParts.Count}; joined length: {response.SpokenText.Length} characters.");
             response.Debug.Notes.Add($"Foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length} characters.");
             response.Debug.Notes.Add($"Foreground negativeEmotionVector length: {response.NegativeEmotionVector.Length} characters.");
@@ -255,21 +255,21 @@ namespace Wds.SixStars.Api.Ai
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_SPEECH_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue > 0 ? configuredValue : 0;
+            return configuredValue > 0 ? configuredValue : 512;
         }
 
         private static int ResolveStoryPlanMaxTokens()
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return 0;
+            return 3072;
         }
 
         private static int ResolveReviewMaxTokens(int configuredValue)
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_REVIEW_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue > 0 ? configuredValue : 0;
+            return configuredValue > 0 ? configuredValue : 768;
         }
 
         private static void PreserveForegroundStoryFields(StarInteractionResponse foreground, StarInteractionResponse analysis)

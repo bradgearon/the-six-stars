@@ -57,6 +57,7 @@ namespace Wds.SixStars.Api.Engine
             ApplyRepeatDamping(delta, positiveSignals, negativeSignals, acceptedCombos, currentState);
 
             ApplyEmotionalConnectionDelta(profile, request, currentState, delta, positiveSignals, negativeSignals, acceptedCombos);
+            ApplyActiveEffectors(currentState, delta, response);
 
             // Non-allies can still warm up, but they should not leap into deep relationship scores from one good line.
             if (!currentState.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
@@ -341,11 +342,71 @@ namespace Wds.SixStars.Api.Engine
                 return;
             }
 
-            // At-rest drift: unless the bond is already more than half connected, non-intimate turns cool slowly.
-            // This prevents shallow farming while letting a serious >50% connection remain stable until harmed.
+            bool hasAnyGoodAttention = positive.Any(x => x.Score >= 72 && x.Confidence >= 0.62);
+            bool hasHighGoodAttention = positive.Any(x => x.Score >= 85 && x.Confidence >= 0.72);
+            bool playerActuallySaidSomething = !string.IsNullOrWhiteSpace(request.PlayerText);
+
+            // Default attention rule: continuing to talk to her should slowly build connection,
+            // and emotionally good attention should build it faster. This is deliberately tiny so
+            // conversation warmth matters without letting shallow spam farm the relationship.
+            if (isAlly && hasHighGoodAttention)
+            {
+                delta.EmotionalConnectionPercent += positive.Count(x => x.Score >= 85 && x.Confidence >= 0.72) >= 2 ? 0.45 : 0.28;
+                return;
+            }
+
+            if (isAlly && hasAnyGoodAttention)
+            {
+                delta.EmotionalConnectionPercent += 0.16;
+                return;
+            }
+
+            if (isAlly && playerActuallySaidSomething && !negative.Any())
+            {
+                delta.EmotionalConnectionPercent += 0.05;
+                return;
+            }
+
+            // At-rest drift is now mild. Talking and paying attention should usually be better than silence,
+            // but completely empty/low-signal loops below 50% should not grow forever.
             if (connection > 0 && connection <= 50)
             {
-                delta.EmotionalConnectionPercent -= 0.35;
+                delta.EmotionalConnectionPercent -= 0.10;
+            }
+        }
+
+        private static void ApplyActiveEffectors(StarState state, RelationshipDelta delta, StarInteractionResponse response)
+        {
+            if (state.ActiveEffectors == null || state.ActiveEffectors.Count == 0) return;
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            foreach (StarRelationshipEffector effector in state.ActiveEffectors.Where(x => x != null && !x.IsExpired(now)).ToList())
+            {
+                double beforeConnection = delta.EmotionalConnectionPercent;
+
+                if (delta.EmotionalConnectionPercent > 0)
+                {
+                    if (effector.SuppressPassiveConnectionGain && delta.EmotionalConnectionPercent <= 0.16)
+                    {
+                        delta.EmotionalConnectionPercent = 0;
+                    }
+                    else
+                    {
+                        delta.EmotionalConnectionPercent *= effector.ConnectionGainMultiplier <= 0 ? 1.0 : effector.ConnectionGainMultiplier;
+                    }
+                }
+                else if (delta.EmotionalConnectionPercent < 0)
+                {
+                    delta.EmotionalConnectionPercent *= effector.ConnectionLossMultiplier <= 0 ? 1.0 : effector.ConnectionLossMultiplier;
+                }
+
+                delta.Heart += effector.HeartDeltaPerTurn;
+                delta.Trust += effector.TrustDeltaPerTurn;
+                delta.Romance += effector.RomanceDeltaPerTurn;
+                delta.BenaveilInfluence += effector.BenaveilInfluenceDeltaPerTurn;
+                effector.AppliedTurns += 1;
+
+                response.Debug.Notes.Add("Active deterministic effector " + effector.Id + " applied: connection " + beforeConnection.ToString("0.00") + " -> " + delta.EmotionalConnectionPercent.ToString("0.00") + ", H/T/R/B +=" + effector.HeartDeltaPerTurn + "/" + effector.TrustDeltaPerTurn + "/" + effector.RomanceDeltaPerTurn + "/" + effector.BenaveilInfluenceDeltaPerTurn + ".");
             }
         }
 
@@ -414,7 +475,8 @@ namespace Wds.SixStars.Api.Engine
             string combo = combos.Count == 0 ? "none" : string.Join(", ", combos);
             double projectedConnection = Math.Max(0, Math.Min(100, state.EmotionalConnectionPercent + actual.EmotionalConnectionPercent));
             bool projectedReady = (state.IsGirlfriend || (state.IsAlly && projectedConnection >= 85 && state.Heart + actual.Heart >= 20 && state.Trust + actual.Trust >= 15 && state.Romance + actual.Romance >= 12));
-            return "Deterministic emotion update: skill=interested_private_potential_partner; ally=" + state.IsAlly
+            int activeEffectorCount = state.ActiveEffectors == null ? 0 : state.ActiveEffectors.Count(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow));
+            return "Deterministic emotion update: skill=interested_private_potential_partner; met=" + state.IsMet + "; ally=" + state.IsAlly + "; activeEffectors=" + activeEffectorCount
                 + "; connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%->" + projectedConnection.ToString("0.0") + "%"
                 + "; girlfriendReadyAfter=" + projectedReady
                 + "; positiveSignals=" + pos

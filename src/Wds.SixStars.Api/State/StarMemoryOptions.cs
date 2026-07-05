@@ -13,5 +13,6 @@ namespace Wds.SixStars.Api.State
         public int MaxSecrets { get; set; } = 120;
         public int MaxRememberedMarkers { get; set; } = 200;
         public int MaxRecentHistoryForPrompt { get; set; } = 10;
+        public int MaxGameDialogueHistory { get; set; } = 240;
     }
 }

@@ -2,7 +2,13 @@ flask==3.1.0
 faster-whisper==1.1.1
 # ctranslate2 4.5.x uses the current CUDA 12/cuDNN 9 path. Keep ASR CUDA in its own pack.
 ctranslate2==4.5.0
-numpy
+numpy==1.26.4
 soundfile
 pyinstaller==6.11.1
 huggingface-hub[cli]
+setuptools==80.9.0
+wheel==0.43.0
+requests==2.32.5
+backports.tarfile==1.2.0
+nvidia-cudnn-cu12
+nvidia-cublas-cu12

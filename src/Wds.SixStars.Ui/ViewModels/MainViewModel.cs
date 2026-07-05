@@ -23,6 +23,7 @@ using Wds.SixStars.Api.Runtime;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Speech;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.State;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Ui.Audio;
 using Wds.SixStars.Ui.Configuration;
@@ -97,6 +98,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private int _nextStoryPartIndex;
     private bool _suppressStoryContinuationOnce;
     private string _pendingBackgroundAnalysisId = string.Empty;
+    private bool _selectedStarIsMet = true;
     private bool _selectedStarIsAlly = true;
     private bool _isLoadingSelectedStarState;
 
@@ -381,6 +383,18 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _romanceMode;
         set => SetProperty(ref _romanceMode, value);
+    }
+
+    public bool SelectedStarIsMet
+    {
+        get => _selectedStarIsMet;
+        set
+        {
+            if (SetProperty(ref _selectedStarIsMet, value) && !_isLoadingSelectedStarState)
+            {
+                _ = SetSelectedStarMetAsync(value);
+            }
+        }
     }
 
     public bool SelectedStarIsAlly
@@ -1780,6 +1794,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 _isLoadingSelectedStarState = true;
                 try
                 {
+                    SelectedStarIsMet = state.IsMet;
                     SelectedStarIsAlly = state.IsAlly;
                 }
                 finally
@@ -2454,13 +2469,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 _isLoadingSelectedStarState = true;
                 try
                 {
+                    SelectedStarIsMet = state.IsMet;
                     SelectedStarIsAlly = state.IsAlly;
                 }
                 finally
                 {
                     _isLoadingSelectedStarState = false;
                 }
-                Status = starId + " state loaded (ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + ").";
+                Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + ").";
             });
         }
         catch (Exception ex)
@@ -2469,16 +2485,65 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task SetSelectedStarMetAsync(bool isMet)
+    {
+        try
+        {
+            string starId = ResolveDefaultStarId(SelectedStarId);
+            StarState state = await _runtime.SetStarMetAsync(DefaultSessionId, starId, isMet, CancellationToken.None);
+            OnUiThread(() =>
+            {
+                _isLoadingSelectedStarState = true;
+                try
+                {
+                    SelectedStarIsMet = state.IsMet;
+                    SelectedStarIsAlly = state.IsAlly;
+                }
+                finally
+                {
+                    _isLoadingSelectedStarState = false;
+                }
+                Status = starId + " met flag set to " + state.IsMet + ", ally=" + state.IsAlly + ". This is now saved in the root state file.";
+                DebugJson = JsonSerializer.Serialize(new { action = "set_star_met", starId, isMet = state.IsMet, isAlly = state.IsAlly, state }, _jsonOptions);
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                Status = "Could not update met flag: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
     private async Task SetSelectedStarAllyAsync(bool isAlly)
     {
         try
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
-            StarState state = await _runtime.SetStarAllyAsync(DefaultSessionId, starId, isAlly, CancellationToken.None);
+            StarState state = await _runtime.SetStarWorldStateAsync(new StarWorldStateUpdateRequest
+            {
+                SessionId = DefaultSessionId,
+                StarId = starId,
+                IsAlly = isAlly,
+                IsMet = isAlly ? true : (bool?)null,
+                Reason = "desktop UI checkbox"
+            }, CancellationToken.None);
             OnUiThread(() =>
             {
-                Status = starId + " ally flag set to " + state.IsAlly + ". Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, girlfriend ready " + state.IsGirlfriendReady + ". This is now saved in the root state file.";
-                DebugJson = JsonSerializer.Serialize(new { action = "set_star_ally", starId, isAlly = state.IsAlly, state }, _jsonOptions);
+                _isLoadingSelectedStarState = true;
+                try
+                {
+                    SelectedStarIsMet = state.IsMet;
+                    SelectedStarIsAlly = state.IsAlly;
+                }
+                finally
+                {
+                    _isLoadingSelectedStarState = false;
+                }
+                Status = starId + " ally flag set to " + state.IsAlly + ", met=" + state.IsMet + ". Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, girlfriend ready " + state.IsGirlfriendReady + ". This is now saved in the root state file.";
+                DebugJson = JsonSerializer.Serialize(new { action = "set_star_ally", starId, isMet = state.IsMet, isAlly = state.IsAlly, state }, _jsonOptions);
             });
         }
         catch (Exception ex)
@@ -2509,6 +2574,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         context.Flags["qwenTtsEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_TTS_ENDPOINT")) ? "false" : "true";
         context.Flags["whisperEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")) ? "false" : "true";
         context.Flags["screenEndpointConfigured"] = string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENDPOINT")) ? "false" : "true";
+        context.Flags["selectedStarIsMet"] = SelectedStarIsMet ? "true" : "false";
         context.Flags["selectedStarIsAlly"] = SelectedStarIsAlly ? "true" : "false";
         context.Flags["emotionalConnectionSkillLevel"] = "interested_private_potential_partner";
         return context;

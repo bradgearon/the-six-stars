@@ -40,6 +40,41 @@ namespace Wds.SixStars.Api.Engine
             return _runtime.SetStarAllyAsync(sessionId, starId, isAlly, cancellationToken);
         }
 
+        public Task<StarState> SetStarMetAsync(string sessionId, string starId, bool isMet, CancellationToken cancellationToken)
+        {
+            return _runtime.SetStarMetAsync(sessionId, starId, isMet, cancellationToken);
+        }
+
+        public Task<StarState> SetStarWorldStateAsync(StarWorldStateUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _runtime.SetStarWorldStateAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken)
+        {
+            return _runtime.ApplyStarEffectorAsync(sessionId, starId, effector, cancellationToken);
+        }
+
+        public Task<StarState> ClearStarEffectorAsync(string sessionId, string starId, string effectorId, CancellationToken cancellationToken)
+        {
+            return _runtime.ClearStarEffectorAsync(sessionId, starId, effectorId, cancellationToken);
+        }
+
+        public Task<StarState> AddStarDialogueEntryAsync(StarDialogueMemoryUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _runtime.AddStarDialogueEntryAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> SetStarDialogueStateAsync(StarDialogueProgressUpdateRequest request, CancellationToken cancellationToken)
+        {
+            return _runtime.SetStarDialogueStateAsync(request, cancellationToken);
+        }
+
+        public Task<StarState> ClearStarDialogueStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            return _runtime.ClearStarDialogueStateAsync(sessionId, starId, cancellationToken);
+        }
+
         public Task<SixStarsSaveData> ExportSaveDataAsync(string sessionId, CancellationToken cancellationToken)
         {
             return _runtime.ExportSaveDataAsync(sessionId, cancellationToken);
