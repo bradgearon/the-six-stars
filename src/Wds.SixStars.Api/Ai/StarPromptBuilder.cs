@@ -146,9 +146,9 @@ namespace Wds.SixStars.Api.Ai
             if (state.StoryHistory.Count > 0)
             {
                 memory.AppendLine("Stories already told by this Star:");
-                foreach (StarStoryHistoryEntry toldStory in state.StoryHistory.Take(10))
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(10))
                 {
-                    memory.AppendLine("- " + toldStory.Title + " | finished=" + toldStory.Finished + " | " + Truncate(toldStory.Summary, 180));
+                    memory.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
                 }
             }
 
@@ -213,17 +213,13 @@ namespace Wds.SixStars.Api.Ai
             }
 
             string foregroundModeInstructions = request.RequestType == RequestType.Story
-                ? "This is a STORY FOREGROUND PASS. Return a complete cached story plan plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory."
+                ? "This is a STORY FOREGROUND PASS. The goal is to return a complete cached story plan plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory."
                 : "This is the FAST FOREGROUND SPEECH PASS. The goal is to produce the spoken answer quickly so TTS can begin immediately.";
-            string outputSizingInstruction = request.RequestType == RequestType.Story
-                ? "Do not rely on a token cap or padding. Be selective, but make the generated story feel whole and complete."
-                : "The host normally does not send max_tokens. Stay fast by returning only the requested fields, not by depending on truncation.";
 
             Dictionary<string, string> data = new Dictionary<string, string>
             {
                 { "StarDisplayName", profile.DisplayName },
                 { "ForegroundModeInstructions", foregroundModeInstructions },
-                { "OutputSizingInstruction", outputSizingInstruction },
                 { "GlobalCanonLore", globalCanon.ToString().TrimEnd() },
                 { "PrivateRomanceProfile", privateRomance.ToString().TrimEnd() },
                 { "StarActingVoiceCard", starCard.ToString().TrimEnd() },

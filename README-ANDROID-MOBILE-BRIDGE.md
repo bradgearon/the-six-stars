@@ -39,3 +39,9 @@ More details are in:
 ```text
 docs/Android-Mobile-Bridge.md
 ```
+
+## Timeout / phone voice playback patch
+
+This build includes the fix for the Visual Studio `client was null` exception in `MobileBridgeServer.HandleClientAsync`. That bug made the Android app time out even though the desktop bridge checkbox was enabled.
+
+The Android checkbox now says **Play Star voice on this phone**. When checked, the phone sends `returnAudio=true` and `speakOnDesktop=false`; the desktop returns generated WAV chunks in the JSON response and the Android app plays them locally.

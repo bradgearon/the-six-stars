@@ -126,3 +126,9 @@ POST /api/mobile/audio
 - The app targets Android API 36 and uses native Java/Android SDK only, with no AndroidX dependency.
 - Voice transcription still depends on your desktop Whisper/faster-whisper endpoint. Use `SIX_STARS_USE_MOCK_WHISPER=true` only for quick testing without real transcription.
 - If Windows firewall blocks the port, the phone will show connection errors even though the desktop says the bridge is running.
+
+## July 2026 timeout and phone playback fix
+
+If Visual Studio breaks in `MobileBridgeServer.HandleClientAsync` with `client was null`, update to the timeout/phone playback patch. The old accept loop captured a nullable `TcpClient` variable inside the task lambda and then set it to null; the phone would connect, the handler would throw before responding, and Android would report a timeout.
+
+The fixed Android app now sends `speakOnDesktop=false` and `returnAudio=true` when **Play Star voice on this phone** is enabled. The desktop generates the TTS WAV chunks and returns them in `voiceAudioChunks`; the phone plays them locally.

@@ -22,31 +22,16 @@ namespace Wds.SixStars.Api.Engine
         {
             if (currentState == null) currentState = new StarState { StarId = request.StarId };
 
-            List<EmotionVectorScore> parsedPositiveSignals = ParseVector(response.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds);
-            List<EmotionVectorScore> parsedNegativeSignals = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds);
-
-            // The LLM background review is the preferred source of emotionalEffectVector,
-            // but local models may occasionally omit it or score too timidly.  The deterministic
-            // layer therefore also recognizes grounded text signals/combos from the actual player
-            // message so Heart/Trust/Romance can move without relying on model-suggested deltas.
-            List<EmotionVectorScore> textPositiveSignals = DetectTextPositiveSignals(profile, request, currentState);
-            List<EmotionVectorScore> textNegativeSignals = DetectTextNegativeSignals(profile, request, currentState);
-
-            if (string.IsNullOrWhiteSpace(response.EmotionalEffectVector) && textPositiveSignals.Count > 0)
-            {
-                response.EmotionalEffectVector = BuildVectorFromSignals(textPositiveSignals, StarEmotionMatrix.StandardEmotionIds);
-            }
-            if (string.IsNullOrWhiteSpace(response.NegativeEmotionVector) && textNegativeSignals.Count > 0)
-            {
-                response.NegativeEmotionVector = BuildVectorFromSignals(textNegativeSignals, NegativeEmotionIds);
-            }
-
-            List<EmotionVectorScore> positiveSignals = MergeSignalSources(parsedPositiveSignals, textPositiveSignals, maxSignals: 5, minConfidence: 0.55, minScore: 60)
+            List<EmotionVectorScore> positiveSignals = ParseVector(response.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds)
+                .Where(x => x.IsHighSignal())
                 .OrderByDescending(x => x.WeightedScore)
+                .Take(3)
                 .ToList();
 
-            List<EmotionVectorScore> negativeSignals = MergeSignalSources(parsedNegativeSignals, textNegativeSignals, maxSignals: 4, minConfidence: 0.58, minScore: 60)
+            List<EmotionVectorScore> negativeSignals = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds)
+                .Where(x => x.IsHighSignal())
                 .OrderByDescending(x => x.WeightedScore)
+                .Take(3)
                 .ToList();
 
             RelationshipDelta delta = new RelationshipDelta();
@@ -62,10 +47,8 @@ namespace Wds.SixStars.Api.Engine
                 ApplyNegativeSignal(delta, signal, request.GameContext.RomanceMode);
             }
 
-            List<string> autoCombos = DetectCombos(positiveSignals, negativeSignals, currentState)
-                .Concat(DetectTextCombos(profile, request, positiveSignals, negativeSignals, currentState))
-                .ToList();
-            List<string> acceptedCombos = MergeAndLimitCombos(response.DetectedCombos, autoCombos, currentState, maxCombos: 4).ToList();
+            List<string> autoCombos = DetectCombos(positiveSignals, negativeSignals, currentState).ToList();
+            List<string> acceptedCombos = MergeAndLimitCombos(response.DetectedCombos, autoCombos, currentState, maxCombos: 3).ToList();
             response.DetectedCombos.Clear();
             response.DetectedCombos.AddRange(acceptedCombos);
 
@@ -130,134 +113,8 @@ namespace Wds.SixStars.Api.Engine
             return result;
         }
 
-
-        private static IEnumerable<EmotionVectorScore> MergeSignalSources(IEnumerable<EmotionVectorScore> parsedSignals, IEnumerable<EmotionVectorScore> textSignals, int maxSignals, double minConfidence, double minScore)
-        {
-            Dictionary<string, EmotionVectorScore> bestById = new Dictionary<string, EmotionVectorScore>(StringComparer.OrdinalIgnoreCase);
-            foreach (EmotionVectorScore signal in (parsedSignals ?? Enumerable.Empty<EmotionVectorScore>()).Concat(textSignals ?? Enumerable.Empty<EmotionVectorScore>()))
-            {
-                if (signal == null || string.IsNullOrWhiteSpace(signal.Id)) continue;
-                if (!IsActionableSignal(signal, minConfidence, minScore)) continue;
-                if (!bestById.TryGetValue(signal.Id, out EmotionVectorScore? existing) || signal.WeightedScore > existing.WeightedScore)
-                {
-                    bestById[signal.Id] = new EmotionVectorScore
-                    {
-                        Id = signal.Id,
-                        Confidence = Clamp01(signal.Confidence),
-                        Score = Math.Max(0, Math.Min(100, signal.Score))
-                    };
-                }
-            }
-
-            return bestById.Values
-                .OrderByDescending(x => x.WeightedScore)
-                .Take(Math.Max(1, maxSignals));
-        }
-
-        private static bool IsActionableSignal(EmotionVectorScore signal, double minConfidence, double minScore)
-        {
-            if (signal.Confidence >= 0.70 && signal.Score >= 80) return true;
-            if (signal.Confidence >= minConfidence && signal.Score >= minScore && signal.WeightedScore >= 34) return true;
-            return false;
-        }
-
-        private static string BuildVectorFromSignals(IEnumerable<EmotionVectorScore> signals, IReadOnlyList<string> ids)
-        {
-            Dictionary<string, EmotionVectorScore> byId = (signals ?? Enumerable.Empty<EmotionVectorScore>())
-                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
-                .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.WeightedScore).First(), StringComparer.OrdinalIgnoreCase);
-
-            List<string> parts = new List<string>();
-            foreach (string id in ids)
-            {
-                if (byId.TryGetValue(id, out EmotionVectorScore? signal))
-                {
-                    parts.Add(Clamp01(signal.Confidence).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + ":" + Math.Round(Math.Max(0, Math.Min(100, signal.Score))).ToString("0", System.Globalization.CultureInfo.InvariantCulture));
-                }
-                else
-                {
-                    parts.Add("0.00:0");
-                }
-            }
-            return string.Join(";", parts);
-        }
-
-        private static List<EmotionVectorScore> DetectTextPositiveSignals(StarProfile profile, StarInteractionRequest request, StarState state)
-        {
-            string text = (request.PlayerText ?? string.Empty).Trim();
-            string t = text.ToLowerInvariant();
-            List<EmotionVectorScore> result = new List<EmotionVectorScore>();
-            if (string.IsNullOrWhiteSpace(t)) return result;
-            if (LooksLikeTechnicalDebugTurn(t)) return result;
-
-            void Add(string id, double confidence, double score)
-            {
-                EmotionVectorScore? existing = result.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-                EmotionVectorScore next = new EmotionVectorScore { Id = id, Confidence = Clamp01(confidence), Score = Math.Max(0, Math.Min(100, score)) };
-                if (existing == null) result.Add(next);
-                else if (next.WeightedScore > existing.WeightedScore)
-                {
-                    existing.Confidence = next.Confidence;
-                    existing.Score = next.Score;
-                }
-            }
-
-            bool thanks = ContainsAny(t, "thank you", "thanks", "appreciate", "as always");
-            bool compliment = ContainsAny(t, "beautiful", "pretty", "wonderful", "amazing", "lovely", "gorgeous", "sweet", "kind", "gentle", "your voice", "voice", "music seem alive", "making the mundane", "making the mudance");
-            bool comfortCompanion = ContainsAny(t, "stay close", "while i work", "keep me company", "say something gentle", "talk with me", "sit with me", "move through the caves");
-            bool storyRequest = request.RequestType == RequestType.Story || ContainsAny(t, "tell me a story", "tell me a new", "long story", "story while", "tale", "legend");
-            bool personalQuestion = ContainsAny(t, "what's your name", "what is your name", "tell me about yourself", "what are you doing", "what kind", "do you like", "how did", "did he know", "who are you");
-            bool loreQuestion = ContainsAny(t, "racha", "cat", "cats", "angel", "benaveil", "leviathan", "stars", "virethorn", "mercy", "father", "void", "light");
-            bool romanticInvite = LooksLikeRomanticInviteOrDirectAffection(t);
-            bool highEffort = LooksLikeHighEffortIntimateSpeech(text);
-            bool kindness = ContainsAny(t, "safe", "trust", "i choose", "i won't leave", "i will stay", "after these battles", "enjoy some food with you", "dinner sometime");
-
-            if (thanks) { Add("Respected", 0.72, 78); Add("Comforted", 0.66, 72); }
-            if (compliment) { Add("Flattered", highEffort ? 0.82 : 0.74, highEffort ? 88 : 80); Add("Affectionate", 0.62, 70); }
-            if (comfortCompanion) { Add("Trusting", 0.72, 78); Add("Comforted", 0.74, 80); }
-            if (storyRequest) { Add("Trusting", 0.66, 72); Add("Wondrous", 0.64, 74); }
-            if (personalQuestion || loreQuestion) { Add("Respected", 0.62, 68); Add("Intrigued", 0.68, 74); }
-            if (kindness) { Add("Safe", 0.68, 76); Add("Tender", 0.62, 72); }
-            if (romanticInvite) { Add("Flattered", 0.76, 84); Add("Tender", 0.70, 80); Add("Affectionate", 0.68, 78); }
-            if (highEffort) { Add("Admiring", 0.76, 84); Add("Tender", 0.72, 82); }
-
-            return result.OrderByDescending(x => x.WeightedScore).Take(5).ToList();
-        }
-
-        private static List<EmotionVectorScore> DetectTextNegativeSignals(StarProfile profile, StarInteractionRequest request, StarState state)
-        {
-            string text = (request.PlayerText ?? string.Empty).Trim().ToLowerInvariant();
-            List<EmotionVectorScore> result = new List<EmotionVectorScore>();
-            if (string.IsNullOrWhiteSpace(text)) return result;
-
-            void Add(string id, double confidence, double score)
-            {
-                EmotionVectorScore? existing = result.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-                EmotionVectorScore next = new EmotionVectorScore { Id = id, Confidence = Clamp01(confidence), Score = Math.Max(0, Math.Min(100, score)) };
-                if (existing == null) result.Add(next);
-                else if (next.WeightedScore > existing.WeightedScore)
-                {
-                    existing.Confidence = next.Confidence;
-                    existing.Score = next.Score;
-                }
-            }
-
-            if (ContainsAny(text, "shut up", "stupid", "idiot", "worthless", "hate you")) Add("Disrespected", 0.82, 90);
-            if (ContainsAny(text, "you have to", "you better", "do it or", "prove you love", "don't say no")) Add("Pressured", 0.78, 86);
-            if (ContainsAny(text, "kill", "hurt", "torture", "make him suffer", "really hurt", "bleed out") && ContainsAny(text, "goblin", "harpy", "slime", "innocent")) Add("Unsafe", 0.74, 84);
-            if (ContainsAny(text, "again again", "say it again", "same compliment") && state.PositiveSuccessionCount >= 3) Add("Bored", 0.66, 72);
-            return result.OrderByDescending(x => x.WeightedScore).Take(3).ToList();
-        }
-
         private static void ApplyPositiveSignal(RelationshipDelta delta, EmotionVectorScore signal, bool romanceGate)
         {
-            // Moderate signals help the connection meter later, but Heart/Trust/Romance
-            // points should move on clear emotional reads or explicit deterministic combos.
-            bool clear = signal.Score >= 78 && signal.Confidence >= 0.66;
-            bool strong = signal.Score >= 86 && signal.Confidence >= 0.74;
-            if (!clear) return;
-
             switch (signal.Id)
             {
                 case "Trusting":
@@ -266,7 +123,7 @@ namespace Wds.SixStars.Api.Engine
                 case "Respected":
                 case "Comforted":
                     delta.Trust += 1;
-                    delta.Heart += strong && (signal.Id == "Comforted" || signal.Id == "Safe" || signal.Id == "Protected") ? 1 : 0;
+                    delta.Heart += signal.Score >= 90 ? 1 : 0;
                     break;
                 case "Admiring":
                 case "Affectionate":
@@ -275,7 +132,7 @@ namespace Wds.SixStars.Api.Engine
                 case "Wondrous":
                 case "Impassioned":
                     delta.Heart += 1;
-                    delta.Trust += strong && signal.Id == "Hopeful" ? 1 : 0;
+                    delta.Trust += signal.Id == "Hopeful" ? 1 : 0;
                     break;
                 case "Flattered":
                 case "Attracted":
@@ -283,11 +140,11 @@ namespace Wds.SixStars.Api.Engine
                     delta.Heart += 1;
                     break;
                 default:
-                    delta.Heart += strong ? 1 : 0;
+                    delta.Heart += signal.Score >= 88 && signal.Confidence >= 0.80 ? 1 : 0;
                     break;
             }
 
-            if (romanceGate && IsRomanceSignal(signal.Id) && signal.Score >= 78 && signal.Confidence >= 0.66)
+            if (romanceGate && IsRomanceSignal(signal.Id) && signal.Score >= 85 && signal.Confidence >= 0.75)
             {
                 delta.Romance += signal.Id == "Attracted" || signal.Id == "Yearning" ? 2 : 1;
             }
@@ -329,57 +186,10 @@ namespace Wds.SixStars.Api.Engine
 
             if ((Has("Trusting") || Has("Safe")) && (Has("Respected") || Has("Protected"))) yield return "trust_respect_combo";
             if ((Has("Affectionate") || Has("Tender")) && (Has("Hopeful") || Has("Comforted"))) yield return "affection_plus_hope";
-            if ((Has("Attracted") || Has("Flattered")) && (Has("Tender") || Has("Yearning") || Has("Affectionate"))) yield return "romantic_spark";
+            if (Has("Attracted") && (Has("Flattered") || Has("Tender") || Has("Yearning"))) yield return "romantic_spark";
             if ((Has("Vulnerable") || Has("Tender")) && (Has("Safe") || Has("Trusting"))) yield return "private_vulnerability_safety";
             if ((Neg("Disrespected") || Neg("Pressured") || Neg("CreepedOut")) && state.HurtSuccessionCount > 0) yield return "repeated_boundary_pressure";
             if (Neg("Hurt") || Neg("Unsafe")) yield return "wounded_guard";
-        }
-
-        private static IEnumerable<string> DetectTextCombos(StarProfile profile, StarInteractionRequest request, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, StarState state)
-        {
-            string text = (request.PlayerText ?? string.Empty).Trim();
-            string t = text.ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(t)) yield break;
-
-            if (LooksLikeTechnicalDebugTurn(t))
-            {
-                yield return "technical_debug_turn";
-                yield break;
-            }
-
-            if (request.RequestType == RequestType.Story || ContainsAny(t, "tell me a story", "tell me a new", "long story", "story while", "tale", "legend"))
-            {
-                yield return "story_companion_request";
-            }
-
-            if (ContainsAny(t, "stay close", "say something gentle", "while i work", "keep me company", "move through the caves"))
-            {
-                yield return "soft_companion_request";
-            }
-
-            if (ContainsAny(t, "thank you", "thanks", "as always", "appreciate") && ContainsAny(t, "beautiful", "music", "alive", "gentle", "voice", "light"))
-            {
-                yield return "gratitude_for_beauty";
-            }
-            else if (ContainsAny(t, "beautiful", "wonderful", "amazing", "lovely", "your voice", "voice") && ContainsAny(t, "you", "your"))
-            {
-                yield return "meaningful_compliment";
-            }
-
-            if (LooksLikeRomanticInviteOrDirectAffection(t))
-            {
-                yield return ContainsAny(t, "dinner", "date", "sit", "food") ? "dinner_invitation" : "romantic_invitation";
-            }
-
-            if (ContainsAny(t, "racha", "benaveil", "angel", "cat", "cats", "father", "what are you doing", "what kind", "tell me about yourself", "what's your name"))
-            {
-                yield return "curious_personal_lore";
-            }
-
-            if (negative.Any(x => x.Id == "Disrespected" || x.Id == "Pressured" || x.Id == "Unsafe"))
-            {
-                yield return "boundary_warning";
-            }
         }
 
         private static IEnumerable<string> MergeAndLimitCombos(IEnumerable<string> modelCombos, IEnumerable<string> autoCombos, StarState state, int maxCombos)
@@ -410,27 +220,8 @@ namespace Wds.SixStars.Api.Engine
                 {
                     case "affection_plus_wisdom":
                     case "trust_respect_combo":
-                    case "gratitude_for_beauty":
                         delta.Heart += 1;
                         delta.Trust += 1;
-                        break;
-                    case "story_companion_request":
-                    case "curious_personal_lore":
-                    case "soft_companion_request":
-                        delta.Trust += 1;
-                        if (combo == "soft_companion_request") delta.Heart += 1;
-                        break;
-                    case "meaningful_compliment":
-                        delta.Heart += 1;
-                        break;
-                    case "dinner_invitation":
-                        delta.Heart += 1;
-                        delta.Trust += 1;
-                        if (romanceGate) delta.Romance += 1;
-                        break;
-                    case "romantic_invitation":
-                        delta.Heart += 1;
-                        if (romanceGate) delta.Romance += 1;
                         break;
                     case "affection_plus_hope":
                     case "private_vulnerability_safety":
@@ -442,12 +233,8 @@ namespace Wds.SixStars.Api.Engine
                         if (romanceGate) delta.Romance += 1;
                         delta.Heart += 1;
                         break;
-                    case "technical_debug_turn":
-                        // Keep engineering/debug discussion in memory, but do not farm relationship points.
-                        break;
                     case "cruel_escalation":
                     case "repeated_boundary_pressure":
-                    case "boundary_warning":
                         delta.Heart -= 2;
                         delta.Trust -= 2;
                         delta.Romance -= 1;
@@ -464,7 +251,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static void ApplyBoundedSuggestedDelta(RelationshipDelta delta, RelationshipDelta suggestion, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos, bool romanceGate)
         {
-            bool hasPositiveSupport = positive.Count > 0 || combos.Any(x => x.Contains("hope") || x.Contains("trust") || x.Contains("affection") || x.Contains("romantic") || x.Contains("compliment") || x.Contains("dinner") || x.Contains("companion") || x.Contains("gratitude") || x.Contains("lore"));
+            bool hasPositiveSupport = positive.Count > 0 || combos.Any(x => x.Contains("hope") || x.Contains("trust") || x.Contains("affection") || x.Contains("romantic"));
             bool hasNegativeSupport = negative.Count > 0 || combos.Any(x => x.Contains("hurt") || x.Contains("cruel") || x.Contains("pressure") || x.Contains("guard"));
 
             if (hasPositiveSupport)
@@ -521,7 +308,7 @@ namespace Wds.SixStars.Api.Engine
             bool hasIntimatePositive = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 1;
             bool hasMultipleIntimate = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 2;
             bool hasPersonalityMatch = positive.Any(x => IsPersonalityMatchedConnectionSignal(profile.StarId, x.Id) && x.Score >= 80 && x.Confidence >= 0.70);
-            bool hasConnectionCombo = combos.Any(x => x.Contains("romantic") || x.Contains("affection") || x.Contains("vulnerability") || x.Contains("trust") || x.Contains("compliment") || x.Contains("dinner") || x.Contains("companion") || x.Contains("gratitude"));
+            bool hasConnectionCombo = combos.Any(x => x.Contains("romantic") || x.Contains("affection") || x.Contains("vulnerability") || x.Contains("trust"));
             bool strongPlayerEffort = LooksLikeHighEffortIntimateSpeech(request.PlayerText ?? string.Empty);
 
             if (hasMajorNegative)
@@ -627,15 +414,14 @@ namespace Wds.SixStars.Api.Engine
         {
             if (!request.GameContext.RomanceMode) return false;
             if (!state.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return false;
-            string text = (request.PlayerText ?? string.Empty).ToLowerInvariant();
-            bool explicitRomanceText = LooksLikeRomanticInviteOrDirectAffection(text);
-            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 78 && x.Confidence >= 0.66) || explicitRomanceText;
+            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 85 && x.Confidence >= 0.75);
             if (!hasHighRomanceEmotion) return false;
 
-            bool earnedByWords = ContainsAny(text, "poem", "poetry", "beautiful", "gentle", "safe", "trust", "song", "music", "kiss", "touch", "cat hair", "fur", "warm", "miracle", "stars", "heart", "dinner", "date", "sit with", "after these battles");
-            bool established = state.Romance > 0 || state.Trust >= 3 || state.Heart >= 3 || state.PositiveSuccessionCount >= 2 || state.EmotionalConnectionPercent >= 5;
+            string text = (request.PlayerText ?? string.Empty).ToLowerInvariant();
+            bool earnedByWords = ContainsAny(text, "poem", "poetry", "beautiful", "gentle", "safe", "trust", "song", "music", "kiss", "touch", "cat hair", "fur", "warm", "miracle", "stars", "heart");
+            bool established = state.Romance > 0 || state.Trust >= 5 || state.Heart >= 5 || state.PositiveSuccessionCount >= 2 || state.EmotionalConnectionPercent >= 10;
             bool kaeliaCatHook = string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase) && ContainsAny(text, "cat", "cat hair", "fur", "purr", "tail", "ears");
-            return explicitRomanceText || earnedByWords || established || kaeliaCatHook;
+            return earnedByWords || established || kaeliaCatHook;
         }
 
         private static bool IsRomanceSignal(string id)
@@ -675,18 +461,6 @@ namespace Wds.SixStars.Api.Engine
             int length = t.Count(char.IsLetter);
             if (ContainsAny(t, "poem", "poetry", "your eyes", "your heart", "miracle", "beautiful", "stars", "sea", "storm", "safe", "trust", "I choose", "I won't leave", "I will stay", "cat hair", "fur", "purr")) return true;
             return length >= 90 && (ContainsAny(t, "you", "your") && ContainsAny(t, "heart", "light", "dark", "safe", "trust", "beautiful", "gentle", "hope"));
-        }
-
-        private static bool LooksLikeRomanticInviteOrDirectAffection(string text)
-        {
-            string t = (text ?? string.Empty).ToLowerInvariant();
-            return ContainsAny(t, "dinner sometime", "have dinner", "sit and enjoy", "after these battles", "date", "go out", "i love", "i would love", "kiss", "hold you", "be with you", "beloved", "romance");
-        }
-
-        private static bool LooksLikeTechnicalDebugTurn(string text)
-        {
-            string t = (text ?? string.Empty).ToLowerInvariant();
-            return ContainsAny(t, "qwen", "tts", "llm", "json", "max tokens", "token", "runtime", "compile", "debug", "websocket", "llama", "gemma", "response takes", "first response", "spin up", "production version");
         }
 
         private static bool ContainsAny(string text, params string[] needles)

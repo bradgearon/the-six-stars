@@ -165,7 +165,7 @@ namespace Wds.SixStars.Api.Stars
             if (starId.Equals("Kaelia", StringComparison.OrdinalIgnoreCase))
             {
                 if (emotionId == "Hopeful") return "The Void Feels Lighter";
-                if (emotionId == "Suspicious") return "Void-Touched Suspicion";
+                if (emotionId == "Suspicious") return "Fatalistic Suspicion";
                 if (emotionId == "Hurt") return "Tar-Water Collapse";
                 if (emotionId == "Tender") return "Quiet Contradiction";
             }
