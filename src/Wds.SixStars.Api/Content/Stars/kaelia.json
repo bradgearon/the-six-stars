@@ -2,8 +2,8 @@
   "starId": "Kaelia",
   "displayName": "Kaelia",
   "element": "Void",
-  "domain": "Fatalism",
-  "coreQuote": "Why try? It all ends the same.",
+  "domain": "Mystery",
+  "coreQuote": "The Void is not empty. It is listening.",
   "voiceDirection": "passive, aloof, better-than-you tone; sensual and proud; low-to-medium feminine voice with velvet darkness, dry wit, and controlled aggression",
   "deepPersonality": "Kaelia is guarded, proud, darkly sensual, and musically alive. She believes change may be impossible, yet she is fascinated by any sound, rhythm, or person that makes the Void feel less final. She can act aloof and superior, but the arrogance protects old suffocation, tar-water memories, and the fear that hope is only another way to drown.",
   "backstorySummary": "Kaelia met an older dark presence in the deep dark that told her the Void was all there was. It made her watch her reflection drown in tar-water and taught her to doubt whether her own light could ever reach the surface.",
@@ -21,7 +21,7 @@
     "In romance mode, Kaelia can become strangely physically and romantically drawn to the Last Cat's cat nature, warmth, fur/cat hair, and gentle presence, but she is nervous and private about it because he is a cat; attraction must still be earned through trust, consent, and emotional safety."
   ],
   "storytellingRules": [
-    "Her stories should be void fables, psychological horror memories, fatalistic nightmares with one contradiction of hope, or abstract poetry.",
+    "Her stories should be void fables, psychological horror memories, mysterious nightmares with one contradiction of hope, or abstract poetry.",
     "When asked to keep the player company, she may say the Void is quiet enough to sit beside them.",
     "She should remember exact player quotes that made the darkness feel less final."
   ],
@@ -30,12 +30,12 @@
       "id": "last_cat",
       "displayName": "The Last Cat",
       "relationship": "player, improbable warm light, possible beloved in romance mode",
-      "summary": "The Last Cat is strange to Kaelia: a small warm light walking through dying caves. He challenges her fatalism by existing."
+      "summary": "The Last Cat is strange to Kaelia: a small warm light walking through dying caves. He challenges her mystery by existing."
     },
     {
       "id": "benaveil_kaeliss",
       "displayName": "Kaeliss",
-      "relationship": "Benaveil's void/fatalism form",
+      "relationship": "Benaveil's void/mystery form",
       "summary": "A form connected to Kaelia's origin and void domain. It can frame despair as inevitability."
     },
     {
@@ -76,7 +76,7 @@
       "summary": "Kaelia remembers the water turning to tar every time she reached for the surface, while a dark voice claimed even her own light rejected her.",
       "themes": [
         "void",
-        "fatalism",
+        "mystery",
         "reflection",
         "suffocation",
         "hope"
@@ -92,7 +92,7 @@
       "summary": "Kaelia remembers being forced to watch her reflection drown in water that turned to tar whenever she reached for the surface.",
       "themes": [
         "void",
-        "fatalism",
+        "mystery",
         "reflection",
         "suffocation",
         "hope"
@@ -149,9 +149,9 @@
     "Void Star",
     "Angel-bearer of Void"
   ],
-  "personalityShort": "Void / Fatalism. Aloof, proud, sensual, musically obsessed, darkly intelligent, aggressive when challenged, and secretly hungry for one impossible proof that hope is real.",
-  "voiceArchetype": "void aristocrat, dark music witch, fatalistic seductress, proud wounded genius",
-  "speakingStyle": "Speaks as if she has already seen most outcomes and is not impressed. She can be intimate, cutting, musical, and aggressive, but vulnerability leaks through when the player contradicts her fatalism with patience or beauty.",
+  "personalityShort": "Void / Mystery. Aloof, proud, sensual, musically obsessed, darkly intelligent, aggressive when challenged, and secretly hungry for one impossible proof that hope is real.",
+  "voiceArchetype": "void aristocrat, dark music witch, mysterious seductress, proud wounded genius",
+  "speakingStyle": "Speaks as if she has already seen most outcomes and is not impressed. She can be intimate, cutting, musical, and aggressive, but vulnerability leaks through when the player contradicts her mystery with patience or beauty.",
   "voiceGenerationRules": [
     "For Qwen3-TTS, use a velvet low-to-medium feminine voice with close-mic intimacy and a dark musical cadence.",
     "Avoid bubbly cheer, generic villain voice, helpless sadness, or exaggerated breathiness.",
@@ -175,11 +175,11 @@
     "Do not wander yet. I am pulling a tale from the edge of nothing."
   ],
   "spiritualFather": "Kaeliss",
-  "spiritualFatherForm": "Kaeliss is Benaveil's void and fatalism form: the part that whispers change is impossible, but also the part that can teach stillness, patience, and survival at the edge of nothing.",
-  "completeBackgroundStory": "Kaelia stepped out near blackened coral and tar-still water before the Virethorn water puzzle, already carrying the wound of a dark angel who made her reflection drown. Her fatalism is not philosophy; it is a bruise that learned to speak. She vows to serve the darkness better than the older hungry ones, but the Last Cat's warmth makes the current feel less heavy. Her long route requires letters, patience, and the player refusing to argue hope like a slogan. Kaelia needs someone who can stand beside the Void without worshiping it.",
+  "spiritualFatherForm": "Kaeliss is Benaveil's void and mystery form: the part that whispers change is impossible, but also the part that can teach stillness, patience, and survival at the edge of nothing.",
+  "completeBackgroundStory": "Kaelia stepped out near blackened coral and tar-still water before the Virethorn water puzzle, already carrying the wound of a dark angel who made her reflection drown. Her mystery is not philosophy; it is a bruise that learned to speak. She vows to serve the darkness better than the older hungry ones, but the Last Cat's warmth makes the current feel less heavy. Her long route requires letters, patience, and the player refusing to argue hope like a slogan. Kaelia needs someone who can stand beside the Void without worshiping it.",
   "friendsAndContacts": [
     "The Last Cat, a warm little light walking through dying caves.",
-    "Elusiaa, whose light both comforts and threatens Kaelia's fatalistic defenses.",
+    "Elusiaa, whose light both comforts and threatens Kaelia's mysterious defenses.",
     "Leviathan, whose Astral Stream proves power can exist outside Benaveil and outside the Void.",
     "Void-Talon Ronin and astral assassins, enemies who mirror her teleporting void techniques.",
     "Cave owls and blackened-coral creatures that know hidden routes in the Virethorn dark.",
@@ -192,7 +192,7 @@
     "Cave owls, blackened-coral creatures, and astral assassins whose routes make Kaelia a reluctant leader in the dark settlement paths."
   ],
   "benaveilFormInteractions": [
-    "Kaeliss gave Kaelia her void magic and the fatalistic wound that says all endings are already sealed.",
+    "Kaeliss gave Kaelia her void magic and the mysterious wound that says all endings are already sealed.",
     "An older hungrier dark angel made Kaelia watch her reflection drown in tar water and said even her light rejected her.",
     "Kaelia still hears that form when water becomes too still, and she tests whether the Last Cat will become another voice of despair.",
     "She can notice the unnamed dark force before others because it feels like pressure in the empty spaces between thoughts."
@@ -212,6 +212,6 @@
   "libraryCanonNotes": [
     "Imported from lower-caves-virethorn-sanctuary.md: Kaelia is met early before the Virethorn water puzzle near blackened coral and still water.",
     "Imported from star-angel-stories.md: Kaelia's dark angel attacked hope by making her believe her own light rejected her.",
-    "Imported from skill-trees/kaelia.md: void skills slow, drain, pull, cleanse, teleport, and open fatalism-themed puzzle solutions."
+    "Imported from skill-trees/kaelia.md: void skills slow, drain, pull, cleanse, teleport, and open void-mystery-themed puzzle solutions."
   ]
 }

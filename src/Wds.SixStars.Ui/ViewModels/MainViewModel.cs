@@ -628,6 +628,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             UseJsonSchemaResponseFormat = GetBooleanSetting(
                 Environment.GetEnvironmentVariable("SIX_STARS_LLM_USE_JSON_SCHEMA"),
                 _appConfig.LLM.UseJsonSchemaResponseFormat),
+            DisableReasoning = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_LLM_DISABLE_REASONING"),
+                _appConfig.LLM.DisableReasoning),
+            ReasoningBudget = GetIntSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_LLM_REASONING_BUDGET"),
+                _appConfig.LLM.ReasoningBudget),
+            ReasoningFormat = Environment.GetEnvironmentVariable("SIX_STARS_LLM_REASONING_FORMAT")
+                ?? _appConfig.LLM.ReasoningFormat,
+            SendReasoningControlFields = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_LLM_SEND_REASONING_CONTROL_FIELDS"),
+                _appConfig.LLM.SendReasoningControlFields),
             TimeoutSeconds = GetIntSetting(
                 Environment.GetEnvironmentVariable("SIX_STARS_LLM_TIMEOUT_SECONDS"),
                 _appConfig.LLM.TimeoutSeconds),
@@ -641,7 +652,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         System.Diagnostics.Debug.WriteLine($"[LLM] Configured endpoint: {options.EndpointUrl}");
         System.Diagnostics.Debug.WriteLine($"[LLM] Model: {options.Model}");
-        System.Diagnostics.Debug.WriteLine($"[LLM] TimeoutSeconds: {options.TimeoutSeconds}, MaxTokens: {(options.MaxTokens > 0 ? options.MaxTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) : "not sent")}, Temperature: {options.Temperature}, JsonSchema: {options.UseJsonSchemaResponseFormat}");
+        System.Diagnostics.Debug.WriteLine($"[LLM] TimeoutSeconds: {options.TimeoutSeconds}, MaxTokens: {(options.MaxTokens > 0 ? options.MaxTokens.ToString(System.Globalization.CultureInfo.InvariantCulture) : "not sent")}, Temperature: {options.Temperature}, JsonSchema: {options.UseJsonSchemaResponseFormat}, DisableReasoning: {options.DisableReasoning}, ReasoningBudget: {options.ReasoningBudget}, ReasoningFormat: {options.ReasoningFormat}");
 
         StarPromptOptions promptOptions = new StarPromptOptions
         {
@@ -782,6 +793,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IScreenSummarizer CreateScreenSummarizer()
     {
+        bool screenEnabled = GetBooleanSetting(
+            Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENABLED"),
+            _appConfig.ScreenLLM.Enabled);
+
+        if (!screenEnabled)
+        {
+            System.Diagnostics.Debug.WriteLine("[Screen LLM] Screen vision is disabled. Using mock screen summarizer.");
+            return new MockScreenSummarizer();
+        }
+
         string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_ENDPOINT")
             ?? _appConfig.ScreenLLM.EndpointUrl
             ?? _appConfig.LocalModels.LlmEndpointUrl;
@@ -791,16 +812,38 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return new MockScreenSummarizer();
         }
 
-        System.Diagnostics.Debug.WriteLine($"[Screen LLM] Configured endpoint: {endpoint}");
-        return new OpenAiCompatibleVisionScreenSummarizer(new LocalChatModelOptions
+        LocalChatModelOptions options = new LocalChatModelOptions
         {
             EndpointUrl = endpoint,
             Model = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MODEL")
                 ?? _appConfig.ScreenLLM.Model
                 ?? _appConfig.LocalModels.LlmModel,
             ApiKey = GetScreenLlmApiKey(_appConfig.ScreenLLM.ApiKey),
-            UseJsonSchemaResponseFormat = _appConfig.ScreenLLM.UseJsonSchemaResponseFormat
-        });
+            UseJsonSchemaResponseFormat = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_USE_JSON_SCHEMA"),
+                _appConfig.ScreenLLM.UseJsonSchemaResponseFormat),
+            DisableReasoning = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_DISABLE_REASONING"),
+                _appConfig.ScreenLLM.DisableReasoning),
+            ReasoningBudget = GetIntSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_REASONING_BUDGET"),
+                _appConfig.ScreenLLM.ReasoningBudget),
+            ReasoningFormat = Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_REASONING_FORMAT")
+                ?? _appConfig.ScreenLLM.ReasoningFormat,
+            SendReasoningControlFields = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_SEND_REASONING_CONTROL_FIELDS"),
+                _appConfig.ScreenLLM.SendReasoningControlFields),
+            TimeoutSeconds = GetIntSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_TIMEOUT_SECONDS"),
+                _appConfig.ScreenLLM.TimeoutSeconds),
+            MaxTokens = GetIntSettingAllowZero(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MAX_TOKENS"),
+                _appConfig.ScreenLLM.MaxTokens),
+            Temperature = 0.1
+        };
+
+        System.Diagnostics.Debug.WriteLine($"[Screen LLM] Configured endpoint: {options.EndpointUrl}; model={options.Model}; max_tokens={options.MaxTokens}");
+        return new OpenAiCompatibleVisionScreenSummarizer(options);
     }
 
     private void WireSpeechEvents()

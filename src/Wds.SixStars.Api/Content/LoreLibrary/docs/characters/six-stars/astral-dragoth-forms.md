@@ -16,7 +16,7 @@ Astral Dragoth forms are advanced transformations unlocked after mastering astra
 - Dragon coloration: lighter purple with black-violet cosmic shadows.
 - Human features: light brown hair or dreads, green eyes, aloof expression.
 - Details: DNA-like abdomen tattoo, slightly armored high-tech bra/top, human/dragoth skin ratio similar to the source concept.
-- Mood: beautiful, dangerous, fatalistic, secretly needy.
+- Mood: beautiful, dangerous, mysterious, secretly needy.
 
 ## Elusiaa — Light Dragoth
 

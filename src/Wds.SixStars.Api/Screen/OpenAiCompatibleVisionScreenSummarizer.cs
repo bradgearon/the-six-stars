@@ -55,12 +55,13 @@ namespace Wds.SixStars.Api.Screen
             Exception? lastException = null;
             string? lastBody = null;
 
-            foreach (string responseFormatMode in BuildResponseFormatModes())
+            List<PayloadMode> payloadModes = BuildPayloadModes();
+            foreach (PayloadMode payloadMode in payloadModes)
             {
                 try
                 {
-                    Dictionary<string, object> payload = CreatePayload(request, responseFormatMode);
-                    string body = await SendPayloadAsync(payload, responseFormatMode, request, cancellationToken).ConfigureAwait(false);
+                    Dictionary<string, object> payload = CreatePayload(request, payloadMode.ResponseFormatMode, payloadMode.ImagePayloadMode);
+                    string body = await SendPayloadAsync(payload, payloadMode, request, cancellationToken).ConfigureAwait(false);
                     string content = ExtractContent(body);
                     ScreenCaptureSummary? summary = TryParseSummary(content);
                     if (summary == null)
@@ -85,9 +86,9 @@ namespace Wds.SixStars.Api.Screen
                         summary.ImageBase64Jpeg = Convert.ToBase64String(request.Capture.ImageBytes ?? Array.Empty<byte>());
                     }
 
-                    if (responseFormatMode != BuildResponseFormatModes()[0])
+                    if (!object.ReferenceEquals(payloadMode, payloadModes[0]))
                     {
-                        System.Diagnostics.Debug.WriteLine("[Screen LLM] Succeeded after response_format fallback mode: " + responseFormatMode);
+                        System.Diagnostics.Debug.WriteLine("[Screen LLM] Succeeded after fallback mode: response_format=" + payloadMode.ResponseFormatMode + ", image=" + payloadMode.ImagePayloadMode);
                     }
 
                     return summary;
@@ -96,29 +97,65 @@ namespace Wds.SixStars.Api.Screen
                 {
                     lastException = ex;
                     lastBody = ex.Message;
-                    System.Diagnostics.Debug.WriteLine("[Screen LLM] Attempt with response_format mode '" + responseFormatMode + "' failed: " + ex.Message);
+                    System.Diagnostics.Debug.WriteLine("[Screen LLM] Attempt failed: response_format='" + payloadMode.ResponseFormatMode + "', image='" + payloadMode.ImagePayloadMode + "': " + ex.Message);
                 }
             }
 
             throw new InvalidOperationException("Screen LLM endpoint failed after OpenAI-compatible vision fallbacks. Last error: " + (lastBody ?? lastException?.Message ?? "unknown"), lastException);
         }
 
-        private List<string> BuildResponseFormatModes()
+        private sealed class PayloadMode
         {
+            public PayloadMode(string responseFormatMode, string imagePayloadMode)
+            {
+                ResponseFormatMode = responseFormatMode;
+                ImagePayloadMode = imagePayloadMode;
+            }
+
+            public string ResponseFormatMode { get; }
+            public string ImagePayloadMode { get; }
+        }
+
+        private List<PayloadMode> BuildPayloadModes()
+        {
+            List<PayloadMode> modes = new List<PayloadMode>();
+
             if (_options.UseJsonSchemaResponseFormat)
             {
                 // For vision calls, many local OpenAI-compatible servers reject response_format even when text calls accept it.
-                // Try json_object first, then send the exact same OpenAI-compatible image payload without response_format.
-                return new List<string> { "json_object", "none" };
+                modes.Add(new PayloadMode("json_object", "object_image_url"));
             }
 
-            return new List<string> { "none" };
+            // Canonical OpenAI / llama.cpp-compatible chat-completions image shape.
+            modes.Add(new PayloadMode("none", "object_image_url"));
+
+            // Compatibility fallback for a few local OpenAI-compatible servers that expect image_url to be a string.
+            modes.Add(new PayloadMode("none", "string_image_url"));
+
+            return modes;
         }
 
-        private Dictionary<string, object> CreatePayload(ScreenSummarizationRequest request, string responseFormatMode)
+        private Dictionary<string, object> CreatePayload(ScreenSummarizationRequest request, string responseFormatMode, string imagePayloadMode)
         {
             string prompt = BuildPrompt(request);
             string imageDataUrl = request.Capture.ToDataUrl();
+
+            object imagePart = string.Equals(imagePayloadMode, "string_image_url", StringComparison.OrdinalIgnoreCase)
+                ? new Dictionary<string, object>
+                {
+                    { "type", "image_url" },
+                    { "image_url", imageDataUrl }
+                }
+                : new Dictionary<string, object>
+                {
+                    { "type", "image_url" },
+                    { "image_url", new Dictionary<string, object>
+                        {
+                            { "url", imageDataUrl },
+                            { "detail", "low" }
+                        }
+                    }
+                };
 
             object[] userContent = new object[]
             {
@@ -127,15 +164,7 @@ namespace Wds.SixStars.Api.Screen
                     { "type", "text" },
                     { "text", prompt }
                 },
-                new Dictionary<string, object>
-                {
-                    { "type", "image_url" },
-                    { "image_url", new Dictionary<string, object>
-                        {
-                            { "url", imageDataUrl }
-                        }
-                    }
-                }
+                imagePart
             };
 
             Dictionary<string, object> payload = new Dictionary<string, object>
@@ -158,6 +187,13 @@ namespace Wds.SixStars.Api.Screen
                 payload["max_tokens"] = _options.MaxTokens;
             }
 
+            if (_options.DisableReasoning && _options.SendReasoningControlFields && IsLocalEndpoint(_options.EndpointUrl))
+            {
+                payload["reasoning"] = "off";
+                payload["reasoning_budget"] = Math.Max(0, _options.ReasoningBudget);
+                payload["reasoning_format"] = string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat;
+            }
+
             if (string.Equals(responseFormatMode, "json_object", StringComparison.OrdinalIgnoreCase))
             {
                 payload["response_format"] = new Dictionary<string, object>
@@ -167,6 +203,17 @@ namespace Wds.SixStars.Api.Screen
             }
 
             return payload;
+        }
+
+        private static bool IsLocalEndpoint(string endpointUrl)
+        {
+            if (string.IsNullOrWhiteSpace(endpointUrl))
+            {
+                return false;
+            }
+
+            return endpointUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0
+                || endpointUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string BuildPrompt(ScreenSummarizationRequest request)
@@ -186,10 +233,10 @@ namespace Wds.SixStars.Api.Screen
             return prompt.ToString();
         }
 
-        private async Task<string> SendPayloadAsync(Dictionary<string, object> payload, string responseFormatMode, ScreenSummarizationRequest request, CancellationToken cancellationToken)
+        private async Task<string> SendPayloadAsync(Dictionary<string, object> payload, PayloadMode payloadMode, ScreenSummarizationRequest request, CancellationToken cancellationToken)
         {
             string json = JsonSerializer.Serialize(payload, _jsonOptions);
-            LogRequestForDebug(payload, responseFormatMode, request, json.Length);
+            LogRequestForDebug(payload, payloadMode, request, json.Length);
 
             using HttpRequestMessage httpRequest = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl);
             httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -198,7 +245,7 @@ namespace Wds.SixStars.Api.Screen
                 httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
             }
 
-            System.Diagnostics.Debug.WriteLine("[Screen LLM] Sending OpenAI-compatible vision POST to " + _options.EndpointUrl + " mode=" + responseFormatMode);
+            System.Diagnostics.Debug.WriteLine("[Screen LLM] Sending OpenAI-compatible vision POST to " + _options.EndpointUrl + " response_format=" + payloadMode.ResponseFormatMode + " image=" + payloadMode.ImagePayloadMode);
             using HttpResponseMessage response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
 #if NET5_0_OR_GREATER
             string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -206,7 +253,7 @@ namespace Wds.SixStars.Api.Screen
             string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
             System.Diagnostics.Debug.WriteLine("[Screen LLM] Response status: " + (int)response.StatusCode + " " + response.StatusCode + "; body chars=" + body.Length);
-            LogResponseForDebug(responseFormatMode, response, body);
+            LogResponseForDebug(payloadMode, response, body);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -216,13 +263,13 @@ namespace Wds.SixStars.Api.Screen
                     throw new InvalidOperationException("Screen LLM returned 401 Unauthorized and no API key was configured. LM Studio may require a token. Set LM_API_TOKEN, SIX_STARS_SCREEN_LLM_API_KEY, SIX_STARS_LLM_API_KEY, or disable API key requirement in LM Studio. Raw response: " + preview);
                 }
 
-                throw new InvalidOperationException("Screen summarizer returned " + (int)response.StatusCode + " " + response.StatusCode + " in mode " + responseFormatMode + ": " + preview);
+                throw new InvalidOperationException("Screen summarizer returned " + (int)response.StatusCode + " " + response.StatusCode + " in response_format=" + payloadMode.ResponseFormatMode + ", image=" + payloadMode.ImagePayloadMode + ": " + preview);
             }
 
             return body;
         }
 
-        private void LogRequestForDebug(Dictionary<string, object> payload, string responseFormatMode, ScreenSummarizationRequest request, int jsonLength)
+        private void LogRequestForDebug(Dictionary<string, object> payload, PayloadMode payloadMode, ScreenSummarizationRequest request, int jsonLength)
         {
             try
             {
@@ -236,7 +283,8 @@ namespace Wds.SixStars.Api.Screen
                 sb.AppendLine("Time: " + DateTimeOffset.Now.ToString("O"));
                 sb.AppendLine("Endpoint: " + _options.EndpointUrl);
                 sb.AppendLine("Model: " + _options.Model);
-                sb.AppendLine("ResponseFormatMode: " + responseFormatMode);
+                sb.AppendLine("ResponseFormatMode: " + payloadMode.ResponseFormatMode);
+                sb.AppendLine("ImagePayloadMode: " + payloadMode.ImagePayloadMode);
                 sb.AppendLine("Authorization: " + (string.IsNullOrWhiteSpace(_options.ApiKey) ? "none" : "Bearer ***"));
                 sb.AppendLine("ImageMimeType: " + request.Capture.MimeType);
                 sb.AppendLine("ImageBytes: " + imageBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -253,7 +301,7 @@ namespace Wds.SixStars.Api.Screen
             }
         }
 
-        private static void LogResponseForDebug(string responseFormatMode, HttpResponseMessage response, string body)
+        private static void LogResponseForDebug(PayloadMode payloadMode, HttpResponseMessage response, string body)
         {
             try
             {
@@ -261,7 +309,8 @@ namespace Wds.SixStars.Api.Screen
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("=============== SCREEN LLM RESPONSE ===============");
                 sb.AppendLine("Time: " + DateTimeOffset.Now.ToString("O"));
-                sb.AppendLine("ResponseFormatMode: " + responseFormatMode);
+                sb.AppendLine("ResponseFormatMode: " + payloadMode.ResponseFormatMode);
+                sb.AppendLine("ImagePayloadMode: " + payloadMode.ImagePayloadMode);
                 sb.AppendLine("Status: " + (int)response.StatusCode + " " + response.StatusCode);
                 sb.AppendLine("BodyChars: " + body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 sb.AppendLine(preview);
@@ -280,10 +329,22 @@ namespace Wds.SixStars.Api.Screen
             if (doc.RootElement.TryGetProperty("choices", out JsonElement choices) && choices.ValueKind == JsonValueKind.Array && choices.GetArrayLength() > 0)
             {
                 JsonElement first = choices[0];
-                if (first.TryGetProperty("message", out JsonElement message) && message.TryGetProperty("content", out JsonElement content))
+                if (first.TryGetProperty("message", out JsonElement message))
                 {
-                    if (content.ValueKind == JsonValueKind.String) return content.GetString() ?? string.Empty;
-                    return content.GetRawText();
+                    if (message.TryGetProperty("content", out JsonElement content))
+                    {
+                        if (content.ValueKind == JsonValueKind.String) return content.GetString() ?? string.Empty;
+                        return content.GetRawText();
+                    }
+
+                    if (message.TryGetProperty("reasoning_content", out JsonElement reasoningContent))
+                    {
+                        string reasoning = reasoningContent.ValueKind == JsonValueKind.String ? (reasoningContent.GetString() ?? string.Empty) : reasoningContent.GetRawText();
+                        if (!string.IsNullOrWhiteSpace(reasoning))
+                        {
+                            throw new InvalidOperationException("Screen LLM returned reasoning_content but empty message.content. Disable llama-server reasoning; ScreenLLM.MaxTokens is optional and is not sent when set to 0. Reasoning preview: " + (reasoning.Length > 360 ? reasoning.Substring(0, 360) + "..." : reasoning));
+                        }
+                    }
                 }
             }
             return responseBody;

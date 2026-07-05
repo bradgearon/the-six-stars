@@ -66,7 +66,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 try
                 {
-                    string body = await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, cancellationToken).ConfigureAwait(false);
+                    string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, cancellationToken).ConfigureAwait(false);
                     string content = ExtractContent(body);
                     LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content));
                     if (string.IsNullOrWhiteSpace(content))
@@ -115,7 +115,22 @@ namespace Wds.SixStars.Api.Ai
             return modes;
         }
 
-        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
+        private async Task<string> SendOnceWithOptionalReasoningControlsAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
+        {
+            bool includeReasoningControls = ShouldSendReasoningControlFields();
+            try
+            {
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, includeReasoningControls, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (includeReasoningControls && LooksLikeReasoningParameterProblem(ex.Message))
+            {
+                System.Diagnostics.Debug.WriteLine("[OpenAiCompatibleChatModelClient] Reasoning-control request fields were rejected; retrying same request without reasoning fields: " + ex.Message);
+                LogExchange("LLM reasoning-control fallback", "The local endpoint rejected request-level reasoning fields, so the client retried without them. The launcher still disables reasoning through llama-server CLI args when it starts the server.\n" + ex.Message);
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, false, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, bool includeReasoningControls, CancellationToken cancellationToken)
         {
             Dictionary<string, object> payload = new Dictionary<string, object>
             {
@@ -123,6 +138,16 @@ namespace Wds.SixStars.Api.Ai
                 { "messages", wireMessages },
                 { "temperature", _options.Temperature }
             };
+
+            if (includeReasoningControls)
+            {
+                // llama.cpp/llama-server can expose intermediate thinking as reasoning_content.
+                // For the real-time foreground voice path, request final content only so the
+                // model does not spend the whole max_tokens budget in reasoning_content.
+                payload["reasoning"] = "off";
+                payload["reasoning_budget"] = Math.Max(0, _options.ReasoningBudget);
+                payload["reasoning_format"] = string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat;
+            }
 
             if (maxTokens.HasValue && maxTokens.Value > 0)
             {
@@ -208,6 +233,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("ResponseFormatMode: " + responseFormatMode);
             sb.AppendLine("Temperature: " + _options.Temperature);
             sb.AppendLine("MaxTokens: " + DescribeMaxTokens(effectiveMaxTokens));
+            sb.AppendLine("ReasoningControls: " + (ShouldSendReasoningControlFields() ? ("off; budget=" + Math.Max(0, _options.ReasoningBudget).ToString(System.Globalization.CultureInfo.InvariantCulture) + "; format=" + (string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat)) : "not sent"));
             sb.AppendLine("TimeoutSeconds: " + _options.TimeoutSeconds);
             sb.AppendLine("Authorization: " + (string.IsNullOrWhiteSpace(_options.ApiKey) ? "none" : "Bearer ***"));
             sb.AppendLine();
@@ -291,6 +317,39 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
+        private bool ShouldSendReasoningControlFields()
+        {
+            if (!_options.DisableReasoning || !_options.SendReasoningControlFields)
+            {
+                return false;
+            }
+
+            // These request-level fields are intended for local OpenAI-compatible servers.
+            // Avoid surprising hosted/public OpenAI-style endpoints unless explicitly enabled by local config.
+            if (string.IsNullOrWhiteSpace(_options.EndpointUrl))
+            {
+                return false;
+            }
+
+            return _options.EndpointUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0
+                || _options.EndpointUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool LooksLikeReasoningParameterProblem(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            return message.IndexOf("reasoning", StringComparison.OrdinalIgnoreCase) >= 0
+                && (message.IndexOf("unknown", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("unsupported", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("unrecognized", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("bad request", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         private static bool LooksLikeResponseFormatProblem(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
@@ -329,6 +388,16 @@ namespace Wds.SixStars.Api.Ai
                         if (!string.IsNullOrWhiteSpace(messageContent))
                         {
                             return messageContent;
+                        }
+
+                        string? reasoningContent = ExtractReasoningContent(message);
+                        if (!string.IsNullOrWhiteSpace(reasoningContent))
+                        {
+                            throw new InvalidOperationException(
+                                "Local model returned reasoning_content but empty message.content. " +
+                                "Disable reasoning for llama-server using --reasoning off --reasoning-budget 0 --reasoning-format none. " +
+                                "Per-request max_tokens is intentionally optional/disabled by default in this build; do not fix this by lowering caps. " +
+                                "Reasoning preview: " + Preview(reasoningContent, 360));
                         }
                     }
 
@@ -403,6 +472,36 @@ namespace Wds.SixStars.Api.Ai
             }
 
             return null;
+        }
+
+        private static string? ExtractReasoningContent(JsonElement message)
+        {
+            if (message.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (message.TryGetProperty("reasoning_content", out JsonElement reasoningContent))
+            {
+                return ElementToString(reasoningContent);
+            }
+
+            if (message.TryGetProperty("reasoning", out JsonElement reasoning))
+            {
+                return ElementToString(reasoning);
+            }
+
+            return null;
+        }
+
+        private static string Preview(string value, int maxChars)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            return value.Length <= maxChars ? value : value.Substring(0, maxChars) + "...";
         }
 
         private static string ElementToString(JsonElement element)

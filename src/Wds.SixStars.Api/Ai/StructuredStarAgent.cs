@@ -130,9 +130,9 @@ namespace Wds.SixStars.Api.Ai
             StarInteractionResponse response = new StarInteractionResponse
             {
                 StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId,
-                EmotionalPurpose = "Foreground spoken reply only; background emotion/memory review pending.",
-                EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
-                NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
+                EmotionalPurpose = "Foreground spoken reply only; background emotion/vector/memory review pending.",
+                EmotionalEffectVector = string.Empty,
+                NegativeEmotionVector = string.Empty,
                 VoiceDirective = BuildDefaultVoiceDirective(profile, request),
                 SuggestedStateDeltas = RelationshipDelta.Zero(),
                 ConversationSummary = BuildFallbackConversationSummary(state, request, model.SpokenText),
@@ -153,11 +153,12 @@ namespace Wds.SixStars.Api.Ai
             // Do not ask the foreground LLM pass for heavy emotion objects.
             // It returns only the compact emotionalEffectVector; the background review computes impactful emotion scores and deterministic relationship updates.
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM fast foreground speech pass.");
-            response.Debug.Notes.Add("Heavy emotion/memory analysis waits until the voice pipeline reports foreground voice generation ready.");
-            response.Debug.Notes.Add($"Per-pass max_tokens cap used: {maxTokens}; this prevents llama-server from filling the whole context window.");
+            response.Debug.Notes.Add("Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
+            response.Debug.Notes.Add(maxTokens > 0
+                ? $"Per-pass max_tokens cap used: {maxTokens}."
+                : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
             response.Debug.Notes.Add($"Speech parts: {response.SpokenParts.Count}; joined length: {response.SpokenText.Length} characters.");
-            response.Debug.Notes.Add($"Foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length} characters.");
-            response.Debug.Notes.Add($"Foreground negativeEmotionVector length: {response.NegativeEmotionVector.Length} characters.");
+            response.Debug.Notes.Add("Foreground pass does not request emotionalEffectVector or negativeEmotionVector; background review computes them.");
             if (isStory)
             {
                 int storyChunks = ExtractAllMarkdownChunks(response.StoryMarkdown).Count;
@@ -192,7 +193,7 @@ namespace Wds.SixStars.Api.Ai
                 model.SpokenParts.AddRange(foregroundResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)));
             }
             StarInteractionResponse response = BuildInteractionResponseFromModel(profile, request, state, model);
-            response.EmotionalEffectVector = foregroundResponse.EmotionalEffectVector ?? string.Empty;
+            response.EmotionalEffectVector = string.IsNullOrWhiteSpace(model.EmotionalEffectVector) ? (foregroundResponse.EmotionalEffectVector ?? string.Empty) : model.EmotionalEffectVector;
             response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
@@ -245,7 +246,7 @@ namespace Wds.SixStars.Api.Ai
             TrimEmotionScoresToImpactfulSet(response, 9);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM compact background emotion/memory review.");
             response.Debug.Notes.Add($"Impact emotions evaluated: {response.EmotionScores.Count} emotions");
-            response.Debug.Notes.Add($"Background kept foreground emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
+            response.Debug.Notes.Add($"Background computed emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
@@ -255,21 +256,21 @@ namespace Wds.SixStars.Api.Ai
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_SPEECH_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue > 0 ? configuredValue : 512;
+            return configuredValue >= 0 ? configuredValue : 0;
         }
 
         private static int ResolveStoryPlanMaxTokens()
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return 3072;
+            return 0;
         }
 
         private static int ResolveReviewMaxTokens(int configuredValue)
         {
             string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_REVIEW_MAX_TOKENS");
             if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue > 0 ? configuredValue : 768;
+            return configuredValue >= 0 ? configuredValue : 0;
         }
 
         private static void PreserveForegroundStoryFields(StarInteractionResponse foreground, StarInteractionResponse analysis)
@@ -404,14 +405,27 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                // A new story always speaks Chunk 0 first. The desktop host now auto-plays
-                // Chunk 1+ locally from storyMarkdown without sending continuation LLM requests.
+                // A new story always speaks Chunk 0 first. The desktop host auto-plays
+                // Chunk 1+ locally from storyMarkdown. Do not force StoryIsFinished=false
+                // merely because cached chunks remain; StoryIsFinished now means whether
+                // the generated markdown is a complete episode, not whether local autoplay
+                // has finished speaking every chunk.
                 model.StoryPartIndex = 0;
-                if (!string.IsNullOrWhiteSpace(ExtractMarkdownChunk(model.StoryMarkdown, 1)))
+                if (!string.IsNullOrWhiteSpace(model.StoryMarkdown) && model.StoryIsFinished == false && !LooksLikeIntentionallyUnfinishedStory(model.StoryMarkdown))
                 {
-                    model.StoryIsFinished = false;
+                    model.StoryIsFinished = true;
                 }
             }
+        }
+
+        private static bool LooksLikeIntentionallyUnfinishedStory(string markdown)
+        {
+            if (string.IsNullOrWhiteSpace(markdown)) return false;
+            string tail = markdown.Trim();
+            if (tail.Length > 600) tail = tail.Substring(tail.Length - 600);
+            return tail.IndexOf("to be continued", StringComparison.OrdinalIgnoreCase) >= 0
+                || tail.IndexOf("continued", StringComparison.OrdinalIgnoreCase) >= 0 && tail.IndexOf("next", StringComparison.OrdinalIgnoreCase) >= 0
+                || tail.EndsWith("...", StringComparison.Ordinal);
         }
 
         private static string NormalizeStoryMarkdownIntoShortChunks(string markdown, int maxSentencesPerChunk)
@@ -814,7 +828,6 @@ namespace Wds.SixStars.Api.Ai
             };
             model.SpokenParts.AddRange(CleanSpeechParts(spokenParts));
             if (!string.IsNullOrWhiteSpace(request.PlayerText)) model.ImportantPlayerQuotes.Add(request.PlayerText.Trim());
-            model.MemoryNotes.Add("Real LLM raw response was salvaged because structured JSON parsing failed: " + reason);
             model.RiskFlags.Add("llm_structured_json_parse_failed_salvaged");
             model.RiskFlags.Add("llm_raw_response_used_not_mock");
             model.LoreUsed.Add("local-llm-raw-content");

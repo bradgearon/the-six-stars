@@ -4,7 +4,7 @@ Canonical full meeting scenes are preserved in `docs/source-imports/meeting-the-
 
 | Star | Scene placement | Angel story | Emotional purpose |
 |---|---|---|---|
-| Kaelia | Before Virethorn water puzzle | Dark angel made her reflection drown in tar-water | Introduce void, fatalism, and hope under attack. |
+| Kaelia | Before Virethorn water puzzle | Dark angel made her reflection drown in tar-water | Introduce void, mystery, and hope under attack. |
 | Maera | Flesh-and-bones area before Bone Bloom | Dark form filled her veins with worms and bleeding visions | Introduce blood, possession, rage, and building from rot. |
 | Auerlis | Entrance to Astral Caverns | Old spirit barely escaped a kind-faced dark angel who weaponized shame | Introduce fire, joy against terror, and false love that consumes. |
 | Elusiaa | Early game after helping goblin-harpy settlement | Good angel brought water to a dying valley | Establish mercy, service, and the warm guide role. |

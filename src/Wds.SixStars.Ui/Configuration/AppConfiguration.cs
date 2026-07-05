@@ -77,6 +77,10 @@ namespace Wds.SixStars.Ui.Configuration
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
+        public bool DisableReasoning { get; set; } = true;
+        public int ReasoningBudget { get; set; } = 0;
+        public string ReasoningFormat { get; set; } = "none";
+        public bool SendReasoningControlFields { get; set; } = true;
 
         /// <summary>
         /// Local models can take a while after the backend reports 100% generation because
@@ -85,12 +89,12 @@ namespace Wds.SixStars.Ui.Configuration
         /// </summary>
         public int TimeoutSeconds { get; set; } = 600;
 
-        /// <summary>Default chat max_tokens sent to the local backend. Override with SIX_STARS_LLM_MAX_TOKENS. Use 0 only when intentionally letting the backend limit apply.</summary>
-        public int MaxTokens { get; set; } = 768;
+        /// <summary>Default chat max_tokens sent to the local backend. Override with SIX_STARS_LLM_MAX_TOKENS. 0 means do not send max_tokens.</summary>
+        public int MaxTokens { get; set; } = 0;
 
-        /// <summary>Per-pass max_tokens for the fast spoken pass and background review. Override with SIX_STARS_LLM_SPEECH_MAX_TOKENS / SIX_STARS_LLM_REVIEW_MAX_TOKENS.</summary>
-        public int SpeechMaxTokens { get; set; } = 512;
-        public int ReviewMaxTokens { get; set; } = 768;
+        /// <summary>Per-pass max_tokens for the fast spoken pass and background review. Override with SIX_STARS_LLM_SPEECH_MAX_TOKENS / SIX_STARS_LLM_REVIEW_MAX_TOKENS. 0 means not sent.</summary>
+        public int SpeechMaxTokens { get; set; } = 0;
+        public int ReviewMaxTokens { get; set; } = 0;
 
         public double Temperature { get; set; } = 0.65;
     }
@@ -186,9 +190,17 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class ScreenLlmConfig
     {
+        public bool Enabled { get; set; } = true;
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
+        public bool DisableReasoning { get; set; } = true;
+        public int ReasoningBudget { get; set; } = 0;
+        public string ReasoningFormat { get; set; } = "none";
+        public bool SendReasoningControlFields { get; set; } = true;
+        public int MaxTokens { get; set; } = 0;
+        public int TimeoutSeconds { get; set; } = 120;
+        public string PayloadShape { get; set; } = "OpenAiImageUrl";
     }
 }

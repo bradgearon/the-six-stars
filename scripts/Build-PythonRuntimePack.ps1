@@ -26,8 +26,7 @@ if (!(Test-Path $venvDir)) {
 }
 
 $pythonExe = Join-Path $venvDir "Scripts/python.exe"
-& $pythonExe -m pip install --upgrade pip
-& $pythonExe -m pip install --force-reinstall "setuptools==80.9.0" "wheel==0.43.0"
+& $pythonExe -m pip install --upgrade pip setuptools wheel
 
 if ($Server -eq "tts" -and $Profile -eq "nvidia-cu12") {
   Write-Host "Installing CUDA PyTorch into the TTS NVIDIA runtime pack..."
@@ -66,131 +65,32 @@ $pyiArgs = @(
 # from crashing before the server starts.
 $pyiArgs += @(
   "--collect-all", "numpy",
+  "--hidden-import", "numpy._core._exceptions",
   "--hidden-import", "numpy.core._exceptions"
 )
 
 if ($Server -eq "asr") {
-    $pyiArgs += @(
-        "--hidden-import", "numpy.core._exceptions",
-
-        "--hidden-import", "pkg_resources",
-        "--collect-submodules", "pkg_resources",
-        "--copy-metadata", "setuptools",
-
-        "--hidden-import", "requests",
-        "--collect-submodules", "requests",
-
-        "--hidden-import", "backports",
-        "--hidden-import", "backports.tarfile",
-        "--collect-submodules", "backports",
-        "--copy-metadata", "backports.tarfile",
-
-        "--collect-submodules", "jaraco",
-        "--collect-all", "faster_whisper",
-        "--collect-all", "ctranslate2",
-
-        "--copy-metadata", "faster-whisper",
-        "--copy-metadata", "ctranslate2"
-    )
+  $pyiArgs += @(
+    "--collect-all", "faster_whisper",
+    "--collect-all", "ctranslate2",
+    "--collect-all", "soundfile"
+  )
 }
 
 if ($Server -eq "tts") {
-    $pyiArgs += @(
-        "--debug", "noarchive",
-
-        "--hidden-import", "backports",
-        "--hidden-import", "backports.tarfile",
-        "--collect-submodules", "backports",
-        "--copy-metadata", "backports.tarfile",
-
-        "--collect-submodules", "jaraco",
-        "--collect-submodules", "jaraco.text",
-        "--collect-submodules", "jaraco.context",
-
-        "--collect-all", "transformers",
-        "--collect-submodules", "transformers.models",
-        "--collect-submodules", "transformers.generation",
-        "--collect-submodules", "transformers.utils",
-        "--copy-metadata", "transformers",
-
-        "--collect-all", "tokenizers",
-        "--copy-metadata", "tokenizers",
-
-        "--collect-all", "accelerate",
-        "--copy-metadata", "accelerate",
-
-        "--collect-all", "safetensors",
-        "--copy-metadata", "safetensors",
-
-        "--collect-all", "sentencepiece",
-        "--copy-metadata", "sentencepiece",
-
-        "--collect-all", "huggingface_hub",
-        "--copy-metadata", "huggingface-hub",
-
-        "--collect-all", "qwen_tts",
-        "--collect-all", "faster_qwen3_tts",
-
-        "--collect-all", "torch",
-        "--collect-all", "torchaudio",
-        "--copy-metadata", "torch",
-        "--copy-metadata", "torchaudio"
-    )
+  $pyiArgs += @(
+    "--hidden-import", "torch",
+    "--hidden-import", "websockets",
+    "--collect-all", "soundfile"
+  )
 }
 
 Write-Host "Running PyInstaller for $Server $Profile"
-
-
-if ($Server -eq "asr") {
-    Write-Host "Checking ASR build imports..."
-    & $pythonExe -c "import pkg_resources; import ctranslate2; from faster_whisper import WhisperModel; print('ASR imports OK')"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "ASR build environment is missing required imports. pkg_resources/ctranslate2/faster_whisper failed."
-    }
-}
-
-
-if ($Server -eq "tts") {
-    Write-Host "Checking TTS build imports before PyInstaller..."
-
-    & $pythonExe -c "import torch; import transformers; import transformers.models; import tokenizers; import safetensors; import sentencepiece; print('TTS imports OK')"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "TTS build environment is missing required imports. torch/transformers/tokenizers/safetensors/sentencepiece failed."
-    }
-}
-
 & $pythonExe @pyiArgs
 
 if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Force -Path (Split-Path $outDir -Parent) | Out-Null
 Copy-Item -Recurse "build/python-packs/$Server-$Profile/dist/$distName" $outDir
-
-if ($Server -eq "asr" -and $Profile -eq "nvidia-cu12") {
-    Write-Host "Copying NVIDIA CUDA/cuDNN runtime DLLs for faster-whisper..."
-
-    $sitePackages = Join-Path $venvDir "Lib\site-packages"
-
-    $nvidiaDlls = Get-ChildItem $sitePackages -Recurse -File -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.Name -like "cudnn*.dll" -or
-            $_.Name -like "cublas*.dll" -or
-            $_.Name -like "cublasLt*.dll" -or
-            $_.Name -like "cudart64_*.dll"
-        }
-
-    if (!$nvidiaDlls -or $nvidiaDlls.Count -eq 0) {
-        throw "No NVIDIA cuDNN/cuBLAS DLLs were found in $sitePackages. Install nvidia-cudnn-cu12 and nvidia-cublas-cu12."
-    }
-
-    foreach ($dll in $nvidiaDlls) {
-        Copy-Item $dll.FullName -Destination $outDir -Force
-    }
-
-    Write-Host "Copied $($nvidiaDlls.Count) NVIDIA runtime DLLs to:"
-    Write-Host "  $outDir"
-}
 
 # Keep helper files/configs next to the exe for debugging and non-frozen fallback imports.
 Copy-Item "scripts/model_paths.py" $outDir -Force
@@ -205,19 +105,5 @@ Generated Python runtime pack: $Server $Profile
 Build script: scripts/Build-PythonRuntimePack.ps1
 Do not merge this folder with the other profile. CPU/CUDA dependencies are intentionally isolated.
 "@ | Set-Content (Join-Path $outDir "README.txt") -Encoding UTF8
-
-if ($Server -eq "tts") {
-    $expectedTransformersModels = Join-Path $outDir "_internal\transformers\models\__init__.pyc"
-
-    if (!(Test-Path $expectedTransformersModels)) {
-        Write-Warning "Expected transformers models file was not found:"
-        Write-Warning "  $expectedTransformersModels"
-        Write-Warning "TTS may fail unless PyInstaller noarchive mode is enabled."
-    }
-    else {
-        Write-Host "Verified transformers.models exists:"
-        Write-Host "  $expectedTransformersModels"
-    }
-}
 
 Write-Host "Runtime pack copied to $outDir" -ForegroundColor Green

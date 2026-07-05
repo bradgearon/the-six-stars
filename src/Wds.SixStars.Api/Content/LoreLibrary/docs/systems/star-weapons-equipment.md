@@ -22,7 +22,7 @@ The Stars should feel like powerful sorceresses, not melee warriors. Their “we
 | Star | Element | Focus | Type | Visual Identity | Combat Use |
 |---|---|---|---|---|---|
 | Elusiaa | Light | Lumen’s Grace | Staff | White-gold staff, teal crystal, floating golden rings. | Healing fields, holy projectiles, radiant claw empowerment. |
-| Kaelia | Void | Nullheart Orb | Floating orb | Black-purple orb with stars inside; opens like an eye. | Void rifts, gravity pulls, fatalism debuffs, portal shots. |
+| Kaelia | Void | Nullheart Orb | Floating orb | Black-purple orb with stars inside; opens like an eye. | Void rifts, gravity pulls, mystery debuffs, portal shots. |
 | Khavia | Water | Tideweaver’s Codex | Grimoire | Floating book with water pages and glowing blue runes. | Water chains, torrents, bonds, mobility waves. |
 | Auerlis | Fire | Ember Eternal | Flaming lantern | Ornate gold lantern with living flame forms. | Fire beasts, phoenix bursts, joy flames, explosive projectiles. |
 | Maera | Blood | Sanguine Heart | Blood crystal | Floating crimson crystal pulsing like a heart. | Blood magic, life-force threads, sacrifice, possession tension. |

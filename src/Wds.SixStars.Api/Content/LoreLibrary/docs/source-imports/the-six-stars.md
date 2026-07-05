@@ -59,13 +59,13 @@ Confuses love with ownership
 Kaelia 
 Void 
 Daughter of Kaeliss
-Domain: Fatalism
+Domain: Mystery
 
 Believes change is impossible
 
 Spreads apathy freezes futures
 
-“Why try? It all ends the same.”
+“The Void is not empty. It is listening.”
 
 Nyxari 
 Shadow 

@@ -24,6 +24,8 @@ namespace Wds.SixStars.Api.Ai
                     {
                         { "starId", StringProperty() },
                         { "spokenText", SpokenTextArray(6) },
+                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                         { "storyTitle", NullableStringProperty() },
                         { "storyKind", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "None", "PersonalMemory", "MoralParable", "AncientStarFable", "PoeticAbstraction", "ComfortStory", "FlirtyStory", "HorrorWarning", "ComedyStory", "BattleMemory", "SecretUnlockStory" } } } },
                         { "storyId", StringProperty() },
@@ -87,7 +89,7 @@ namespace Wds.SixStars.Api.Ai
                 { "additionalProperties", false },
                 { "required", new[]
                     {
-                        "starId", "spokenText", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
+                        "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
@@ -98,6 +100,8 @@ namespace Wds.SixStars.Api.Ai
                     {
                         { "starId", StringProperty() },
                         { "spokenText", SpokenTextArray(6) },
+                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                         { "storyTitle", NullableStringProperty() },
                         { "storyId", StringProperty() },
                         { "storySummary", StringProperty(700) },
@@ -133,13 +137,11 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector" } },
+                { "required", new[] { "starId", "spokenText" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(5) },
-                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
-                        { "negativeEmotionVector", NegativeEmotionVectorProperty() }
+                        { "spokenText", SpokenTextArray(5) }
                     }
                 }
             };
@@ -153,8 +155,6 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "starId", StringProperty() },
                 { "spokenText", SpokenTextArray(6) },
-                { "emotionalEffectVector", EmotionEffectVectorProperty() },
-                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                 { "storyTitle", StringProperty(160) },
                 { "storyId", StringProperty(120) },
                 { "storyMarkdown", StringProperty() },
@@ -164,8 +164,8 @@ namespace Wds.SixStars.Api.Ai
             };
 
             string[] required = continuation
-                ? new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyIsFinished", "storyPartIndex" }
-                : new[] { "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex" };
+                ? new[] { "starId", "spokenText", "storyIsFinished", "storyPartIndex" }
+                : new[] { "starId", "spokenText", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex" };
 
             Dictionary<string, object> schema = new Dictionary<string, object>
             {

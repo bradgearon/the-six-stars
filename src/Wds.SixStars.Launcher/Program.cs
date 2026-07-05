@@ -151,18 +151,36 @@ internal static class Program
         psi.Environment["SIX_STARS_LLM_ENDPOINT"] = supervisor.OpenAiChatUrl ?? "http://127.0.0.1:8080/v1/chat/completions";
         psi.Environment["SIX_STARS_SCREEN_LLM_ENDPOINT"] = supervisor.OpenAiChatUrl ?? "http://127.0.0.1:8080/v1/chat/completions";
         psi.Environment["SIX_STARS_LLM_MODEL"] = supervisor.ModelManifest.Models.Llm?.OpenAiModelName ?? "local-model";
-        psi.Environment["SIX_STARS_SCREEN_LLM_MODEL"] = supervisor.ModelManifest.Models.Llm?.OpenAiModelName ?? "local-model";
+        psi.Environment["SIX_STARS_SCREEN_LLM_MODEL"] = supervisor.ModelManifest.Models.Vision?.OpenAiModelName
+            ?? supervisor.ModelManifest.Models.Llm?.OpenAiModelName
+            ?? "local-model";
+        psi.Environment["SIX_STARS_SCREEN_LLM_ENABLED"] = supervisor.VisionReady ? "true" : "false";
+        psi.Environment["SIX_STARS_SCREEN_LLM_USE_JSON_SCHEMA"] = "false";
+        psi.Environment["SIX_STARS_SCREEN_LLM_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_MAX_TOKENS", out var screenMaxTokens) ? screenMaxTokens : "0";
+        psi.Environment["SIX_STARS_SCREEN_LLM_TIMEOUT_SECONDS"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_TIMEOUT_SECONDS", out var screenTimeout) ? screenTimeout : "120";
         // llama.cpp + small local Gemma models are more stable with prompt-only JSON
-        // than strict json_schema grammar mode. Keep generation bounded so the model
-        // cannot fill the whole context window and return an empty length stop.
+        // than strict json_schema grammar mode. Do not send per-request max_tokens by default;
+        // prompt contracts and reasoning-off control should make the model stop on final JSON.
         psi.Environment["SIX_STARS_LLM_USE_JSON_SCHEMA"] = psi.Environment.TryGetValue("SIX_STARS_LLM_USE_JSON_SCHEMA", out var jsonSchema) ? jsonSchema : "false";
-        psi.Environment["SIX_STARS_LLM_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_MAX_TOKENS", out var maxTokens) ? maxTokens : "768";
-        psi.Environment["SIX_STARS_LLM_SPEECH_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_SPEECH_MAX_TOKENS", out var speechMaxTokens) ? speechMaxTokens : "512";
-        psi.Environment["SIX_STARS_LLM_REVIEW_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_REVIEW_MAX_TOKENS", out var reviewMaxTokens) ? reviewMaxTokens : "768";
-        psi.Environment["SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS", out var storyMaxTokens) ? storyMaxTokens : "3072";
+        psi.Environment["SIX_STARS_LLM_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_MAX_TOKENS", out var maxTokens) ? maxTokens : "0";
+        psi.Environment["SIX_STARS_LLM_SPEECH_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_SPEECH_MAX_TOKENS", out var speechMaxTokens) ? speechMaxTokens : "0";
+        psi.Environment["SIX_STARS_LLM_REVIEW_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_REVIEW_MAX_TOKENS", out var reviewMaxTokens) ? reviewMaxTokens : "0";
+        psi.Environment["SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS", out var storyMaxTokens) ? storyMaxTokens : "0";
+        psi.Environment["SIX_STARS_LLM_DISABLE_REASONING"] = psi.Environment.TryGetValue("SIX_STARS_LLM_DISABLE_REASONING", out var disableReasoning) ? disableReasoning : "true";
+        psi.Environment["SIX_STARS_LLM_REASONING_BUDGET"] = psi.Environment.TryGetValue("SIX_STARS_LLM_REASONING_BUDGET", out var reasoningBudget) ? reasoningBudget : "0";
+        psi.Environment["SIX_STARS_LLM_REASONING_FORMAT"] = psi.Environment.TryGetValue("SIX_STARS_LLM_REASONING_FORMAT", out var reasoningFormat) ? reasoningFormat : "none";
+        psi.Environment["SIX_STARS_LLM_SEND_REASONING_CONTROL_FIELDS"] = psi.Environment.TryGetValue("SIX_STARS_LLM_SEND_REASONING_CONTROL_FIELDS", out var sendReasoningControls) ? sendReasoningControls : "true";
+        psi.Environment["SIX_STARS_SCREEN_LLM_DISABLE_REASONING"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_DISABLE_REASONING", out var screenDisableReasoning) ? screenDisableReasoning : "true";
+        psi.Environment["SIX_STARS_SCREEN_LLM_REASONING_BUDGET"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_REASONING_BUDGET", out var screenReasoningBudget) ? screenReasoningBudget : "0";
+        psi.Environment["SIX_STARS_SCREEN_LLM_REASONING_FORMAT"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_REASONING_FORMAT", out var screenReasoningFormat) ? screenReasoningFormat : "none";
+        psi.Environment["SIX_STARS_SCREEN_LLM_SEND_REASONING_CONTROL_FIELDS"] = psi.Environment.TryGetValue("SIX_STARS_SCREEN_LLM_SEND_REASONING_CONTROL_FIELDS", out var screenSendReasoningControls) ? screenSendReasoningControls : "true";
         psi.Environment["SIX_STARS_WHISPER_ENDPOINT"] = "http://127.0.0.1:8000/v1/audio/transcriptions";
         psi.Environment["SIX_STARS_WEBSOCKET_TTS_URL"] = "ws://127.0.0.1:8100/tts/stream";
         psi.Environment["SIX_STARS_USE_STREAMING_TTS"] = "true";
+        // Keep the render device open with silent PCM while TTS is generating/between chunks.
+        // This prevents HDMI/USB/digital outputs from going idle before the real speech WAV arrives.
+        psi.Environment["SIX_STARS_AUDIO_KEEP_ALIVE"] = psi.Environment.TryGetValue("SIX_STARS_AUDIO_KEEP_ALIVE", out var audioKeepAlive) ? audioKeepAlive : "true";
+        psi.Environment["SIX_STARS_AUDIO_KEEPALIVE_BACKEND"] = psi.Environment.TryGetValue("SIX_STARS_AUDIO_KEEPALIVE_BACKEND", out var audioKeepAliveBackend) ? audioKeepAliveBackend : "directsound";
         psi.Environment["SIX_STARS_REQUIRE_WAKE_WORD"] = psi.Environment.TryGetValue("SIX_STARS_REQUIRE_WAKE_WORD", out var wake) ? wake : "false";
         return Process.Start(psi) ?? throw new InvalidOperationException("Could not launch UI: " + uiExe);
     }
@@ -243,6 +261,7 @@ internal sealed class RuntimeSupervisor : IDisposable
 
     public ModelManifest ModelManifest { get; }
     public string? OpenAiChatUrl { get; private set; }
+    public bool VisionReady { get; private set; }
 
     public async Task StartAllAsync(int waitSeconds)
     {
@@ -288,7 +307,11 @@ internal sealed class RuntimeSupervisor : IDisposable
                 }
 
                 _processes.Add(proc);
-                if (kind == "llm") OpenAiChatUrl = pack.OpenAiChatUrl ?? "http://127.0.0.1:8080/v1/chat/completions";
+                if (kind == "llm")
+                {
+                    OpenAiChatUrl = pack.OpenAiChatUrl ?? "http://127.0.0.1:8080/v1/chat/completions";
+                    UpdateVisionReadyForStartedLlm(pack);
+                }
                 Console.WriteLine($"READY   {kind}: {pack.Id}");
                 return;
             }
@@ -389,8 +412,103 @@ internal sealed class RuntimeSupervisor : IDisposable
             {
                 args = "-hf " + Quote(llm.HfSpecifier) + " " + args;
             }
+
+            args = AppendVisionProjectorArgs(args);
+            args = AppendReasoningDisabledArgs(args);
         }
         return args.Trim();
+    }
+
+    private static string AppendReasoningDisabledArgs(string args)
+    {
+        // Gemma 4 and other reasoning-capable local models can fill message.reasoning_content
+        // and leave message.content empty. The companion needs immediate spoken JSON, so the
+        // launcher disables reasoning globally for llama-server unless the user already chose
+        // explicit reasoning args in runtime-manifest.json.
+        if (!ContainsArgument(args, "--reasoning"))
+        {
+            args += " --reasoning off";
+        }
+
+        if (!ContainsArgument(args, "--reasoning-budget"))
+        {
+            args += " --reasoning-budget 0";
+        }
+
+        if (!ContainsArgument(args, "--reasoning-format"))
+        {
+            args += " --reasoning-format none";
+        }
+
+        return args.Trim();
+    }
+
+    private static bool ContainsArgument(string args, string argumentName)
+    {
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            return false;
+        }
+
+        return args.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Any(x => string.Equals(x, argumentName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string AppendVisionProjectorArgs(string args)
+    {
+        if (args.Contains("--mmproj", StringComparison.OrdinalIgnoreCase))
+        {
+            VisionReady = true;
+            return args;
+        }
+
+        var vision = ModelManifest.Models.Vision;
+        if (vision == null || !vision.Enabled)
+        {
+            VisionReady = false;
+            return args;
+        }
+
+        if (string.IsNullOrWhiteSpace(vision.LocalPath))
+        {
+            Console.WriteLine("VISION Screen vision is enabled, but config/models.json models.vision.localPath is empty. Screen vision will be disabled for this launch.");
+            VisionReady = false;
+            return args;
+        }
+
+        var mmprojPath = Program.FullPath(_root, vision.LocalPath);
+        if (!File.Exists(mmprojPath))
+        {
+            Console.WriteLine("VISION mmproj not found. Screen vision will be disabled for this launch:");
+            Console.WriteLine("       " + mmprojPath);
+            Console.WriteLine("       Put the matching multimodal projector GGUF at models.vision.localPath or set models.vision.enabled=false.");
+            VisionReady = false;
+            return args;
+        }
+
+        VisionReady = true;
+        Console.WriteLine("VISION enabled with mmproj: " + mmprojPath);
+        return (args + " --mmproj " + Quote(mmprojPath)).Trim();
+    }
+
+    private void UpdateVisionReadyForStartedLlm(RuntimePack pack)
+    {
+        if (pack.Kind != "llm") return;
+
+        var vision = ModelManifest.Models.Vision;
+        if (vision == null || !vision.Enabled)
+        {
+            VisionReady = false;
+            return;
+        }
+
+        if ((pack.Args ?? string.Empty).Contains("--mmproj", StringComparison.OrdinalIgnoreCase))
+        {
+            VisionReady = true;
+            return;
+        }
+
+        VisionReady = !string.IsNullOrWhiteSpace(vision.LocalPath) && File.Exists(Program.FullPath(_root, vision.LocalPath));
     }
 
     private static string Quote(string value) => value.Contains(' ') ? "\"" + value + "\"" : value;
@@ -509,16 +627,19 @@ internal sealed class ModelManifest
 internal sealed class ModelSet
 {
     [JsonPropertyName("llm")] public ModelEntry? Llm { get; set; }
+    [JsonPropertyName("vision")] public ModelEntry? Vision { get; set; }
     [JsonPropertyName("asr")] public ModelEntry? Asr { get; set; }
     [JsonPropertyName("tts")] public ModelEntry? Tts { get; set; }
 }
 
 internal sealed class ModelEntry
 {
+    [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
     [JsonPropertyName("id")] public string? Id { get; set; }
     [JsonPropertyName("preferredMode")] public string? PreferredMode { get; set; }
     [JsonPropertyName("hfSpecifier")] public string? HfSpecifier { get; set; }
     [JsonPropertyName("localPath")] public string? LocalPath { get; set; }
     [JsonPropertyName("modelName")] public string? ModelName { get; set; }
     [JsonPropertyName("openAiModelName")] public string? OpenAiModelName { get; set; }
+    [JsonPropertyName("notes")] public string? Notes { get; set; }
 }
