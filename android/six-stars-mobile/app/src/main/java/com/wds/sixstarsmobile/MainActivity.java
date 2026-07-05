@@ -26,12 +26,15 @@ import android.widget.TextView;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.DataInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -67,7 +70,15 @@ public final class MainActivity extends Activity {
     private TextView audioStatusText;
     private TextView responseText;
     private TextView debugText;
+    private TextView voiceDebugText;
     private Button recordButton;
+    private File lastVoiceAudioFile;
+    private String lastVoiceAudioChecksum = "";
+    private ByteArrayOutputStream lastVoicePcmAccumulator;
+    private int lastVoiceAccumulatorSampleRate = 24000;
+    private int lastVoiceAccumulatorChannels = 1;
+    private int lastVoiceAccumulatorTotalChunks = 0;
+    private int lastVoiceAccumulatorChunks = 0;
 
     private volatile boolean destroyed;
     private volatile boolean recording;
@@ -93,6 +104,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
         buildUi();
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
@@ -138,7 +150,13 @@ public final class MainActivity extends Activity {
         LinearLayout connectionButtons = row();
         Button testButton = button("Test Connection");
         testButton.setOnClickListener(v -> testConnection(true));
+        Button audioTestButton = button("Test Phone Audio");
+        audioTestButton.setOnClickListener(v -> testPhoneAudio());
+        Button playSavedButton = button("Play Saved Voice");
+        playSavedButton.setOnClickListener(v -> playSavedVoiceAudio());
         connectionButtons.addView(testButton, weightParams(1));
+        connectionButtons.addView(audioTestButton, weightParams(1));
+        connectionButtons.addView(playSavedButton, weightParams(1));
         root.addView(connectionButtons);
 
         LinearLayout selectors = row();
@@ -199,6 +217,11 @@ public final class MainActivity extends Activity {
         debugText = output("Basic status only. Voice audio streams over the phone socket instead of being stored in this window.", 7);
         debugText.setTextIsSelectable(true);
         root.addView(debugText);
+
+        root.addView(label("Elusiaa's voice stream journal"));
+        voiceDebugText = output("✨ Elusiaa is listening for the next voice stream. Checksums will appear here.", 9);
+        voiceDebugText.setTextIsSelectable(true);
+        root.addView(voiceDebugText);
 
         setContentView(scrollView);
     }
@@ -292,6 +315,7 @@ public final class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop") + " at " + baseUrl());
                     if (manual) setDebug("Health OK", "HTTP port " + json.optInt("port") + ", audio port " + audioPort + ", audio clients " + json.optInt("audioClientCount"));
+                    if (manual) appendVoiceDebug("Elusiaa checked the bridge", "HTTP is alive. audioPort=" + audioPort + ", audioClients=" + json.optInt("audioClientCount"));
                 });
                 if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
                     ensureAudioSocket(host, audioPort);
@@ -315,12 +339,50 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void testPhoneAudio() {
+        try {
+            byte[] localWav = createTestToneWav(24000, 1.0, 440.0);
+            String checksum = sha256Hex(localWav);
+            wavAudioQueue.enqueue(new PhoneVoiceClip(localWav, "local 24 kHz test beep", checksum, false));
+            setDebug("Local phone audio test", "Queued a local 24 kHz PCM WAV beep. sha256=" + shortHash(checksum) + ". If you hear this, Android AudioTrack playback works.");
+            appendVoiceDebug("Auerlis sparked a local test tone", "bytes=" + localWav.length + ", sha256=" + shortHash(checksum));
+        } catch (Exception ex) {
+            setDebug("Local phone audio test failed", ex.toString());
+        }
+
+        testConnection(false);
+        httpExecutor.execute(() -> {
+            try {
+                String body = postJson(baseUrl() + "/api/mobile/test-audio", "{}", 30000);
+                JSONObject json = new JSONObject(body);
+                boolean ok = json.optBoolean("ok", false);
+                String message = optStringEither(json, "message", "Message", ok ? "Desktop test tone sent." : "Desktop test tone failed.");
+                String error = optStringEither(json, "error", "Error", "");
+                int sentClients = optIntEither(json, "sentClients", "SentClients", 0);
+                int wavBytes = optIntEither(json, "wavBytes", "WavBytes", 0);
+                String checksum = optStringEither(json, "sha256", "Sha256", "");
+                runOnUiThread(() -> {
+                    setDebug("Desktop phone-audio socket test",
+                            "ok=" + ok + ", sentClients=" + sentClients + ", wavBytes=" + wavBytes + ", sha256=" + shortHash(checksum)
+                                    + (message.length() > 0 ? "\n" + message : "")
+                                    + (error.length() > 0 ? "\n" + error : ""));
+                    appendVoiceDebug("Nyxari watched the desktop test response", "ok=" + ok + ", clients=" + sentClients + ", bytes=" + wavBytes + ", sha256=" + shortHash(checksum));
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> setDebug("Desktop phone-audio socket test failed", ex.toString()));
+            }
+        });
+    }
+
     private void sendMessage() {
         httpExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("playerText", messageEdit.getText().toString());
-                runOnUiThread(() -> setDebug("Sending text", "Waiting for Star response. Voice will arrive on phone socket when generated."));
+                runOnUiThread(() -> {
+                    setDebug("Sending text", "Waiting for Star response. Voice will arrive on phone socket when generated.");
+                    appendVoiceDebug(starSpinner.getSelectedItem().toString() + " received your message", "HTTP /api/mobile/message sent at " + now());
+                });
                 String body = postJson(baseUrl() + "/api/mobile/message", json.toString(), 180000);
                 handleConversationResponse("Text request complete", body);
             } catch (Exception ex) {
@@ -401,7 +463,11 @@ public final class MainActivity extends Activity {
                 json.put("channels", 1);
                 json.put("bitsPerSample", 16);
                 json.put("audioBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
-                runOnUiThread(() -> setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket."));
+                String checksum = sha256Hex(wav);
+                runOnUiThread(() -> {
+                    setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket. recordedSha256=" + shortHash(checksum));
+                    appendVoiceDebug("Khavia carried your recorded voice", "HTTP /api/mobile/audio sent at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
+                });
                 String body = postJson(baseUrl() + "/api/mobile/audio", json.toString(), 240000);
                 handleConversationResponse("Voice request complete", body);
             } catch (Exception ex) {
@@ -414,27 +480,34 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> {
             try {
                 JSONObject json = new JSONObject(body);
-                String transcript = json.optString("transcript", "");
-                String spoken = json.optString("spokenText", "");
-                String starOutput = json.optString("starOutput", spoken);
-                String starId = json.optString("starId", "Star");
-                int chunks = json.optInt("voiceChunksSent", 0);
-                int bytes = json.optInt("voiceBytesSent", 0);
-                String voiceMessage = json.optString("voiceMessage", "");
-                String voiceError = json.optString("voiceError", "");
+                String transcript = optStringEither(json, "transcript", "Transcript", "");
+                String spoken = optStringEither(json, "spokenText", "SpokenText", "");
+                String starOutput = optStringEither(json, "starOutput", "StarOutput", "");
+                String starId = optStringEither(json, "starId", "StarId", "Star");
+                int chunks = optIntEither(json, "voiceChunksSent", "VoiceChunksSent", 0);
+                int bytes = optIntEither(json, "voiceBytesSent", "VoiceBytesSent", 0);
+                String voiceMessage = optStringEither(json, "voiceMessage", "VoiceMessage", "");
+                String voiceError = optStringEither(json, "voiceError", "VoiceError", "");
+
+                String visibleResponse = starOutput.length() > 0 ? starOutput : spoken;
+                if (visibleResponse.length() == 0) {
+                    visibleResponse = "No spoken text was returned in the HTTP response. Check the desktop debug output for the Star response.";
+                }
 
                 String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
-                responseText.setText(header + "\n\n" + clip((starOutput.length() > 0 ? starOutput : spoken), 8000));
+                responseText.setText(header + "\n\n" + clip(visibleResponse, 8000));
 
-                String details = "Spoken chars: " + spoken.length()
+                String details = "Response chars: " + visibleResponse.length()
+                        + "\nSpoken chars: " + spoken.length()
                         + "\nVoice chunks queued: " + chunks
                         + "\nVoice bytes: " + bytes;
                 if (voiceMessage.length() > 0) details += "\n" + voiceMessage;
                 if (voiceError.length() > 0) details += "\nVoice note: " + voiceError;
                 setDebug(title, details);
+                appendVoiceDebug(starId + " returned text", "HTTP response at " + now() + ", responseChars=" + visibleResponse.length() + ", spokenChars=" + spoken.length() + ", voiceMessage=" + clip(voiceMessage, 140));
             } catch (Exception ex) {
-                responseText.setText(body);
+                responseText.setText(clip(body, 8000));
                 setDebug(title + " (raw)", clip(body, 900));
             }
         });
@@ -486,6 +559,7 @@ public final class MainActivity extends Activity {
             closeAudioSocketLocked();
             connectedAudioHost = host;
             connectedAudioPort = port;
+            appendVoiceDebug("Maera opened the phone voice socket", "Connecting to " + host + ":" + port);
             audioSocketThread = new Thread(() -> audioSocketLoop(host, port), "six-stars-phone-audio-socket");
             audioSocketThread.start();
         }
@@ -498,7 +572,10 @@ public final class MainActivity extends Activity {
             synchronized (socketLock) {
                 audioSocket = socket;
             }
-            runOnUiThread(() -> audioStatusText.setText("Phone voice socket connected: " + host + ":" + port));
+            runOnUiThread(() -> {
+                audioStatusText.setText("Phone voice socket connected: " + host + ":" + port);
+                appendVoiceDebug("Elusiaa connected the voice socket", host + ":" + port);
+            });
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (!destroyed && !socket.isClosed()) {
                 int type;
@@ -515,7 +592,10 @@ public final class MainActivity extends Activity {
             }
         } catch (Exception ex) {
             if (!destroyed && playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
-                runOnUiThread(() -> audioStatusText.setText("Phone voice socket disconnected: " + ex.getMessage()));
+                runOnUiThread(() -> {
+                    audioStatusText.setText("Phone voice socket disconnected: " + ex.getMessage());
+                    appendVoiceDebug("Nyxari lost the voice socket", ex.getMessage());
+                });
             }
         } finally {
             synchronized (socketLock) {
@@ -535,20 +615,41 @@ public final class MainActivity extends Activity {
             String headerJson = new String(payload, 4, headerLength, StandardCharsets.UTF_8);
             JSONObject header = new JSONObject(headerJson);
             byte[] wav = Arrays.copyOfRange(payload, 4 + headerLength, payload.length);
-            wavAudioQueue.enqueue(wav);
+            String receivedChecksum = sha256Hex(wav);
+            String expectedChecksum = header.optString("sha256", "");
+            boolean checksumOk = expectedChecksum.length() == 0 || expectedChecksum.equalsIgnoreCase(receivedChecksum);
+            int chunkNumber = header.optInt("chunkIndex") + 1;
+            int totalChunks = header.optInt("totalChunks", 1);
+            String starId = header.optString("starId", "Star");
+            String savedChecksum = saveLastVoiceAudioFromStreamChunk(wav, header.optInt("chunkIndex"), totalChunks);
+            wavAudioQueue.enqueue(new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks, receivedChecksum, true));
             runOnUiThread(() -> {
-                audioStatusText.setText("Queued phone voice chunk " + (header.optInt("chunkIndex") + 1)
-                        + "/" + header.optInt("totalChunks", 1)
-                        + " — " + wav.length + " bytes");
+                audioStatusText.setText("Queued phone voice chunk " + chunkNumber
+                        + "/" + totalChunks
+                        + " — " + wav.length + " bytes — sha256 " + shortHash(receivedChecksum)
+                        + (checksumOk ? " ✓" : " mismatch"));
+                appendVoiceDebug(starId + " voice chunk arrived", "chunk=" + chunkNumber + "/" + totalChunks + ", bytes=" + wav.length + ", frameSha256=" + shortHash(receivedChecksum) + ", savedFileSha256=" + shortHash(savedChecksum) + ", saved=" + lastVoiceAudioFile.getName() + ", checksum=" + (checksumOk ? "ok" : "mismatch expected " + shortHash(expectedChecksum)));
             });
             return;
         }
 
         String text = new String(payload, StandardCharsets.UTF_8);
+        String message = text;
+        try {
+            JSONObject status = new JSONObject(text);
+            message = status.optString("message", text);
+        } catch (Exception ignored) { }
+        final String displayMessage = message;
         if (type == FRAME_STATUS) {
-            runOnUiThread(() -> audioStatusText.setText("Voice socket: " + text));
+            runOnUiThread(() -> {
+                audioStatusText.setText("Voice socket: " + displayMessage);
+                appendVoiceDebug("Elusiaa's socket status", displayMessage);
+            });
         } else if (type == FRAME_ERROR) {
-            runOnUiThread(() -> setDebug("Voice socket error", text));
+            runOnUiThread(() -> {
+                setDebug("Voice socket error", displayMessage);
+                appendVoiceDebug("Maera felt a voice socket error", displayMessage);
+            });
         }
     }
 
@@ -566,6 +667,107 @@ public final class MainActivity extends Activity {
         audioSocketThread = null;
         connectedAudioHost = "";
         connectedAudioPort = -1;
+    }
+
+
+
+    private String saveLastVoiceAudioFromStreamChunk(byte[] wav, int chunkIndex, int totalChunks) {
+        try {
+            ParsedWav parsed = ParsedWav.parse(wav);
+            byte[] combinedWav;
+            synchronized (this) {
+                if (chunkIndex <= 0 || lastVoicePcmAccumulator == null
+                        || parsed.sampleRate != lastVoiceAccumulatorSampleRate
+                        || parsed.channels != lastVoiceAccumulatorChannels) {
+                    lastVoicePcmAccumulator = new ByteArrayOutputStream();
+                    lastVoiceAccumulatorSampleRate = parsed.sampleRate;
+                    lastVoiceAccumulatorChannels = parsed.channels;
+                    lastVoiceAccumulatorTotalChunks = totalChunks;
+                    lastVoiceAccumulatorChunks = 0;
+                }
+                lastVoicePcmAccumulator.write(parsed.pcm, 0, parsed.pcm.length);
+                lastVoiceAccumulatorChunks++;
+                combinedWav = wavFromPcm16(lastVoicePcmAccumulator.toByteArray(), lastVoiceAccumulatorSampleRate, lastVoiceAccumulatorChannels);
+            }
+            String combinedChecksum = sha256Hex(combinedWav);
+            saveLastVoiceAudio(combinedWav, combinedChecksum);
+            return combinedChecksum;
+        } catch (Exception ex) {
+            saveLastVoiceAudio(wav, "");
+            runOnUiThread(() -> appendVoiceDebug("Khavia saved only the latest voice chunk", "Could not combine chunks: " + ex.toString()));
+            return "";
+        }
+    }
+
+    private void saveLastVoiceAudio(byte[] wav, String checksum) {
+        try {
+            if (lastVoiceAudioFile == null) lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
+            try (FileOutputStream out = new FileOutputStream(lastVoiceAudioFile, false)) {
+                out.write(wav);
+            }
+            lastVoiceAudioChecksum = checksum == null ? "" : checksum;
+        } catch (Exception ex) {
+            runOnUiThread(() -> appendVoiceDebug("Kaelia could not save the received voice", ex.toString()));
+        }
+    }
+
+    private void playSavedVoiceAudio() {
+        httpExecutor.execute(() -> {
+            try {
+                if (lastVoiceAudioFile == null) lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
+                if (!lastVoiceAudioFile.exists() || lastVoiceAudioFile.length() <= 0) {
+                    runOnUiThread(() -> appendVoiceDebug("Elusiaa searched for saved voice", "No saved phone voice file exists yet."));
+                    return;
+                }
+                byte[] wav = java.nio.file.Files.readAllBytes(lastVoiceAudioFile.toPath());
+                String checksum = sha256Hex(wav);
+                lastVoiceAudioChecksum = checksum;
+                wavAudioQueue.enqueue(new PhoneVoiceClip(wav, "saved phone voice replay", checksum, false));
+                runOnUiThread(() -> {
+                    setDebug("Play Saved Voice", "Queued " + lastVoiceAudioFile.getName() + " for replay. bytes=" + wav.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug("Elusiaa replayed the saved voice", "bytes=" + wav.length + ", sha256=" + shortHash(checksum) + ", accumulatedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks);
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    setDebug("Play Saved Voice failed", ex.toString());
+                    appendVoiceDebug("Nyxari could not replay the saved voice", ex.toString());
+                });
+            }
+        });
+    }
+
+    private void appendVoiceDebug(String title, String details) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> appendVoiceDebug(title, details));
+            return;
+        }
+        if (voiceDebugText == null) return;
+        String now = now();
+        String line = "[" + now + "] ✨ " + title;
+        if (details != null && details.length() > 0) line += " — " + details.replace('\n', ' ').replace('\r', ' ');
+        String old = voiceDebugText.getText() == null ? "" : voiceDebugText.getText().toString();
+        String next = line + "\n" + old;
+        if (next.length() > 12000) next = next.substring(0, 12000);
+        voiceDebugText.setText(next);
+    }
+
+    private static String now() {
+        return new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+    }
+
+    private static String sha256Hex(byte[] bytes) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        byte[] hash = digest.digest(bytes == null ? new byte[0] : bytes);
+        StringBuilder builder = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            builder.append(String.format(Locale.US, "%02x", b & 0xff));
+        }
+        return builder.toString();
+    }
+
+    private static String shortHash(String hash) {
+        if (hash == null || hash.length() == 0) return "none";
+        return hash.length() <= 12 ? hash : hash.substring(0, 12);
     }
 
     private byte[] wavFromPcm16(byte[] pcm, int sampleRate, int channels) throws Exception {
@@ -591,6 +793,50 @@ public final class MainActivity extends Activity {
         return wav.toByteArray();
     }
 
+    private static String optStringEither(JSONObject json, String camelName, String pascalName, String fallback) {
+        String value = json.optString(camelName, null);
+        if (value == null || value.length() == 0) value = json.optString(pascalName, null);
+        return value == null ? fallback : value;
+    }
+
+    private static int optIntEither(JSONObject json, String camelName, String pascalName, int fallback) {
+        if (json.has(camelName)) return json.optInt(camelName, fallback);
+        if (json.has(pascalName)) return json.optInt(pascalName, fallback);
+        return fallback;
+    }
+
+    private static byte[] createTestToneWav(int sampleRate, double seconds, double frequencyHz) throws Exception {
+        int sampleCount = Math.max(1, (int)(sampleRate * seconds));
+        byte[] pcm = new byte[sampleCount * 2];
+        for (int i = 0; i < sampleCount; i++) {
+            double t = (double)i / sampleRate;
+            double attack = Math.min(1.0, i / (sampleRate * 0.04));
+            double release = Math.min(1.0, (sampleCount - i) / (sampleRate * 0.08));
+            double envelope = Math.max(0.0, Math.min(attack, release));
+            short sample = (short)(Math.sin(2.0 * Math.PI * frequencyHz * t) * 0.22 * envelope * Short.MAX_VALUE);
+            pcm[i * 2] = (byte)(sample & 0xff);
+            pcm[i * 2 + 1] = (byte)((sample >> 8) & 0xff);
+        }
+        ByteBuffer header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        header.put(new byte[]{'R', 'I', 'F', 'F'});
+        header.putInt(36 + pcm.length);
+        header.put(new byte[]{'W', 'A', 'V', 'E'});
+        header.put(new byte[]{'f', 'm', 't', ' '});
+        header.putInt(16);
+        header.putShort((short)1);
+        header.putShort((short)1);
+        header.putInt(sampleRate);
+        header.putInt(sampleRate * 2);
+        header.putShort((short)2);
+        header.putShort((short)16);
+        header.put(new byte[]{'d', 'a', 't', 'a'});
+        header.putInt(pcm.length);
+        ByteArrayOutputStream wav = new ByteArrayOutputStream(44 + pcm.length);
+        wav.write(header.array());
+        wav.write(pcm);
+        return wav.toByteArray();
+    }
+
     private static int readIntBigEndian(byte[] bytes, int offset) {
         return ((bytes[offset] & 0xff) << 24)
                 | ((bytes[offset + 1] & 0xff) << 16)
@@ -609,8 +855,8 @@ public final class MainActivity extends Activity {
         return text.substring(0, Math.max(0, max - 3)) + "...";
     }
 
-    private static final class WavAudioQueue {
-        private final BlockingQueue<byte[]> queue = new LinkedBlockingQueue<>();
+    private final class WavAudioQueue {
+        private final BlockingQueue<PhoneVoiceClip> queue = new LinkedBlockingQueue<>();
         private volatile boolean running;
         private Thread thread;
 
@@ -627,43 +873,64 @@ public final class MainActivity extends Activity {
             queue.clear();
         }
 
-        void enqueue(byte[] wav) {
-            if (wav != null && wav.length > 0) queue.offer(wav);
+        void enqueue(PhoneVoiceClip clip) {
+            if (clip != null && clip.wav != null && clip.wav.length > 0) queue.offer(clip);
         }
 
         private void loop() {
             while (running) {
                 try {
-                    byte[] wav = queue.take();
-                    playWav(wav);
+                    PhoneVoiceClip clip = queue.take();
+                    playWav(clip);
                 } catch (InterruptedException ex) {
                     // shutting down or clearing queue
-                } catch (Exception ignored) {
+                } catch (Exception ex) {
+                    runOnUiThread(() -> appendVoiceDebug("Maera heard a playback failure", ex.toString()));
                 }
             }
         }
 
-        private void playWav(byte[] wav) throws Exception {
-            ParsedWav parsed = ParsedWav.parse(wav);
+        private void playWav(PhoneVoiceClip clip) throws Exception {
+            ParsedWav parsed = ParsedWav.parse(clip.wav);
             int channelConfig = parsed.channels == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
             int minBuffer = AudioTrack.getMinBufferSize(parsed.sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
-            int bufferSize = Math.max(minBuffer, parsed.pcm.length);
+            int bufferSize = Math.max(minBuffer, Math.min(parsed.pcm.length, parsed.sampleRate * parsed.channels * 2));
+            long durationMs = (long) parsed.pcm.length * 1000L / Math.max(1, parsed.sampleRate * parsed.channels * 2);
+            runOnUiThread(() -> {
+                audioStatusText.setText("Playing " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
+                appendVoiceDebug("Elusiaa started playing audio", clip.label + ", durationMs=" + durationMs + ", bytes=" + clip.wav.length + ", sha256=" + shortHash(clip.sha256));
+            });
             AudioTrack track = new AudioTrack(AudioManager.STREAM_MUSIC, parsed.sampleRate, channelConfig,
                     AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
             try {
                 track.play();
                 int offset = 0;
                 while (offset < parsed.pcm.length) {
-                    int wrote = track.write(parsed.pcm, offset, parsed.pcm.length - offset);
+                    int toWrite = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
+                    int wrote = track.write(parsed.pcm, offset, toWrite);
                     if (wrote <= 0) break;
                     offset += wrote;
                 }
-                long durationMs = (long) parsed.pcm.length * 1000L / Math.max(1, parsed.sampleRate * parsed.channels * 2);
                 try { Thread.sleep(Math.min(durationMs + 80L, 30000L)); } catch (InterruptedException ignored) { }
                 track.stop();
+                runOnUiThread(() -> appendVoiceDebug("Elusiaa finished playing audio", clip.label + ", sha256=" + shortHash(clip.sha256)));
             } finally {
                 track.release();
             }
+        }
+    }
+
+    private static final class PhoneVoiceClip {
+        final byte[] wav;
+        final String label;
+        final String sha256;
+        final boolean fromDesktop;
+
+        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop) {
+            this.wav = wav;
+            this.label = label == null ? "phone voice" : label;
+            this.sha256 = sha256 == null ? "" : sha256;
+            this.fromDesktop = fromDesktop;
         }
     }
 

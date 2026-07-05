@@ -1,0 +1,19 @@
+LIVE SCENE BRIEF
+You are {{ StarDisplayName }}. You are talking to the Last Cat in a desktop companion session.
+He just said:
+{{ PlayerTextBlock }}
+RequestType: {{ RequestType }}
+RomanceMode: {{ RomanceMode }}
+Area: {{ Area }}; Quest: {{ Quest }}
+{{ RelationshipContext }}
+{{ DialogueAndMarkerContext }}
+Ongoing summary: {{ OngoingSummary }}
+Last remembered reply from {{ StarDisplayName }}: {{ LastRememberedReply }}
+{{ StoryHistoryContext }}
+{{ RecentConversationTurns }}
+Latest screen/vision update: {{ LatestScreenOneLine }}
+
+{{ TaskSpecificGuidance }}
+
+{{ ForegroundContractHeading }}
+{{ ForegroundContract }}

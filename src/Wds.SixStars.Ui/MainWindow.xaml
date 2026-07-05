@@ -107,7 +107,9 @@
                             <CheckBox Content="Mobile bridge running" IsChecked="{Binding MobileBridgeEnabled}" IsEnabled="False" Margin="0,0,0,6" />
                             <TextBlock Text="{Binding MobileBridgeStatus}" TextWrapping="Wrap" Foreground="#555" Margin="0,0,0,6" />
                             <TextBlock Text="Last phone request" FontWeight="SemiBold" />
-                            <TextBox Text="{Binding MobileBridgeLastRequest}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="86" Margin="0,2,0,0" />
+                            <TextBox Text="{Binding MobileBridgeLastRequest}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="86" Margin="0,2,0,6" />
+                            <TextBlock Text="Phone voice stream" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding MobileBridgeVoiceDebugLog}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="72" MaxHeight="140" FontFamily="Consolas" FontSize="11" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
                     <TextBlock Text="Voice Input / Whisper" FontWeight="SemiBold" Margin="0,0,0,6" />
