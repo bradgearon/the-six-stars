@@ -4,16 +4,16 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
+import android.media.AudioManager;
 import android.media.AudioRecord;
+import android.media.AudioTrack;
 import android.media.MediaRecorder;
-import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -23,33 +23,37 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
+import java.io.DataInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Socket;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 301;
     private static final int SAMPLE_RATE = 16000;
+    private static final int FRAME_STATUS = 1;
+    private static final int FRAME_AUDIO_WAV = 2;
+    private static final int FRAME_ERROR = 3;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService httpExecutor = Executors.newSingleThreadExecutor();
+    private final Object socketLock = new Object();
 
     private EditText serverUrlEdit;
     private Spinner starSpinner;
@@ -60,6 +64,7 @@ public final class MainActivity extends Activity {
     private CheckBox romanceCheck;
     private CheckBox playOnPhoneCheck;
     private TextView connectionStatusText;
+    private TextView audioStatusText;
     private TextView responseText;
     private TextView debugText;
     private Button recordButton;
@@ -69,9 +74,12 @@ public final class MainActivity extends Activity {
     private AudioRecord audioRecord;
     private Thread recordingThread;
     private ByteArrayOutputStream recordedPcm;
-    private final Object playbackLock = new Object();
-    private MediaPlayer currentVoicePlayer;
-    private int voicePlaybackGeneration;
+
+    private Socket audioSocket;
+    private Thread audioSocketThread;
+    private String connectedAudioHost = "";
+    private int connectedAudioPort = -1;
+    private final WavAudioQueue wavAudioQueue = new WavAudioQueue();
 
     private final Runnable healthLoop = new Runnable() {
         @Override
@@ -87,6 +95,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         buildUi();
         requestAudioPermissionIfNeeded();
+        wavAudioQueue.start();
         mainHandler.postDelayed(healthLoop, 600);
     }
 
@@ -94,8 +103,9 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         destroyed = true;
         stopRecording(false);
-        stopCurrentVoicePlayback();
-        executor.shutdownNow();
+        closeAudioSocket();
+        wavAudioQueue.stop();
+        httpExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -107,7 +117,7 @@ public final class MainActivity extends Activity {
         scrollView.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("Six Stars Mobile Debug Client");
+        title.setText("Six Stars Mobile");
         title.setTextSize(22);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         title.setPadding(0, 0, 0, dp(10));
@@ -116,6 +126,10 @@ public final class MainActivity extends Activity {
         connectionStatusText = label("Connecting to desktop host...");
         connectionStatusText.setTextSize(14);
         root.addView(connectionStatusText);
+
+        audioStatusText = label("Phone voice socket not connected yet.");
+        audioStatusText.setTextSize(14);
+        root.addView(audioStatusText);
 
         root.addView(label("Desktop bridge URL"));
         serverUrlEdit = input("http://grasshoppah:8066", false);
@@ -153,6 +167,14 @@ public final class MainActivity extends Activity {
         playOnPhoneCheck = new CheckBox(this);
         playOnPhoneCheck.setText("Play Star voice on this phone");
         playOnPhoneCheck.setChecked(true);
+        playOnPhoneCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) {
+                testConnection(false);
+            } else {
+                closeAudioSocket();
+                audioStatusText.setText("Phone voice socket disabled.");
+            }
+        });
         root.addView(playOnPhoneCheck);
 
         root.addView(label("Message to selected Star"));
@@ -173,8 +195,8 @@ public final class MainActivity extends Activity {
         responseText = output("No response yet.", 6);
         root.addView(responseText);
 
-        root.addView(label("Debug window"));
-        debugText = output("The app pings /health every 5 seconds and posts JSON to /api/mobile/message or /api/mobile/audio.", 14);
+        root.addView(label("Status / debug"));
+        debugText = output("Basic status only. Voice audio streams over the phone socket instead of being stored in this window.", 7);
         debugText.setTextIsSelectable(true);
         root.addView(debugText);
 
@@ -261,14 +283,19 @@ public final class MainActivity extends Activity {
 
     private void testConnection(boolean manual) {
         String url = baseUrl() + "/health";
-        executor.execute(() -> {
+        httpExecutor.execute(() -> {
             try {
                 String body = get(url, 8000);
                 JSONObject json = new JSONObject(body);
+                int audioPort = json.optInt("audioPort", defaultAudioPort());
+                String host = new URL(baseUrl()).getHost();
                 runOnUiThread(() -> {
                     connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop") + " at " + baseUrl());
-                    if (manual) setDebug("Health OK", body);
+                    if (manual) setDebug("Health OK", "HTTP port " + json.optInt("port") + ", audio port " + audioPort + ", audio clients " + json.optInt("audioClientCount"));
                 });
+                if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
+                    ensureAudioSocket(host, audioPort);
+                }
             } catch (Exception ex) {
                 runOnUiThread(() -> {
                     connectionStatusText.setText("Not connected to " + baseUrl() + " — " + ex.getMessage());
@@ -278,11 +305,22 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private int defaultAudioPort() {
+        try {
+            URL url = new URL(baseUrl());
+            int port = url.getPort() > 0 ? url.getPort() : 8066;
+            return port >= 65535 ? port - 1 : port + 1;
+        } catch (Exception ignored) {
+            return 8067;
+        }
+    }
+
     private void sendMessage() {
-        executor.execute(() -> {
+        httpExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("playerText", messageEdit.getText().toString());
+                runOnUiThread(() -> setDebug("Sending text", "Waiting for Star response. Voice will arrive on phone socket when generated."));
                 String body = postJson(baseUrl() + "/api/mobile/message", json.toString(), 180000);
                 handleConversationResponse("Text request complete", body);
             } catch (Exception ex) {
@@ -292,11 +330,7 @@ public final class MainActivity extends Activity {
     }
 
     private void toggleRecording() {
-        if (recording) {
-            stopRecording(true);
-        } else {
-            startRecording();
-        }
+        if (recording) stopRecording(true); else startRecording();
     }
 
     private void startRecording() {
@@ -358,7 +392,7 @@ public final class MainActivity extends Activity {
     }
 
     private void sendAudio(byte[] pcm16) {
-        executor.execute(() -> {
+        httpExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
                 JSONObject json = baseRequestJson();
@@ -367,6 +401,7 @@ public final class MainActivity extends Activity {
                 json.put("channels", 1);
                 json.put("bitsPerSample", 16);
                 json.put("audioBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
+                runOnUiThread(() -> setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket."));
                 String body = postJson(baseUrl() + "/api/mobile/audio", json.toString(), 240000);
                 handleConversationResponse("Voice request complete", body);
             } catch (Exception ex) {
@@ -379,19 +414,28 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> {
             try {
                 JSONObject json = new JSONObject(body);
-                String transcript = optStringEither(json, "transcript", "Transcript", "");
-                String spoken = optStringEither(json, "spokenText", "SpokenText", "");
-                String starOutput = optStringEither(json, "starOutput", "StarOutput", spoken);
-                String header = title;
+                String transcript = json.optString("transcript", "");
+                String spoken = json.optString("spokenText", "");
+                String starOutput = json.optString("starOutput", spoken);
+                String starId = json.optString("starId", "Star");
+                int chunks = json.optInt("voiceChunksSent", 0);
+                int bytes = json.optInt("voiceBytesSent", 0);
+                String voiceMessage = json.optString("voiceMessage", "");
+                String voiceError = json.optString("voiceError", "");
+
+                String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
-                responseText.setText(header + "\n\n" + (starOutput.length() > 0 ? starOutput : spoken));
-                setDebug(title, body);
-                if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
-                    playVoiceFromResponse(json);
-                }
+                responseText.setText(header + "\n\n" + clip((starOutput.length() > 0 ? starOutput : spoken), 8000));
+
+                String details = "Spoken chars: " + spoken.length()
+                        + "\nVoice chunks queued: " + chunks
+                        + "\nVoice bytes: " + bytes;
+                if (voiceMessage.length() > 0) details += "\n" + voiceMessage;
+                if (voiceError.length() > 0) details += "\nVoice note: " + voiceError;
+                setDebug(title, details);
             } catch (Exception ex) {
                 responseText.setText(body);
-                setDebug(title + " (raw)", body);
+                setDebug(title + " (raw)", clip(body, 900));
             }
         });
     }
@@ -426,15 +470,102 @@ public final class MainActivity extends Activity {
         if (inputStream != null) {
             byte[] chunk = new byte[4096];
             int read;
-            while ((read = inputStream.read(chunk)) >= 0) {
-                buffer.write(chunk, 0, read);
-            }
+            while ((read = inputStream.read(chunk)) >= 0) buffer.write(chunk, 0, read);
         }
         String body = buffer.toString("UTF-8");
-        if (code < 200 || code >= 300) {
-            throw new RuntimeException("HTTP " + code + ": " + body);
-        }
+        if (code < 200 || code >= 300) throw new RuntimeException("HTTP " + code + ": " + body);
         return body;
+    }
+
+    private void ensureAudioSocket(String host, int port) {
+        synchronized (socketLock) {
+            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
+                    && host.equals(connectedAudioHost) && port == connectedAudioPort) {
+                return;
+            }
+            closeAudioSocketLocked();
+            connectedAudioHost = host;
+            connectedAudioPort = port;
+            audioSocketThread = new Thread(() -> audioSocketLoop(host, port), "six-stars-phone-audio-socket");
+            audioSocketThread.start();
+        }
+    }
+
+    private void audioSocketLoop(String host, int port) {
+        try {
+            Socket socket = new Socket(host, port);
+            socket.setTcpNoDelay(true);
+            synchronized (socketLock) {
+                audioSocket = socket;
+            }
+            runOnUiThread(() -> audioStatusText.setText("Phone voice socket connected: " + host + ":" + port));
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            while (!destroyed && !socket.isClosed()) {
+                int type;
+                try {
+                    type = in.readUnsignedByte();
+                } catch (Exception closed) {
+                    break;
+                }
+                int length = in.readInt();
+                if (length < 0 || length > 64 * 1024 * 1024) throw new RuntimeException("Invalid audio frame length: " + length);
+                byte[] payload = new byte[length];
+                in.readFully(payload);
+                handleAudioSocketFrame(type, payload);
+            }
+        } catch (Exception ex) {
+            if (!destroyed && playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
+                runOnUiThread(() -> audioStatusText.setText("Phone voice socket disconnected: " + ex.getMessage()));
+            }
+        } finally {
+            synchronized (socketLock) {
+                if (audioSocket != null) {
+                    try { audioSocket.close(); } catch (Exception ignored) { }
+                    audioSocket = null;
+                }
+            }
+        }
+    }
+
+    private void handleAudioSocketFrame(int type, byte[] payload) throws Exception {
+        if (type == FRAME_AUDIO_WAV) {
+            if (payload.length < 4) return;
+            int headerLength = readIntBigEndian(payload, 0);
+            if (headerLength < 0 || 4 + headerLength > payload.length) return;
+            String headerJson = new String(payload, 4, headerLength, StandardCharsets.UTF_8);
+            JSONObject header = new JSONObject(headerJson);
+            byte[] wav = Arrays.copyOfRange(payload, 4 + headerLength, payload.length);
+            wavAudioQueue.enqueue(wav);
+            runOnUiThread(() -> {
+                audioStatusText.setText("Queued phone voice chunk " + (header.optInt("chunkIndex") + 1)
+                        + "/" + header.optInt("totalChunks", 1)
+                        + " — " + wav.length + " bytes");
+            });
+            return;
+        }
+
+        String text = new String(payload, StandardCharsets.UTF_8);
+        if (type == FRAME_STATUS) {
+            runOnUiThread(() -> audioStatusText.setText("Voice socket: " + text));
+        } else if (type == FRAME_ERROR) {
+            runOnUiThread(() -> setDebug("Voice socket error", text));
+        }
+    }
+
+    private void closeAudioSocket() {
+        synchronized (socketLock) {
+            closeAudioSocketLocked();
+        }
+    }
+
+    private void closeAudioSocketLocked() {
+        if (audioSocket != null) {
+            try { audioSocket.close(); } catch (Exception ignored) { }
+            audioSocket = null;
+        }
+        audioSocketThread = null;
+        connectedAudioHost = "";
+        connectedAudioPort = -1;
     }
 
     private byte[] wavFromPcm16(byte[] pcm, int sampleRate, int channels) throws Exception {
@@ -454,143 +585,128 @@ public final class MainActivity extends Activity {
         header.putShort((short) 16);
         header.put(new byte[]{'d', 'a', 't', 'a'});
         header.putInt(dataSize);
-
         ByteArrayOutputStream wav = new ByteArrayOutputStream(44 + dataSize);
         wav.write(header.array());
         wav.write(pcm);
         return wav.toByteArray();
     }
 
-
-    private String optStringEither(JSONObject json, String camelName, String pascalName, String fallback) {
-        String value = json.optString(camelName, null);
-        if (value == null || value.length() == 0) {
-            value = json.optString(pascalName, null);
-        }
-        return value == null ? fallback : value;
-    }
-
-    private void playVoiceFromResponse(JSONObject json) {
-        try {
-            ArrayList<byte[]> wavs = new ArrayList<>();
-            JSONArray chunks = json.optJSONArray("voiceAudioChunks");
-            if (chunks == null) chunks = json.optJSONArray("VoiceAudioChunks");
-            if (chunks != null) {
-                ArrayList<VoiceChunk> ordered = new ArrayList<>();
-                for (int i = 0; i < chunks.length(); i++) {
-                    JSONObject chunk = chunks.optJSONObject(i);
-                    if (chunk == null) continue;
-                    String audio = optStringEither(chunk, "audioBase64", "AudioBase64", "");
-                    if (audio.length() == 0) continue;
-                    int index = chunk.has("index") ? chunk.optInt("index", i) : chunk.optInt("Index", i);
-                    ordered.add(new VoiceChunk(index, Base64.decode(audio, Base64.DEFAULT)));
-                }
-                ordered.sort((a, b) -> Integer.compare(a.index, b.index));
-                for (VoiceChunk chunk : ordered) wavs.add(chunk.wavBytes);
-            }
-
-            if (wavs.size() == 0) {
-                String single = optStringEither(json, "voiceAudioBase64", "VoiceAudioBase64", "");
-                if (single.length() > 0) wavs.add(Base64.decode(single, Base64.DEFAULT));
-            }
-
-            if (wavs.size() == 0) {
-                String voiceError = optStringEither(json, "voiceError", "VoiceError", "");
-                String voiceMessage = optStringEither(json, "voiceMessage", "VoiceMessage", "");
-                if (voiceError.length() > 0 || voiceMessage.length() > 0) {
-                    setDebug("Phone voice was not returned", voiceError + " " + voiceMessage);
-                }
-                return;
-            }
-
-            int generation;
-            synchronized (playbackLock) {
-                voicePlaybackGeneration++;
-                generation = voicePlaybackGeneration;
-                stopCurrentVoicePlaybackLocked();
-            }
-            playVoiceSequence(wavs, 0, generation);
-        } catch (Exception ex) {
-            setDebug("Phone voice playback failed", ex.toString());
-        }
-    }
-
-    private void playVoiceSequence(List<byte[]> wavs, int index, int generation) {
-        if (index >= wavs.size()) {
-            return;
-        }
-
-        try {
-            File file = File.createTempFile("six-stars-voice-" + generation + "-" + index, ".wav", getCacheDir());
-            try (FileOutputStream out = new FileOutputStream(file)) {
-                out.write(wavs.get(index));
-            }
-
-            MediaPlayer player = new MediaPlayer();
-            player.setDataSource(file.getAbsolutePath());
-            player.setOnCompletionListener(mp -> {
-                try { mp.release(); } catch (Exception ignored) { }
-                try { file.delete(); } catch (Exception ignored) { }
-                synchronized (playbackLock) {
-                    if (generation != voicePlaybackGeneration) return;
-                    currentVoicePlayer = null;
-                }
-                runOnUiThread(() -> playVoiceSequence(wavs, index + 1, generation));
-            });
-            player.setOnErrorListener((mp, what, extra) -> {
-                try { mp.release(); } catch (Exception ignored) { }
-                try { file.delete(); } catch (Exception ignored) { }
-                synchronized (playbackLock) {
-                    if (generation == voicePlaybackGeneration) currentVoicePlayer = null;
-                }
-                runOnUiThread(() -> setDebug("Phone voice playback error", "MediaPlayer error " + what + ", extra " + extra));
-                return true;
-            });
-
-            synchronized (playbackLock) {
-                if (generation != voicePlaybackGeneration) {
-                    try { player.release(); } catch (Exception ignored) { }
-                    try { file.delete(); } catch (Exception ignored) { }
-                    return;
-                }
-                currentVoicePlayer = player;
-            }
-
-            player.prepare();
-            player.start();
-            setDebug("Playing Star voice on phone", "Chunk " + (index + 1) + " of " + wavs.size() + ", " + wavs.get(index).length + " bytes.");
-        } catch (Exception ex) {
-            setDebug("Phone voice playback failed", ex.toString());
-        }
-    }
-
-    private void stopCurrentVoicePlayback() {
-        synchronized (playbackLock) {
-            voicePlaybackGeneration++;
-            stopCurrentVoicePlaybackLocked();
-        }
-    }
-
-    private void stopCurrentVoicePlaybackLocked() {
-        if (currentVoicePlayer != null) {
-            try { currentVoicePlayer.stop(); } catch (Exception ignored) { }
-            try { currentVoicePlayer.release(); } catch (Exception ignored) { }
-            currentVoicePlayer = null;
-        }
-    }
-
-    private static final class VoiceChunk {
-        final int index;
-        final byte[] wavBytes;
-
-        VoiceChunk(int index, byte[] wavBytes) {
-            this.index = index;
-            this.wavBytes = wavBytes;
-        }
+    private static int readIntBigEndian(byte[] bytes, int offset) {
+        return ((bytes[offset] & 0xff) << 24)
+                | ((bytes[offset + 1] & 0xff) << 16)
+                | ((bytes[offset + 2] & 0xff) << 8)
+                | (bytes[offset + 3] & 0xff);
     }
 
     private void setDebug(String title, String details) {
         String now = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
-        debugText.setText("[" + now + "] " + title + "\n" + details);
+        debugText.setText("[" + now + "] " + title + "\n" + clip(details, 1200));
+    }
+
+    private static String clip(String text, int max) {
+        if (text == null) return "";
+        if (text.length() <= max) return text;
+        return text.substring(0, Math.max(0, max - 3)) + "...";
+    }
+
+    private static final class WavAudioQueue {
+        private final BlockingQueue<byte[]> queue = new LinkedBlockingQueue<>();
+        private volatile boolean running;
+        private Thread thread;
+
+        void start() {
+            if (running) return;
+            running = true;
+            thread = new Thread(this::loop, "six-stars-wav-player");
+            thread.start();
+        }
+
+        void stop() {
+            running = false;
+            if (thread != null) thread.interrupt();
+            queue.clear();
+        }
+
+        void enqueue(byte[] wav) {
+            if (wav != null && wav.length > 0) queue.offer(wav);
+        }
+
+        private void loop() {
+            while (running) {
+                try {
+                    byte[] wav = queue.take();
+                    playWav(wav);
+                } catch (InterruptedException ex) {
+                    // shutting down or clearing queue
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        private void playWav(byte[] wav) throws Exception {
+            ParsedWav parsed = ParsedWav.parse(wav);
+            int channelConfig = parsed.channels == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
+            int minBuffer = AudioTrack.getMinBufferSize(parsed.sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
+            int bufferSize = Math.max(minBuffer, parsed.pcm.length);
+            AudioTrack track = new AudioTrack(AudioManager.STREAM_MUSIC, parsed.sampleRate, channelConfig,
+                    AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
+            try {
+                track.play();
+                int offset = 0;
+                while (offset < parsed.pcm.length) {
+                    int wrote = track.write(parsed.pcm, offset, parsed.pcm.length - offset);
+                    if (wrote <= 0) break;
+                    offset += wrote;
+                }
+                long durationMs = (long) parsed.pcm.length * 1000L / Math.max(1, parsed.sampleRate * parsed.channels * 2);
+                try { Thread.sleep(Math.min(durationMs + 80L, 30000L)); } catch (InterruptedException ignored) { }
+                track.stop();
+            } finally {
+                track.release();
+            }
+        }
+    }
+
+    private static final class ParsedWav {
+        final int sampleRate;
+        final int channels;
+        final byte[] pcm;
+
+        ParsedWav(int sampleRate, int channels, byte[] pcm) {
+            this.sampleRate = sampleRate;
+            this.channels = channels;
+            this.pcm = pcm;
+        }
+
+        static ParsedWav parse(byte[] wav) throws Exception {
+            if (wav.length < 44 || wav[0] != 'R' || wav[1] != 'I' || wav[2] != 'F' || wav[3] != 'F') {
+                return new ParsedWav(24000, 1, wav);
+            }
+            int offset = 12;
+            int sampleRate = 24000;
+            int channels = 1;
+            byte[] data = null;
+            while (offset + 8 <= wav.length) {
+                String id = new String(wav, offset, 4, StandardCharsets.US_ASCII);
+                int size = ByteBuffer.wrap(wav, offset + 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                offset += 8;
+                if (size < 0 || offset + size > wav.length) break;
+                if ("fmt ".equals(id) && size >= 16) {
+                    ByteBuffer fmt = ByteBuffer.wrap(wav, offset, size).order(ByteOrder.LITTLE_ENDIAN);
+                    int audioFormat = fmt.getShort() & 0xffff;
+                    channels = fmt.getShort() & 0xffff;
+                    sampleRate = fmt.getInt();
+                    fmt.getInt();
+                    fmt.getShort();
+                    int bits = fmt.getShort() & 0xffff;
+                    if (audioFormat != 1 || bits != 16) throw new RuntimeException("Only PCM16 WAV is supported. format=" + audioFormat + " bits=" + bits);
+                } else if ("data".equals(id)) {
+                    data = Arrays.copyOfRange(wav, offset, offset + size);
+                }
+                offset += size + (size % 2);
+            }
+            if (data == null) data = Arrays.copyOfRange(wav, 44, wav.length);
+            return new ParsedWav(sampleRate, channels <= 0 ? 1 : channels, data);
+        }
     }
 }

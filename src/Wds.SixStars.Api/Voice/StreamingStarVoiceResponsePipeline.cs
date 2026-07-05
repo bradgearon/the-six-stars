@@ -107,13 +107,21 @@ namespace Wds.SixStars.Api.Voice
                     outputKeepAlive = keepAliveEndpoint.StartOutputKeepAlive("streaming speech generation and playback", linkedCts.Token);
                 }
 
+                if(string.IsNullOrEmpty(response.SpokenText) && (response.SpokenParts == null || response.SpokenParts.Count == 0))
+                {
+                    Debug.WriteLine("[StreamingStarVoiceResponsePipeline] No spoken text or parts provided; skipping speech generation.");
+                    return;
+                }
+
+                var text = response.SpokenText ?? "";
+
                 VoiceSynthesisRequest request = new VoiceSynthesisRequest
                 {
                     SessionId = sessionId,
                     StarId = response.StarId,
                     // Preserve the LLM-provided speech array. Each spokenText item is one intentional
                     // TTS/breath chunk. The server must not re-split or merge these parts.
-                    Text = response.SpokenText,
+                    Text = text,
                     TextParts = response.SpokenParts
                         .Where(x => !string.IsNullOrWhiteSpace(x))
                         .Select(x => x.Trim())

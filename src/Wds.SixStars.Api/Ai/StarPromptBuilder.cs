@@ -146,9 +146,9 @@ namespace Wds.SixStars.Api.Ai
             if (state.StoryHistory.Count > 0)
             {
                 memory.AppendLine("Stories already told by this Star:");
-                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(10))
+                foreach (StarStoryHistoryEntry toldStory in state.StoryHistory.Take(10))
                 {
-                    memory.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
+                    memory.AppendLine("- " + toldStory.Title + " | finished=" + toldStory.Finished + " | " + Truncate(toldStory.Summary, 180));
                 }
             }
 

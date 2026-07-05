@@ -31,7 +31,7 @@ namespace Wds.SixStars.Ui.Configuration
         public int Port { get; set; } = 8066;
 
         /// <summary>When true, Android requests also play the Star response through the desktop TTS/audio pipeline.</summary>
-        public bool SpeakResponsesOnDesktop { get; set; } = true;
+        public bool SpeakResponsesOnDesktop { get; set; } = false;
     }
 
 

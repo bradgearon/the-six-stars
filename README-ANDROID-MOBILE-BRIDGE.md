@@ -45,3 +45,14 @@ docs/Android-Mobile-Bridge.md
 This build includes the fix for the Visual Studio `client was null` exception in `MobileBridgeServer.HandleClientAsync`. That bug made the Android app time out even though the desktop bridge checkbox was enabled.
 
 The Android checkbox now says **Play Star voice on this phone**. When checked, the phone sends `returnAudio=true` and `speakOnDesktop=false`; the desktop returns generated WAV chunks in the JSON response and the Android app plays them locally.
+
+## Phone voice queue update
+
+The Android app now uses two connections:
+
+- HTTP control/API: `http://grasshoppah:8066`
+- Phone voice socket: reported by `/health` as `audioPort`, usually `8067`
+
+The desktop receives Qwen/WebSocket TTS chunks, orders them through the streaming voice pipeline with desktop autoplay disabled, and forwards each WAV chunk to Android. Android plays the queued PCM16 WAV chunks locally using `AudioTrack`. The Android debug window is intentionally compact and no longer stores full bridge request/response JSON.
+
+Open both TCP ports in Windows Firewall when testing from a real phone.
