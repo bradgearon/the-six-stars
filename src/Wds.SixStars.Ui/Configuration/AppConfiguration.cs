@@ -15,6 +15,23 @@ namespace Wds.SixStars.Ui.Configuration
         public CompanionConfig Companion { get; set; } = new CompanionConfig();
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
+        public MobileBridgeConfig MobileBridge { get; set; } = new MobileBridgeConfig();
+    }
+
+
+    public sealed class MobileBridgeConfig
+    {
+        /// <summary>Starts the LAN bridge when the WPF app opens so the Android client can connect.</summary>
+        public bool EnabledOnStartup { get; set; } = true;
+
+        /// <summary>Friendly Windows/network name the Android client defaults to. Change to your PC name or use the phone app URL field.</summary>
+        public string HostName { get; set; } = "grasshoppah";
+
+        /// <summary>TCP port listened on all local interfaces. Open Windows Firewall for this port for phone access.</summary>
+        public int Port { get; set; } = 8066;
+
+        /// <summary>When true, Android requests also play the Star response through the desktop TTS/audio pipeline.</summary>
+        public bool SpeakResponsesOnDesktop { get; set; } = true;
     }
 
 

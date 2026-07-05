@@ -303,6 +303,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         StopScreenAwarenessCommand = new RelayCommand(async _ => await StopScreenAwarenessAsync());
         CaptureScreenNowCommand = new RelayCommand(async _ => await CaptureScreenNowAsync());
         PlayElusiaaCloneWavCommand = new RelayCommand(async _ => await PlayElusiaaCloneWavAsync());
+        InitializeMobileBridgeCommandsAndMaybeStart();
 
         if (GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_ALWAYS_LISTENING"), _appConfig.VoiceInput.AlwaysListeningOnStartup))
         {
@@ -2863,6 +2864,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             _microphoneSpeechSource.Dispose();
             _screenAwarenessLoop.Dispose();
+            StopMobileBridgeServer("App shutting down.");
+            _mobileBridgeServer?.Dispose();
+            _mobileBridgeRuntimeGate.Dispose();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _operationController.Dispose();
             _interruptionManager.Dispose();

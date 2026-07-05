@@ -112,3 +112,11 @@ _package_staging/
 Thumbs.db
 Desktop.ini
 /state/
+
+# -----------------------------------------------------------------------------
+# Android / Gradle
+# -----------------------------------------------------------------------------
+android/**/.gradle/
+android/**/build/
+android/**/local.properties
+android/**/*.apk

@@ -88,6 +88,27 @@
                     <Button Content="Cruel Escalation Test" Command="{Binding CruelEscalationCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Kind Company Test" Command="{Binding KindCompanyCommand}" Margin="0,0,0,8" Height="34" />
                     <Separator Margin="0,8,0,8" />
+                    <TextBlock Text="Android Phone Bridge" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <Border BorderBrush="#D9E3F0" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8" Background="#FAFCFF">
+                        <StackPanel>
+                            <TextBlock Text="Host a tiny LAN server so the Android app can send text or recorded voice to this desktop runtime. The phone defaults to http://grasshoppah:8066." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="Host" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox Text="{Binding MobileBridgeHostName, UpdateSourceTrigger=PropertyChanged}" Width="96" Margin="0,0,8,0" />
+                                <TextBlock Text="Port" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox Text="{Binding MobileBridgePort, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding MobileBridgeUrl}" FontFamily="Consolas" Foreground="#333" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="Start Host" Command="{Binding StartMobileBridgeCommand}" Width="92" Height="30" Margin="0,0,6,0" />
+                                <Button Content="Stop" Command="{Binding StopMobileBridgeCommand}" Width="64" Height="30" />
+                            </StackPanel>
+                            <CheckBox Content="Mobile bridge running" IsChecked="{Binding MobileBridgeEnabled}" IsEnabled="False" Margin="0,0,0,6" />
+                            <TextBlock Text="{Binding MobileBridgeStatus}" TextWrapping="Wrap" Foreground="#555" Margin="0,0,0,6" />
+                            <TextBlock Text="Last phone request" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding MobileBridgeLastRequest}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="86" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock Text="Voice Input / Whisper" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Border BorderBrush="#D9E3F0" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8" Background="#FAFCFF">
                         <StackPanel>
