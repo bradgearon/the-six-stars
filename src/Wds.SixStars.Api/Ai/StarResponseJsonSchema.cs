@@ -81,6 +81,29 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_story_intent_classifier", schema);
         }
 
+        public static object CreateInformationNeedSelectionResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "shouldRequestMoreInformation", "selectedDataType", "subject", "confidence", "score", "reason", "rankedNeeds" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "shouldRequestMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "selectedDataType", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "history", "quotes", "markers", "lore", "bestiary", "characters", "world", "screen", "story" } } } },
+                        { "subject", StringProperty(160) },
+                        { "confidence", NumberProperty(0, 1) },
+                        { "score", NumberProperty(0, 100) },
+                        { "reason", StringProperty(420) },
+                        { "rankedNeeds", InformationNeedArray(9) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_information_need_selector", schema);
+        }
+
         public static object CreateBackgroundReviewResponseFormat(string schemaName = "six_stars_background_memory_review_compact")
         {
             Dictionary<string, object> schema = new Dictionary<string, object>
@@ -137,13 +160,13 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText", "needsMoreInformation", "informationNeeds" } },
+                { "required", new[] { "starId", "spokenText" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
                         { "spokenText", SpokenTextArray(5) },
                         { "needsMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "informationNeeds", InformationNeedArray(6) }
+                        { "informationNeeds", InformationNeedArray(9) }
                     }
                 }
             };

@@ -67,6 +67,10 @@ namespace Wds.SixStars.Api.Models
         public bool InformationFollowupSucceeded { get; set; }
         public string InformationFollowupContextSummary { get; set; } = string.Empty;
 
+        /// <summary>Full optional foreground information-needs vector returned by the Star before deterministic selection.</summary>
+        public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
+        public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();
+
         /// <summary>
         /// Compact emotion hint returned by the fast foreground LLM pass for experimentation.
         /// Format: confidence:score;confidence:score;... in the canonical StarEmotionMatrix.StandardEmotionIds order.

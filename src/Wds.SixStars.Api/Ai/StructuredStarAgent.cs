@@ -12,7 +12,7 @@ using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier
+    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -98,6 +98,66 @@ namespace Wds.SixStars.Api.Ai
                     StorySeed = fallback ? (request.PlayerText ?? string.Empty).Trim() : string.Empty,
                     Reason = "Story intent LLM check failed; heuristic fallback used: " + ex.Message,
                     Source = "heuristic-fallback"
+                };
+            }
+        }
+
+        public async Task<InformationNeedSelectionResult> AnalyzeInformationNeedAsync(
+            StarProfile profile,
+            StarInteractionRequest request,
+            StarState state,
+            StarInteractionResponse foregroundResponse,
+            IReadOnlyList<InformationNeedVectorItem> foregroundVector,
+            IReadOnlyList<InformationNeedAvailabilityItem> availableData,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending QUICK information-need selector request...");
+                string json = await _client.CompleteJsonAsync(
+                    _promptBuilder.BuildInformationNeedSelectorMessages(profile, request, state, foregroundResponse, foregroundVector, availableData),
+                    StarResponseJsonSchema.CreateInformationNeedSelectionResponseFormat(),
+                    0,
+                    "information-need-selector",
+                    cancellationToken).ConfigureAwait(false);
+
+                InformationNeedSelectionResult? model = JsonSerializer.Deserialize<InformationNeedSelectionResult>(ExtractJson(json), _jsonOptions);
+                if (model == null) throw new InvalidOperationException("Information-need selector returned empty JSON.");
+                model.Source = "llm";
+                model.RankedNeeds = (model.RankedNeeds ?? new List<InformationNeedVectorItem>())
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
+                    .Select(x => new InformationNeedVectorItem
+                    {
+                        DataType = x.DataType,
+                        Subject = string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim(),
+                        Confidence = Clamp01(x.Confidence),
+                        Score = ClampScore(x.Score),
+                        Reason = x.Reason ?? string.Empty
+                    })
+                    .Take(9)
+                    .ToList();
+                return model;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                InformationNeedVectorItem? best = foregroundVector
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
+                    .OrderByDescending(x => Math.Max(x.Score / 100.0, x.Confidence))
+                    .FirstOrDefault();
+                return new InformationNeedSelectionResult
+                {
+                    ShouldRequestMoreInformation = best != null && (best.Confidence >= 0.55 || best.Score >= 55),
+                    SelectedDataType = best?.DataType ?? "history",
+                    Subject = string.IsNullOrWhiteSpace(best?.Subject) ? "self" : best!.Subject,
+                    Confidence = best?.Confidence ?? 0,
+                    Score = best?.Score ?? 0,
+                    Reason = "Information-need selector LLM failed; foreground-vector fallback used: " + ex.Message,
+                    Source = "heuristic-fallback",
+                    RankedNeeds = foregroundVector == null ? new List<InformationNeedVectorItem>() : foregroundVector.Take(9).ToList()
                 };
             }
         }
@@ -774,6 +834,14 @@ namespace Wds.SixStars.Api.Ai
             if (double.IsNaN(value)) return 0;
             if (value < 0) return 0;
             if (value > 1) return 1;
+            return value;
+        }
+
+        private static double ClampScore(double value)
+        {
+            if (double.IsNaN(value)) return 0;
+            if (value < 0) return 0;
+            if (value > 100) return 100;
             return value;
         }
 

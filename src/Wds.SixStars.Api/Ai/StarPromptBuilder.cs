@@ -103,6 +103,70 @@ namespace Wds.SixStars.Api.Ai
             };
         }
 
+        public IReadOnlyList<ChatMessage> BuildInformationNeedSelectorMessages(
+            StarProfile profile,
+            StarInteractionRequest request,
+            StarState state,
+            StarInteractionResponse foregroundResponse,
+            IReadOnlyList<InformationNeedVectorItem> foregroundVector,
+            IReadOnlyList<InformationNeedAvailabilityItem> availableData)
+        {
+            StringBuilder system = new StringBuilder();
+            system.AppendLine("You are a tiny information-need selector for The Last Cat desktop companion.");
+            system.AppendLine("Do not roleplay. Do not answer the player. Analyze the Star's optional foreground information-needs vector and the local data inventory.");
+            system.AppendLine("Select at most one available data area for a deep second LLM pass. Prefer the area that best matches what the player actually asked for, not merely the highest raw score.");
+            system.AppendLine("If no local data area is available or the request can already be answered from the prompt, set shouldRequestMoreInformation=false and keep the selected area low-confidence.");
+            system.AppendLine("Return JSON only.");
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("Selected Star: " + profile.DisplayName);
+            user.AppendLine("Latest player message:");
+            user.AppendLine(QuoteBlock(request.PlayerText));
+            user.AppendLine("Foreground spoken bridge/reply:");
+            user.AppendLine(QuoteBlock(foregroundResponse.SpokenText));
+            user.AppendLine("Ongoing summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none" : Truncate(state.ConversationSummary, 600)));
+            user.AppendLine();
+            user.AppendLine("FOREGROUND INFORMATION NEED VECTOR");
+            if (foregroundVector == null || foregroundVector.Count == 0)
+            {
+                user.AppendLine("none");
+            }
+            else
+            {
+                foreach (InformationNeedVectorItem need in foregroundVector.Take(12))
+                {
+                    user.AppendLine("- dataType=" + need.DataType + "; subject=" + need.Subject + "; confidence=" + need.Confidence.ToString("0.00") + "; score=" + need.Score.ToString("0.0") + "; reason=" + Truncate(need.Reason, 220));
+                }
+            }
+            user.AppendLine();
+            user.AppendLine("LOCAL DATA INVENTORY");
+            if (availableData == null || availableData.Count == 0)
+            {
+                user.AppendLine("none");
+            }
+            else
+            {
+                foreach (InformationNeedAvailabilityItem item in availableData)
+                {
+                    user.AppendLine("- dataType=" + item.DataType + "; available=" + item.Available + "; count=" + item.Count + "; summary=" + Truncate(item.Summary, 260));
+                    if (item.SampleSubjects.Count > 0) user.AppendLine("  samples=" + string.Join(", ", item.SampleSubjects.Take(6)));
+                }
+            }
+            user.AppendLine();
+            user.AppendLine("Selector rules:");
+            user.AppendLine("- Return rankedNeeds as the useful vector sorted from strongest to weakest after considering the player message and availability.");
+            user.AppendLine("- selectedDataType must be one of the available types when shouldRequestMoreInformation=true.");
+            user.AppendLine("- Use subject from the foreground vector when useful, otherwise infer a compact subject from the player message, or self.");
+            user.AppendLine("- Do not request deep history just because the word remember appears if a direct answer is already possible.");
+            user.AppendLine("- Do request deep data when the Star's first reply was a bridge line or the foreground vector points to old history, quotes, markers, lore, bestiary, character, world, screen, or story data.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system.ToString()),
+                new ChatMessage("user", user.ToString())
+            };
+        }
+
         private string BuildCompactReviewSystemMessage(StarProfile profile)
         {
             StringBuilder vectorInstructions = new StringBuilder();
@@ -299,10 +363,11 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, and informationNeeds. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
-                contract.AppendLine("needsMoreInformation=false and informationNeeds=[] when you can answer from the context provided.");
-                contract.AppendLine("If the player asks for old conversation details, old phrases, markers, bestiary/living-world data, lore, character-profile facts, or anything you cannot safely answer from the prompt, set needsMoreInformation=true and add 1-3 informationNeeds entries. Use dataType one of history, quotes, markers, lore, bestiary, characters, world, screen, story. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
-                contract.AppendLine("When needsMoreInformation=true, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a second pass with the requested archive slice.");
+                contract.AppendLine("Return only: starId, spokenText, and optionally needsMoreInformation plus informationNeeds. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+                contract.AppendLine("informationNeeds is a full optional information-request vector, not a single final decision. The host/API layer will analyze the whole vector, compare it to available local data, and deterministically decide whether to run a deep second pass.");
+                contract.AppendLine("When the latest message may need older context or data outside this prompt, return the whole informationNeeds vector: one separate entry for each area you considered from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
+                contract.AppendLine("Omit informationNeeds or return [] when the answer is clearly available in the provided prompt. needsMoreInformation is optional legacy hint; set it true only when your spokenText is intentionally a brief 'I am trying to remember/check' bridge line.");
+                contract.AppendLine("If you set needsMoreInformation=true or return a high scoring informationNeeds vector, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a selector and second pass with a local archive/lore slice.");
                 contract.AppendLine("For normal chat, use 1-4 spokenText items. If the player asks direct personal questions such as name/about yourself/friends/what do you do, use 3-5 concise spokenText items and answer completely instead of being evasive.");
                 contract.AppendLine("Every spokenText item should be one or two natural sentences. A direct question deserves a direct answer, plus personality.");
                 contract.AppendLine("Answer warmly and directly as " + profile.DisplayName + ".");
