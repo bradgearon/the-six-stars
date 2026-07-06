@@ -57,6 +57,7 @@ namespace Wds.SixStars.Api.Ai
                 profile.Emotions = StarEmotionMatrix.CreateStandardEmotionSet(profile.StarId);
             }
 
+            StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
             return profile;
         }
 

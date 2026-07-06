@@ -53,6 +53,16 @@ namespace Wds.SixStars.Api.Stars
         public List<KnownPerson> PeopleKnown { get; set; } = new List<KnownPerson>();
         public List<StarLoreEntry> AngelStories { get; set; } = new List<StarLoreEntry>();
         public List<StarEmotionDefinition> Emotions { get; set; } = new List<StarEmotionDefinition>();
+
+        /// <summary>Deterministic Heart/Trust/Romance scoring thresholds for this Star.</summary>
+        public StarRelationshipStatsConfig RelationshipStats { get; set; } = new StarRelationshipStatsConfig();
+
+        /// <summary>Per-emotion deterministic relationship influence map for this Star.</summary>
+        public List<StarEmotionInfluenceRule> EmotionInfluence { get; set; } = new List<StarEmotionInfluenceRule>();
+
+        /// <summary>Per-Star deterministic combo rules that scan recent stored emotion vectors.</summary>
+        public List<StarEmotionComboRule> ComboRules { get; set; } = new List<StarEmotionComboRule>();
+
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
     }
 }

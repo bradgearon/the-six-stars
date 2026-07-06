@@ -22,6 +22,11 @@ namespace Wds.SixStars.Api.Stars
                 CreateNyxari()
             };
 
+            foreach (StarProfile profile in profiles)
+            {
+                StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
+            }
+
             _profiles = profiles.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)).GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
         }
 

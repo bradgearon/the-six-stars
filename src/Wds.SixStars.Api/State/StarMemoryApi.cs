@@ -84,14 +84,14 @@ namespace Wds.SixStars.Api.State
             state.LastInteractionAt = now;
             state.LastDailyStateSourceUpdateAt = now;
 
-            RelationshipDelta sourceDelta = _options.AcceptModelSuggestedDeltas ? request.SuggestedDelta : request.ActualDelta;
             RelationshipDelta applied = new RelationshipDelta
             {
-                Heart = sourceDelta.Heart,
-                Trust = sourceDelta.Trust,
-                Romance = sourceDelta.Romance,
-                BenaveilInfluence = sourceDelta.BenaveilInfluence,
-                // The connection meter is always deterministic even if a dev toggle accepts model heart/trust/romance suggestions.
+                // Heart/Trust/Romance are always deterministic now. The model can provide emotional evidence,
+                // but it cannot directly award relationship points even if the legacy dev toggle is enabled.
+                Heart = request.ActualDelta.Heart,
+                Trust = request.ActualDelta.Trust,
+                Romance = request.ActualDelta.Romance,
+                BenaveilInfluence = request.ActualDelta.BenaveilInfluence,
                 EmotionalConnectionPercent = request.ActualDelta.EmotionalConnectionPercent
             };
             double emotionalConnectionBefore = state.EmotionalConnectionPercent;
@@ -438,6 +438,16 @@ namespace Wds.SixStars.Api.State
             if (state.CurrentDialogueState == null)
             {
                 state.CurrentDialogueState = new StarDialogueProgressState();
+                changed = true;
+            }
+            if (state.EmotionVectorHistory == null)
+            {
+                state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.RelationshipScoreAccumulators == null)
+            {
+                state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
                 changed = true;
             }
             if (state.IsAlly && !state.IsMet)

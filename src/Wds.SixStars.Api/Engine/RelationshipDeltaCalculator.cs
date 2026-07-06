@@ -7,9 +7,9 @@ using Wds.SixStars.Api.Stars;
 namespace Wds.SixStars.Api.Engine
 {
     /// <summary>
-    /// Converts the fast foreground emotionalEffectVector, the fast negativeEmotionVector, and the
-    /// background review's suggested deltas/combos into small deterministic state changes.
-    /// The model may suggest, but this class decides what actually moves the saved Star state.
+    /// Converts current-turn emotion vectors into deterministic relationship changes.
+    /// The LLM supplies emotional evidence; this class owns Heart/Trust/Romance movement using
+    /// Star-specific JSON personality maps, stored vector history, combo rules, and point thresholds.
     /// </summary>
     public sealed class RelationshipDeltaCalculator : IRelationshipDeltaCalculator
     {
@@ -21,45 +21,48 @@ namespace Wds.SixStars.Api.Engine
         public RelationshipDelta Calculate(StarProfile profile, StarInteractionRequest request, StarInteractionResponse response, StarState currentState)
         {
             if (currentState == null) currentState = new StarState { StarId = request.StarId };
+            NormalizeDeterministicState(currentState);
+            StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
 
-            List<EmotionVectorScore> positiveSignals = ParseVector(response.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds)
+            List<EmotionVectorScore> positiveAll = ParseVector(response.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds);
+            List<EmotionVectorScore> negativeAll = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds);
+
+            List<EmotionVectorScore> positiveSignals = positiveAll
                 .Where(x => x.IsHighSignal())
                 .OrderByDescending(x => x.WeightedScore)
-                .Take(3)
+                .Take(6)
                 .ToList();
 
-            List<EmotionVectorScore> negativeSignals = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds)
+            List<EmotionVectorScore> negativeSignals = negativeAll
                 .Where(x => x.IsHighSignal())
                 .OrderByDescending(x => x.WeightedScore)
-                .Take(3)
+                .Take(6)
                 .ToList();
 
             RelationshipDelta delta = new RelationshipDelta();
             bool romanceGate = IsRomanceGateOpen(profile, request, currentState, positiveSignals);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
 
-            foreach (EmotionVectorScore signal in positiveSignals)
-            {
-                ApplyPositiveSignal(delta, signal, request.GameContext.RomanceMode && romanceGate);
-            }
+            StarEmotionVectorHistoryEntry vectorHistory = BuildVectorHistoryEntry(profile, request, positiveAll, negativeAll, now);
+            List<string> profileCombos = DetectProfileCombos(profile, currentState, vectorHistory).ToList();
+            List<string> legacySafetyCombos = DetectLegacySafetyCombos(positiveSignals, negativeSignals, currentState).ToList();
+            List<string> filteredModelCombos = FilterModelCombosToConfiguredRules(response.DetectedCombos, profile, legacySafetyCombos).ToList();
+            List<string> acceptedCombos = MergeAndLimitCombos(profileCombos.Concat(legacySafetyCombos).Concat(filteredModelCombos), currentState, maxCombos: 4).ToList();
 
-            foreach (EmotionVectorScore signal in negativeSignals)
-            {
-                ApplyNegativeSignal(delta, signal, request.GameContext.RomanceMode);
-            }
+            vectorHistory.ComboHits.Clear();
+            vectorHistory.ComboHits.AddRange(acceptedCombos);
 
-            List<string> autoCombos = DetectCombos(positiveSignals, negativeSignals, currentState).ToList();
-            List<string> acceptedCombos = MergeAndLimitCombos(response.DetectedCombos, autoCombos, currentState, maxCombos: 3).ToList();
-            response.DetectedCombos.Clear();
-            response.DetectedCombos.AddRange(acceptedCombos);
-
-            ApplyComboDeltas(delta, acceptedCombos, request.GameContext.RomanceMode && romanceGate);
-            ApplyBoundedSuggestedDelta(delta, response.SuggestedStateDeltas, positiveSignals, negativeSignals, acceptedCombos, request.GameContext.RomanceMode && romanceGate);
+            bool enoughHistoryForPositivePoints = HasEnoughRelevantHistoryForPositivePoints(currentState, vectorHistory, acceptedCombos);
+            ApplyStarSpecificEmotionScores(profile, currentState, vectorHistory, delta, romanceGate, enoughHistoryForPositivePoints, now);
+            ApplyProfileComboScores(profile, currentState, vectorHistory, acceptedCombos, delta, romanceGate, now);
+            ApplyMajorNegativeSafetyDeltas(delta, negativeSignals, request.GameContext.RomanceMode);
+            ApplyBoundedSuggestedDelta(delta, response.SuggestedStateDeltas, positiveSignals, negativeSignals, acceptedCombos, romanceGate);
             ApplyRepeatDamping(delta, positiveSignals, negativeSignals, acceptedCombos, currentState);
 
             ApplyEmotionalConnectionDelta(profile, request, currentState, delta, positiveSignals, negativeSignals, acceptedCombos);
             ApplyActiveEffectors(currentState, delta, response);
 
-            // Non-allies can still warm up, but they should not leap into deep relationship scores from one good line.
+            // Non-allies can warm toward ally status but should not leap into deep romance/connection.
             if (!currentState.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {
                 delta.Heart = Math.Min(delta.Heart, 1);
@@ -68,17 +71,28 @@ namespace Wds.SixStars.Api.Engine
                 delta.EmotionalConnectionPercent = Math.Min(delta.EmotionalConnectionPercent, 0);
             }
 
-            Clamp(delta);
+            Clamp(delta, profile.RelationshipStats);
+            StoreVectorHistory(currentState, vectorHistory);
 
+            response.DetectedCombos.Clear();
+            response.DetectedCombos.AddRange(acceptedCombos);
             response.AcceptedPositiveEmotionSignals.Clear();
-            response.AcceptedPositiveEmotionSignals.AddRange(positiveSignals.Select(x => x.ToString()));
+            response.AcceptedPositiveEmotionSignals.AddRange(vectorHistory.Entries
+                .Where(x => x.Accepted && !string.Equals(x.Polarity, "negative", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
+                .Take(8)
+                .Select(FormatHistoryItem));
             response.AcceptedNegativeEmotionSignals.Clear();
-            response.AcceptedNegativeEmotionSignals.AddRange(negativeSignals.Select(x => x.ToString()));
+            response.AcceptedNegativeEmotionSignals.AddRange(vectorHistory.Entries
+                .Where(x => x.Accepted && string.Equals(x.Polarity, "negative", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
+                .Take(8)
+                .Select(FormatHistoryItem));
             response.AcceptedRelationshipCombos.Clear();
             response.AcceptedRelationshipCombos.AddRange(acceptedCombos);
             response.TopAffectedEmotions.Clear();
             response.TopAffectedEmotions.AddRange(BuildTopAffectedEmotions(response.EmotionalEffectVector, response.NegativeEmotionVector));
-            response.DeterministicEmotionUpdateSummary = BuildSummary(currentState, positiveSignals, negativeSignals, acceptedCombos, response.SuggestedStateDeltas, delta, romanceGate);
+            response.DeterministicEmotionUpdateSummary = BuildSummary(currentState, vectorHistory, positiveSignals, negativeSignals, acceptedCombos, response.SuggestedStateDeltas, delta, romanceGate, enoughHistoryForPositivePoints);
             response.Debug.Notes.Add(response.DeterministicEmotionUpdateSummary);
 
             return delta;
@@ -109,23 +123,6 @@ namespace Wds.SixStars.Api.Engine
                 .ThenBy(x => x.EmotionId, StringComparer.OrdinalIgnoreCase)
                 .Take(Math.Max(1, maxCount <= 0 ? 3 : maxCount))
                 .ToList();
-        }
-
-        private static TopAffectedEmotion CreateTopAffectedEmotion(EmotionVectorScore signal, string valence)
-        {
-            double weighted = signal.WeightedScore;
-            bool accepted = signal.IsHighSignal();
-            string sign = string.Equals(valence, "negative", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
-            return new TopAffectedEmotion
-            {
-                EmotionId = signal.Id,
-                Valence = valence,
-                Confidence = signal.Confidence,
-                Score = signal.Score,
-                WeightedScore = weighted,
-                AcceptedForStateUpdate = accepted,
-                Summary = signal.Id + " " + sign + signal.Score.ToString("0") + " confidence " + signal.Confidence.ToString("0.00") + (accepted ? " accepted" : " observed")
-            };
         }
 
         public static List<EmotionVectorScore> ParseVector(string? vector, IReadOnlyList<string> ids)
@@ -159,73 +156,330 @@ namespace Wds.SixStars.Api.Engine
             return result;
         }
 
-        private static void ApplyPositiveSignal(RelationshipDelta delta, EmotionVectorScore signal, bool romanceGate)
+        private static TopAffectedEmotion CreateTopAffectedEmotion(EmotionVectorScore signal, string valence)
         {
-            switch (signal.Id)
+            double weighted = signal.WeightedScore;
+            bool accepted = signal.IsHighSignal();
+            string sign = string.Equals(valence, "negative", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
+            return new TopAffectedEmotion
             {
-                case "Trusting":
-                case "Safe":
-                case "Protected":
-                case "Respected":
-                case "Comforted":
-                    delta.Trust += 1;
-                    delta.Heart += signal.Score >= 90 ? 1 : 0;
-                    break;
-                case "Admiring":
-                case "Affectionate":
-                case "Tender":
-                case "Hopeful":
-                case "Wondrous":
-                case "Impassioned":
-                    delta.Heart += 1;
-                    delta.Trust += signal.Id == "Hopeful" ? 1 : 0;
-                    break;
-                case "Flattered":
-                case "Attracted":
-                case "Yearning":
-                    delta.Heart += 1;
-                    break;
-                default:
-                    delta.Heart += signal.Score >= 88 && signal.Confidence >= 0.80 ? 1 : 0;
-                    break;
+                EmotionId = signal.Id,
+                Valence = valence,
+                Confidence = signal.Confidence,
+                Score = signal.Score,
+                WeightedScore = weighted,
+                AcceptedForStateUpdate = accepted,
+                Summary = signal.Id + " " + sign + signal.Score.ToString("0") + " confidence " + signal.Confidence.ToString("0.00") + (accepted ? " accepted" : " observed")
+            };
+        }
+
+        private static StarEmotionVectorHistoryEntry BuildVectorHistoryEntry(StarProfile profile, StarInteractionRequest request, List<EmotionVectorScore> positiveAll, List<EmotionVectorScore> negativeAll, DateTimeOffset now)
+        {
+            Dictionary<string, StarEmotionInfluenceRule> rules = BuildInfluenceLookup(profile);
+            StarEmotionVectorHistoryEntry entry = new StarEmotionVectorHistoryEntry
+            {
+                CreatedAt = now,
+                TurnId = now.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture) + "_" + (request.StarId ?? string.Empty),
+                RequestType = request.RequestType.ToString(),
+                PlayerText = TruncateLocal(request.PlayerText, 500)
+            };
+
+            foreach (EmotionVectorScore signal in positiveAll.Where(x => x != null && (x.Confidence > 0 || x.Score > 0)))
+            {
+                AddHistoryItem(entry, signal, ResolveInfluence(rules, signal.Id, "positive"), "positive");
             }
 
-            if (romanceGate && IsRomanceSignal(signal.Id) && signal.Score >= 85 && signal.Confidence >= 0.75)
+            foreach (EmotionVectorScore signal in negativeAll.Where(x => x != null && (x.Confidence > 0 || x.Score > 0)))
             {
-                delta.Romance += signal.Id == "Attracted" || signal.Id == "Yearning" ? 2 : 1;
+                AddHistoryItem(entry, signal, ResolveInfluence(rules, signal.Id, "negative"), "negative");
+            }
+
+            entry.Summary = BuildVectorEntrySummary(entry);
+            return entry;
+        }
+
+        private static void AddHistoryItem(StarEmotionVectorHistoryEntry entry, EmotionVectorScore signal, StarEmotionInfluenceRule rule, string fallbackPolarity)
+        {
+            double weighted = signal.WeightedScore;
+            double affectsStar = Clamp01(rule.AffectsStar <= 0 ? 0 : rule.AffectsStar);
+            double starScore = weighted * affectsStar;
+            double heart = starScore * GetWeight(rule, "heart");
+            double trust = starScore * GetWeight(rule, "trust");
+            double romance = starScore * GetWeight(rule, "romance");
+            bool accepted = signal.Confidence >= 0.70 && signal.Score >= 40 && affectsStar >= 0.35 && (Math.Abs(heart) + Math.Abs(trust) + Math.Abs(romance)) >= 5;
+
+            entry.Entries.Add(new StarEmotionVectorHistoryItem
+            {
+                Emotion = signal.Id,
+                Polarity = string.IsNullOrWhiteSpace(rule.Polarity) ? fallbackPolarity : rule.Polarity,
+                Confidence = signal.Confidence,
+                Score = signal.Score,
+                WeightedScore = weighted,
+                AffectsStar = affectsStar,
+                Accepted = accepted,
+                HeartScore = heart,
+                TrustScore = trust,
+                RomanceScore = romance,
+                Reason = rule.Emotion + " affects this Star " + affectsStar.ToString("0.00") + " with H/T/R score " + heart.ToString("0.0") + "/" + trust.ToString("0.0") + "/" + romance.ToString("0.0")
+            });
+        }
+
+        private static Dictionary<string, StarEmotionInfluenceRule> BuildInfluenceLookup(StarProfile profile)
+        {
+            StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
+            return (profile.EmotionInfluence ?? new List<StarEmotionInfluenceRule>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Emotion))
+                .GroupBy(x => x.Emotion, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static StarEmotionInfluenceRule ResolveInfluence(Dictionary<string, StarEmotionInfluenceRule> rules, string emotion, string fallbackPolarity)
+        {
+            if (rules.TryGetValue(emotion ?? string.Empty, out StarEmotionInfluenceRule? rule)) return rule;
+            return new StarEmotionInfluenceRule
+            {
+                Emotion = emotion ?? string.Empty,
+                Polarity = fallbackPolarity,
+                AffectsStar = 0.10,
+                StatWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "heart", 0.0 },
+                    { "trust", 0.0 },
+                    { "romance", 0.0 }
+                }
+            };
+        }
+
+        private static bool HasEnoughRelevantHistoryForPositivePoints(StarState state, StarEmotionVectorHistoryEntry current, List<string> combos)
+        {
+            int currentDistinct = CountDistinctAcceptedEmotions(current, includeNegative: false);
+            if (currentDistinct >= 3) return true;
+            if (combos.Any(x => !IsNegativeCombo(x))) return true;
+
+            int priorRelevantTurns = (state.EmotionVectorHistory ?? new List<StarEmotionVectorHistoryEntry>())
+                .Take(16)
+                .Count(x => x != null && CountDistinctAcceptedEmotions(x, includeNegative: false) > 0);
+            return priorRelevantTurns + (currentDistinct > 0 ? 1 : 0) >= 3;
+        }
+
+        private static int CountDistinctAcceptedEmotions(StarEmotionVectorHistoryEntry entry, bool includeNegative)
+        {
+            if (entry == null || entry.Entries == null) return 0;
+            return entry.Entries
+                .Where(x => x != null && x.Accepted && (includeNegative || !string.Equals(x.Polarity, "negative", StringComparison.OrdinalIgnoreCase)))
+                .Select(x => x.Emotion)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+        }
+
+        private static void ApplyStarSpecificEmotionScores(StarProfile profile, StarState state, StarEmotionVectorHistoryEntry current, RelationshipDelta delta, bool romanceGate, bool allowPositiveCashOut, DateTimeOffset now)
+        {
+            foreach (StarEmotionVectorHistoryItem item in current.Entries.Where(x => x != null && x.Accepted))
+            {
+                ApplyOneStatScore(profile, state, "heart", item.HeartScore, delta, allowPositiveCashOut || item.HeartScore < 0, true, now, item.Reason);
+                ApplyOneStatScore(profile, state, "trust", item.TrustScore, delta, allowPositiveCashOut || item.TrustScore < 0, true, now, item.Reason);
+                ApplyOneStatScore(profile, state, "romance", item.RomanceScore, delta, allowPositiveCashOut || item.RomanceScore < 0, romanceGate || item.RomanceScore < 0, now, item.Reason);
             }
         }
 
-        private static void ApplyNegativeSignal(RelationshipDelta delta, EmotionVectorScore signal, bool romanceMode)
+        private static void ApplyProfileComboScores(StarProfile profile, StarState state, StarEmotionVectorHistoryEntry current, List<string> acceptedCombos, RelationshipDelta delta, bool romanceGate, DateTimeOffset now)
         {
-            switch (signal.Id)
+            if (acceptedCombos == null || acceptedCombos.Count == 0) return;
+            Dictionary<string, StarEmotionComboRule> rules = (profile.ComboRules ?? new List<StarEmotionComboRule>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.ComboId))
+                .GroupBy(x => Slugify(x.ComboId), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (string combo in acceptedCombos)
             {
-                case "Disrespected":
-                case "Pressured":
-                case "CreepedOut":
-                case "Unsafe":
-                    delta.Trust -= 1;
-                    delta.Heart -= 1;
-                    if (romanceMode) delta.Romance -= 1;
+                string id = Slugify(combo);
+                if (!rules.TryGetValue(id, out StarEmotionComboRule? rule))
+                {
+                    ApplyLegacyComboScore(profile, state, id, delta, romanceGate, now);
+                    continue;
+                }
+
+                double baseScore = CalculateComboBaseScore(rule, state, current);
+                double bonusScore = baseScore * (rule.BonusMultiplier <= 0 ? 1.0 : rule.BonusMultiplier);
+                string reason = "combo " + id + " score " + bonusScore.ToString("0.0") + ": " + rule.Description;
+                ApplyOneStatScore(profile, state, "heart", bonusScore * GetWeight(rule, "heart"), delta, true, true, now, reason);
+                ApplyOneStatScore(profile, state, "trust", bonusScore * GetWeight(rule, "trust"), delta, true, true, now, reason);
+                ApplyOneStatScore(profile, state, "romance", bonusScore * GetWeight(rule, "romance"), delta, true, romanceGate || IsNegativeCombo(id), now, reason);
+            }
+        }
+
+        private static double CalculateComboBaseScore(StarEmotionComboRule rule, StarState state, StarEmotionVectorHistoryEntry current)
+        {
+            List<StarEmotionVectorHistoryEntry> window = BuildRecentWindow(state, current, rule.WithinTurns <= 0 ? 4 : rule.WithinTurns);
+            List<double> scores = new List<double>();
+            foreach (StarEmotionComboRequirement req in rule.Requires ?? new List<StarEmotionComboRequirement>())
+            {
+                StarEmotionVectorHistoryItem? match = FindRequirementMatch(window, req);
+                if (match != null)
+                {
+                    scores.Add(match.WeightedScore * Math.Max(0.05, match.AffectsStar));
+                }
+            }
+
+            return scores.Count == 0 ? 45 : Math.Max(35, scores.Average());
+        }
+
+        private static void ApplyLegacyComboScore(StarProfile profile, StarState state, string combo, RelationshipDelta delta, bool romanceGate, DateTimeOffset now)
+        {
+            string reason = "legacy deterministic combo " + combo;
+            switch (combo)
+            {
+                case "trust_respect_combo":
+                    ApplyOneStatScore(profile, state, "heart", 55, delta, true, true, now, reason);
+                    ApplyOneStatScore(profile, state, "trust", 70, delta, true, true, now, reason);
                     break;
-                case "Hurt":
+                case "affection_plus_hope":
+                case "private_vulnerability_safety":
+                    ApplyOneStatScore(profile, state, "heart", 70, delta, true, true, now, reason);
+                    ApplyOneStatScore(profile, state, "romance", 40, delta, true, romanceGate, now, reason);
+                    delta.BenaveilInfluence -= 1;
+                    break;
+                case "romantic_spark":
+                    ApplyOneStatScore(profile, state, "romance", 75, delta, true, romanceGate, now, reason);
+                    ApplyOneStatScore(profile, state, "heart", 45, delta, true, true, now, reason);
+                    break;
+                case "cruel_escalation":
+                case "repeated_boundary_pressure":
                     delta.Heart -= 2;
-                    delta.Trust -= 1;
-                    if (romanceMode) delta.Romance -= 1;
+                    delta.Trust -= 2;
+                    delta.Romance -= 1;
+                    delta.BenaveilInfluence += 2;
                     break;
-                case "Irritated":
+                case "wounded_guard":
                     delta.Heart -= 1;
-                    break;
-                case "Bored":
-                    // Boredom should not punish hard, but repeated low-effort turns should not build connection.
-                    delta.Heart -= signal.Score >= 90 ? 1 : 0;
+                    delta.Trust -= 1;
+                    delta.BenaveilInfluence += 1;
                     break;
             }
-
-            delta.BenaveilInfluence += signal.Id == "CreepedOut" || signal.Id == "Unsafe" || signal.Id == "Hurt" ? 1 : 0;
         }
 
-        private static IEnumerable<string> DetectCombos(List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, StarState state)
+        private static void ApplyOneStatScore(StarProfile profile, StarState state, string stat, double score, RelationshipDelta delta, bool allowCashOut, bool gateOpen, DateTimeOffset now, string reason)
+        {
+            if (!gateOpen || Math.Abs(score) < 0.01) return;
+            StarRelationshipStatRule rule = GetStatRule(profile.RelationshipStats, stat);
+            StarRelationshipScoreAccumulator accumulator = GetAccumulator(state, stat);
+            accumulator.Score += score;
+            accumulator.LastScoreAdded = score;
+            accumulator.LastUpdatedAt = now;
+            accumulator.LastReason = reason;
+
+            if (!allowCashOut && accumulator.Score > 0) return;
+
+            int cap = Math.Max(1, rule.MaxPerTurn);
+            double threshold = Math.Max(1, rule.ScorePerPoint);
+            if (accumulator.Score >= threshold)
+            {
+                int points = Math.Min(cap, (int)Math.Floor(accumulator.Score / threshold));
+                accumulator.Score -= points * threshold;
+                accumulator.TotalPositivePoints += points;
+                AddDelta(delta, stat, points);
+            }
+            else if (accumulator.Score <= -threshold)
+            {
+                int points = Math.Min(cap, (int)Math.Floor(Math.Abs(accumulator.Score) / threshold));
+                accumulator.Score += points * threshold;
+                accumulator.TotalNegativePoints += points;
+                AddDelta(delta, stat, -points);
+            }
+        }
+
+        private static StarRelationshipScoreAccumulator GetAccumulator(StarState state, string stat)
+        {
+            if (state.RelationshipScoreAccumulators == null) state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
+            StarRelationshipScoreAccumulator? accumulator = state.RelationshipScoreAccumulators.FirstOrDefault(x => string.Equals(x.Stat, stat, StringComparison.OrdinalIgnoreCase));
+            if (accumulator == null)
+            {
+                accumulator = new StarRelationshipScoreAccumulator { Stat = stat };
+                state.RelationshipScoreAccumulators.Add(accumulator);
+            }
+            return accumulator;
+        }
+
+        private static StarRelationshipStatRule GetStatRule(StarRelationshipStatsConfig stats, string stat)
+        {
+            if (stats == null) stats = new StarRelationshipStatsConfig();
+            switch ((stat ?? string.Empty).ToLowerInvariant())
+            {
+                case "trust": return stats.Trust ?? new StarRelationshipStatRule { ScorePerPoint = 90, MaxPerTurn = 2 };
+                case "romance": return stats.Romance ?? new StarRelationshipStatRule { ScorePerPoint = 120, MaxPerTurn = 1 };
+                default: return stats.Heart ?? new StarRelationshipStatRule { ScorePerPoint = 80, MaxPerTurn = 2 };
+            }
+        }
+
+        private static void AddDelta(RelationshipDelta delta, string stat, int points)
+        {
+            switch ((stat ?? string.Empty).ToLowerInvariant())
+            {
+                case "trust": delta.Trust += points; break;
+                case "romance": delta.Romance += points; break;
+                default: delta.Heart += points; break;
+            }
+        }
+
+        private static IEnumerable<string> DetectProfileCombos(StarProfile profile, StarState state, StarEmotionVectorHistoryEntry current)
+        {
+            foreach (StarEmotionComboRule rule in profile.ComboRules ?? new List<StarEmotionComboRule>())
+            {
+                if (rule == null || string.IsNullOrWhiteSpace(rule.ComboId)) continue;
+                string id = Slugify(rule.ComboId);
+                if (IsComboCoolingDown(id, rule, state)) continue;
+                List<StarEmotionVectorHistoryEntry> window = BuildRecentWindow(state, current, rule.WithinTurns <= 0 ? 4 : rule.WithinTurns);
+                int requiredMatches = 0;
+                foreach (StarEmotionComboRequirement req in rule.Requires ?? new List<StarEmotionComboRequirement>())
+                {
+                    if (FindRequirementMatch(window, req) != null) requiredMatches += 1;
+                }
+
+                int distinct = window
+                    .SelectMany(x => x.Entries ?? new List<StarEmotionVectorHistoryItem>())
+                    .Where(x => x != null && x.Accepted)
+                    .Select(x => x.Emotion)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+
+                bool matchedRequirements = (rule.Requires == null || rule.Requires.Count == 0) ? distinct >= Math.Max(2, rule.MinimumDistinctEmotions) : requiredMatches >= rule.Requires.Count;
+                if (matchedRequirements && distinct >= Math.Max(1, rule.MinimumDistinctEmotions)) yield return id;
+            }
+        }
+
+        private static List<StarEmotionVectorHistoryEntry> BuildRecentWindow(StarState state, StarEmotionVectorHistoryEntry current, int turns)
+        {
+            List<StarEmotionVectorHistoryEntry> window = new List<StarEmotionVectorHistoryEntry> { current };
+            window.AddRange((state.EmotionVectorHistory ?? new List<StarEmotionVectorHistoryEntry>()).Where(x => x != null).Take(Math.Max(1, turns - 1)));
+            return window;
+        }
+
+        private static StarEmotionVectorHistoryItem? FindRequirementMatch(List<StarEmotionVectorHistoryEntry> window, StarEmotionComboRequirement req)
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.Emotion)) return null;
+            return window
+                .SelectMany(x => x.Entries ?? new List<StarEmotionVectorHistoryItem>())
+                .Where(x => x != null && x.Accepted)
+                .Where(x => string.Equals(x.Emotion, req.Emotion, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.IsNullOrWhiteSpace(req.Polarity) || string.Equals(x.Polarity, req.Polarity, StringComparison.OrdinalIgnoreCase) || string.Equals(req.Polarity, "contextual", StringComparison.OrdinalIgnoreCase))
+                .Where(x => x.Confidence >= (req.MinConfidence <= 0 ? 0.70 : req.MinConfidence) && x.Score >= (req.MinScore <= 0 ? 40 : req.MinScore))
+                .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
+                .FirstOrDefault();
+        }
+
+        private static bool IsComboCoolingDown(string id, StarEmotionComboRule rule, StarState state)
+        {
+            if (state.RelationshipCombos == null || rule.CooldownTurns <= 0) return false;
+            RelationshipComboState? prior = state.RelationshipCombos.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (prior == null || prior.LastTriggeredAt == default(DateTimeOffset)) return false;
+            int recentEntries = (state.EmotionUpdateHistory ?? new List<EmotionUpdateHistoryEntry>())
+                .Take(rule.CooldownTurns)
+                .Count(x => x.CreatedAt <= prior.LastTriggeredAt);
+            return prior.Count > 0 && recentEntries > 0;
+        }
+
+        private static IEnumerable<string> DetectLegacySafetyCombos(List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, StarState state)
         {
             bool Has(string id) => positive.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
             bool Neg(string id) => negative.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
@@ -238,17 +492,28 @@ namespace Wds.SixStars.Api.Engine
             if (Neg("Hurt") || Neg("Unsafe")) yield return "wounded_guard";
         }
 
-        private static IEnumerable<string> MergeAndLimitCombos(IEnumerable<string> modelCombos, IEnumerable<string> autoCombos, StarState state, int maxCombos)
+        private static IEnumerable<string> FilterModelCombosToConfiguredRules(IEnumerable<string> modelCombos, StarProfile profile, List<string> legacySafetyCombos)
+        {
+            HashSet<string> allowed = new HashSet<string>((profile.ComboRules ?? new List<StarEmotionComboRule>()).Select(x => Slugify(x.ComboId)), StringComparer.OrdinalIgnoreCase);
+            foreach (string combo in legacySafetyCombos ?? new List<string>()) allowed.Add(Slugify(combo));
+            foreach (string combo in modelCombos ?? Enumerable.Empty<string>())
+            {
+                string id = Slugify(combo);
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                if (allowed.Contains(id) || IsNegativeCombo(id)) yield return id;
+            }
+        }
+
+        private static IEnumerable<string> MergeAndLimitCombos(IEnumerable<string> combos, StarState state, int maxCombos)
         {
             HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string combo in autoCombos.Concat(modelCombos ?? Enumerable.Empty<string>()))
+            foreach (string combo in combos ?? Enumerable.Empty<string>())
             {
                 if (string.IsNullOrWhiteSpace(combo)) continue;
                 string id = Slugify(combo);
                 if (!seen.Add(id)) continue;
-                // Do not farm the same combo every line; after 3+ triggers it must cool down unless it is negative/boundary related.
-                RelationshipComboState? prior = state.RelationshipCombos.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
-                bool negativeCombo = id.Contains("hurt") || id.Contains("wounded") || id.Contains("cruel") || id.Contains("pressure") || id.Contains("guard");
+                RelationshipComboState? prior = state.RelationshipCombos == null ? null : state.RelationshipCombos.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                bool negativeCombo = IsNegativeCombo(id);
                 if (!negativeCombo && prior != null && prior.Count >= 3 && prior.LastTriggeredAt > DateTimeOffset.UtcNow.AddMinutes(-10))
                 {
                     continue;
@@ -258,82 +523,71 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
-        private static void ApplyComboDeltas(RelationshipDelta delta, IEnumerable<string> combos, bool romanceGate)
+        private static void ApplyMajorNegativeSafetyDeltas(RelationshipDelta delta, List<EmotionVectorScore> negative, bool romanceMode)
         {
-            foreach (string combo in combos)
+            foreach (EmotionVectorScore signal in negative)
             {
-                switch (combo)
+                switch (signal.Id)
                 {
-                    case "affection_plus_wisdom":
-                    case "trust_respect_combo":
-                        delta.Heart += 1;
-                        delta.Trust += 1;
+                    case "Disrespected":
+                    case "Pressured":
+                    case "CreepedOut":
+                    case "Unsafe":
+                        delta.Trust -= 1;
+                        delta.Heart -= 1;
+                        if (romanceMode) delta.Romance -= 1;
                         break;
-                    case "affection_plus_hope":
-                    case "private_vulnerability_safety":
-                        delta.Heart += 1;
-                        if (romanceGate) delta.Romance += 1;
-                        delta.BenaveilInfluence -= 1;
-                        break;
-                    case "romantic_spark":
-                        if (romanceGate) delta.Romance += 1;
-                        delta.Heart += 1;
-                        break;
-                    case "cruel_escalation":
-                    case "repeated_boundary_pressure":
-                        delta.Heart -= 2;
-                        delta.Trust -= 2;
-                        delta.Romance -= 1;
-                        delta.BenaveilInfluence += 2;
-                        break;
-                    case "wounded_guard":
+                    case "Hurt":
                         delta.Heart -= 1;
                         delta.Trust -= 1;
-                        delta.BenaveilInfluence += 1;
+                        if (romanceMode && signal.Score >= 90) delta.Romance -= 1;
+                        break;
+                    case "Irritated":
+                        if (signal.Score >= 90) delta.Heart -= 1;
+                        break;
+                    case "Bored":
+                        if (signal.Score >= 92) delta.Heart -= 1;
                         break;
                 }
+
+                if (signal.Id == "CreepedOut" || signal.Id == "Unsafe" || signal.Id == "Hurt") delta.BenaveilInfluence += 1;
             }
         }
 
         private static void ApplyBoundedSuggestedDelta(RelationshipDelta delta, RelationshipDelta suggestion, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos, bool romanceGate)
         {
-            bool hasPositiveSupport = positive.Count > 0 || combos.Any(x => x.Contains("hope") || x.Contains("trust") || x.Contains("affection") || x.Contains("romantic"));
-            bool hasNegativeSupport = negative.Count > 0 || combos.Any(x => x.Contains("hurt") || x.Contains("cruel") || x.Contains("pressure") || x.Contains("guard"));
+            // Heart/Trust/Romance are intentionally not accepted from the model here. The LLM provides vectors and memory;
+            // deterministic Star JSON, accumulators, and combo rules decide the relationship points.
+            bool hasPositiveSupport = positive.Count > 0 || combos.Any(x => !IsNegativeCombo(x));
+            bool hasNegativeSupport = negative.Count > 0 || combos.Any(IsNegativeCombo);
 
             if (hasPositiveSupport)
             {
-                delta.Heart += Math.Max(0, Math.Min(1, suggestion.Heart));
-                delta.Trust += Math.Max(0, Math.Min(1, suggestion.Trust));
-                if (romanceGate) delta.Romance += Math.Max(0, Math.Min(1, suggestion.Romance));
                 delta.BenaveilInfluence += Math.Max(-1, Math.Min(0, suggestion.BenaveilInfluence));
             }
 
             if (hasNegativeSupport)
             {
-                delta.Heart += Math.Min(0, Math.Max(-1, suggestion.Heart));
-                delta.Trust += Math.Min(0, Math.Max(-1, suggestion.Trust));
-                delta.Romance += Math.Min(0, Math.Max(-1, suggestion.Romance));
                 delta.BenaveilInfluence += Math.Max(0, Math.Min(1, suggestion.BenaveilInfluence));
             }
 
-            // The model may suggest tiny connection drift. Deterministic logic still requires support and clamps it heavily.
             if (hasPositiveSupport && suggestion.EmotionalConnectionPercent > 0)
             {
-                delta.EmotionalConnectionPercent += Math.Min(0.35, suggestion.EmotionalConnectionPercent);
+                delta.EmotionalConnectionPercent += Math.Min(0.20, suggestion.EmotionalConnectionPercent);
             }
             if ((hasNegativeSupport || positive.Count == 0) && suggestion.EmotionalConnectionPercent < 0)
             {
-                delta.EmotionalConnectionPercent += Math.Max(-0.75, suggestion.EmotionalConnectionPercent);
+                delta.EmotionalConnectionPercent += Math.Max(-0.60, suggestion.EmotionalConnectionPercent);
             }
         }
 
         private static void ApplyRepeatDamping(RelationshipDelta delta, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos, StarState state)
         {
-            List<EmotionUpdateHistoryEntry> recent = state.EmotionUpdateHistory.Take(3).ToList();
+            List<EmotionUpdateHistoryEntry> recent = (state.EmotionUpdateHistory ?? new List<EmotionUpdateHistoryEntry>()).Take(3).ToList();
             if (recent.Count == 0) return;
 
             int repeatedPositiveSignals = positive.Count(signal => recent.Any(entry => entry.AcceptedPositiveSignals.Any(x => x.StartsWith(signal.Id + "(", StringComparison.OrdinalIgnoreCase))));
-            int repeatedPositiveCombos = combos.Count(combo => recent.Any(entry => entry.AcceptedCombos.Any(x => string.Equals(x, combo, StringComparison.OrdinalIgnoreCase))));
+            int repeatedPositiveCombos = combos.Count(combo => !IsNegativeCombo(combo) && recent.Any(entry => entry.AcceptedCombos.Any(x => string.Equals(x, combo, StringComparison.OrdinalIgnoreCase))));
             if (repeatedPositiveSignals + repeatedPositiveCombos >= 2)
             {
                 delta.Heart = Math.Max(0, delta.Heart - 1);
@@ -341,8 +595,6 @@ namespace Wds.SixStars.Api.Engine
                 delta.Romance = Math.Max(0, delta.Romance - 1);
                 delta.EmotionalConnectionPercent = Math.Min(delta.EmotionalConnectionPercent, 0.20);
             }
-
-            // Negative repeats should still matter; do not damp them. They build caution/hurt succession instead.
         }
 
         private static void ApplyEmotionalConnectionDelta(StarProfile profile, StarInteractionRequest request, StarState state, RelationshipDelta delta, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos)
@@ -354,7 +606,7 @@ namespace Wds.SixStars.Api.Engine
             bool hasIntimatePositive = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 1;
             bool hasMultipleIntimate = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 2;
             bool hasPersonalityMatch = positive.Any(x => IsPersonalityMatchedConnectionSignal(profile.StarId, x.Id) && x.Score >= 80 && x.Confidence >= 0.70);
-            bool hasConnectionCombo = combos.Any(x => x.Contains("romantic") || x.Contains("affection") || x.Contains("vulnerability") || x.Contains("trust"));
+            bool hasConnectionCombo = combos.Any(x => x.Contains("romantic") || x.Contains("affection") || x.Contains("vulnerability") || x.Contains("trust") || x.Contains("tender") || x.Contains("safe"));
             bool strongPlayerEffort = LooksLikeHighEffortIntimateSpeech(request.PlayerText ?? string.Empty);
 
             if (hasMajorNegative)
@@ -371,7 +623,6 @@ namespace Wds.SixStars.Api.Engine
 
             if (!isAlly)
             {
-                // Before ally unlock, the relationship may warm in Heart/Trust, but the deeper girlfriend meter does not build.
                 if (connection > 0) delta.EmotionalConnectionPercent -= 0.25;
                 return;
             }
@@ -392,9 +643,6 @@ namespace Wds.SixStars.Api.Engine
             bool hasHighGoodAttention = positive.Any(x => x.Score >= 85 && x.Confidence >= 0.72);
             bool playerActuallySaidSomething = !string.IsNullOrWhiteSpace(request.PlayerText);
 
-            // Default attention rule: continuing to talk to her should slowly build connection,
-            // and emotionally good attention should build it faster. This is deliberately tiny so
-            // conversation warmth matters without letting shallow spam farm the relationship.
             if (isAlly && hasHighGoodAttention)
             {
                 delta.EmotionalConnectionPercent += positive.Count(x => x.Score >= 85 && x.Confidence >= 0.72) >= 2 ? 0.45 : 0.28;
@@ -413,8 +661,6 @@ namespace Wds.SixStars.Api.Engine
                 return;
             }
 
-            // At-rest drift is now mild. Talking and paying attention should usually be better than silence,
-            // but completely empty/low-signal loops below 50% should not grow forever.
             if (connection > 0 && connection <= 50)
             {
                 delta.EmotionalConnectionPercent -= 0.10;
@@ -460,12 +706,12 @@ namespace Wds.SixStars.Api.Engine
         {
             if (!request.GameContext.RomanceMode) return false;
             if (!state.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return false;
-            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 85 && x.Confidence >= 0.75);
-            if (!hasHighRomanceEmotion) return false;
+            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 78 && x.Confidence >= 0.68);
+            if (!hasHighRomanceEmotion && !state.IsGirlfriend && state.Romance < 4) return false;
 
             string text = (request.PlayerText ?? string.Empty).ToLowerInvariant();
             bool earnedByWords = ContainsAny(text, "poem", "poetry", "beautiful", "gentle", "safe", "trust", "song", "music", "kiss", "touch", "cat hair", "fur", "warm", "miracle", "stars", "heart");
-            bool established = state.Romance > 0 || state.Trust >= 5 || state.Heart >= 5 || state.PositiveSuccessionCount >= 2 || state.EmotionalConnectionPercent >= 10;
+            bool established = state.IsGirlfriend || state.Romance > 0 || state.Trust >= 5 || state.Heart >= 5 || state.PositiveSuccessionCount >= 2 || state.EmotionalConnectionPercent >= 10;
             bool kaeliaCatHook = string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase) && ContainsAny(text, "cat", "cat hair", "fur", "purr", "tail", "ears");
             return earnedByWords || established || kaeliaCatHook;
         }
@@ -485,17 +731,17 @@ namespace Wds.SixStars.Api.Engine
             switch ((starId ?? string.Empty).ToLowerInvariant())
             {
                 case "elusiaa":
-                    return id == "Comforted" || id == "Safe" || id == "Protected" || id == "Trusting" || id == "Tender" || id == "Hopeful" || id == "Wondrous" || id == "Affectionate";
+                    return id == "Comforted" || id == "Safe" || id == "Protected" || id == "Trusting" || id == "Tender" || id == "Hopeful" || id == "Wondrous" || id == "Affectionate" || id == "Sad" || id == "Concerned";
                 case "kaelia":
-                    return id == "Intrigued" || id == "Wondrous" || id == "Hopeful" || id == "Respected" || id == "Trusting" || id == "Tender" || id == "Flattered" || id == "Attracted" || id == "Yearning";
+                    return id == "Intrigued" || id == "Wondrous" || id == "Hopeful" || id == "Respected" || id == "Trusting" || id == "Tender" || id == "Flattered" || id == "Attracted" || id == "Yearning" || id == "Vulnerable";
                 case "khavia":
-                    return id == "Happy" || id == "Playful" || id == "Comforted" || id == "Safe" || id == "Trusting" || id == "Affectionate" || id == "Tender";
+                    return id == "Happy" || id == "Playful" || id == "Comforted" || id == "Safe" || id == "Trusting" || id == "Affectionate" || id == "Tender" || id == "Respected";
                 case "auerlis":
-                    return id == "Happy" || id == "Amused" || id == "Playful" || id == "Hopeful" || id == "Admiring" || id == "Affectionate" || id == "Impassioned";
+                    return id == "Happy" || id == "Amused" || id == "Playful" || id == "Hopeful" || id == "Admiring" || id == "Affectionate" || id == "Impassioned" || id == "Determined";
                 case "maera":
-                    return id == "Protected" || id == "Trusting" || id == "Respected" || id == "Tender" || id == "Attracted" || id == "Yearning" || id == "Vulnerable";
+                    return id == "Protected" || id == "Trusting" || id == "Respected" || id == "Tender" || id == "Attracted" || id == "Yearning" || id == "Vulnerable" || id == "Safe";
                 case "nyxari":
-                    return id == "Safe" || id == "Trusting" || id == "Vulnerable" || id == "Comforted" || id == "Tender" || id == "Hopeful" || id == "Intrigued";
+                    return id == "Safe" || id == "Trusting" || id == "Vulnerable" || id == "Comforted" || id == "Tender" || id == "Hopeful" || id == "Intrigued" || id == "Respected";
                 default:
                     return IsIntimateConnectionSignal(id);
             }
@@ -505,7 +751,7 @@ namespace Wds.SixStars.Api.Engine
         {
             string t = (text ?? string.Empty).ToLowerInvariant();
             int length = t.Count(char.IsLetter);
-            if (ContainsAny(t, "poem", "poetry", "your eyes", "your heart", "miracle", "beautiful", "stars", "sea", "storm", "safe", "trust", "I choose", "I won't leave", "I will stay", "cat hair", "fur", "purr")) return true;
+            if (ContainsAny(t, "poem", "poetry", "your eyes", "your heart", "miracle", "beautiful", "stars", "sea", "storm", "safe", "trust", "i choose", "i won't leave", "i will stay", "cat hair", "fur", "purr")) return true;
             return length >= 90 && (ContainsAny(t, "you", "your") && ContainsAny(t, "heart", "light", "dark", "safe", "trust", "beautiful", "gentle", "hope"));
         }
 
@@ -514,23 +760,88 @@ namespace Wds.SixStars.Api.Engine
             return needles.Any(n => text.IndexOf(n, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
-        private static string BuildSummary(StarState state, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos, RelationshipDelta suggested, RelationshipDelta actual, bool romanceGate)
+        private static void StoreVectorHistory(StarState state, StarEmotionVectorHistoryEntry entry)
         {
-            string pos = positive.Count == 0 ? "none" : string.Join(", ", positive.Select(x => x.ToString()));
-            string neg = negative.Count == 0 ? "none" : string.Join(", ", negative.Select(x => x.ToString()));
+            if (entry == null) return;
+            if (state.EmotionVectorHistory == null) state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+            if (!entry.Entries.Any(x => x.Accepted)) return;
+            state.EmotionVectorHistory.Insert(0, entry);
+            Trim(state.EmotionVectorHistory, 256);
+        }
+
+        private static string BuildSummary(StarState state, StarEmotionVectorHistoryEntry vectorHistory, List<EmotionVectorScore> positive, List<EmotionVectorScore> negative, List<string> combos, RelationshipDelta suggested, RelationshipDelta actual, bool romanceGate, bool enoughHistory)
+        {
+            string pos = positive.Count == 0 ? "none" : string.Join(", ", positive.Take(4).Select(x => x.ToString()));
+            string neg = negative.Count == 0 ? "none" : string.Join(", ", negative.Take(4).Select(x => x.ToString()));
             string combo = combos.Count == 0 ? "none" : string.Join(", ", combos);
+            string acceptedVector = vectorHistory.Entries.Count(x => x.Accepted).ToString(System.Globalization.CultureInfo.InvariantCulture);
             double projectedConnection = Math.Max(0, Math.Min(100, state.EmotionalConnectionPercent + actual.EmotionalConnectionPercent));
             bool projectedReady = (state.IsGirlfriend || (state.IsAlly && projectedConnection >= 85 && state.Heart + actual.Heart >= 20 && state.Trust + actual.Trust >= 15 && state.Romance + actual.Romance >= 12));
             int activeEffectorCount = state.ActiveEffectors == null ? 0 : state.ActiveEffectors.Count(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow));
-            return "Deterministic emotion update: skill=interested_private_potential_partner; met=" + state.IsMet + "; ally=" + state.IsAlly + "; activeEffectors=" + activeEffectorCount
+            string accumulatorSummary = BuildAccumulatorSummary(state);
+            return "Deterministic emotion update: skill=star_specific_vector_scoring; met=" + state.IsMet + "; ally=" + state.IsAlly + "; activeEffectors=" + activeEffectorCount
                 + "; connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%->" + projectedConnection.ToString("0.0") + "%"
                 + "; girlfriendReadyAfter=" + projectedReady
+                + "; highVectorEntries=" + acceptedVector
+                + "; enoughRelevantHistoryForPositivePoints=" + enoughHistory
                 + "; positiveSignals=" + pos
                 + "; negativeSignals=" + neg
                 + "; acceptedCombos=" + combo
+                + "; accumulators=" + accumulatorSummary
                 + "; romanceGate=" + romanceGate
-                + "; suggestedDelta=(H" + suggested.Heart + ",T" + suggested.Trust + ",R" + suggested.Romance + ",B" + suggested.BenaveilInfluence + ",C" + suggested.EmotionalConnectionPercent.ToString("0.00") + ")"
+                + "; modelSuggestedIgnoredForHTR=(H" + suggested.Heart + ",T" + suggested.Trust + ",R" + suggested.Romance + ")"
                 + "; actualDelta=(H" + actual.Heart + ",T" + actual.Trust + ",R" + actual.Romance + ",B" + actual.BenaveilInfluence + ",C" + actual.EmotionalConnectionPercent.ToString("0.00") + ").";
+        }
+
+        private static string BuildVectorEntrySummary(StarEmotionVectorHistoryEntry entry)
+        {
+            List<string> top = entry.Entries
+                .Where(x => x.Accepted)
+                .OrderByDescending(x => Math.Abs(x.HeartScore) + Math.Abs(x.TrustScore) + Math.Abs(x.RomanceScore))
+                .Take(5)
+                .Select(FormatHistoryItem)
+                .ToList();
+            return top.Count == 0 ? "No high-certainty Star-specific emotion entries accepted." : "Accepted Star-specific emotions: " + string.Join(", ", top);
+        }
+
+        private static string FormatHistoryItem(StarEmotionVectorHistoryItem item)
+        {
+            return item.Emotion + "(" + item.Confidence.ToString("0.00") + ":" + item.Score.ToString("0") + ",star=" + item.AffectsStar.ToString("0.00") + ",H/T/R=" + item.HeartScore.ToString("0.0") + "/" + item.TrustScore.ToString("0.0") + "/" + item.RomanceScore.ToString("0.0") + ")";
+        }
+
+        private static string BuildAccumulatorSummary(StarState state)
+        {
+            if (state.RelationshipScoreAccumulators == null || state.RelationshipScoreAccumulators.Count == 0) return "none";
+            return string.Join(", ", state.RelationshipScoreAccumulators
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Stat))
+                .OrderBy(x => x.Stat)
+                .Select(x => x.Stat + "=" + x.Score.ToString("0.0")));
+        }
+
+        private static double GetWeight(StarEmotionInfluenceRule rule, string key)
+        {
+            if (rule == null || rule.StatWeights == null) return 0;
+            return rule.StatWeights.TryGetValue(key, out double value) ? value : 0;
+        }
+
+        private static double GetWeight(StarEmotionComboRule rule, string key)
+        {
+            if (rule == null || rule.StatWeights == null) return 0;
+            return rule.StatWeights.TryGetValue(key, out double value) ? value : 0;
+        }
+
+        private static bool IsNegativeCombo(string combo)
+        {
+            string id = Slugify(combo);
+            return id.Contains("hurt") || id.Contains("wounded") || id.Contains("cruel") || id.Contains("pressure") || id.Contains("guard") || id.Contains("warning") || id.Contains("unsafe") || id.Contains("possessive");
+        }
+
+        private static void NormalizeDeterministicState(StarState state)
+        {
+            if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
+            if (state.EmotionUpdateHistory == null) state.EmotionUpdateHistory = new List<EmotionUpdateHistoryEntry>();
+            if (state.EmotionVectorHistory == null) state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+            if (state.RelationshipScoreAccumulators == null) state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
         }
 
         private static string Slugify(string value)
@@ -550,13 +861,30 @@ namespace Wds.SixStars.Api.Engine
             return value;
         }
 
-        private static void Clamp(RelationshipDelta delta)
+        private static void Clamp(RelationshipDelta delta, StarRelationshipStatsConfig stats)
         {
-            delta.Heart = Math.Max(-4, Math.Min(4, delta.Heart));
-            delta.Trust = Math.Max(-4, Math.Min(4, delta.Trust));
-            delta.Romance = Math.Max(-3, Math.Min(3, delta.Romance));
+            int heartCap = Math.Max(2, stats?.Heart?.MaxPerTurn ?? 2);
+            int trustCap = Math.Max(2, stats?.Trust?.MaxPerTurn ?? 2);
+            int romanceCap = Math.Max(1, stats?.Romance?.MaxPerTurn ?? 1);
+            delta.Heart = Math.Max(-4, Math.Min(heartCap, delta.Heart));
+            delta.Trust = Math.Max(-4, Math.Min(trustCap, delta.Trust));
+            delta.Romance = Math.Max(-3, Math.Min(romanceCap, delta.Romance));
             delta.BenaveilInfluence = Math.Max(-3, Math.Min(3, delta.BenaveilInfluence));
             delta.EmotionalConnectionPercent = Math.Max(-3.0, Math.Min(3.0, delta.EmotionalConnectionPercent));
+        }
+
+        private static void Trim<T>(List<T> list, int maxCount)
+        {
+            if (list == null || list.Count <= maxCount) return;
+            list.RemoveRange(maxCount, list.Count - maxCount);
+        }
+
+        private static string TruncateLocal(string? value, int maxLength)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (cleaned.Length <= maxLength) return cleaned;
+            return cleaned.Substring(0, maxLength).Trim() + "...";
         }
     }
 }

@@ -102,6 +102,12 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Recent deterministic emotion updates used to prevent repeated cheap scoring and to detect longer-term combos.</summary>
         public List<EmotionUpdateHistoryEntry> EmotionUpdateHistory { get; set; } = new List<EmotionUpdateHistoryEntry>();
 
+        /// <summary>Bounded full-vector relationship evidence used only by the deterministic scorer, not by the prompt.</summary>
+        public List<StarEmotionVectorHistoryEntry> EmotionVectorHistory { get; set; } = new List<StarEmotionVectorHistoryEntry>();
+
+        /// <summary>Durable Heart/Trust/Romance score remainders. These let varied high-certainty emotion evidence add up over time.</summary>
+        public List<StarRelationshipScoreAccumulator> RelationshipScoreAccumulators { get; set; } = new List<StarRelationshipScoreAccumulator>();
+
         /// <summary>High-confidence positive emotion totals earned through deterministic emotion scoring.</summary>
         public List<StarEmotionAccumulatedScore> PositiveEmotionTotals { get; set; } = new List<StarEmotionAccumulatedScore>();
 

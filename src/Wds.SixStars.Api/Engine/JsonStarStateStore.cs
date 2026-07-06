@@ -110,6 +110,16 @@ namespace Wds.SixStars.Api.Engine
                 state.ActiveEffectors = new List<StarRelationshipEffector>();
                 changed = true;
             }
+            if (state.EmotionVectorHistory == null)
+            {
+                state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.RelationshipScoreAccumulators == null)
+            {
+                state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
+                changed = true;
+            }
             if (state.TodayState == null)
             {
                 state.TodayState = new StarDailyStateContext();

@@ -20,6 +20,7 @@ namespace Wds.SixStars.Api.Stars
                 {
                     profile.Emotions = StarEmotionMatrix.CreateStandardEmotionSet(profile.StarId);
                 }
+                StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
                 profiles.Add(profile);
             }
 

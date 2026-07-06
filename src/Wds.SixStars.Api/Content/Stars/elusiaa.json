@@ -231,5 +231,612 @@
     "Imported from lower-caves-virethorn-sanctuary.md: Virethorn introduces poisoned water, slimes, goblins, harpies, Elusiaa, Kaelia, and Benaveil-heart decisions.",
     "Imported from star-angel-stories.md: Elusiaa's good angel served a drought valley with a small waterskin and left without praise.",
     "Imported from skill-trees/elusiaa.md: Bond of Light reveals hidden shrines, Stardust Nodes, and relics."
+  ],
+  "relationshipStats": {
+    "heart": {
+      "scorePerPoint": 78,
+      "maxPerTurn": 2
+    },
+    "trust": {
+      "scorePerPoint": 86,
+      "maxPerTurn": 2
+    },
+    "romance": {
+      "scorePerPoint": 125,
+      "maxPerTurn": 1
+    }
+  },
+  "emotionInfluence": [
+    {
+      "emotion": "Happy",
+      "polarity": "positive",
+      "affectsStar": 0.45,
+      "statWeights": {
+        "heart": 0.35,
+        "trust": 0.15,
+        "romance": 0.05
+      },
+      "tags": [
+        "warmth"
+      ]
+    },
+    {
+      "emotion": "Amused",
+      "polarity": "positive",
+      "affectsStar": 0.5,
+      "statWeights": {
+        "heart": 0.38,
+        "trust": 0.12,
+        "romance": 0.06
+      },
+      "tags": [
+        "humor"
+      ]
+    },
+    {
+      "emotion": "Playful",
+      "polarity": "positive",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": 0.4,
+        "trust": 0.15,
+        "romance": 0.12
+      },
+      "tags": [
+        "play"
+      ]
+    },
+    {
+      "emotion": "Comforted",
+      "polarity": "positive",
+      "affectsStar": 0.95,
+      "statWeights": {
+        "heart": 0.8,
+        "trust": 0.45,
+        "romance": 0.2
+      },
+      "tags": [
+        "mercy",
+        "comfort"
+      ]
+    },
+    {
+      "emotion": "Safe",
+      "polarity": "positive",
+      "affectsStar": 0.95,
+      "statWeights": {
+        "heart": 0.6,
+        "trust": 0.8,
+        "romance": 0.14
+      },
+      "tags": [
+        "safety"
+      ]
+    },
+    {
+      "emotion": "Protected",
+      "polarity": "positive",
+      "affectsStar": 0.98,
+      "statWeights": {
+        "heart": 0.72,
+        "trust": 0.72,
+        "romance": 0.1
+      },
+      "tags": [
+        "protect_weak"
+      ]
+    },
+    {
+      "emotion": "Trusting",
+      "polarity": "positive",
+      "affectsStar": 0.95,
+      "statWeights": {
+        "heart": 0.62,
+        "trust": 0.9,
+        "romance": 0.16
+      },
+      "tags": [
+        "trust"
+      ]
+    },
+    {
+      "emotion": "Respected",
+      "polarity": "positive",
+      "affectsStar": 0.88,
+      "statWeights": {
+        "heart": 0.42,
+        "trust": 0.85,
+        "romance": 0.08
+      },
+      "tags": [
+        "restrained_justice"
+      ]
+    },
+    {
+      "emotion": "Admiring",
+      "polarity": "positive",
+      "affectsStar": 0.65,
+      "statWeights": {
+        "heart": 0.65,
+        "trust": 0.35,
+        "romance": 0.14
+      },
+      "tags": [
+        "admiration"
+      ]
+    },
+    {
+      "emotion": "Affectionate",
+      "polarity": "positive",
+      "affectsStar": 0.75,
+      "statWeights": {
+        "heart": 0.75,
+        "trust": 0.35,
+        "romance": 0.35
+      },
+      "tags": [
+        "affection",
+        "romance"
+      ]
+    },
+    {
+      "emotion": "Vulnerable",
+      "polarity": "contextual",
+      "affectsStar": 0.6,
+      "statWeights": {
+        "heart": 0.35,
+        "trust": 0.65,
+        "romance": 0.12
+      },
+      "tags": [
+        "vulnerability"
+      ]
+    },
+    {
+      "emotion": "Hopeful",
+      "polarity": "positive",
+      "affectsStar": 0.75,
+      "statWeights": {
+        "heart": 0.65,
+        "trust": 0.55,
+        "romance": 0.15
+      },
+      "tags": [
+        "hope"
+      ]
+    },
+    {
+      "emotion": "Wondrous",
+      "polarity": "positive",
+      "affectsStar": 0.65,
+      "statWeights": {
+        "heart": 0.55,
+        "trust": 0.3,
+        "romance": 0.1
+      },
+      "tags": [
+        "wonder"
+      ]
+    },
+    {
+      "emotion": "Intrigued",
+      "polarity": "positive",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": 0.3,
+        "trust": 0.28,
+        "romance": 0.06
+      },
+      "tags": [
+        "curiosity"
+      ]
+    },
+    {
+      "emotion": "Impassioned",
+      "polarity": "positive",
+      "affectsStar": 0.62,
+      "statWeights": {
+        "heart": 0.58,
+        "trust": 0.22,
+        "romance": 0.28
+      },
+      "tags": [
+        "passion"
+      ]
+    },
+    {
+      "emotion": "Determined",
+      "polarity": "positive",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": 0.32,
+        "trust": 0.45,
+        "romance": 0.04
+      },
+      "tags": [
+        "resolve"
+      ]
+    },
+    {
+      "emotion": "Concerned",
+      "polarity": "contextual",
+      "affectsStar": 0.7,
+      "statWeights": {
+        "heart": 0.25,
+        "trust": 0.45,
+        "romance": 0.02
+      },
+      "tags": [
+        "discernment"
+      ]
+    },
+    {
+      "emotion": "Confused",
+      "polarity": "contextual",
+      "affectsStar": 0.3,
+      "statWeights": {
+        "heart": 0.05,
+        "trust": 0.08,
+        "romance": 0.0
+      },
+      "tags": [
+        "uncertainty"
+      ]
+    },
+    {
+      "emotion": "Unsure",
+      "polarity": "contextual",
+      "affectsStar": 0.35,
+      "statWeights": {
+        "heart": 0.06,
+        "trust": 0.12,
+        "romance": 0.0
+      },
+      "tags": [
+        "uncertainty"
+      ]
+    },
+    {
+      "emotion": "Frustrated",
+      "polarity": "negative",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": -0.2,
+        "trust": -0.25,
+        "romance": -0.05
+      },
+      "tags": [
+        "friction"
+      ]
+    },
+    {
+      "emotion": "Angry",
+      "polarity": "negative",
+      "affectsStar": 0.88,
+      "statWeights": {
+        "heart": -0.5,
+        "trust": -0.55,
+        "romance": -0.16
+      },
+      "tags": [
+        "vengeance_risk"
+      ]
+    },
+    {
+      "emotion": "Hurt",
+      "polarity": "negative",
+      "affectsStar": 0.82,
+      "statWeights": {
+        "heart": -0.7,
+        "trust": -0.65,
+        "romance": -0.25
+      },
+      "tags": [
+        "wound"
+      ]
+    },
+    {
+      "emotion": "Sad",
+      "polarity": "contextual",
+      "affectsStar": 0.65,
+      "statWeights": {
+        "heart": 0.5,
+        "trust": 0.25,
+        "romance": 0.05
+      },
+      "tags": [
+        "compassionate_sadness"
+      ]
+    },
+    {
+      "emotion": "Melancholy",
+      "polarity": "contextual",
+      "affectsStar": 0.4,
+      "statWeights": {
+        "heart": 0.08,
+        "trust": 0.04,
+        "romance": 0.0
+      },
+      "tags": [
+        "sadness"
+      ]
+    },
+    {
+      "emotion": "Lonely",
+      "polarity": "contextual",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": 0.18,
+        "trust": 0.1,
+        "romance": 0.02
+      },
+      "tags": [
+        "loneliness"
+      ]
+    },
+    {
+      "emotion": "Guilty",
+      "polarity": "contextual",
+      "affectsStar": 0.42,
+      "statWeights": {
+        "heart": 0.05,
+        "trust": 0.1,
+        "romance": 0.0
+      },
+      "tags": [
+        "repentance"
+      ]
+    },
+    {
+      "emotion": "Suspicious",
+      "polarity": "negative",
+      "affectsStar": 0.66,
+      "statWeights": {
+        "heart": -0.12,
+        "trust": -0.55,
+        "romance": -0.1
+      },
+      "tags": [
+        "guarded"
+      ]
+    },
+    {
+      "emotion": "Flattered",
+      "polarity": "positive",
+      "affectsStar": 0.65,
+      "statWeights": {
+        "heart": 0.45,
+        "trust": 0.15,
+        "romance": 0.55
+      },
+      "tags": [
+        "romance"
+      ]
+    },
+    {
+      "emotion": "Attracted",
+      "polarity": "positive",
+      "affectsStar": 0.7,
+      "statWeights": {
+        "heart": 0.34,
+        "trust": 0.1,
+        "romance": 0.9
+      },
+      "tags": [
+        "romance"
+      ]
+    },
+    {
+      "emotion": "Tender",
+      "polarity": "positive",
+      "affectsStar": 0.88,
+      "statWeights": {
+        "heart": 0.86,
+        "trust": 0.46,
+        "romance": 0.34
+      },
+      "tags": [
+        "tender_light"
+      ]
+    },
+    {
+      "emotion": "Yearning",
+      "polarity": "positive",
+      "affectsStar": 0.65,
+      "statWeights": {
+        "heart": 0.3,
+        "trust": 0.08,
+        "romance": 0.85
+      },
+      "tags": [
+        "romance"
+      ]
+    },
+    {
+      "emotion": "Jealous",
+      "polarity": "contextual",
+      "affectsStar": 0.55,
+      "statWeights": {
+        "heart": -0.08,
+        "trust": -0.18,
+        "romance": 0.18
+      },
+      "tags": [
+        "romance",
+        "risk"
+      ]
+    },
+    {
+      "emotion": "Irritated",
+      "polarity": "negative",
+      "affectsStar": 0.6,
+      "statWeights": {
+        "heart": -0.3,
+        "trust": -0.2,
+        "romance": -0.08
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "emotion": "Disrespected",
+      "polarity": "negative",
+      "affectsStar": 0.9,
+      "statWeights": {
+        "heart": -0.7,
+        "trust": -0.95,
+        "romance": -0.35
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "emotion": "Pressured",
+      "polarity": "negative",
+      "affectsStar": 0.95,
+      "statWeights": {
+        "heart": -0.6,
+        "trust": -1.0,
+        "romance": -0.45
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "emotion": "CreepedOut",
+      "polarity": "negative",
+      "affectsStar": 1.0,
+      "statWeights": {
+        "heart": -0.85,
+        "trust": -1.0,
+        "romance": -0.65
+      },
+      "tags": [
+        "boundary"
+      ]
+    },
+    {
+      "emotion": "Bored",
+      "polarity": "negative",
+      "affectsStar": 0.4,
+      "statWeights": {
+        "heart": -0.1,
+        "trust": -0.04,
+        "romance": -0.03
+      },
+      "tags": [
+        "low_effort"
+      ]
+    },
+    {
+      "emotion": "Unsafe",
+      "polarity": "negative",
+      "affectsStar": 1.0,
+      "statWeights": {
+        "heart": -1.0,
+        "trust": -1.0,
+        "romance": -0.75
+      },
+      "tags": [
+        "boundary",
+        "danger"
+      ]
+    }
+  ],
+  "comboRules": [
+    {
+      "comboId": "merciful_sadness_comfort",
+      "description": "The player responds to pain with sadness, mercy, and comfort instead of judgment.",
+      "withinTurns": 4,
+      "minimumDistinctEmotions": 3,
+      "requires": [
+        {
+          "emotion": "Sad",
+          "minConfidence": 0.7,
+          "minScore": 40,
+          "context": "compassionate"
+        },
+        {
+          "emotion": "Comforted",
+          "minConfidence": 0.7,
+          "minScore": 35
+        },
+        {
+          "emotion": "Hopeful",
+          "minConfidence": 0.66,
+          "minScore": 35
+        }
+      ],
+      "bonusMultiplier": 1.35,
+      "statWeights": {
+        "heart": 1.0,
+        "trust": 0.7,
+        "romance": 0.15
+      },
+      "cooldownTurns": 3
+    },
+    {
+      "comboId": "restrained_justice_safety",
+      "description": "The player sees possible evil but chooses patient correction, safety, and restrained justice.",
+      "withinTurns": 5,
+      "minimumDistinctEmotions": 3,
+      "requires": [
+        {
+          "emotion": "Concerned",
+          "minConfidence": 0.62,
+          "minScore": 35
+        },
+        {
+          "emotion": "Protected",
+          "minConfidence": 0.7,
+          "minScore": 45
+        },
+        {
+          "emotion": "Respected",
+          "minConfidence": 0.7,
+          "minScore": 40
+        }
+      ],
+      "bonusMultiplier": 1.3,
+      "statWeights": {
+        "heart": 0.85,
+        "trust": 1.0,
+        "romance": 0.1
+      },
+      "cooldownTurns": 3
+    },
+    {
+      "comboId": "warm_mercy_trust",
+      "description": "The player consistently makes Elusiaa feel safe, comforted, and trusting.",
+      "withinTurns": 4,
+      "minimumDistinctEmotions": 3,
+      "requires": [
+        {
+          "emotion": "Safe",
+          "minConfidence": 0.7,
+          "minScore": 40
+        },
+        {
+          "emotion": "Comforted",
+          "minConfidence": 0.7,
+          "minScore": 40
+        },
+        {
+          "emotion": "Trusting",
+          "minConfidence": 0.7,
+          "minScore": 40
+        }
+      ],
+      "bonusMultiplier": 1.25,
+      "statWeights": {
+        "heart": 0.75,
+        "trust": 0.95,
+        "romance": 0.2
+      },
+      "cooldownTurns": 3
+    }
   ]
 }

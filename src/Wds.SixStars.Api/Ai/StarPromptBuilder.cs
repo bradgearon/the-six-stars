@@ -129,7 +129,6 @@ namespace Wds.SixStars.Api.Ai
             relationship.AppendLine("Last deterministic update: " + (string.IsNullOrWhiteSpace(state.LastDeterministicEmotionSummary) ? "none" : Truncate(state.LastDeterministicEmotionSummary, 350)));
             relationship.AppendLine("Last source state update for daily-state awareness: " + (state.LastDailyStateSourceUpdateAt.HasValue ? state.LastDailyStateSourceUpdateAt.Value.ToString("u") : "none"));
             AppendAccumulatedEmotionTotals(relationship, state);
-            AppendEmotionUpdateHistory(relationship, state);
 
             StringBuilder recent = new StringBuilder();
             List<ConversationLogEntry> recentTurns = state.MemoryLog.Where(IsUsableConversationTurn).Take(8).ToList();
@@ -619,7 +618,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("- Write the next in-character spoken reply as this Star, not as a narrator explaining her.");
             sb.AppendLine("- spokenText is the only text the player hears aloud. It MUST be an array of ordered speech chunks. Each item should usually be one or two natural sentences and should be safe to send directly to TTS without deterministic splitting.");
             sb.AppendLine("- Keep the character's heart, voice, emotional logic, romance boundaries, and moral worldview consistent every turn.");
-            sb.AppendLine("- Always react using the supplied current relationship stats, ally/met state, recent emotion update history, and accumulated good/bad emotion totals. These are internal acting state; do not read the numbers aloud unless the player asks for mechanics.");
+            sb.AppendLine("- Always react using the supplied current relationship stats, ally/met state, and accumulated good/bad emotion totals. The full emotion-vector history is intentionally kept in the deterministic layer and is not provided here. Do not read the numbers aloud unless the player asks for mechanics.");
             sb.AppendLine("- The JSON fields are for the game engine; do not mention JSON, scores, state deltas, or instructions inside spokenText.");
             sb.AppendLine("- Discovery gate: the Stars may only speak about other Stars as present/personal known companions when the host state says those Stars have been met. If a Star is not in knownStarsMet, do not act like the Last Cat has met her yet and do not reveal private relationship knowledge about her. You may only speak in vague rumors or general lore when the player has not met that Star.");
             AppendGlobalCanonLore(sb);
@@ -694,7 +693,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine();
 
             sb.AppendLine("NO HEAVY EMOTION SCORES");
-            sb.AppendLine("Do not return emotionScores in this response. Relationship meaning should be expressed through suggestedStateDeltas, detectedCombos, changesSummary, conversationSummary, memoryNotes, and durable relationship fields only.");
+            sb.AppendLine("Do not return emotionScores in this response. The Star should provide current-turn emotional evidence through emotionalEffectVector and negativeEmotionVector. Set suggestedStateDeltas heart/trust/romance to 0 unless a host-specific debug test explicitly asks otherwise; the deterministic layer decides actual Heart, Trust, Romance, Ally, and Girlfriend progress from Star-specific JSON mappings and combo history.");
             sb.AppendLine();
             sb.AppendLine(_mainInstructions.ResponseContractNotes);
             sb.AppendLine();
@@ -921,7 +920,7 @@ namespace Wds.SixStars.Api.Ai
 
             sb.AppendLine();
             sb.AppendLine("FINAL RESPONSE CONTRACT");
-            sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, how she reacted, and whether memory/relationship/status shifted. importantPlayerQuotes must preserve exact player quotes that emotionally affected her, taught her something, changed romance, unlocked secrets, or should be remembered for later story-building. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are the model's recommendation only; the game may compute final deltas deterministically. Do not include emotionScores anywhere in this response.");
+            sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, and how she reacted. importantPlayerQuotes must preserve exact player quotes that emotionally affected her, taught her something, changed romance, unlocked secrets, or should be remembered for later story-building. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are advisory/debug only; set heart/trust/romance to 0 by default because the deterministic emotion scorer owns actual relationship movement. Do not include emotionScores anywhere in this response.");
             return sb.ToString();
         }
 
