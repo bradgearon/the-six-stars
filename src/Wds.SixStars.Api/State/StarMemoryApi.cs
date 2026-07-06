@@ -82,6 +82,7 @@ namespace Wds.SixStars.Api.State
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? request.StarId : state.StarId;
             state.InteractionCount += 1;
             state.LastInteractionAt = now;
+            state.LastDailyStateSourceUpdateAt = now;
 
             RelationshipDelta sourceDelta = _options.AcceptModelSuggestedDeltas ? request.SuggestedDelta : request.ActualDelta;
             RelationshipDelta applied = new RelationshipDelta
@@ -306,6 +307,15 @@ namespace Wds.SixStars.Api.State
 
             AddUnique(state.RelationshipEvents, request.RelationshipEvents ?? new List<string>(), _options.MaxRelationshipEvents);
             Trim(state.RelationshipEvents, _options.MaxRelationshipEvents);
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        public async Task<StarState> SetStarDailyStateContextAsync(string sessionId, string starId, StarDailyStateContext context, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            state.TodayState = context ?? new StarDailyStateContext();
             await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
             return state;
         }

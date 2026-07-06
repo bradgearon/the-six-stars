@@ -209,6 +209,11 @@ public sealed class MobileBridgeDispatchResult
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string DailyStateSlotId { get; set; } = string.Empty;
+    public string DailyStateLocalDate { get; set; } = string.Empty;
+    public DateTimeOffset? DailyStateGeneratedAt { get; set; }
+    public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateXml { get; set; } = string.Empty;
     public StarState? State { get; set; }
     public MobileBridgeDispatchEvent? Event { get; set; }
 }
@@ -244,6 +249,11 @@ public sealed class MobileBridgeDispatchEvent
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string DailyStateSlotId { get; set; } = string.Empty;
+    public string DailyStateLocalDate { get; set; } = string.Empty;
+    public DateTimeOffset? DailyStateGeneratedAt { get; set; }
+    public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateXml { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
 
     public static MobileBridgeDispatchEvent FromResult(MobileBridgeDispatchCommand command, MobileBridgeDispatchResult result)
@@ -277,6 +287,11 @@ public sealed class MobileBridgeDispatchEvent
             PhotoAttached = result.PhotoAttached,
             PhotoSummary = result.PhotoSummary,
             PhotoError = result.PhotoError,
+            DailyStateSlotId = !string.IsNullOrWhiteSpace(result.DailyStateSlotId) ? result.DailyStateSlotId : (state?.TodayState?.SlotId ?? string.Empty),
+            DailyStateLocalDate = !string.IsNullOrWhiteSpace(result.DailyStateLocalDate) ? result.DailyStateLocalDate : (state?.TodayState?.LocalDate ?? string.Empty),
+            DailyStateGeneratedAt = result.DailyStateGeneratedAt ?? state?.TodayState?.GeneratedAt,
+            DailyStateSummary = !string.IsNullOrWhiteSpace(result.DailyStateSummary) ? result.DailyStateSummary : (state?.TodayState?.Summary ?? string.Empty),
+            DailyStateXml = !string.IsNullOrWhiteSpace(result.DailyStateXml) ? result.DailyStateXml : (state?.TodayState?.Xml ?? string.Empty),
             TopAffectedEmotions = result.TopAffectedEmotions.Count > 0
                 ? result.TopAffectedEmotions.ToList()
                 : (state?.LastTopAffectedEmotions?.ToList() ?? new List<TopAffectedEmotion>())

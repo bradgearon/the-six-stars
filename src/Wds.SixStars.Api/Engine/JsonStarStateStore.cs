@@ -110,6 +110,11 @@ namespace Wds.SixStars.Api.Engine
                 state.ActiveEffectors = new List<StarRelationshipEffector>();
                 changed = true;
             }
+            if (state.TodayState == null)
+            {
+                state.TodayState = new StarDailyStateContext();
+                changed = true;
+            }
             if (state.IsAlly && !state.IsMet)
             {
                 state.IsMet = true;

@@ -49,6 +49,12 @@ namespace Wds.SixStars.Api.Models
         public string LastNegativeEmotionVector { get; set; } = string.Empty;
         public string LastDeterministicEmotionSummary { get; set; } = string.Empty;
 
+        /// <summary>Current generated daily XML state pointer used to answer questions like what she is doing today.</summary>
+        public StarDailyStateContext TodayState { get; set; } = new StarDailyStateContext();
+
+        /// <summary>When the durable Star relationship/memory state last changed and could influence the next scheduled daily state refresh.</summary>
+        public DateTimeOffset? LastDailyStateSourceUpdateAt { get; set; }
+
         /// <summary>Top three strongest emotion vector entries from the last settled background update.</summary>
         public List<TopAffectedEmotion> LastTopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
 

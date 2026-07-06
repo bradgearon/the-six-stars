@@ -12,6 +12,7 @@ Last remembered reply from {{ StarDisplayName }}: {{ LastRememberedReply }}
 {{ StoryHistoryContext }}
 {{ RecentConversationTurns }}
 Latest screen/vision update: {{ LatestScreenOneLine }}
+{{ TodayStarStateContext }}
 
 {{ TaskSpecificGuidance }}
 

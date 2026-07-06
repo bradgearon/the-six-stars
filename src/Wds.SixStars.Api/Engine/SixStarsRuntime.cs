@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.State;
@@ -26,6 +27,7 @@ namespace Wds.SixStars.Api.Engine
         private CancellationTokenSource? _backgroundStoryGenerationCts;
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
+        private readonly StarDailyStateService? _dailyStateService;
         private static readonly object StoryRandomGate = new object();
         private static readonly Random StoryRandom = new Random();
 
@@ -33,6 +35,8 @@ namespace Wds.SixStars.Api.Engine
         public event EventHandler<Exception>? BackgroundAnalysisFailed;
         public event EventHandler<StarInteractionResponse>? StoryGenerationCompleted;
         public event EventHandler<Exception>? StoryGenerationFailed;
+        public event EventHandler<StarDailyStateUpdatedEventArgs>? DailyStateUpdated;
+        public event EventHandler<Exception>? DailyStateUpdateFailed;
 
         public SixStarsRuntime(
             IStarProfileProvider profileProvider,
@@ -53,7 +57,8 @@ namespace Wds.SixStars.Api.Engine
             int recentHistoryCount = 10,
             int maxMemoryLogEntries = 160,
             int maxImportantQuotes = 80,
-            int maxMemoryNotes = 160)
+            int maxMemoryNotes = 160,
+            DailyStarStateOptions? dailyStateOptions = null)
             : this(
                 profileProvider,
                 agent,
@@ -67,7 +72,8 @@ namespace Wds.SixStars.Api.Engine
                 }),
                 screenContextStore,
                 recentScreenCount,
-                recentHistoryCount)
+                recentHistoryCount,
+                dailyStateOptions)
         {
         }
 
@@ -78,7 +84,8 @@ namespace Wds.SixStars.Api.Engine
             IStarMemoryApi memoryApi,
             IScreenContextStore? screenContextStore = null,
             int recentScreenCount = 5,
-            int recentHistoryCount = 10)
+            int recentHistoryCount = 10,
+            DailyStarStateOptions? dailyStateOptions = null)
         {
             _profileProvider = profileProvider;
             _agent = agent;
@@ -87,6 +94,19 @@ namespace Wds.SixStars.Api.Engine
             _screenContextStore = screenContextStore;
             _recentScreenCount = Math.Max(1, recentScreenCount);
             _recentHistoryCount = Math.Max(1, recentHistoryCount);
+
+            DailyStarStateOptions dailyOptions = dailyStateOptions ?? new DailyStarStateOptions();
+            if (dailyOptions.Enabled && agent is IStarDailyStateGenerator dailyGenerator)
+            {
+                _dailyStateService = new StarDailyStateService(
+                    profileProvider,
+                    memoryApi,
+                    dailyGenerator,
+                    new StarDailyStateFileStore(dailyOptions.StateRoot),
+                    dailyOptions);
+                _dailyStateService.DailyStateUpdated += (_, args) => DailyStateUpdated?.Invoke(this, args);
+                _dailyStateService.DailyStateUpdateFailed += (_, ex) => DailyStateUpdateFailed?.Invoke(this, ex);
+            }
         }
 
         public Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -108,6 +128,22 @@ namespace Wds.SixStars.Api.Engine
                     return _pendingBackgroundAnalysis.Count > 0 || _backgroundAnalysisQueue.CurrentCount == 0;
                 }
             }
+        }
+
+        public void StartDailyStateBackgroundUpdates(string sessionId)
+        {
+            _dailyStateService?.Start(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId);
+        }
+
+        public void StopDailyStateBackgroundUpdates()
+        {
+            _dailyStateService?.Stop();
+        }
+
+        public Task<StarDailyStateRecord?> GetCurrentDailyStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            if (_dailyStateService == null) return Task.FromResult<StarDailyStateRecord?>(null);
+            return _dailyStateService.ReadCurrentAsync(sessionId, starId, cancellationToken);
         }
 
         public Task<SixStarsSaveData> ExportSaveDataAsync(string sessionId, CancellationToken cancellationToken)
@@ -208,6 +244,7 @@ namespace Wds.SixStars.Api.Engine
             await PopulateKnownStarContextAsync(request, cancellationToken).ConfigureAwait(false);
             StarMemorySnapshot snapshot = await _memoryApi.GetStarMemorySnapshotAsync(request.SessionId, request.StarId, _recentHistoryCount, cancellationToken).ConfigureAwait(false);
             StarState state = snapshot.State;
+            await AttachDailyStateContextForRequestAsync(request, state, cancellationToken).ConfigureAwait(false);
 
             StarRequestIntentResult? requestIntent = await ClassifyAndPrepareRequestModeAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
 
@@ -261,6 +298,52 @@ namespace Wds.SixStars.Api.Engine
             return response;
         }
 
+
+        private async Task AttachDailyStateContextForRequestAsync(StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
+        {
+            if (request == null || request.GameContext == null) return;
+            StarDailyStateRecord? record = null;
+            if (_dailyStateService != null)
+            {
+                try
+                {
+                    record = await _dailyStateService.EnsureCurrentAsync(request.SessionId, request.StarId, state, "selected Star request prompt injection", cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    request.GameContext.RecentEvents.Add("Daily Star state refresh failed before this request: " + ex.Message);
+                    DailyStateUpdateFailed?.Invoke(this, ex);
+                }
+            }
+
+            if (record == null && state.TodayState != null && state.TodayState.IsAvailable)
+            {
+                request.GameContext.Flags["todayStarStateXml"] = state.TodayState.Xml ?? string.Empty;
+                request.GameContext.Flags["todayStarStateSummary"] = state.TodayState.Summary ?? string.Empty;
+                request.GameContext.Flags["todayStarStateGeneratedAt"] = state.TodayState.GeneratedAt?.ToString("o") ?? string.Empty;
+                request.GameContext.Flags["todayStarStateSlotId"] = state.TodayState.SlotId ?? string.Empty;
+                request.GameContext.Flags["todayStarStateLocalDate"] = state.TodayState.LocalDate ?? string.Empty;
+                request.GameContext.Flags["todayStarStateFilePath"] = state.TodayState.FilePath ?? string.Empty;
+                return;
+            }
+
+            if (record != null && !string.IsNullOrWhiteSpace(record.XmlContent))
+            {
+                string xml = record.XmlContent;
+                if (xml.Length > 12000) xml = xml.Substring(0, 12000) + "\n<!-- daily-star-state truncated for prompt -->";
+                request.GameContext.Flags["todayStarStateXml"] = xml;
+                request.GameContext.Flags["todayStarStateSummary"] = record.Summary ?? string.Empty;
+                request.GameContext.Flags["todayStarStateGeneratedAt"] = record.GeneratedAt.ToString("o");
+                request.GameContext.Flags["todayStarStateSlotId"] = record.SlotId ?? string.Empty;
+                request.GameContext.Flags["todayStarStateLocalDate"] = record.LocalDate ?? string.Empty;
+                request.GameContext.Flags["todayStarStateFilePath"] = record.FilePath ?? string.Empty;
+                request.GameContext.RecentEvents.Add("Today's generated Star state XML is attached for " + request.StarId + " from slot " + record.SlotId + ".");
+            }
+        }
 
         private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
         {

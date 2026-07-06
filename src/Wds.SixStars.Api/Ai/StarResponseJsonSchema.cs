@@ -81,6 +81,43 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_story_intent_classifier", schema);
         }
 
+        public static object CreateDailyStarStateResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[]
+                    {
+                        "starId", "situationSummary", "feelingsSummary", "whatSheIsDoingToday", "currentDesires",
+                        "relationshipPosture", "recentPeopleSeenSummary", "recentEventsSummary", "privateSecretsOrHooks",
+                        "promptUseSummary", "moodTags", "recentPeopleSeen", "recentEvents", "todayIntentions", "conversationHooks"
+                    }
+                },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty() },
+                        { "situationSummary", StringProperty(900) },
+                        { "feelingsSummary", StringProperty(900) },
+                        { "whatSheIsDoingToday", StringProperty(900) },
+                        { "currentDesires", StringProperty(700) },
+                        { "relationshipPosture", StringProperty(700) },
+                        { "recentPeopleSeenSummary", StringProperty(700) },
+                        { "recentEventsSummary", StringProperty(900) },
+                        { "privateSecretsOrHooks", StringProperty(700) },
+                        { "promptUseSummary", StringProperty(420) },
+                        { "moodTags", StringArray(10) },
+                        { "recentPeopleSeen", StringArray(12) },
+                        { "recentEvents", StringArray(12) },
+                        { "todayIntentions", StringArray(12) },
+                        { "conversationHooks", StringArray(12) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_daily_star_state", schema);
+        }
+
         public static object CreateInformationNeedSelectionResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

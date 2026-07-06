@@ -15,6 +15,7 @@ using System.Windows;
 using System.Windows.Input;
 using Wds.SixStars.Api.Agents;
 using Wds.SixStars.Api.Ai;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
@@ -72,6 +73,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _debugJson = string.Empty;
     private string _status = "Ready.";
     private string _topAffectedEmotionsText = "Top emotions: none yet.";
+    private string _todayStarStateText = "Today: no daily Star state yet.";
     private string _speechStatus = "Voice input stopped. Click Start Listen to enable amplitude VAD and real Whisper transcription.";
     private string _voiceInputStatus = "Amplitude VAD idle. No audio captured yet.";
     private string _microphoneCaptureStatus = "Microphone not started.";
@@ -150,7 +152,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             recentHistoryCount: recentHistoryForPrompt,
             maxMemoryLogEntries: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_LOG_ENTRIES"), _appConfig.Memory.MaxMemoryLogEntries),
             maxImportantQuotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_IMPORTANT_QUOTES"), _appConfig.Memory.MaxImportantQuotes),
-            maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes));
+            maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes),
+            dailyStateOptions: CreateDailyStarStateOptions());
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
@@ -249,6 +252,29 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Status = "Story generation failed after thinking phrase: " + ex.Message;
         });
+        _runtime.DailyStateUpdated += (_, args) => OnUiThread(() =>
+        {
+            TodayStarStateText = FormatTodayStarState(args.Record.SlotId, args.Record.Summary);
+            Status = "Daily Star state refreshed for " + args.Record.StarId + " (" + args.Record.SlotId + "): " + args.Record.Summary;
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "DailyStarStateUpdated",
+                SessionId = args.Record.SessionId,
+                StarId = args.Record.StarId,
+                SelectedStarId = SelectedStarId,
+                Message = args.Record.Summary,
+                DailyStateSlotId = args.Record.SlotId,
+                DailyStateLocalDate = args.Record.LocalDate,
+                DailyStateGeneratedAt = args.Record.GeneratedAt,
+                DailyStateSummary = args.Record.Summary,
+                DailyStateXml = args.Record.XmlContent
+            });
+        });
+        _runtime.DailyStateUpdateFailed += (_, ex) => OnUiThread(() =>
+        {
+            Status = "Daily Star state refresh failed: " + ex.Message;
+        });
+        _runtime.StartDailyStateBackgroundUpdates(DefaultSessionId);
 
         _speechOptions = new SpeechToStarOptions
         {
@@ -557,6 +583,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         set => SetProperty(ref _topAffectedEmotionsText, value);
     }
 
+    public string TodayStarStateText
+    {
+        get => _todayStarStateText;
+        set => SetProperty(ref _todayStarStateText, value);
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void ConfigureLocalModelEnvironment()
@@ -628,6 +660,30 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Environment.GetEnvironmentVariable("LM_API_TOKEN"),
             Environment.GetEnvironmentVariable("LM_STUDIO_API_KEY"),
             configuredApiKey);
+    }
+
+    private DailyStarStateOptions CreateDailyStarStateOptions()
+    {
+        DailyStarStateConfig cfg = _appConfig.DailyStarState ?? new DailyStarStateConfig();
+        DailyStarStateOptions options = new DailyStarStateOptions
+        {
+            Enabled = cfg.Enabled,
+            GenerateForAllStars = cfg.GenerateForAllStars,
+            RefreshSelectedStarOnRequest = cfg.RefreshSelectedStarOnRequest,
+            StateRoot = string.IsNullOrWhiteSpace(cfg.StateRoot) ? "state/daily-star-state" : cfg.StateRoot,
+            PollSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_DAILY_STATE_POLL_SECONDS"), cfg.PollSeconds),
+            MaxXmlCharsForPrompt = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_DAILY_STATE_MAX_XML_CHARS"), cfg.MaxXmlCharsForPrompt),
+            StarIds = cfg.StarIds == null ? new List<string>() : cfg.StarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList(),
+            RefreshSlots = cfg.RefreshSlots == null || cfg.RefreshSlots.Count == 0
+                ? DailyStarStateOptions.CreateDefaultSlots()
+                : cfg.RefreshSlots.Select(x => new DailyStarStateScheduleSlot
+                {
+                    SlotId = x.SlotId,
+                    StartsAt = x.StartsAt,
+                    RefreshBefore = x.RefreshBefore
+                }).ToList()
+        };
+        return options;
     }
 
     private IStarAgent CreateStarAgent()
@@ -2569,6 +2625,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     _isLoadingSelectedStarState = false;
                 }
                 TopAffectedEmotionsText = FormatTopAffectedEmotions(state.LastTopAffectedEmotions);
+                TodayStarStateText = FormatTodayStarState(state.TodayState?.SlotId, state.TodayState?.Summary);
                 Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + "). " + TopAffectedEmotionsText;
             });
         }
@@ -2932,6 +2989,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }));
     }
 
+    private static string FormatTodayStarState(string? slotId, string? summary)
+    {
+        if (string.IsNullOrWhiteSpace(summary)) return "Today: no daily Star state yet.";
+        string slot = string.IsNullOrWhiteSpace(slotId) ? string.Empty : " [" + slotId.Trim() + "]";
+        string text = summary.Trim();
+        if (text.Length > 220) text = text.Substring(0, 220) + "...";
+        return "Today" + slot + ": " + text;
+    }
+
     private static byte[] CopyBytes(byte[]? source)
     {
         if (source == null || source.Length == 0) return Array.Empty<byte>();
@@ -2949,6 +3015,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             StopMobileBridgeServer("App shutting down.");
             _mobileBridgeServer?.Dispose();
             _mobileBridgeRuntimeGate.Dispose();
+            _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _operationController.Dispose();
             _interruptionManager.Dispose();

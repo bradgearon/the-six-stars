@@ -454,6 +454,11 @@ public sealed partial class MainViewModel
             PhotoAttached = response.PhotoAttached,
             PhotoSummary = response.PhotoSummary,
             PhotoError = response.PhotoError,
+            DailyStateSlotId = FirstNonEmpty(response.DailyStateSlotId, state.TodayState?.SlotId),
+            DailyStateLocalDate = FirstNonEmpty(response.DailyStateLocalDate, state.TodayState?.LocalDate),
+            DailyStateGeneratedAt = response.DailyStateGeneratedAt ?? state.TodayState?.GeneratedAt,
+            DailyStateSummary = FirstNonEmpty(response.DailyStateSummary, state.TodayState?.Summary),
+            DailyStateXml = FirstNonEmpty(response.DailyStateXml, state.TodayState?.Xml),
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList()
         };
     }
@@ -470,6 +475,12 @@ public sealed partial class MainViewModel
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
             State = state,
+            DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
+            DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
+            DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
+            DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
+            DailyStateXml = state.TodayState?.Xml ?? string.Empty,
+            TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
             Message = message
         };
 
@@ -489,6 +500,11 @@ public sealed partial class MainViewModel
             EmotionalConnectionPercent = state.EmotionalConnectionPercent,
             IsGirlfriendReady = state.IsGirlfriendReady,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
+            DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
+            DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
+            DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
+            DailyStateXml = state.TodayState?.Xml ?? string.Empty,
             Message = message
         });
         return result;
@@ -515,6 +531,11 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
                 TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
+                DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
+                DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
+                DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
+                DailyStateXml = state.TodayState?.Xml ?? string.Empty,
                 Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
             });
         }
@@ -537,6 +558,12 @@ public sealed partial class MainViewModel
             emotionalConnectionPercent = state.EmotionalConnectionPercent,
             isGirlfriendReady = state.IsGirlfriendReady,
             topAffectedEmotions = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>(),
+            todayState = state.TodayState,
+            dailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
+            dailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
+            dailyStateGeneratedAt = state.TodayState?.GeneratedAt,
+            dailyStateSummary = state.TodayState?.Summary ?? string.Empty,
+            dailyStateXml = state.TodayState?.Xml ?? string.Empty,
             interactionCount = state.InteractionCount
         };
     }
@@ -824,7 +851,7 @@ public sealed partial class MainViewModel
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice stream reserved", "The thinking phrase and generated story will share stream=" + sharedStoryVoiceStream.StreamId + " so Android does not cut a word when the full story arrives."));
             }
 
-            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request.RequestType, transcript, starResponse);
+            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse);
 
             OnUiThread(() => AppendMobileBridgeVoiceDebug("Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio));
 
@@ -1228,13 +1255,29 @@ public sealed partial class MainViewModel
         }
     }
 
-    private MobileBridgeResponse CreateMobileResponse(MobileBridgeRequest request, RequestType requestType, string transcript, StarInteractionResponse response)
+    private static string GetFlag(StarInteractionRequest request, string key)
     {
+        if (request != null && request.GameContext != null && request.GameContext.Flags != null && request.GameContext.Flags.TryGetValue(key, out string? value))
+        {
+            return value ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    private static DateTimeOffset? TryParseDateTimeOffset(string value)
+    {
+        if (DateTimeOffset.TryParse(value, out DateTimeOffset parsed)) return parsed;
+        return null;
+    }
+
+    private MobileBridgeResponse CreateMobileResponse(MobileBridgeRequest mobileRequest, StarInteractionRequest runtimeRequest, string transcript, StarInteractionResponse response)
+    {
+        RequestType requestType = runtimeRequest?.RequestType ?? ParseMobileRequestType(mobileRequest.RequestType);
         return new MobileBridgeResponse
         {
             Ok = true,
             Source = "android-mobile-bridge",
-            StarId = response.StarId ?? request.StarId,
+            StarId = response.StarId ?? mobileRequest.StarId,
             RequestType = requestType.ToString(),
             Transcript = transcript ?? string.Empty,
             SpokenText = response.SpokenText ?? string.Empty,
@@ -1249,7 +1292,7 @@ public sealed partial class MainViewModel
             EmotionalConnectionDelta = response.StateDeltas.EmotionalConnectionPercent,
             EmotionalConnectionAfter = response.EmotionalConnectionPercentAfter,
             IsGirlfriendReadyAfter = response.IsGirlfriendReadyAfter,
-            VoiceRequested = request.ReturnAudio,
+            VoiceRequested = mobileRequest.ReturnAudio,
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
             StoryId = response.StoryId ?? string.Empty,
             StoryTitle = response.StoryTitle ?? string.Empty,
@@ -1260,11 +1303,16 @@ public sealed partial class MainViewModel
             StoryMarkdownReady = !string.IsNullOrWhiteSpace(response.StoryMarkdown),
             StoryAutoplayPlanned = _storySpeechAdapter.ShouldUseStoryAutoplay(response),
             StoryChunkCount = _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown),
-            PhotoAttached = HasMobilePhoto(request),
-            PhotoSummary = TryGetLatestPhotoSummary(response, request),
+            PhotoAttached = HasMobilePhoto(mobileRequest),
+            PhotoSummary = TryGetLatestPhotoSummary(response, mobileRequest),
             PhotoError = TryGetLatestPhotoError(response),
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
-            VoiceMessage = request.ReturnAudio
+            DailyStateSlotId = GetFlag(runtimeRequest, "todayStarStateSlotId"),
+            DailyStateLocalDate = GetFlag(runtimeRequest, "todayStarStateLocalDate"),
+            DailyStateGeneratedAt = TryParseDateTimeOffset(GetFlag(runtimeRequest, "todayStarStateGeneratedAt")),
+            DailyStateSummary = GetFlag(runtimeRequest, "todayStarStateSummary"),
+            DailyStateXml = GetFlag(runtimeRequest, "todayStarStateXml"),
+            VoiceMessage = mobileRequest.ReturnAudio
                 ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
                 : "Phone voice was not requested."
         };
@@ -1481,13 +1529,19 @@ public sealed partial class MainViewModel
             AppendMobileBridgeVoiceDebug("Story markdown ready", (response.StarId ?? "Star") + " chunks=" + _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown) + ", chars=" + (response.StoryMarkdown?.Length ?? 0));
         });
 
+        StarInteractionRequest generatedStoryRuntimeRequest = new StarInteractionRequest
+        {
+            StarId = response.StarId ?? SelectedStarId,
+            RequestType = RequestType.Story,
+            SessionId = "android-phone-dev"
+        };
         MobileBridgeResponse mobileResponse = CreateMobileResponse(new MobileBridgeRequest
         {
             StarId = response.StarId ?? SelectedStarId,
             RequestType = "Story",
             ReturnAudio = true,
             SessionId = "android-phone-dev"
-        }, RequestType.Story, string.Empty, response);
+        }, generatedStoryRuntimeRequest, string.Empty, response);
 
         MobileVoiceStreamScope? sharedStoryVoiceStream = TakePendingMobileStoryVoiceStream(out Task? thinkingVoiceTask);
         try

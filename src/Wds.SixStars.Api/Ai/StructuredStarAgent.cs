@@ -7,12 +7,13 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Engine;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer
+    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -160,6 +161,31 @@ namespace Wds.SixStars.Api.Ai
                     RankedNeeds = foregroundVector == null ? new List<InformationNeedVectorItem>() : foregroundVector.Take(9).ToList()
                 };
             }
+        }
+
+        public async Task<StarDailyStateModelResponse> GenerateDailyStateAsync(StarDailyStateGenerationRequest request, CancellationToken cancellationToken)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            StarProfile profile = request.Profile ?? throw new ArgumentNullException(nameof(request.Profile));
+            StarState state = request.State ?? new StarState { StarId = profile.StarId };
+
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending DAILY Star state refresh request for " + profile.StarId + " slot " + request.SlotId + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildDailyStarStateMessages(request),
+                StarResponseJsonSchema.CreateDailyStarStateResponseFormat(),
+                _reviewMaxTokens,
+                "daily-star-state-refresh",
+                cancellationToken).ConfigureAwait(false);
+
+            StarDailyStateModelResponse? model = JsonSerializer.Deserialize<StarDailyStateModelResponse>(ExtractJson(json), _jsonOptions);
+            if (model == null) throw new InvalidOperationException("Daily Star state generator returned empty JSON.");
+            model.StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId;
+            model.MoodTags = CleanList(model.MoodTags, 10);
+            model.RecentPeopleSeen = CleanList(model.RecentPeopleSeen, 12);
+            model.RecentEvents = CleanList(model.RecentEvents, 12);
+            model.TodayIntentions = CleanList(model.TodayIntentions, 12);
+            model.ConversationHooks = CleanList(model.ConversationHooks, 12);
+            return model;
         }
 
         public async Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
@@ -822,6 +848,16 @@ namespace Wds.SixStars.Api.Ai
                 System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] JSON parsing failed but raw LLM content will be used instead of mock data: {ex.Message}");
                 return BuildSalvagedModelResponse(rawContent, profile, request, state, ex.Message);
             }
+        }
+
+        private static List<string> CleanList(IEnumerable<string>? values, int maxItems)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
         }
 
         private static bool LooksLikeStoryRequest(string? text)

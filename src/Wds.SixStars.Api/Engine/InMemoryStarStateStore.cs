@@ -70,6 +70,7 @@ namespace Wds.SixStars.Api.Engine
         private static void NormalizeState(StarState state)
         {
             if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
+            if (state.TodayState == null) state.TodayState = new StarDailyStateContext();
             if (state.IsAlly) state.IsMet = true;
             if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {

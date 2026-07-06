@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
@@ -100,6 +101,94 @@ namespace Wds.SixStars.Api.Ai
             {
                 new ChatMessage("system", system.ToString()),
                 new ChatMessage("user", user.ToString())
+            };
+        }
+
+        public IReadOnlyList<ChatMessage> BuildDailyStarStateMessages(StarDailyStateGenerationRequest request)
+        {
+            StarProfile profile = request.Profile;
+            StarState state = request.State;
+
+            StringBuilder globalCanon = new StringBuilder();
+            AppendGlobalCanonLore(globalCanon);
+
+            StringBuilder starCard = new StringBuilder();
+            starCard.AppendLine("Star: " + profile.DisplayName);
+            starCard.AppendLine("Element: " + profile.Element);
+            starCard.AppendLine("Domain: " + profile.Domain);
+            starCard.AppendLine("Core quote: " + profile.CoreQuote);
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) starCard.AppendLine("Personality: " + profile.PersonalityShort);
+            if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) starCard.AppendLine("Backstory: " + Truncate(profile.BackstorySummary, 800));
+            if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) starCard.AppendLine("Complete background: " + Truncate(profile.CompleteBackgroundStory, 1200));
+            AppendPrivateRomanceProfile(starCard, profile);
+            AppendList(starCard, "Friends and contacts", profile.FriendsAndContacts.Take(12).ToList());
+
+            StringBuilder relationship = new StringBuilder();
+            relationship.AppendLine(BuildRelationshipStatus(state));
+            relationship.AppendLine("Met=" + state.IsMet + "; Ally=" + state.IsAlly + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + "; girlfriendReady=" + state.IsGirlfriendReady + ".");
+            relationship.AppendLine("Last deterministic update: " + (string.IsNullOrWhiteSpace(state.LastDeterministicEmotionSummary) ? "none" : Truncate(state.LastDeterministicEmotionSummary, 350)));
+            relationship.AppendLine("Last source state update for daily-state awareness: " + (state.LastDailyStateSourceUpdateAt.HasValue ? state.LastDailyStateSourceUpdateAt.Value.ToString("u") : "none"));
+            AppendAccumulatedEmotionTotals(relationship, state);
+            AppendEmotionUpdateHistory(relationship, state);
+
+            StringBuilder recent = new StringBuilder();
+            List<ConversationLogEntry> recentTurns = state.MemoryLog.Where(IsUsableConversationTurn).Take(8).ToList();
+            if (recentTurns.Count == 0)
+            {
+                recent.AppendLine("No recent usable conversation turns yet.");
+            }
+            else
+            {
+                int i = 1;
+                foreach (ConversationLogEntry entry in recentTurns)
+                {
+                    recent.AppendLine("- Turn " + i + " at " + entry.CreatedAt.ToString("u") + ": player=" + QuoteInline(Truncate(entry.PlayerText, 180)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 220)) + "; summary=" + Truncate(entry.Summary, 220));
+                    i++;
+                }
+            }
+
+            StringBuilder memory = new StringBuilder();
+            memory.AppendLine("ConversationSummary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none" : Truncate(state.ConversationSummary, 900)));
+            AppendList(memory, "Important player quotes", state.ImportantPlayerQuotes.Take(16).ToList());
+            AppendList(memory, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(16).ToList());
+            AppendRememberedMarkers(memory, state, 16);
+            AppendList(memory, "Relationship events", state.RelationshipEvents.Take(16).ToList());
+            if (state.StoryHistory.Count > 0)
+            {
+                memory.AppendLine("Stories told recently:");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(8))
+                {
+                    memory.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
+                }
+            }
+
+            string previousXml = request.PreviousRecord == null || string.IsNullOrWhiteSpace(request.PreviousRecord.XmlContent)
+                ? "none"
+                : Truncate(request.PreviousRecord.XmlContent, 4000);
+
+            Dictionary<string, string> systemData = new Dictionary<string, string>
+            {
+                { "StarDisplayName", profile.DisplayName },
+                { "GlobalCanonLore", globalCanon.ToString().TrimEnd() }
+            };
+            Dictionary<string, string> userData = new Dictionary<string, string>
+            {
+                { "StarDisplayName", profile.DisplayName },
+                { "SessionId", request.SessionId ?? string.Empty },
+                { "LocalDate", request.LocalDate ?? string.Empty },
+                { "SlotId", request.SlotId ?? string.Empty },
+                { "LocalNow", request.LocalNow.ToString("F") },
+                { "StarActingCard", starCard.ToString().TrimEnd() },
+                { "RelationshipContext", relationship.ToString().TrimEnd() },
+                { "RecentConversationTurns", recent.ToString().TrimEnd() },
+                { "DurableMemoryContext", memory.ToString().TrimEnd() },
+                { "PreviousDailyStateXml", previousXml }
+            };
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("daily_state_system.sbn", systemData)),
+                new ChatMessage("user", _templates.Render("daily_state_user.sbn", userData))
             };
         }
 
@@ -336,6 +425,9 @@ namespace Wds.SixStars.Api.Ai
             AppendAccumulatedEmotionTotals(relationship, state);
             AppendConnectionFlirtGuidance(relationship, profile, state);
 
+            StringBuilder todayStateContext = new StringBuilder();
+            AppendTodayStateContext(todayStateContext, request);
+
             StringBuilder task = new StringBuilder();
             if (request.RequestType == RequestType.Story)
             {
@@ -405,12 +497,39 @@ namespace Wds.SixStars.Api.Ai
                 { "StoryHistoryContext", storyHistory.ToString().TrimEnd() },
                 { "RecentConversationTurns", recentTurns.ToString().TrimEnd() },
                 { "LatestScreenOneLine", BuildLatestScreenOneLine(request.RecentScreenCaptures) },
+                { "TodayStarStateContext", todayStateContext.ToString().TrimEnd() },
                 { "TaskSpecificGuidance", task.ToString().TrimEnd() },
                 { "ForegroundContractHeading", request.RequestType == RequestType.Story ? "STORY FOREGROUND CONTRACT" : "FAST SPEECH CONTRACT" },
                 { "ForegroundContract", contract.ToString().TrimEnd() }
             };
 
             return _templates.Render("speech_user.sbn", data);
+        }
+
+        private static void AppendTodayStateContext(StringBuilder sb, StarInteractionRequest request)
+        {
+            string xml = string.Empty;
+            string summary = string.Empty;
+            string generatedAt = string.Empty;
+            string slotId = string.Empty;
+            if (request.GameContext != null && request.GameContext.Flags != null)
+            {
+                request.GameContext.Flags.TryGetValue("todayStarStateXml", out xml);
+                request.GameContext.Flags.TryGetValue("todayStarStateSummary", out summary);
+                request.GameContext.Flags.TryGetValue("todayStarStateGeneratedAt", out generatedAt);
+                request.GameContext.Flags.TryGetValue("todayStarStateSlotId", out slotId);
+            }
+
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                sb.AppendLine("TODAY STAR STATE XML: none yet. If the player asks what you are up to, answer from your profile, relationship state, and recent history without pretending to know a generated daily schedule.");
+                return;
+            }
+
+            sb.AppendLine("TODAY STAR STATE XML");
+            sb.AppendLine("GeneratedAt=" + generatedAt + "; Slot=" + slotId + "; Summary=" + Truncate(summary, 300));
+            sb.AppendLine(xml.Trim());
+            sb.AppendLine("Use this current-day XML quietly when the player asks what you are doing, how you feel today, who you have seen, what has happened recently, what you want, or what your current situation is. Do not mention XML unless the player asks about system internals.");
         }
 
         private static void AppendStoryModeSystemContext(StringBuilder sb, StarProfile profile)

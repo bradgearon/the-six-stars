@@ -1,0 +1,35 @@
+DAILY STAR STATE REFRESH
+Star: {{ StarDisplayName }}
+SessionId: {{ SessionId }}
+LocalDate: {{ LocalDate }}
+SlotId: {{ SlotId }}
+LocalNow: {{ LocalNow }}
+
+STAR ACTING CARD
+{{ StarActingCard }}
+
+RELATIONSHIP / EMOTION STATE
+{{ RelationshipContext }}
+
+RECENT CONVERSATION TURNS
+{{ RecentConversationTurns }}
+
+DURABLE MEMORY / MARKERS / STORIES
+{{ DurableMemoryContext }}
+
+PREVIOUS DAILY STATE XML
+{{ PreviousDailyStateXml }}
+
+Write the new current-day state as compact JSON fields. This is not a spoken reply.
+Guidelines:
+- situationSummary: one compact paragraph about where she is emotionally and narratively right now.
+- feelingsSummary: what she currently feels toward the Last Cat, herself, the other Stars, and the world.
+- whatSheIsDoingToday: a lore-based answer to "what are you up to today?" for this slot.
+- currentDesires: what she wants today, including small desires and deeper Star desires.
+- relationshipPosture: how close, guarded, playful, flirty, careful, or distant she should be based on state.
+- recentPeopleSeenSummary and recentPeopleSeen: include only people/Stars/creatures supported by met/ally/recent state.
+- recentEventsSummary and recentEvents: summarize recent conversation/game events, not technical parser notes.
+- privateSecretsOrHooks: secrets or hooks she might reveal only if relationship/emotional state supports it.
+- promptUseSummary: one line explaining how future requests should use this state.
+- moodTags, todayIntentions, conversationHooks: short strings useful for prompt injection and UI/game debugging.
+Return JSON only.

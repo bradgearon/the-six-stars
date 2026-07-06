@@ -16,6 +16,7 @@ namespace Wds.SixStars.Ui.Configuration
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
         public MobileBridgeConfig MobileBridge { get; set; } = new MobileBridgeConfig();
+        public DailyStarStateConfig DailyStarState { get; set; } = new DailyStarStateConfig();
     }
 
 
@@ -34,6 +35,30 @@ namespace Wds.SixStars.Ui.Configuration
         public bool SpeakResponsesOnDesktop { get; set; } = false;
     }
 
+
+    public sealed class DailyStarStateConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public bool GenerateForAllStars { get; set; } = true;
+        public bool RefreshSelectedStarOnRequest { get; set; } = true;
+        public string StateRoot { get; set; } = "state/daily-star-state";
+        public int PollSeconds { get; set; } = 180;
+        public int MaxXmlCharsForPrompt { get; set; } = 12000;
+        public List<string> StarIds { get; set; } = new List<string>();
+        public List<DailyStarStateSlotConfig> RefreshSlots { get; set; } = new List<DailyStarStateSlotConfig>
+        {
+            new DailyStarStateSlotConfig { SlotId = "morning", StartsAt = "00:00", RefreshBefore = "10:00" },
+            new DailyStarStateSlotConfig { SlotId = "midday", StartsAt = "10:00", RefreshBefore = "15:00" },
+            new DailyStarStateSlotConfig { SlotId = "night", StartsAt = "15:00", RefreshBefore = "19:00" }
+        };
+    }
+
+    public sealed class DailyStarStateSlotConfig
+    {
+        public string SlotId { get; set; } = string.Empty;
+        public string StartsAt { get; set; } = string.Empty;
+        public string RefreshBefore { get; set; } = string.Empty;
+    }
 
     public sealed class LocalModelsConfig
     {

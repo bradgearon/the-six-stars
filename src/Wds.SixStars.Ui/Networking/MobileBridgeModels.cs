@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Wds.SixStars.Api.Models;
 
@@ -64,6 +65,11 @@ public sealed class MobileBridgeResponse
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string DailyStateSlotId { get; set; } = string.Empty;
+    public string DailyStateLocalDate { get; set; } = string.Empty;
+    public DateTimeOffset? DailyStateGeneratedAt { get; set; }
+    public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateXml { get; set; } = string.Empty;
     public List<string> Notes { get; } = new List<string>();
 }
 

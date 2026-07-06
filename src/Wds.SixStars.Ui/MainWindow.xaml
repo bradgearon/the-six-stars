@@ -173,6 +173,7 @@
             <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
             <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Width="140" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
             <TextBlock Text="{Binding TopAffectedEmotionsText}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#664A7A" FontWeight="SemiBold" DockPanel.Dock="Left" />
+            <TextBlock Text="{Binding TodayStarStateText}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#3C6F66" FontWeight="SemiBold" DockPanel.Dock="Left" />
             <TextBlock Text="{Binding Status}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
         </DockPanel>
 

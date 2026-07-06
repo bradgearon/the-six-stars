@@ -91,6 +91,7 @@ public final class MainActivity extends Activity {
     private boolean selectedStarIsMet;
     private boolean selectedStarIsAlly;
     private String currentTopAffectedEmotions = "Top emotions: none yet.";
+    private String currentDailyStarState = "Today: no daily Star state yet.";
     private long lastBridgeEventSequence;
     private boolean bridgeEventsPrimed;
     private File lastVoiceAudioFile;
@@ -554,6 +555,8 @@ public final class MainActivity extends Activity {
             handleStoryBridgeEvent(event, type, seq, starId, message);
         } else if (isTopEmotionBridgeEvent(type)) {
             applyTopAffectedEmotionsObject(event, type);
+        } else if (isDailyStateBridgeEvent(type)) {
+            applyDailyStateObject(event, type);
         } else if (isStateBridgeEvent(type)) {
             applyStarStateObject(event, type);
         }
@@ -576,6 +579,25 @@ public final class MainActivity extends Activity {
     private boolean isTopEmotionBridgeEvent(String type) {
         return "TopAffectedEmotionsChanged".equalsIgnoreCase(type)
                 || "EmotionUpdateSettled".equalsIgnoreCase(type);
+    }
+
+    private boolean isDailyStateBridgeEvent(String type) {
+        return "DailyStarStateUpdated".equalsIgnoreCase(type);
+    }
+
+    private void applyDailyStateObject(JSONObject state, String status) {
+        String starId = optStringEither(state, "starId", "StarId", selectedStarName());
+        if (!starId.equalsIgnoreCase(selectedStarName())) return;
+        String slot = optStringEither(state, "dailyStateSlotId", "DailyStateSlotId", "");
+        String summary = optStringEither(state, "dailyStateSummary", "DailyStateSummary", "");
+        if (summary.length() == 0) summary = optStringEither(state, "message", "Message", "");
+        if (summary.length() == 0) summary = "daily Star state refreshed";
+        currentDailyStarState = "Today" + (slot.length() > 0 ? " [" + slot + "]" : "") + ": " + clip(summary, 220);
+        if (starStateText != null) {
+            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
+            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + " — " + status);
+        }
+        appendVoiceDebug("Daily Star state refreshed", currentDailyStarState);
     }
 
     private boolean isPhotoBridgeEvent(String type) {
@@ -641,6 +663,8 @@ public final class MainActivity extends Activity {
         boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;
+        String daily = extractDailyStateLine(state);
+        if (daily.length() > 0) currentDailyStarState = daily;
         updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
     }
 
@@ -651,7 +675,8 @@ public final class MainActivity extends Activity {
         if (top.length() == 0) top = optStringEither(state, "message", "Message", "Top emotions: none yet.");
         currentTopAffectedEmotions = top;
         if (starStateText != null) {
-            starStateText.setText(starStateText.getText().toString().split("\nTop emotions:")[0] + "\n" + currentTopAffectedEmotions + " — " + status);
+            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
+            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + " — " + status);
         }
         appendVoiceDebug("Emotion vector settled", currentTopAffectedEmotions);
     }
@@ -662,8 +687,22 @@ public final class MainActivity extends Activity {
         if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
         if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
         if (starStateText != null) {
-            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions);
+            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState);
         }
+    }
+
+    private String extractDailyStateLine(JSONObject json) {
+        String slot = optStringEither(json, "dailyStateSlotId", "DailyStateSlotId", "");
+        String summary = optStringEither(json, "dailyStateSummary", "DailyStateSummary", "");
+        if (summary.length() == 0) {
+            JSONObject todayState = optJsonObjectEither(json, "todayState", "TodayState");
+            if (todayState != null) {
+                slot = optStringEither(todayState, "slotId", "SlotId", slot);
+                summary = optStringEither(todayState, "summary", "Summary", "");
+            }
+        }
+        if (summary.length() == 0) return "";
+        return "Today" + (slot.length() > 0 ? " [" + slot + "]" : "") + ": " + clip(summary, 220);
     }
 
     private void selectStarInSpinner(String starId) {
@@ -937,7 +976,14 @@ public final class MainActivity extends Activity {
                 String topEmotions = formatTopAffectedEmotions(optJsonArrayEither(json, "topAffectedEmotions", "TopAffectedEmotions"));
                 if (topEmotions.length() > 0) {
                     currentTopAffectedEmotions = topEmotions;
-                    if (starStateText != null) starStateText.setText(starStateText.getText().toString().split("\nTop emotions:")[0] + "\n" + currentTopAffectedEmotions);
+                }
+                String dailyLine = extractDailyStateLine(json);
+                if (dailyLine.length() > 0) {
+                    currentDailyStarState = dailyLine;
+                }
+                if (starStateText != null && (topEmotions.length() > 0 || dailyLine.length() > 0)) {
+                    String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
+                    starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState);
                 }
 
                 String visibleResponse = storyMarkdown.length() > 0 ? storyMarkdown : (starOutput.length() > 0 ? starOutput : spoken);
@@ -1372,6 +1418,13 @@ public final class MainActivity extends Activity {
         wav.write(header.array());
         wav.write(pcm);
         return wav.toByteArray();
+    }
+
+    private static JSONObject optJsonObjectEither(JSONObject object, String camel, String pascal) {
+        if (object == null) return null;
+        JSONObject value = object.optJSONObject(camel);
+        if (value != null) return value;
+        return object.optJSONObject(pascal);
     }
 
     private static JSONArray optJsonArrayEither(JSONObject object, String camel, String pascal) {
