@@ -1056,10 +1056,12 @@ namespace Wds.SixStars.Api.Ai
             }
 
             response.EmotionScores = response.EmotionScores
-                .Where(x => x.Value != null)
+                .Where(x => x.Value != null && !string.IsNullOrWhiteSpace(x.Key))
+                .GroupBy(x => x.Key.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.Value.Score * Math.Max(0.01, x.Value.Confidence)).First())
                 .OrderByDescending(x => x.Value.Score * Math.Max(0.01, x.Value.Confidence))
                 .Take(Math.Max(1, maxCount))
-                .ToDictionary(x => x.Key, x => x.Value);
+                .ToDictionary(x => x.Key, x => x.Value, StringComparer.OrdinalIgnoreCase);
         }
     }
 }

@@ -24,6 +24,7 @@ using Wds.SixStars.Api.Runtime;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Speech;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.State;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Ui.Audio;
@@ -56,6 +57,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SpeechInterruptionManager _interruptionManager;
     private readonly SixStarsRuntimeOperationController _operationController;
     private readonly MobileBridgeDispatcher _mobileBridgeDispatcher = new MobileBridgeDispatcher();
+    private readonly StarStorySpeechAdapter _storySpeechAdapter = new StarStorySpeechAdapter();
     private readonly bool _useStreamingTts;
     private readonly StringBuilder _llmDebugLog = new StringBuilder();
 
@@ -69,6 +71,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _starOutput = string.Empty;
     private string _debugJson = string.Empty;
     private string _status = "Ready.";
+    private string _topAffectedEmotionsText = "Top emotions: none yet.";
     private string _speechStatus = "Voice input stopped. Click Start Listen to enable amplitude VAD and real Whisper transcription.";
     private string _voiceInputStatus = "Amplitude VAD idle. No audio captured yet.";
     private string _microphoneCaptureStatus = "Microphone not started.";
@@ -230,7 +233,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 response.StateDeltas.Romance,
                 response.StateDeltas.BenaveilInfluence,
                 response.StateDeltas.EmotionalConnectionPercent);
-            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
+            TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
+            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%. " + TopAffectedEmotionsText;
+            PublishMobileBridgeTopEmotionUpdate(response);
             DebugJson = _llmDebugLog.ToString()
                 + "\n================ BACKGROUND DETERMINISTIC EMOTION UPDATE ================\n"
                 + CreateEnhancedDebugOutput(new { backgroundUpdate = true, starId = response.StarId }, response);
@@ -544,6 +549,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _status;
         set => SetProperty(ref _status, value);
+    }
+
+    public string TopAffectedEmotionsText
+    {
+        get => _topAffectedEmotionsText;
+        set => SetProperty(ref _topAffectedEmotionsText, value);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -1038,6 +1049,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
+            if (IsMobileBridgeStoryResponse(response))
+            {
+                await HandleGeneratedMobileStoryResponseAsync(response).ConfigureAwait(false);
+                return;
+            }
+
             // The first preprogrammed "thinking of a story" line may still be playing when the
             // story LLM finishes. Wait for that short line to leave the normal speech path before
             // starting the actual generated story, so audio never overlaps.
@@ -1177,18 +1194,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool ShouldUseStoryAutoplayPrefetch(StarInteractionResponse response)
     {
-        if (response == null) return false;
-        if (string.IsNullOrWhiteSpace(response.StoryMarkdown)) return false;
-        if (string.IsNullOrWhiteSpace(response.SpokenText) && (response.SpokenParts == null || response.SpokenParts.Count == 0)) return false;
         if (_storyAutoplayPrefetchStreamingGenerator == null && _storyAutoplayPrefetchVoiceGenerator == null) return false;
-
-        // Only use the custom prefetch path when there is at least one cached story chunk after
-        // the current one. Normal one-off Star replies should continue through the existing voice pipeline.
-        return TryGetNextNonEmptyStoryChunkFromMarkdown(
-            response.StoryMarkdown,
-            Math.Max(0, response.StoryPartIndex + 1),
-            out _,
-            out _);
+        return _storySpeechAdapter.ShouldUseStoryAutoplay(response);
     }
 
     private async Task SpeakStoryAutoplayWithPrefetchAsync(StarInteractionResponse firstResponse, CancellationToken cancellationToken)
@@ -1221,7 +1228,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             string markdown = string.IsNullOrWhiteSpace(_activeStoryMarkdown) ? currentResponse.StoryMarkdown : _activeStoryMarkdown;
             int startChunkIndex = Math.Max(0, currentResponse.StoryPartIndex + 1);
 
-            if (TryGetNextNonEmptyStoryChunkFromMarkdown(markdown, startChunkIndex, out int actualChunkIndex, out string nextChunk))
+            if (_storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(markdown, startChunkIndex, out int actualChunkIndex, out string nextChunk))
             {
                 if (actualChunkIndex != startChunkIndex)
                 {
@@ -2200,7 +2207,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return false;
         }
 
-        if (!TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int actualChunkIndex, out string nextChunk))
+        if (!_storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int actualChunkIndex, out string nextChunk))
         {
             OnUiThread(() =>
             {
@@ -2249,19 +2256,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private StarInteractionResponse CreateLocalStoryContinuationResponse(string markdownChunk, int chunkIndex)
     {
-        string cleanChunk = CleanStoryChunkForPrompt(markdownChunk);
-        bool finishedAfterThisChunk = !TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, chunkIndex + 1, out _, out _);
-        VoiceDirective voice = CloneVoiceDirective(_activeStoryVoiceDirective);
-        if (string.IsNullOrWhiteSpace(voice.DeliveryInstructions))
-        {
-            voice.DeliveryInstructions = "Continue the same story narration naturally. Keep the breath, tone, and emotional continuity from the previous chunk.";
-        }
-        else if (!voice.DeliveryInstructions.Contains("Continue the same story narration", StringComparison.OrdinalIgnoreCase))
-        {
-            voice.DeliveryInstructions = voice.DeliveryInstructions.Trim() + " Continue the same story narration naturally, without a recap or setup phrase.";
-        }
-
-        StarInteractionResponse response = new StarInteractionResponse
+        StarInteractionResponse source = new StarInteractionResponse
         {
             StarId = string.IsNullOrWhiteSpace(_activeStoryStarId) ? SelectedStarId : _activeStoryStarId,
             StoryId = _activeStoryId,
@@ -2269,33 +2264,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             StoryKind = _activeStoryKind,
             StoryMarkdown = _activeStoryMarkdown,
             StorySummary = _activeStorySummary,
-            StoryPartIndex = Math.Max(0, chunkIndex),
-            StoryIsFinished = finishedAfterThisChunk,
-            EmotionalPurpose = "Local cached story playback; no LLM continuation request.",
-            EmotionalEffectVector = string.Empty,
-            VoiceDirective = voice,
-            SuggestedStateDeltas = RelationshipDelta.Zero(),
-            StateDeltas = RelationshipDelta.Zero(),
-            ConversationSummary = "Continuing cached story narration from markdown chunk " + Math.Max(0, chunkIndex) + ".",
-            ChangesSummary = "Story autoplay advanced locally without a new LLM call."
+            VoiceDirective = CloneVoiceDirective(_activeStoryVoiceDirective)
         };
-        response.SetSpokenParts(SplitStoryChunkForSpeech(cleanChunk));
-        response.Debug.DetectedIntent = "StoryAutoplayLocalChunk";
-        response.Debug.Notes.Add("Local story autoplay used cached storyMarkdown chunk " + Math.Max(0, chunkIndex) + "; no LLM request was sent.");
-        response.UnityEvents.Add(new UnityEventEnvelope
-        {
-            Type = "StoryAutoplayChunk",
-            Target = response.StarId,
-            Data =
-            {
-                { "storyId", response.StoryId ?? string.Empty },
-                { "storyTitle", response.StoryTitle ?? string.Empty },
-                { "storyPartIndex", response.StoryPartIndex.ToString() },
-                { "storyIsFinished", response.StoryIsFinished.ToString() },
-                { "source", "cached-story-markdown" }
-            }
-        });
-        return response;
+        return _storySpeechAdapter.CreateLocalStoryChunkResponse(source, markdownChunk, chunkIndex);
     }
 
     private static string[] SplitStoryChunkForSpeech(string chunk)
@@ -2460,7 +2431,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         if (response.StoryKind != StoryKind.None) _activeStoryKind = response.StoryKind;
         if (response.VoiceDirective != null) _activeStoryVoiceDirective = CloneVoiceDirective(response.VoiceDirective);
         if (response.StoryPartIndex >= 0) _nextStoryPartIndex = Math.Max(_nextStoryPartIndex + 1, response.StoryPartIndex + 1);
-        bool hasNextCachedChunk = TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int nextNonEmptyIndex, out _);
+        bool hasNextCachedChunk = _storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int nextNonEmptyIndex, out _);
         if (hasNextCachedChunk && nextNonEmptyIndex != _nextStoryPartIndex)
         {
             System.Diagnostics.Debug.WriteLine($"[StoryAutoplay] Next cached story passage is chunk {nextNonEmptyIndex}; chunk {_nextStoryPartIndex} or later empty chunks will be skipped.");
@@ -2597,7 +2568,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     _isLoadingSelectedStarState = false;
                 }
-                Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + ").";
+                TopAffectedEmotionsText = FormatTopAffectedEmotions(state.LastTopAffectedEmotions);
+                Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + "). " + TopAffectedEmotionsText;
             });
         }
         catch (Exception ex)
@@ -2910,6 +2882,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 acceptedPositiveEmotionSignals = response.AcceptedPositiveEmotionSignals,
                 acceptedNegativeEmotionSignals = response.AcceptedNegativeEmotionSignals,
                 acceptedRelationshipCombos = response.AcceptedRelationshipCombos,
+                topAffectedEmotions = response.TopAffectedEmotions,
                 storyKind = response.StoryKind,
                 storyTitle = response.StoryTitle,
                 storyId = response.StoryId,
@@ -2935,6 +2908,28 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
 
         return JsonSerializer.Serialize(debugData, _jsonOptions);
+    }
+
+    private static string FormatTopAffectedEmotions(IEnumerable<TopAffectedEmotion>? emotions)
+    {
+        List<TopAffectedEmotion> list = (emotions ?? Enumerable.Empty<TopAffectedEmotion>())
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EmotionId))
+            .OrderByDescending(x => x.WeightedScore)
+            .ThenByDescending(x => x.Score)
+            .Take(3)
+            .ToList();
+
+        if (list.Count == 0)
+        {
+            return "Top emotions: none yet.";
+        }
+
+        return "Top emotions: " + string.Join(" | ", list.Select(x =>
+        {
+            string sign = string.Equals(x.Valence, "negative", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
+            string accepted = x.AcceptedForStateUpdate ? "*" : string.Empty;
+            return x.EmotionId + " " + sign + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00") + accepted;
+        }));
     }
 
     private static byte[] CopyBytes(byte[]? source)

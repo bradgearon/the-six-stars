@@ -8,6 +8,7 @@ namespace Wds.SixStars.Api.Screen
         public string SessionId { get; set; } = string.Empty;
         public ScreenImageCapture Capture { get; set; } = new ScreenImageCapture();
         public bool IncludeBase64InSummary { get; set; }
+        public string PromptOverride { get; set; } = string.Empty;
         public List<string> BlockedWindowTitleKeywords { get; set; } = new List<string>();
         public List<string> BlockedProcessNames { get; set; } = new List<string>();
 

@@ -49,6 +49,9 @@ namespace Wds.SixStars.Api.Models
         public string LastNegativeEmotionVector { get; set; } = string.Empty;
         public string LastDeterministicEmotionSummary { get; set; } = string.Empty;
 
+        /// <summary>Top three strongest emotion vector entries from the last settled background update.</summary>
+        public List<TopAffectedEmotion> LastTopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+
         public int InteractionCount { get; set; }
         public DateTimeOffset? LastInteractionAt { get; set; }
         public string CurrentConversationId { get; set; } = string.Empty;
@@ -92,6 +95,12 @@ namespace Wds.SixStars.Api.Models
 
         /// <summary>Recent deterministic emotion updates used to prevent repeated cheap scoring and to detect longer-term combos.</summary>
         public List<EmotionUpdateHistoryEntry> EmotionUpdateHistory { get; set; } = new List<EmotionUpdateHistoryEntry>();
+
+        /// <summary>High-confidence positive emotion totals earned through deterministic emotion scoring.</summary>
+        public List<StarEmotionAccumulatedScore> PositiveEmotionTotals { get; set; } = new List<StarEmotionAccumulatedScore>();
+
+        /// <summary>High-confidence bad/boundary emotion totals earned through deterministic emotion scoring.</summary>
+        public List<StarEmotionAccumulatedScore> NegativeEmotionTotals { get; set; } = new List<StarEmotionAccumulatedScore>();
 
         /// <summary>
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.

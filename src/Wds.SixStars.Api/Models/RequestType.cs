@@ -6,6 +6,7 @@ namespace Wds.SixStars.Api.Models
         Story = 1,
         Letter = 2,
         BattleUpdate = 3,
-        Debug = 4
+        Debug = 4,
+        Photo = 5
     }
 }

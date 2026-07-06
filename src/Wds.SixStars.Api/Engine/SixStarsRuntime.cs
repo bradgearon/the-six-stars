@@ -405,6 +405,7 @@ namespace Wds.SixStars.Api.Engine
                 PlayerText = request.PlayerText,
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
+                AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
                 RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
             };
             clone.GameContext.Flags["informationFollowup"] = "true";
@@ -496,7 +497,10 @@ namespace Wds.SixStars.Api.Engine
             bool legacyNeedsMoreInformation,
             string playerText)
         {
-            Dictionary<string, InformationNeedAvailabilityItem> availabilityByType = availability.ToDictionary(x => NormalizeInformationDataType(x.DataType), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, InformationNeedAvailabilityItem> availabilityByType = (availability ?? new List<InformationNeedAvailabilityItem>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
+                .GroupBy(x => NormalizeInformationDataType(x.DataType), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Count).First(), StringComparer.OrdinalIgnoreCase);
             IEnumerable<InformationNeedVectorItem> candidateSource = aiSelection != null && aiSelection.RankedNeeds != null && aiSelection.RankedNeeds.Count > 0
                 ? aiSelection.RankedNeeds.Concat(foregroundVector)
                 : foregroundVector;
@@ -876,6 +880,15 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
+        private static string GetGameContextFlag(GameContext context, string key, string fallback = "")
+        {
+            if (context != null && context.Flags.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+            return fallback;
+        }
+
         private static bool IsStoryGenerationWorkerRequest(StarInteractionRequest request)
         {
             return request.GameContext.Flags.TryGetValue("storyGenerationWorker", out string? value)
@@ -922,7 +935,9 @@ namespace Wds.SixStars.Api.Engine
                     { "playerText", request.PlayerText ?? string.Empty },
                     { "approxTargetMinutes", (request.StoryOptions?.TargetMinutes ?? 0).ToString() },
                     { "approxTargetChunkCount", (request.StoryOptions?.TargetChunkCount ?? 0).ToString() },
-                    { "storyLengthIsFlexible", "true" }
+                    { "storyLengthIsFlexible", "true" },
+                    { "sessionId", request.SessionId ?? string.Empty },
+                    { "mobileBridge", GetGameContextFlag(request.GameContext, "mobileBridge", "false") }
                 }
             });
 
@@ -965,6 +980,7 @@ namespace Wds.SixStars.Api.Engine
                 PlayerText = request.PlayerText,
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
+                AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
                 RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
             };
         }
@@ -980,8 +996,24 @@ namespace Wds.SixStars.Api.Engine
                 BenaveilPressureLevel = context.BenaveilPressureLevel,
                 EquippedStars = context.EquippedStars.ToList(),
                 RecentEvents = context.RecentEvents.ToList(),
-                Flags = new Dictionary<string, string>(context.Flags, StringComparer.OrdinalIgnoreCase)
+                Flags = CloneFlagsCaseInsensitive(context.Flags)
             };
+        }
+
+        private static Dictionary<string, string> CloneFlagsCaseInsensitive(Dictionary<string, string> source)
+        {
+            Dictionary<string, string> clone = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (source == null) return clone;
+            foreach (KeyValuePair<string, string> pair in source)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key)) continue;
+                // Use the indexer instead of the Dictionary copy constructor. Mobile/game hosts may
+                // accidentally provide both `foo` and `Foo`; with a case-insensitive clone the copy
+                // constructor throws "An item with the same key has already been added." The last value
+                // wins, which is safer than failing the whole Star request.
+                clone[pair.Key] = pair.Value ?? string.Empty;
+            }
+            return clone;
         }
 
         private static StoryOptions CloneStoryOptions(StoryOptions options)
@@ -1008,6 +1040,20 @@ namespace Wds.SixStars.Api.Engine
                 NextStoryChunkMarkdown = options.NextStoryChunkMarkdown,
                 NextStoryPartIndex = options.NextStoryPartIndex,
                 StoriesAlreadyTold = options.StoriesAlreadyTold.ToList()
+            };
+        }
+
+        private static StarPhotoAttachment ClonePhotoAttachment(StarPhotoAttachment photo)
+        {
+            if (photo == null) return new StarPhotoAttachment();
+            return new StarPhotoAttachment
+            {
+                ImageBytes = photo.ImageBytes == null ? Array.Empty<byte>() : photo.ImageBytes.ToArray(),
+                MimeType = photo.MimeType ?? "image/jpeg",
+                Caption = photo.Caption ?? string.Empty,
+                ImageReference = photo.ImageReference ?? string.Empty,
+                PhotoSummary = photo.PhotoSummary ?? string.Empty,
+                PhotoError = photo.PhotoError ?? string.Empty
             };
         }
 
@@ -1104,6 +1150,9 @@ namespace Wds.SixStars.Api.Engine
                             { "approxTargetMinutes", (workerRequest.StoryOptions?.TargetMinutes ?? 0).ToString() },
                             { "approxTargetChunkCount", (workerRequest.StoryOptions?.TargetChunkCount ?? 0).ToString() },
                             { "storyLengthIsFlexible", "true" },
+                            { "sessionId", workerRequest.SessionId ?? string.Empty },
+                            { "mobileBridge", GetGameContextFlag(workerRequest.GameContext, "mobileBridge", "false") },
+                            { "storyMarkdownChars", (storyResponse.StoryMarkdown?.Length ?? 0).ToString() },
                             { "note", "The full story response is ready and should now be spoken." }
                         }
                     });
@@ -1127,24 +1176,27 @@ namespace Wds.SixStars.Api.Engine
         {
             StarRequestIntentResult? intent = null;
 
-            if (request.RequestType == RequestType.Chat && _agent is IStarRequestIntentClassifier classifier)
+            if (request.RequestType == RequestType.Chat)
             {
                 if (StoryIntentLexicon.TryFindStoryIntentTrigger(request.PlayerText, out string storyIntentTrigger))
                 {
                     request.GameContext.Flags["storyIntentTrigger"] = storyIntentTrigger;
-                    intent = await classifier.ClassifyRequestIntentAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
-                    request.GameContext.Flags["storyIntentCheckSource"] = intent.Source ?? string.Empty;
-                    request.GameContext.Flags["storyIntentConfidence"] = intent.Confidence.ToString("0.00");
-                    request.GameContext.Flags["storyIntentReason"] = intent.Reason ?? string.Empty;
-
-                    if (intent.IsStoryRequest && intent.Confidence >= 0.50)
+                    request.GameContext.Flags["storyIntentCheckSource"] = "deterministic_story_alias";
+                    request.GameContext.Flags["storyIntentConfidence"] = "0.95";
+                    request.GameContext.Flags["storyIntentReason"] = "A direct story request word was detected before the foreground Star turn, so the runtime promoted the request to Story mode without waiting for an uncertain classifier vote.";
+                    request.GameContext.Flags["autoPromotedToStory"] = "true";
+                    request.RequestType = RequestType.Story;
+                    request.GameContext.RecentEvents.Add("Deterministic story adapter promoted this normal voice/chat message into Story mode because the player used a story trigger: " + storyIntentTrigger + ".");
+                    intent = new StarRequestIntentResult
                     {
-                        request.RequestType = RequestType.Story;
-                        request.GameContext.RecentEvents.Add("Pre-flight LLM intent classifier promoted this normal voice/chat message into Story mode because a story alias trigger was detected: " + storyIntentTrigger + ".");
-                        request.GameContext.Flags["autoPromotedToStory"] = "true";
-                    }
+                        IsStoryRequest = true,
+                        Confidence = 0.95,
+                        StorySeed = request.PlayerText ?? string.Empty,
+                        Source = "deterministic_story_alias",
+                        Reason = "Detected story trigger: " + storyIntentTrigger
+                    };
                 }
-                else
+                else if (_agent is IStarRequestIntentClassifier)
                 {
                     request.GameContext.Flags["storyIntentTrigger"] = string.Empty;
                     request.GameContext.Flags["storyIntentCheckSource"] = "skipped_no_story_alias";
@@ -1367,6 +1419,8 @@ namespace Wds.SixStars.Api.Engine
             response.EmotionalConnectionPercentAfter = update.State.EmotionalConnectionPercent;
             response.IsGirlfriendReadyAfter = update.State.IsGirlfriendReady;
             response.GirlfriendReadinessSummary = update.State.GirlfriendReadinessSummary ?? string.Empty;
+            response.TopAffectedEmotions.Clear();
+            response.TopAffectedEmotions.AddRange((update.State.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()));
 
             response.UnityEvents.Add(new UnityEventEnvelope
             {
@@ -1394,6 +1448,7 @@ namespace Wds.SixStars.Api.Engine
                     { "acceptedNegativeSignals", string.Join(", ", response.AcceptedNegativeEmotionSignals) },
                     { "acceptedCombos", string.Join(", ", response.AcceptedRelationshipCombos) },
                     { "deterministicEmotionSummary", response.DeterministicEmotionUpdateSummary ?? string.Empty },
+                    { "topAffectedEmotions", string.Join(", ", response.TopAffectedEmotions.Select(x => x.ToString())) },
                     { "rememberedMarkers", string.Join(", ", response.RememberedMarkers.Select(x => string.IsNullOrWhiteSpace(x.MarkerName) ? x.Id : x.MarkerName)) },
                     { "referencedMemoryMarkerIds", string.Join(", ", response.ReferencedMemoryMarkerIds) }
                 }

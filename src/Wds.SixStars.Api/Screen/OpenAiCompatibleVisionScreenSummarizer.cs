@@ -219,6 +219,17 @@ namespace Wds.SixStars.Api.Screen
         private static string BuildPrompt(ScreenSummarizationRequest request)
         {
             StringBuilder prompt = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(request.PromptOverride))
+            {
+                prompt.AppendLine(request.PromptOverride.Trim());
+                prompt.AppendLine();
+                prompt.AppendLine("Return compact JSON only using this exact shape:");
+                prompt.AppendLine("{\"activeApp\":\"\",\"activityType\":\"\",\"likelyActivity\":\"\",\"companionSafeSummary\":\"\",\"visibleTextHighlights\":[],\"visibleProblems\":[],\"sensitivity\":\"normal\",\"confidence\":0.0}");
+                prompt.AppendLine("Image reference: " + (request.Capture.ImageReference ?? string.Empty));
+                prompt.AppendLine("Image dimensions: " + request.Capture.Width.ToString(System.Globalization.CultureInfo.InvariantCulture) + "x" + request.Capture.Height.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return prompt.ToString();
+            }
+
             prompt.AppendLine("You are a screen summarizer for a desktop AI companion app.");
             prompt.AppendLine("Look at the attached screenshot image and return compact JSON only.");
             prompt.AppendLine("Use this JSON shape exactly:");

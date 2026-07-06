@@ -12,6 +12,8 @@ using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.Speech;
+using Wds.SixStars.Api.Screen;
+using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
@@ -24,7 +26,12 @@ public sealed partial class MainViewModel
     private MobileBridgeHttpServer? _mobileBridgeServer;
     private MobileBridgeAudioSocketHost? _mobileBridgeAudioHost;
     private readonly SemaphoreSlim _mobileBridgeRuntimeGate = new SemaphoreSlim(1, 1);
-    private string _mobileBridgeHostName = "grasshoppah";
+    private readonly object _mobileVoiceStreamGate = new object();
+    private CancellationTokenSource? _mobileVoiceStreamCts;
+    private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
+    private Task? _pendingMobileStoryThinkingVoiceTask;
+    private long _mobileVoiceStreamOrdinal;
+    private string _mobileBridgeHostName = "192.168.1.217";
     private string _mobileBridgePort = "8066";
     private bool _mobileBridgeEnabled;
     private string _mobileBridgeStatus = "Android phone bridge stopped.";
@@ -89,7 +96,7 @@ public sealed partial class MainViewModel
 
     private void InitializeMobileBridgeCommandsAndMaybeStart()
     {
-        _mobileBridgeHostName = string.IsNullOrWhiteSpace(_appConfig.MobileBridge.HostName) ? Environment.MachineName : _appConfig.MobileBridge.HostName;
+        _mobileBridgeHostName = string.IsNullOrWhiteSpace(_appConfig.MobileBridge.HostName) ? "192.168.1.217" : _appConfig.MobileBridge.HostName;
         _mobileBridgePort = (_appConfig.MobileBridge.Port <= 0 ? 8066 : _appConfig.MobileBridge.Port).ToString(System.Globalization.CultureInfo.InvariantCulture);
         StartMobileBridgeCommand = new RelayCommand(_ => StartMobileBridgeServer());
         StopMobileBridgeCommand = new RelayCommand(_ => StopMobileBridgeServer("Stopped by user."));
@@ -320,6 +327,61 @@ public sealed partial class MainViewModel
                 });
                 return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept every Android Star memory shelf clean and refreshed the state.");
             }
+            case "SendPhoto":
+            {
+                MobileBridgeRequest photoRequest = new MobileBridgeRequest
+                {
+                    SessionId = sessionId,
+                    StarId = starId,
+                    RequestType = "Photo",
+                    PlayerText = string.IsNullOrWhiteSpace(command.PlayerText) ? FirstNonEmpty(command.PhotoCaption, "I attached a photo. Please look at it and reply directly to what you see.") : command.PlayerText,
+                    Area = string.IsNullOrWhiteSpace(command.Area) ? Area : command.Area,
+                    Quest = string.IsNullOrWhiteSpace(command.Quest) ? Quest : command.Quest,
+                    RomanceMode = command.RomanceMode,
+                    SpeakOnDesktop = command.SpeakOnDesktop,
+                    ReturnAudio = command.ReturnAudio,
+                    ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid" : command.ClientName,
+                    PhotoBase64 = command.PhotoBase64 ?? string.Empty,
+                    PhotoMimeType = string.IsNullOrWhiteSpace(command.PhotoMimeType) ? "image/jpeg" : command.PhotoMimeType,
+                    PhotoCaption = FirstNonEmpty(command.PhotoCaption, command.PlayerText)
+                };
+
+                MobileBridgeResponse photoResponse = await ProcessMobileConversationAsync(photoRequest, string.Empty, cancellationToken).ConfigureAwait(false);
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "SendPhoto", sessionId, starId, state, photoResponse);
+                result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = photoResponse.Ok ? "PhotoResponseReady" : "PhotoResponseFailed",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    Heart = state.Heart,
+                    Trust = state.Trust,
+                    Romance = state.Romance,
+                    EmotionalConnectionPercent = state.EmotionalConnectionPercent,
+                    IsGirlfriendReady = state.IsGirlfriendReady,
+                    Message = photoResponse.Ok ? "The Star answered the Android photo request." : photoResponse.VoiceError,
+                    Error = photoResponse.Ok ? string.Empty : photoResponse.VoiceError,
+                    SpokenText = photoResponse.SpokenText ?? string.Empty,
+                    StoryId = photoResponse.StoryId ?? string.Empty,
+                    StoryTitle = photoResponse.StoryTitle ?? string.Empty,
+                    StoryMarkdown = photoResponse.StoryMarkdown ?? string.Empty,
+                    StorySummary = photoResponse.StorySummary ?? string.Empty,
+                    StoryPartIndex = photoResponse.StoryPartIndex,
+                    StoryIsFinished = photoResponse.StoryIsFinished,
+                    StoryChunkCount = photoResponse.StoryChunkCount,
+                    PhotoAttached = photoResponse.PhotoAttached,
+                    PhotoSummary = photoResponse.PhotoSummary ?? string.Empty,
+                    PhotoError = photoResponse.PhotoError ?? string.Empty,
+                    TopAffectedEmotions = photoResponse.TopAffectedEmotions.Count > 0 ? photoResponse.TopAffectedEmotions.ToList() : (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList()
+                });
+                return result;
+            }
+
             case "RefreshState":
             default:
             {
@@ -347,7 +409,53 @@ public sealed partial class MainViewModel
             }
         }
         MobileBridgeStatus = status;
-        AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%");
+        if (string.Equals(SelectedStarId, state.StarId, StringComparison.OrdinalIgnoreCase))
+        {
+            TopAffectedEmotionsText = FormatTopAffectedEmotions(state.LastTopAffectedEmotions);
+        }
+        AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%, top=" + FormatTopAffectedEmotions(state.LastTopAffectedEmotions));
+    }
+
+    private MobileBridgeDispatchResult CreateConversationDispatchResult(MobileBridgeDispatchCommand command, string commandType, string sessionId, string starId, StarState state, MobileBridgeResponse response)
+    {
+        return new MobileBridgeDispatchResult
+        {
+            Ok = response.Ok,
+            CommandId = command.CommandId,
+            CommandType = commandType,
+            StarId = starId,
+            SelectedStarId = SelectedStarId,
+            IsMet = state.IsMet,
+            IsAlly = state.IsAlly,
+            State = state,
+            Message = response.Ok ? "Conversation response ready." : response.VoiceError,
+            Error = response.Ok ? string.Empty : response.VoiceError,
+            RequestType = response.RequestType,
+            Transcript = response.Transcript,
+            SpokenText = response.SpokenText,
+            StarOutput = response.StarOutput,
+            ConversationSummary = response.ConversationSummary,
+            ChangesSummary = response.ChangesSummary,
+            VoiceRequested = response.VoiceRequested,
+            VoiceSocketConnected = response.VoiceSocketConnected,
+            VoiceChunksSent = response.VoiceChunksSent,
+            VoiceBytesSent = response.VoiceBytesSent,
+            VoiceMessage = response.VoiceMessage,
+            VoiceError = response.VoiceError,
+            StoryId = response.StoryId,
+            StoryTitle = response.StoryTitle,
+            StoryMarkdown = response.StoryMarkdown,
+            StorySummary = response.StorySummary,
+            StoryPartIndex = response.StoryPartIndex,
+            StoryIsFinished = response.StoryIsFinished,
+            StoryMarkdownReady = response.StoryMarkdownReady,
+            StoryAutoplayPlanned = response.StoryAutoplayPlanned,
+            StoryChunkCount = response.StoryChunkCount,
+            PhotoAttached = response.PhotoAttached,
+            PhotoSummary = response.PhotoSummary,
+            PhotoError = response.PhotoError,
+            TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList()
+        };
     }
 
     private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message)
@@ -380,6 +488,7 @@ public sealed partial class MainViewModel
             Romance = state.Romance,
             EmotionalConnectionPercent = state.EmotionalConnectionPercent,
             IsGirlfriendReady = state.IsGirlfriendReady,
+            TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
             Message = message
         });
         return result;
@@ -405,6 +514,7 @@ public sealed partial class MainViewModel
                 Romance = state.Romance,
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
+                TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
                 Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
             });
         }
@@ -426,6 +536,7 @@ public sealed partial class MainViewModel
             romance = state.Romance,
             emotionalConnectionPercent = state.EmotionalConnectionPercent,
             isGirlfriendReady = state.IsGirlfriendReady,
+            topAffectedEmotions = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>(),
             interactionCount = state.InteractionCount
         };
     }
@@ -449,12 +560,37 @@ public sealed partial class MainViewModel
                 Romance = state.Romance,
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
+                TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
                 Message = message
             });
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish desktop state event: " + ex.Message);
+        }
+    }
+
+    private void PublishMobileBridgeTopEmotionUpdate(StarInteractionResponse response)
+    {
+        if (response == null) return;
+        try
+        {
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "TopAffectedEmotionsChanged",
+                SourceClientId = "desktop-runtime",
+                SessionId = DefaultSessionId,
+                StarId = response.StarId ?? SelectedStarId,
+                SelectedStarId = SelectedStarId,
+                EmotionalConnectionPercent = response.EmotionalConnectionPercentAfter,
+                IsGirlfriendReady = response.IsGirlfriendReadyAfter,
+                TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                Message = FormatTopAffectedEmotions(response.TopAffectedEmotions)
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish top affected emotions update: " + ex.Message);
         }
     }
 
@@ -631,6 +767,7 @@ public sealed partial class MainViewModel
         {
             string starId = ResolveDefaultStarId(mobileRequest.StarId);
             RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
+            if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
             bool wantsPhoneAudio = mobileRequest.ReturnAudio;
             DateTimeOffset started = DateTimeOffset.Now;
 
@@ -649,14 +786,25 @@ public sealed partial class MainViewModel
                 Speaker = "LastCat",
                 RequestType = requestType,
                 PlayerText = mobileRequest.PlayerText ?? string.Empty,
+                AttachedPhoto = new StarPhotoAttachment(),
                 GameContext = CreateMobileGameContext(mobileRequest, starId),
-                StoryOptions = requestType == RequestType.Story ? CreateStoryOptions(false) : null
+                StoryOptions = CreateMobileStoryOptions(mobileRequest, requestType)
             };
+
+            MobileAttachedPhotoResult photoResult = await AddMobileAttachedPhotoContextAsync(request, mobileRequest, cancellationToken).ConfigureAwait(false);
 
             ResetLlmDebugLog(request);
             CancellationToken runtimeToken = _operationController.BeginNewOperation("android bridge request to " + starId);
             using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
             StarInteractionResponse starResponse = await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            if (photoResult.Attached)
+            {
+                starResponse.Debug.Notes.Add("Android photo summary: " + photoResult.Summary);
+            }
+            else if (!string.IsNullOrWhiteSpace(photoResult.Error))
+            {
+                starResponse.Debug.Notes.Add("Android photo error: " + photoResult.Error);
+            }
 
             _stateChangeTracker.RecordStateChange(
                 starResponse.StarId,
@@ -666,8 +814,17 @@ public sealed partial class MainViewModel
                 starResponse.StateDeltas.BenaveilInfluence,
                 starResponse.StateDeltas.EmotionalConnectionPercent);
             TrackStoryFromResponse(starResponse);
+            PublishMobileStoryEventIfNeeded(starResponse, "StoryInitialResponse", "Initial story response returned to Android.");
+            bool storyThinkingPlaceholder = IsMobileStoryThinkingPlaceholder(starResponse);
+            MobileVoiceStreamScope? sharedStoryVoiceStream = null;
+            if (wantsPhoneAudio && storyThinkingPlaceholder)
+            {
+                sharedStoryVoiceStream = BeginMobileVoiceStream(starResponse, true, "Android story thinking phrase followed by generated story narration");
+                lock (_mobileVoiceStreamGate) _pendingMobileStoryVoiceStream = sharedStoryVoiceStream;
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice stream reserved", "The thinking phrase and generated story will share stream=" + sharedStoryVoiceStream.StreamId + " so Android does not cut a word when the full story arrives."));
+            }
 
-            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, requestType, transcript, starResponse);
+            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request.RequestType, transcript, starResponse);
 
             OnUiThread(() => AppendMobileBridgeVoiceDebug("Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio));
 
@@ -689,6 +846,12 @@ public sealed partial class MainViewModel
                         response.VoiceChunksSent,
                         response.VoiceBytesSent,
                         response.VoiceError,
+                        storyMarkdownChars = response.StoryMarkdown?.Length ?? 0,
+                        storyChunkCount = response.StoryChunkCount,
+                        storyMarkdownReady = response.StoryMarkdownReady,
+                        response.PhotoAttached,
+                        photoSummaryChars = response.PhotoSummary?.Length ?? 0,
+                        response.PhotoError,
                         state = new
                         {
                             response.HeartDelta,
@@ -716,11 +879,11 @@ public sealed partial class MainViewModel
 
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("HTTP response returned to phone", response.VoiceSocketConnected ? "Voice generation is now running in the background." : "No phone audio socket was connected."));
 
-                _ = Task.Run(async () =>
+                Task phoneVoiceTask = Task.Run(async () =>
                 {
                     try
                     {
-                        await SendMobileVoiceAsync(starResponse, response, CancellationToken.None).ConfigureAwait(false);
+                        await SendMobileVoiceAsync(starResponse, response, CancellationToken.None, sharedStoryVoiceStream).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -728,6 +891,17 @@ public sealed partial class MainViewModel
                         try { ReleasePendingBackgroundAnalysis("Android background voice failed: " + ex.Message); } catch { }
                     }
                 });
+
+                if (sharedStoryVoiceStream != null)
+                {
+                    lock (_mobileVoiceStreamGate)
+                    {
+                        if (ReferenceEquals(_pendingMobileStoryVoiceStream, sharedStoryVoiceStream))
+                        {
+                            _pendingMobileStoryThinkingVoiceTask = phoneVoiceTask;
+                        }
+                    }
+                }
             }
             else if (mobileRequest.SpeakOnDesktop || _appConfig.MobileBridge.SpeakResponsesOnDesktop)
             {
@@ -780,7 +954,278 @@ public sealed partial class MainViewModel
         context.Flags["phoneAudioSocketConnected"] = ((_mobileBridgeAudioHost?.ClientCount ?? 0) > 0).ToString().ToLowerInvariant();
         context.Flags["speakOnDesktop"] = request.SpeakOnDesktop.ToString().ToLowerInvariant();
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
+        if (HasMobilePhoto(request))
+        {
+            context.Flags["androidPhotoAttached"] = "true";
+            context.Flags["androidPhotoMimeType"] = string.IsNullOrWhiteSpace(request.PhotoMimeType) ? "image/jpeg" : request.PhotoMimeType;
+            context.RecentEvents.Add("Android attached a phone camera/gallery image and asked the selected Star to answer it directly.");
+            if (!string.IsNullOrWhiteSpace(request.PhotoCaption)) context.RecentEvents.Add("Android photo caption: " + TruncateForUi(request.PhotoCaption, 240));
+        }
         return context;
+    }
+
+
+    private async Task<MobileAttachedPhotoResult> AddMobileAttachedPhotoContextAsync(StarInteractionRequest request, MobileBridgeRequest mobileRequest, CancellationToken cancellationToken)
+    {
+        if (request == null || mobileRequest == null || !HasMobilePhoto(mobileRequest))
+        {
+            return MobileAttachedPhotoResult.Empty;
+        }
+
+        try
+        {
+            byte[] imageBytes = DecodeMobilePhotoBase64(mobileRequest.PhotoBase64);
+            if (imageBytes.Length == 0)
+            {
+                request.GameContext.RecentEvents.Add("Android tried to attach a photo, but the image data was empty.");
+                return new MobileAttachedPhotoResult(false, string.Empty, "Attached photo was empty.");
+            }
+
+            if (imageBytes.Length > 12 * 1024 * 1024)
+            {
+                request.GameContext.RecentEvents.Add("Android attached a photo, but it was too large for the mobile bridge vision path.");
+                return new MobileAttachedPhotoResult(false, string.Empty, "Attached photo was larger than 12 MB.");
+            }
+
+            string mimeType = string.IsNullOrWhiteSpace(mobileRequest.PhotoMimeType) ? "image/jpeg" : mobileRequest.PhotoMimeType.Trim();
+            ScreenImageCapture capture = new ScreenImageCapture
+            {
+                CapturedAt = DateTimeOffset.UtcNow,
+                ImageBytes = imageBytes,
+                MimeType = mimeType,
+                ImageReference = "android-phone-photo-" + Guid.NewGuid().ToString("N"),
+                ActiveApp = "SixStarsMobileAndroid",
+                ActiveWindowTitle = "Android phone photo attachment",
+                ActiveProcessName = "com.wds.sixstarsmobile"
+            };
+
+            ScreenCaptureSummary summary;
+            try
+            {
+                IScreenSummarizer summarizer = CreateScreenSummarizer();
+                summary = await summarizer.SummarizeAsync(new ScreenSummarizationRequest
+                {
+                    SessionId = request.SessionId,
+                    Capture = capture,
+                    IncludeBase64InSummary = false,
+                    PromptOverride = BuildAndroidPhotoVisionPrompt(mobileRequest)
+                }, cancellationToken).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(summary.CompanionSafeSummary))
+                {
+                    summary.CompanionSafeSummary = "The player attached a phone photo, but the vision summarizer returned no description.";
+                }
+            }
+            catch (Exception ex)
+            {
+                summary = new ScreenCaptureSummary
+                {
+                    CapturedAt = capture.CapturedAt,
+                    ActiveApp = capture.ActiveApp,
+                    ActivityType = "android_photo_attachment",
+                    LikelyActivity = "The player attached a phone camera or gallery image for the Star to answer directly.",
+                    CompanionSafeSummary = "The player attached a phone photo. Vision summarization failed, so answer the player's caption and acknowledge that the image was attached but could not be inspected in detail. Vision error: " + ex.Message,
+                    Sensitivity = "normal",
+                    ImageReference = capture.ImageReference,
+                    Confidence = 0.15
+                };
+            }
+
+            summary.ActivityType = string.IsNullOrWhiteSpace(summary.ActivityType) ? "android_photo_attachment" : summary.ActivityType;
+            summary.ActiveApp = string.IsNullOrWhiteSpace(summary.ActiveApp) ? "SixStarsMobileAndroid" : summary.ActiveApp;
+            summary.ImageReference = string.IsNullOrWhiteSpace(summary.ImageReference) ? capture.ImageReference : summary.ImageReference;
+            summary.ImageBase64Jpeg = string.Empty;
+            if (!string.IsNullOrWhiteSpace(mobileRequest.PhotoCaption))
+            {
+                summary.VisibleTextHighlights.Add("Player photo caption/request: " + TruncateForUi(mobileRequest.PhotoCaption, 500));
+            }
+
+            request.RequestType = RequestType.Photo;
+            request.AttachedPhoto = new StarPhotoAttachment
+            {
+                ImageBytes = imageBytes.ToArray(),
+                MimeType = mimeType,
+                Caption = mobileRequest.PhotoCaption ?? string.Empty,
+                ImageReference = capture.ImageReference,
+                PhotoSummary = summary.CompanionSafeSummary ?? string.Empty,
+                PhotoError = string.Empty
+            };
+            request.RecentScreenCaptures.Insert(0, summary);
+            request.GameContext.Flags["androidPhotoAttached"] = "true";
+            request.GameContext.Flags["androidPhotoSummary"] = TruncateForUi(summary.CompanionSafeSummary, 1000);
+            request.GameContext.RecentEvents.Add("Android photo vision summary: " + TruncateForUi(summary.CompanionSafeSummary, 600));
+            if (string.IsNullOrWhiteSpace(request.PlayerText))
+            {
+                request.PlayerText = string.IsNullOrWhiteSpace(mobileRequest.PhotoCaption)
+                    ? "I attached a photo. Please look at it and reply directly to what you can see."
+                    : mobileRequest.PhotoCaption.Trim();
+            }
+
+            return new MobileAttachedPhotoResult(true, summary.CompanionSafeSummary, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            request.AttachedPhoto = new StarPhotoAttachment
+            {
+                MimeType = string.IsNullOrWhiteSpace(mobileRequest.PhotoMimeType) ? "image/jpeg" : mobileRequest.PhotoMimeType,
+                Caption = mobileRequest.PhotoCaption ?? string.Empty,
+                PhotoError = ex.Message
+            };
+            request.GameContext.RecentEvents.Add("Android photo attachment failed before the Star turn: " + ex.Message);
+            return new MobileAttachedPhotoResult(false, string.Empty, ex.Message);
+        }
+    }
+
+    private static string BuildAndroidPhotoVisionPrompt(MobileBridgeRequest mobileRequest)
+    {
+        StringBuilder prompt = new StringBuilder();
+        prompt.AppendLine("You are a vision summarizer for The Six Stars Android photo bridge.");
+        prompt.AppendLine("Look at the attached camera/gallery photo and describe it so an in-character Star companion can respond directly to the player.");
+        prompt.AppendLine("This is not a desktop screen recording. It is a user-shared photo attached to a fresh Star request.");
+        prompt.AppendLine("Mention concrete visible objects, colors, layout, mood, readable non-sensitive text, and any obvious artistic/game-related details.");
+        prompt.AppendLine("Do not identify real people by name. Do not invent private facts. If the image is unclear, say confidence is low.");
+        prompt.AppendLine("Keep the companionSafeSummary useful for a character reaction. Do not include secrets, passwords, account data, exact addresses, or medical/bank details.");
+        if (!string.IsNullOrWhiteSpace(mobileRequest?.PhotoCaption))
+        {
+            prompt.AppendLine("Player caption/request: " + TruncateForUi(mobileRequest.PhotoCaption, 500));
+        }
+        return prompt.ToString();
+    }
+
+    private static bool HasMobilePhoto(MobileBridgeRequest request)
+    {
+        return request != null && !string.IsNullOrWhiteSpace(request.PhotoBase64);
+    }
+
+    private static byte[] DecodeMobilePhotoBase64(string photoBase64)
+    {
+        if (string.IsNullOrWhiteSpace(photoBase64)) return Array.Empty<byte>();
+        string clean = photoBase64.Trim();
+        int comma = clean.IndexOf(',');
+        if (comma >= 0 && clean.Substring(0, comma).IndexOf("base64", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            clean = clean.Substring(comma + 1);
+        }
+        return Convert.FromBase64String(clean);
+    }
+
+    private static string TryGetLatestPhotoSummary(StarInteractionResponse response, MobileBridgeRequest request)
+    {
+        if (response != null && response.Debug != null && response.Debug.Notes != null)
+        {
+            string? note = response.Debug.Notes.FirstOrDefault(x => x != null && x.StartsWith("Android photo summary:", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(note)) return note.Substring("Android photo summary:".Length).Trim();
+        }
+
+        if (request != null && HasMobilePhoto(request))
+        {
+            return "A phone photo was attached to this request. The vision summary was included in recent screen context for the Star.";
+        }
+        return string.Empty;
+    }
+
+    private static string TryGetLatestPhotoError(StarInteractionResponse response)
+    {
+        if (response != null && response.Debug != null && response.Debug.Notes != null)
+        {
+            string? note = response.Debug.Notes.FirstOrDefault(x => x != null && x.StartsWith("Android photo error:", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(note)) return note.Substring("Android photo error:".Length).Trim();
+        }
+        return string.Empty;
+    }
+
+    private readonly struct MobileAttachedPhotoResult
+    {
+        public MobileAttachedPhotoResult(bool attached, string summary, string error)
+        {
+            Attached = attached;
+            Summary = summary ?? string.Empty;
+            Error = error ?? string.Empty;
+        }
+
+        public bool Attached { get; }
+        public string Summary { get; }
+        public string Error { get; }
+        public static MobileAttachedPhotoResult Empty => new MobileAttachedPhotoResult(false, string.Empty, string.Empty);
+    }
+
+    private MobileVoiceStreamScope BeginMobileVoiceStream(StarInteractionResponse response, bool isStory, string reason)
+    {
+        CancellationTokenSource cts = new CancellationTokenSource();
+        CancellationTokenSource? previous = null;
+        long ordinal;
+        lock (_mobileVoiceStreamGate)
+        {
+            previous = _mobileVoiceStreamCts;
+            if (_pendingMobileStoryVoiceStream != null && ReferenceEquals(_pendingMobileStoryVoiceStream.CancellationSource, previous))
+            {
+                _pendingMobileStoryVoiceStream = null;
+                _pendingMobileStoryThinkingVoiceTask = null;
+            }
+            _mobileVoiceStreamCts = cts;
+            ordinal = ++_mobileVoiceStreamOrdinal;
+        }
+
+        try { previous?.Cancel(); } catch { }
+
+        string streamId = "android-voice-" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
+        MobileAudioStreamSession? audioSession = _mobileBridgeAudioHost?.CreateStreamSession(
+            streamId,
+            ordinal,
+            "android-phone-dev",
+            response.StarId ?? SelectedStarId,
+            isStory,
+            reason ?? string.Empty);
+
+        OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream opened", "stream=" + streamId + ", ordinal=" + ordinal + ", story=" + isStory + ", targets=" + (audioSession?.TargetClientIds.Count ?? 0) + ", reason=" + reason));
+        return new MobileVoiceStreamScope(streamId, ordinal, cts, audioSession);
+    }
+
+    private bool IsMobileVoiceStreamCurrent(MobileVoiceStreamScope stream)
+    {
+        if (stream == null) return false;
+        lock (_mobileVoiceStreamGate)
+        {
+            return ReferenceEquals(_mobileVoiceStreamCts, stream.CancellationSource) && _mobileVoiceStreamOrdinal == stream.Ordinal && !stream.CancellationToken.IsCancellationRequested;
+        }
+    }
+
+    private void EndMobileVoiceStream(MobileVoiceStreamScope stream, string reason)
+    {
+        if (stream == null) return;
+        bool current;
+        lock (_mobileVoiceStreamGate)
+        {
+            current = ReferenceEquals(_mobileVoiceStreamCts, stream.CancellationSource) && _mobileVoiceStreamOrdinal == stream.Ordinal;
+            if (current) _mobileVoiceStreamCts = null;
+        }
+
+        if (current)
+        {
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream closed", "stream=" + stream.StreamId + ", ordinal=" + stream.Ordinal + ", " + reason));
+        }
+        stream.Dispose();
+    }
+
+    private sealed class MobileVoiceStreamScope : IDisposable
+    {
+        public MobileVoiceStreamScope(string streamId, long ordinal, CancellationTokenSource cancellationSource, MobileAudioStreamSession? audioSession)
+        {
+            StreamId = streamId;
+            Ordinal = ordinal;
+            CancellationSource = cancellationSource;
+            AudioSession = audioSession;
+        }
+
+        public string StreamId { get; }
+        public long Ordinal { get; }
+        public CancellationTokenSource CancellationSource { get; }
+        public CancellationToken CancellationToken => CancellationSource.Token;
+        public MobileAudioStreamSession? AudioSession { get; }
+
+        public void Dispose()
+        {
+            try { CancellationSource.Dispose(); } catch { }
+        }
     }
 
     private MobileBridgeResponse CreateMobileResponse(MobileBridgeRequest request, RequestType requestType, string transcript, StarInteractionResponse response)
@@ -806,90 +1251,556 @@ public sealed partial class MainViewModel
             IsGirlfriendReadyAfter = response.IsGirlfriendReadyAfter,
             VoiceRequested = request.ReturnAudio,
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
+            StoryId = response.StoryId ?? string.Empty,
+            StoryTitle = response.StoryTitle ?? string.Empty,
+            StoryMarkdown = response.StoryMarkdown ?? string.Empty,
+            StorySummary = response.StorySummary ?? string.Empty,
+            StoryPartIndex = response.StoryPartIndex,
+            StoryIsFinished = response.StoryIsFinished,
+            StoryMarkdownReady = !string.IsNullOrWhiteSpace(response.StoryMarkdown),
+            StoryAutoplayPlanned = _storySpeechAdapter.ShouldUseStoryAutoplay(response),
+            StoryChunkCount = _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown),
+            PhotoAttached = HasMobilePhoto(request),
+            PhotoSummary = TryGetLatestPhotoSummary(response, request),
+            PhotoError = TryGetLatestPhotoError(response),
+            TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
             VoiceMessage = request.ReturnAudio
                 ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
                 : "Phone voice was not requested."
         };
     }
 
-    private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken)
+    private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null)
     {
-        if (_mobileBridgeAudioHost == null || _mobileBridgeAudioHost.ClientCount == 0)
-        {
-            mobileResponse.VoiceSocketConnected = false;
-            mobileResponse.VoiceError = "No Android audio socket is connected. The phone should connect to TCP " + ResolveMobileBridgeAudioPort() + " after /health.";
-            OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation skipped", "No Android audio socket is connected."));
-            ReleasePendingBackgroundAnalysis("Android bridge had no phone audio socket; released background analysis after text response.");
-            return;
-        }
+        bool ownsStream = existingStream == null;
+        MobileVoiceStreamScope voiceStream = existingStream ?? BeginMobileVoiceStream(starResponse, _storySpeechAdapter.ShouldUseStoryAutoplay(starResponse), "Android phone voice request");
+        using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, voiceStream.CancellationToken);
+        CancellationToken voiceToken = linkedCts.Token;
 
-        PrepareVoiceCloneReferenceForTts(starResponse);
-        mobileResponse.VoiceSocketConnected = true;
-        await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa opened the voice stream. Generating " + (starResponse.StarId ?? "Star") + " voice...", cancellationToken).ConfigureAwait(false);
-        OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation started", (starResponse.StarId ?? "Star") + ", streaming=" + _useStreamingTts));
-
-        if (_useStreamingTts)
+        try
         {
-            using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
-            using StreamingStarVoiceResponsePipeline mobilePipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+            if (_mobileBridgeAudioHost == null || _mobileBridgeAudioHost.ClientCount == 0 || voiceStream.AudioSession == null || voiceStream.AudioSession.TargetClientIds.Count == 0)
             {
-                AutoPlayChunks = false
-            };
+                mobileResponse.VoiceSocketConnected = false;
+                mobileResponse.VoiceError = "No Android audio socket is connected. The phone should connect to TCP " + ResolveMobileBridgeAudioPort() + " after /health.";
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation skipped", "No Android audio socket was connected at stream start; stale reconnects will not receive this old stream."));
+                ReleasePendingBackgroundAnalysis("Android bridge had no phone audio socket; released background analysis after text response.");
+                return;
+            }
 
-            int chunksSent = 0;
-            int bytesSent = 0;
-            mobilePipeline.ChunkReadyForConsumer += (sender, args) =>
+            await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "start", "Starting fresh Android voice stream " + voiceStream.StreamId + ". The phone should clear stale queued speech before accepting this stream.", voiceToken).ConfigureAwait(false);
+
+            if (_storySpeechAdapter.ShouldUseStoryAutoplay(starResponse))
+            {
+                await SendMobileStoryVoiceWithPrefetchAsync(starResponse, mobileResponse, voiceToken, voiceStream).ConfigureAwait(false);
+                return;
+            }
+
+            PrepareVoiceCloneReferenceForTts(starResponse);
+            mobileResponse.VoiceSocketConnected = true;
+            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa opened the voice stream. Generating " + (starResponse.StarId ?? "Star") + " voice...", voiceToken).ConfigureAwait(false);
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation started", (starResponse.StarId ?? "Star") + ", stream=" + voiceStream.Ordinal + ", streaming=" + _useStreamingTts));
+
+            if (_useStreamingTts)
+            {
+                using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
+                using StreamingStarVoiceResponsePipeline mobilePipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+                {
+                    AutoPlayChunks = false
+                };
+
+                int chunksSent = 0;
+                int bytesSent = 0;
+                mobilePipeline.ChunkReadyForConsumer += (sender, args) =>
+                {
+                    try
+                    {
+                        if (!IsMobileVoiceStreamCurrent(voiceStream) || voiceToken.IsCancellationRequested) return;
+                        int chunkIndex = chunksSent;
+                        int totalChunks = Math.Max(1, starResponse.SpokenParts.Count == 0 ? 1 : starResponse.SpokenParts.Count);
+                        string checksum = Sha256Hex(args.Result.WavAudio);
+                        MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+                        {
+                            IsStory = false,
+                            TtsPartIndex = chunkIndex,
+                            TtsTotalParts = totalChunks
+                        };
+                        MobileAudioSendResult sent = _mobileBridgeAudioHost.SendVoiceChunkAsync(args.Result, chunkIndex, totalChunks, voiceToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
+                        chunksSent++;
+                        bytesSent += args.Result.WavAudio.Length;
+                        _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", voiceToken).GetAwaiter().GetResult();
+                        OnUiThread(() =>
+                        {
+                            MobileBridgeStatus = "Sent phone voice chunk " + chunksSent + " (" + args.Result.WavAudio.Length + " bytes, sha256=" + ShortHash(checksum) + ") to " + sent.SentClients + " phone client(s).";
+                            AppendMobileBridgeVoiceDebug("Voice chunk sent", "stream=" + voiceStream.Ordinal + ", chunk=" + chunksSent + "/" + totalChunks + ", clients=" + sent.SentClients + ", bytes=" + args.Result.WavAudio.Length + ", sha256=" + ShortHash(checksum));
+                        });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // A newer Android voice stream replaced this one.
+                    }
+                    catch (Exception ex)
+                    {
+                        mobileResponse.VoiceError = "Phone audio send failed: " + ex.Message;
+                    }
+                };
+                mobilePipeline.GenerationError += (_, args) =>
+                {
+                    mobileResponse.VoiceError = args.ErrorMessage ?? "TTS generation error.";
+                    if (!voiceToken.IsCancellationRequested) _ = _mobileBridgeAudioHost.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None);
+                };
+
+                await mobilePipeline.SpeakStreamingAsync(DefaultSessionId, starResponse, voiceToken).ConfigureAwait(false);
+                await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa closed the voice stream. Finished generating and sending " + chunksSent + " chunk(s), bytes=" + bytesSent + ".", voiceToken).ConfigureAwait(false);
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation finished", "stream=" + voiceStream.Ordinal + ", chunks=" + chunksSent + ", bytes=" + bytesSent));
+                mobileResponse.VoiceChunksSent = chunksSent;
+                mobileResponse.VoiceBytesSent = bytesSent;
+                if (string.IsNullOrWhiteSpace(mobileResponse.VoiceError))
+                {
+                    mobileResponse.VoiceMessage = "Queued " + chunksSent + " ordered voice chunk(s) on the Android phone audio socket.";
+                }
+            }
+            else
+            {
+                IStarVoiceGenerator generator = CreateVoiceGenerator();
+                VoiceSynthesisResult result = await generator.GenerateAsync(CreateVoiceSynthesisRequest(starResponse), voiceToken).ConfigureAwait(false);
+                string checksum = Sha256Hex(result.WavAudio);
+                MobileAudioFrameContext frameContext = new MobileAudioFrameContext { IsStory = false, TtsPartIndex = 0, TtsTotalParts = 1 };
+                MobileAudioSendResult sent = await _mobileBridgeAudioHost.SendVoiceChunkAsync(result, 0, 1, voiceToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
+                await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent one complete voice WAV. sha256=" + ShortHash(checksum) + ", bytes=" + result.WavAudio.Length + ".", voiceToken).ConfigureAwait(false);
+                mobileResponse.VoiceChunksSent = sent.SentClients > 0 ? 1 : 0;
+                mobileResponse.VoiceBytesSent = result.WavAudio.Length;
+                mobileResponse.VoiceMessage = "Queued one non-streaming voice WAV on the Android phone audio socket.";
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Non-streaming voice sent", "stream=" + voiceStream.Ordinal + ", clients=" + sent.SentClients + ", bytes=" + result.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+            }
+
+            if (!voiceToken.IsCancellationRequested)
+            {
+                ReleasePendingBackgroundAnalysis("Android phone voice chunks were generated/sent.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            mobileResponse.VoiceError = "Android phone voice stream was replaced by a newer request.";
+            try
+            {
+                if (_mobileBridgeAudioHost != null && voiceStream.AudioSession != null)
+                {
+                    await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "cancel", "This Android voice stream was cancelled because a newer stream started.", CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            catch { }
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream cancelled", "stream=" + voiceStream.Ordinal + " was replaced."));
+        }
+        finally
+        {
+            if (ownsStream)
             {
                 try
                 {
-                    int chunkIndex = chunksSent;
-                    int totalChunks = Math.Max(1, starResponse.SpokenParts.Count == 0 ? 1 : starResponse.SpokenParts.Count);
-                    string checksum = Sha256Hex(args.Result.WavAudio);
-                    MobileAudioSendResult sent = _mobileBridgeAudioHost.SendVoiceChunkAsync(args.Result, chunkIndex, totalChunks, CancellationToken.None).GetAwaiter().GetResult();
-                    chunksSent++;
-                    bytesSent += args.Result.WavAudio.Length;
-                    _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", CancellationToken.None).GetAwaiter().GetResult();
-                    OnUiThread(() =>
+                    if (_mobileBridgeAudioHost != null && voiceStream.AudioSession != null && !voiceStream.CancellationToken.IsCancellationRequested)
                     {
-                        MobileBridgeStatus = "Sent phone voice chunk " + chunksSent + " (" + args.Result.WavAudio.Length + " bytes, sha256=" + ShortHash(checksum) + ") to " + sent.SentClients + " phone client(s).";
-                        AppendMobileBridgeVoiceDebug("Voice chunk sent", "chunk=" + chunksSent + "/" + totalChunks + ", clients=" + sent.SentClients + ", bytes=" + args.Result.WavAudio.Length + ", sha256=" + ShortHash(checksum));
-                    });
+                        await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "end", "Android voice stream completed.", CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                catch { }
+                EndMobileVoiceStream(voiceStream, "completed or replaced");
+            }
+        }
+    }
+
+
+
+    private static bool IsMobileStoryThinkingPlaceholder(StarInteractionResponse response)
+    {
+        if (response == null) return false;
+        return response.UnityEvents.Any(x => string.Equals(x.Type, "StoryGenerationStarted", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private MobileVoiceStreamScope? TakePendingMobileStoryVoiceStream(out Task? thinkingVoiceTask)
+    {
+        MobileVoiceStreamScope? stream;
+        lock (_mobileVoiceStreamGate)
+        {
+            stream = _pendingMobileStoryVoiceStream;
+            thinkingVoiceTask = _pendingMobileStoryThinkingVoiceTask;
+            _pendingMobileStoryVoiceStream = null;
+            _pendingMobileStoryThinkingVoiceTask = null;
+            if (stream == null) return null;
+            bool current = ReferenceEquals(_mobileVoiceStreamCts, stream.CancellationSource)
+                && _mobileVoiceStreamOrdinal == stream.Ordinal
+                && !stream.CancellationToken.IsCancellationRequested;
+            if (current) return stream;
+        }
+
+        try { stream.Dispose(); } catch { }
+        return null;
+    }
+
+    private async Task EndSharedMobileStoryVoiceStreamAsync(MobileVoiceStreamScope stream, string reason)
+    {
+        if (stream == null) return;
+        try
+        {
+            if (_mobileBridgeAudioHost != null && stream.AudioSession != null && !stream.CancellationToken.IsCancellationRequested)
+            {
+                await _mobileBridgeAudioHost.SendStreamControlAsync(stream.AudioSession, "end", "Android story voice stream completed.", CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch { }
+        EndMobileVoiceStream(stream, reason);
+    }
+
+    private StoryOptions CreateMobileStoryOptions(MobileBridgeRequest mobileRequest, RequestType requestType)
+    {
+        StoryOptions options = CreateStoryOptions(false);
+        string playerText = mobileRequest.PlayerText ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(playerText))
+        {
+            options.PlayerSuggestion = playerText.Trim();
+        }
+        return options;
+    }
+
+    private bool IsMobileBridgeStoryResponse(StarInteractionResponse response)
+    {
+        if (response == null) return false;
+        return response.UnityEvents.Any(x =>
+            x.Data.TryGetValue("mobileBridge", out string? value)
+            && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task HandleGeneratedMobileStoryResponseAsync(StarInteractionResponse response)
+    {
+        TrackStoryFromResponse(response);
+        PublishMobileStoryEventIfNeeded(response, "StoryResponseReady", "The full story markdown is ready for Android and game clients.");
+        OnUiThread(() =>
+        {
+            StarOutput = FormatStarOutput(response);
+            Status = "Generated Android story is ready. Streaming story narration to phone.";
+            AppendMobileBridgeVoiceDebug("Story markdown ready", (response.StarId ?? "Star") + " chunks=" + _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown) + ", chars=" + (response.StoryMarkdown?.Length ?? 0));
+        });
+
+        MobileBridgeResponse mobileResponse = CreateMobileResponse(new MobileBridgeRequest
+        {
+            StarId = response.StarId ?? SelectedStarId,
+            RequestType = "Story",
+            ReturnAudio = true,
+            SessionId = "android-phone-dev"
+        }, RequestType.Story, string.Empty, response);
+
+        MobileVoiceStreamScope? sharedStoryVoiceStream = TakePendingMobileStoryVoiceStream(out Task? thinkingVoiceTask);
+        try
+        {
+            if (thinkingVoiceTask != null)
+            {
+                try
+                {
+                    await thinkingVoiceTask.ConfigureAwait(false);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Story thinking voice finished sending", "The generated story will continue on the same Android stream without clearing playback."));
                 }
                 catch (Exception ex)
                 {
-                    mobileResponse.VoiceError = "Phone audio send failed: " + ex.Message;
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Story thinking voice did not finish cleanly", ex.Message));
                 }
-            };
-            mobilePipeline.GenerationError += (_, args) =>
-            {
-                mobileResponse.VoiceError = args.ErrorMessage ?? "TTS generation error.";
-                _ = _mobileBridgeAudioHost.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None);
-            };
+            }
 
-            await mobilePipeline.SpeakStreamingAsync(DefaultSessionId, starResponse, cancellationToken).ConfigureAwait(false);
-            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa closed the voice stream. Finished generating and sending " + chunksSent + " chunk(s), bytes=" + bytesSent + ".", cancellationToken).ConfigureAwait(false);
-            OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation finished", "chunks=" + chunksSent + ", bytes=" + bytesSent));
-            mobileResponse.VoiceChunksSent = chunksSent;
-            mobileResponse.VoiceBytesSent = bytesSent;
-            if (string.IsNullOrWhiteSpace(mobileResponse.VoiceError))
+            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, sharedStoryVoiceStream).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() => MobileBridgeStatus = "Android generated story voice error: " + ex.Message);
+            try { ReleasePendingBackgroundAnalysis("Android generated story voice failed: " + ex.Message); } catch { }
+        }
+        finally
+        {
+            if (sharedStoryVoiceStream != null)
             {
-                mobileResponse.VoiceMessage = "Queued " + chunksSent + " ordered voice chunk(s) on the Android phone audio socket.";
+                await EndSharedMobileStoryVoiceStreamAsync(sharedStoryVoiceStream, "generated story narration completed").ConfigureAwait(false);
             }
         }
-        else
+    }
+
+    private void PublishMobileStoryEventIfNeeded(StarInteractionResponse response, string eventType, string message)
+    {
+        if (response == null) return;
+        bool hasStoryData = response.UnityEvents.Any(x => x.Type.StartsWith("Story", StringComparison.OrdinalIgnoreCase))
+            || !string.IsNullOrWhiteSpace(response.StoryMarkdown)
+            || !string.IsNullOrWhiteSpace(response.StoryTitle);
+        if (!hasStoryData) return;
+
+        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
-            IStarVoiceGenerator generator = CreateVoiceGenerator();
-            VoiceSynthesisResult result = await generator.GenerateAsync(CreateVoiceSynthesisRequest(starResponse), cancellationToken).ConfigureAwait(false);
-            string checksum = Sha256Hex(result.WavAudio);
-            MobileAudioSendResult sent = await _mobileBridgeAudioHost.SendVoiceChunkAsync(result, 0, 1, cancellationToken).ConfigureAwait(false);
-            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent one complete voice WAV. sha256=" + ShortHash(checksum) + ", bytes=" + result.WavAudio.Length + ".", cancellationToken).ConfigureAwait(false);
-            mobileResponse.VoiceChunksSent = sent.SentClients > 0 ? 1 : 0;
-            mobileResponse.VoiceBytesSent = result.WavAudio.Length;
-            mobileResponse.VoiceMessage = "Queued one non-streaming voice WAV on the Android phone audio socket.";
-            OnUiThread(() => AppendMobileBridgeVoiceDebug("Non-streaming voice sent", "clients=" + sent.SentClients + ", bytes=" + result.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+            EventType = eventType,
+            SourceClientId = "desktop-runtime",
+            SessionId = "android-phone-dev",
+            StarId = response.StarId ?? SelectedStarId,
+            SelectedStarId = SelectedStarId,
+            Message = message,
+            StoryId = response.StoryId ?? string.Empty,
+            StoryTitle = response.StoryTitle ?? string.Empty,
+            StoryMarkdown = response.StoryMarkdown ?? string.Empty,
+            StorySummary = response.StorySummary ?? string.Empty,
+            StoryPartIndex = response.StoryPartIndex,
+            StoryIsFinished = response.StoryIsFinished,
+            StoryChunkCount = _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown),
+            SpokenText = response.SpokenText ?? string.Empty
+        });
+    }
+
+    private async Task SendMobileStoryVoiceWithPrefetchAsync(StarInteractionResponse firstResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope voiceStream)
+    {
+        StarInteractionResponse currentResponse = firstResponse;
+        int totalStoryChunks = Math.Max(1, _storySpeechAdapter.CountStoryChunks(firstResponse.StoryMarkdown));
+        int storyChunksQueued = 0;
+        int totalVoiceChunks = 0;
+        int totalBytes = 0;
+        bool releasedBackgroundAnalysis = false;
+        Task<List<VoiceSynthesisResult>>? prefetchedVoiceTask = null;
+
+        PublishMobileStoryEventIfNeeded(firstResponse, "StoryResponseReady", "Full story markdown is ready; Android story voice prefetch is starting.");
+        await _mobileBridgeAudioHost!.SendStatusAsync("Story voice mode: streaming the first ready sentence immediately and asking Qwen for the next passage as soon as the phone starts receiving audio.", cancellationToken).ConfigureAwait(false);
+        OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice low-latency prefetch started", (firstResponse.StarId ?? "Star") + " storyChunks=" + totalStoryChunks));
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            object prefetchGate = new object();
+            bool nextPrefetchStarted = false;
+            StarInteractionResponse? nextResponse = null;
+            Task<List<VoiceSynthesisResult>>? nextVoiceTask = null;
+
+            void StartNextPrefetchFromCurrentSpeech()
+            {
+                lock (prefetchGate)
+                {
+                    if (nextPrefetchStarted) return;
+                    nextPrefetchStarted = true;
+
+                    if (_storySpeechAdapter.TryCreateNextStoryChunkResponse(currentResponse, out StarInteractionResponse? createdNext) && createdNext != null)
+                    {
+                        nextResponse = createdNext;
+                        TrackStoryFromResponse(createdNext);
+                        PublishMobileStoryEventIfNeeded(createdNext, "StoryVoicePrefetchStarted", "The next story voice request was sent as soon as the current Android speech began queueing.");
+                        nextVoiceTask = GenerateMobileStoryVoiceBatchAsync(createdNext, cancellationToken);
+                        _ = _mobileBridgeAudioHost!.SendStatusAsync((createdNext.StarId ?? "Star") + " is already preparing story passage " + (createdNext.StoryPartIndex + 1) + " while the phone plays passage " + (currentResponse.StoryPartIndex + 1) + ".", CancellationToken.None);
+                        OnUiThread(() => AppendMobileBridgeVoiceDebug("Next story passage requested early", "current=" + (currentResponse.StoryPartIndex + 1) + ", next=" + (createdNext.StoryPartIndex + 1)));
+                    }
+                }
+            }
+
+            MobileStoryVoiceSendStats stats;
+            if (prefetchedVoiceTask != null)
+            {
+                // For an already-prefetched passage, ask for the following passage before sending this
+                // passage to the phone. The phone begins playback as soon as these WAV chunks arrive.
+                StartNextPrefetchFromCurrentSpeech();
+                List<VoiceSynthesisResult> prefetchedVoice = await prefetchedVoiceTask.ConfigureAwait(false);
+                if (!releasedBackgroundAnalysis)
+                {
+                    releasedBackgroundAnalysis = true;
+                    ReleasePendingBackgroundAnalysis("Android story voice is queued; story TTS prefetch continues while the phone plays.");
+                }
+
+                stats = await SendMobileStoryVoiceBatchAsync(prefetchedVoice, currentResponse, totalStoryChunks, cancellationToken, voiceStream).ConfigureAwait(false);
+            }
+            else
+            {
+                stats = await GenerateAndSendMobileStoryVoicePassageStreamingAsync(
+                    currentResponse,
+                    totalStoryChunks,
+                    voiceStream,
+                    () =>
+                    {
+                        StartNextPrefetchFromCurrentSpeech();
+                        if (!releasedBackgroundAnalysis)
+                        {
+                            releasedBackgroundAnalysis = true;
+                            ReleasePendingBackgroundAnalysis("First Android story voice sentence queued; story TTS prefetch continues while the phone plays.");
+                        }
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            storyChunksQueued++;
+            totalVoiceChunks += stats.VoiceChunks;
+            totalBytes += stats.Bytes;
+
+            if (nextResponse == null || nextVoiceTask == null)
+            {
+                await _mobileBridgeAudioHost.SendStatusAsync("Story voice stream finished. Queued " + storyChunksQueued + " story passage(s), voice chunks=" + totalVoiceChunks + ", bytes=" + totalBytes + ".", cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice finished", "storyChunks=" + storyChunksQueued + ", voiceChunks=" + totalVoiceChunks + ", bytes=" + totalBytes));
+                mobileResponse.VoiceChunksSent = totalVoiceChunks;
+                mobileResponse.VoiceBytesSent = totalBytes;
+                mobileResponse.VoiceMessage = "Queued full story narration to Android with sentence-level streaming and next-passage prefetch.";
+                return;
+            }
+
+            currentResponse = nextResponse;
+            prefetchedVoiceTask = nextVoiceTask;
+        }
+    }
+
+    private async Task<MobileStoryVoiceSendStats> GenerateAndSendMobileStoryVoicePassageStreamingAsync(StarInteractionResponse response, int totalStoryChunks, MobileVoiceStreamScope voiceStream, Action onFirstVoiceChunkQueued, CancellationToken cancellationToken)
+    {
+        PrepareVoiceCloneReferenceForTts(response);
+
+        if (!_useStreamingTts)
+        {
+            List<VoiceSynthesisResult> voice = await GenerateMobileStoryVoiceBatchAsync(response, cancellationToken).ConfigureAwait(false);
+            onFirstVoiceChunkQueued?.Invoke();
+            return await SendMobileStoryVoiceBatchAsync(voice, response, totalStoryChunks, cancellationToken, voiceStream).ConfigureAwait(false);
         }
 
-        ReleasePendingBackgroundAnalysis("Android phone voice chunks were generated/sent.");
+        using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
+        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+        {
+            AutoPlayChunks = false
+        };
+
+        int voiceChunks = 0;
+        int bytes = 0;
+        bool firstChunkQueued = false;
+
+        pipeline.ChunkReadyForConsumer += (sender, args) =>
+        {
+            try
+            {
+                if (!IsMobileVoiceStreamCurrent(voiceStream) || cancellationToken.IsCancellationRequested) return;
+                if (!firstChunkQueued)
+                {
+                    firstChunkQueued = true;
+                    onFirstVoiceChunkQueued?.Invoke();
+                }
+
+                int chunkIndex = voiceChunks;
+                int totalTtsChunks = Math.Max(1, response.SpokenParts.Count == 0 ? 1 : response.SpokenParts.Count);
+                string checksum = Sha256Hex(args.Result.WavAudio);
+                MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+                {
+                    IsStory = true,
+                    StoryId = response.StoryId ?? string.Empty,
+                    StoryTitle = response.StoryTitle ?? string.Empty,
+                    StoryPartIndex = response.StoryPartIndex,
+                    StoryChunkCount = totalStoryChunks,
+                    TtsPartIndex = chunkIndex,
+                    TtsTotalParts = totalTtsChunks
+                };
+                MobileAudioSendResult sent = _mobileBridgeAudioHost!.SendVoiceChunkAsync(args.Result, chunkIndex, totalTtsChunks, cancellationToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
+                voiceChunks++;
+                bytes += args.Result.WavAudio.Length;
+                _mobileBridgeAudioHost.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " streamed to phone immediately, ttsPart=" + voiceChunks + "/" + totalTtsChunks + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).GetAwaiter().GetResult();
+                _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "StoryVoiceChunkQueued",
+                    SourceClientId = "desktop-runtime",
+                    SessionId = "android-phone-dev",
+                    StarId = response.StarId ?? SelectedStarId,
+                    SelectedStarId = SelectedStarId,
+                    Message = "Streamed story voice chunk " + (response.StoryPartIndex + 1) + " to " + sent.SentClients + " Android phone client(s).",
+                    StoryId = response.StoryId ?? string.Empty,
+                    StoryTitle = response.StoryTitle ?? string.Empty,
+                    StoryPartIndex = response.StoryPartIndex,
+                    StoryIsFinished = response.StoryIsFinished,
+                    StoryChunkCount = totalStoryChunks,
+                    SpokenText = response.SpokenText ?? string.Empty
+                });
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice chunk streamed", "storyPart=" + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + ", ttsPart=" + voiceChunks + "/" + totalTtsChunks + ", clients=" + sent.SentClients + ", bytes=" + args.Result.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+            }
+            catch (Exception ex)
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice stream send failed", ex.Message));
+            }
+        };
+
+        pipeline.GenerationError += (_, args) =>
+        {
+            if (!cancellationToken.IsCancellationRequested) _ = _mobileBridgeAudioHost!.SendErrorAsync(args.ErrorMessage ?? "TTS generation error.", CancellationToken.None);
+        };
+
+        await pipeline.SpeakStreamingAsync(DefaultSessionId, response, cancellationToken).ConfigureAwait(false);
+
+        if (!firstChunkQueued)
+        {
+            onFirstVoiceChunkQueued?.Invoke();
+        }
+
+        return new MobileStoryVoiceSendStats(voiceChunks, bytes);
+    }
+
+    private async Task<List<VoiceSynthesisResult>> GenerateMobileStoryVoiceBatchAsync(StarInteractionResponse response, CancellationToken cancellationToken)
+    {
+        PrepareVoiceCloneReferenceForTts(response);
+        if (_useStreamingTts)
+        {
+            using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
+            return await GenerateStreamingStoryVoiceBatchAsync(generator, response, cancellationToken).ConfigureAwait(false);
+        }
+
+        IStarVoiceGenerator nonStreaming = CreateVoiceGenerator();
+        VoiceSynthesisResult result = await nonStreaming.GenerateAsync(CreateVoiceSynthesisRequest(response), cancellationToken).ConfigureAwait(false);
+        return new List<VoiceSynthesisResult> { result };
+    }
+
+    private async Task<MobileStoryVoiceSendStats> SendMobileStoryVoiceBatchAsync(List<VoiceSynthesisResult> voiceChunks, StarInteractionResponse response, int totalStoryChunks, CancellationToken cancellationToken, MobileVoiceStreamScope voiceStream)
+    {
+        int bytes = 0;
+        if (voiceChunks.Count == 0)
+        {
+            return new MobileStoryVoiceSendStats(0, 0);
+        }
+
+        for (int i = 0; i < voiceChunks.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsMobileVoiceStreamCurrent(voiceStream)) throw new OperationCanceledException("Android story stream was replaced.", cancellationToken);
+            VoiceSynthesisResult chunk = voiceChunks[i];
+            string checksum = Sha256Hex(chunk.WavAudio);
+            MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+            {
+                IsStory = true,
+                StoryId = response.StoryId ?? string.Empty,
+                StoryTitle = response.StoryTitle ?? string.Empty,
+                StoryPartIndex = response.StoryPartIndex,
+                StoryChunkCount = totalStoryChunks,
+                TtsPartIndex = i,
+                TtsTotalParts = voiceChunks.Count
+            };
+            MobileAudioSendResult sent = await _mobileBridgeAudioHost!.SendVoiceChunkAsync(chunk, i, voiceChunks.Count, cancellationToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
+            bytes += chunk.WavAudio.Length;
+            await _mobileBridgeAudioHost.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " sent to phone, ttsPart=" + (i + 1) + "/" + voiceChunks.Count + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).ConfigureAwait(false);
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "StoryVoiceChunkQueued",
+                SourceClientId = "desktop-runtime",
+                SessionId = "android-phone-dev",
+                StarId = response.StarId ?? SelectedStarId,
+                SelectedStarId = SelectedStarId,
+                Message = "Queued story voice chunk " + (response.StoryPartIndex + 1) + " to " + sent.SentClients + " Android phone client(s).",
+                StoryId = response.StoryId ?? string.Empty,
+                StoryTitle = response.StoryTitle ?? string.Empty,
+                StoryPartIndex = response.StoryPartIndex,
+                StoryIsFinished = response.StoryIsFinished,
+                StoryChunkCount = totalStoryChunks,
+                SpokenText = response.SpokenText ?? string.Empty
+            });
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice chunk sent", "storyPart=" + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + ", ttsPart=" + (i + 1) + "/" + voiceChunks.Count + ", clients=" + sent.SentClients + ", bytes=" + chunk.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+        }
+
+        return new MobileStoryVoiceSendStats(voiceChunks.Count, bytes);
+    }
+
+    private readonly struct MobileStoryVoiceSendStats
+    {
+        public MobileStoryVoiceSendStats(int voiceChunks, int bytes)
+        {
+            VoiceChunks = voiceChunks;
+            Bytes = bytes;
+        }
+
+        public int VoiceChunks { get; }
+        public int Bytes { get; }
     }
 
     private static RequestType ParseMobileRequestType(string? value)
@@ -899,6 +1810,15 @@ public sealed partial class MainViewModel
             return parsed;
         }
         return RequestType.Chat;
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (string? value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+        }
+        return string.Empty;
     }
 
     private static string TruncateForUi(string? text, int maxChars)

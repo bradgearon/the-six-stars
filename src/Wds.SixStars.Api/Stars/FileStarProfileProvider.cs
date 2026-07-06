@@ -23,7 +23,7 @@ namespace Wds.SixStars.Api.Stars
                 profiles.Add(profile);
             }
 
-            _profiles = profiles.ToDictionary(x => x.StarId, StringComparer.OrdinalIgnoreCase);
+            _profiles = profiles.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)).GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
         }
 
         public StarProfile GetProfile(string starId)

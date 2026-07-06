@@ -91,6 +91,9 @@ namespace Wds.SixStars.Api.Models
         public List<string> AcceptedNegativeEmotionSignals { get; set; } = new List<string>();
         public List<string> AcceptedRelationshipCombos { get; set; } = new List<string>();
 
+        /// <summary>Top three strongest entries from the latest emotion vectors after deterministic background scoring.</summary>
+        public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> DetectedCombos { get; set; } = new List<string>();

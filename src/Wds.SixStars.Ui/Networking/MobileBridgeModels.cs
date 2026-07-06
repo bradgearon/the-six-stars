@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Wds.SixStars.Api.Models;
 
 namespace Wds.SixStars.Ui.Networking;
 
@@ -19,7 +20,11 @@ public sealed class MobileBridgeRequest
     public int Channels { get; set; } = 1;
     public int BitsPerSample { get; set; } = 16;
     public string AudioBase64 { get; set; } = string.Empty;
+    public string PhotoBase64 { get; set; } = string.Empty;
+    public string PhotoMimeType { get; set; } = "image/jpeg";
+    public string PhotoCaption { get; set; } = string.Empty;
 }
+
 
 public sealed class MobileBridgeResponse
 {
@@ -46,5 +51,19 @@ public sealed class MobileBridgeResponse
     public int VoiceBytesSent { get; set; }
     public string VoiceMessage { get; set; } = string.Empty;
     public string VoiceError { get; set; } = string.Empty;
+    public string StoryId { get; set; } = string.Empty;
+    public string StoryTitle { get; set; } = string.Empty;
+    public string StoryMarkdown { get; set; } = string.Empty;
+    public string StorySummary { get; set; } = string.Empty;
+    public int StoryPartIndex { get; set; }
+    public bool StoryIsFinished { get; set; }
+    public bool StoryMarkdownReady { get; set; }
+    public bool StoryAutoplayPlanned { get; set; }
+    public int StoryChunkCount { get; set; }
+    public bool PhotoAttached { get; set; }
+    public string PhotoSummary { get; set; } = string.Empty;
+    public string PhotoError { get; set; } = string.Empty;
+    public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
     public List<string> Notes { get; } = new List<string>();
 }
+

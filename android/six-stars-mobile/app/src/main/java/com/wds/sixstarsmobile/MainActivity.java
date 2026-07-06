@@ -2,12 +2,15 @@ package com.wds.sixstarsmobile;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
+import android.graphics.Bitmap;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
+import android.provider.MediaStore;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -44,7 +47,9 @@ import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.TreeMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,6 +57,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_RECORD_AUDIO = 301;
+    private static final int REQUEST_CAMERA_PHOTO = 302;
     private static final int SAMPLE_RATE = 16000;
     private static final int FRAME_STATUS = 1;
     private static final int FRAME_AUDIO_WAV = 2;
@@ -75,6 +81,7 @@ public final class MainActivity extends Activity {
     private TextView debugText;
     private TextView voiceDebugText;
     private Button recordButton;
+    private Button photoButton;
     private Button toggleMetButton;
     private Button toggleAllyButton;
     private Button clearHistoryButton;
@@ -83,7 +90,9 @@ public final class MainActivity extends Activity {
     private boolean suppressStarSelectionDispatch;
     private boolean selectedStarIsMet;
     private boolean selectedStarIsAlly;
+    private String currentTopAffectedEmotions = "Top emotions: none yet.";
     private long lastBridgeEventSequence;
+    private boolean bridgeEventsPrimed;
     private File lastVoiceAudioFile;
     private String lastVoiceAudioChecksum = "";
     private ByteArrayOutputStream lastVoicePcmAccumulator;
@@ -103,6 +112,14 @@ public final class MainActivity extends Activity {
     private String connectedAudioHost = "";
     private int connectedAudioPort = -1;
     private final WavAudioQueue wavAudioQueue = new WavAudioQueue();
+    private final Object voiceStreamStateLock = new Object();
+    private String activeVoiceStreamId = "";
+    private long activeVoiceStreamOrdinal = 0L;
+    private int droppedStaleVoiceFrames;
+    private final Object orderedVoiceQueueLock = new Object();
+    private final TreeMap<Integer, PhoneVoiceClip> pendingDesktopVoiceClips = new TreeMap<>();
+    private final HashSet<Integer> acceptedDesktopVoiceSequences = new HashSet<>();
+    private int nextExpectedDesktopVoiceSequence = 0;
 
     private final Runnable healthLoop = new Runnable() {
         @Override
@@ -118,7 +135,7 @@ public final class MainActivity extends Activity {
         public void run() {
             if (destroyed) return;
             pollBridgeEvents();
-            mainHandler.postDelayed(this, 1300);
+            mainHandler.postDelayed(this, 450);
         }
     };
 
@@ -187,7 +204,7 @@ public final class MainActivity extends Activity {
                 new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"}));
         requestTypeSpinner = new Spinner(this);
         requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"Chat", "Story", "Letter", "BattleUpdate", "Debug"}));
+                new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
         selectors.addView(starSpinner, weightParams(1));
         selectors.addView(requestTypeSpinner, weightParams(1));
         root.addView(selectors);
@@ -258,8 +275,11 @@ public final class MainActivity extends Activity {
         sendButton.setOnClickListener(v -> sendMessage());
         recordButton = button("Record Voice");
         recordButton.setOnClickListener(v -> toggleRecording());
+        photoButton = button("Share Photo");
+        photoButton.setOnClickListener(v -> startPhotoCapture());
         actionRow.addView(sendButton, weightParams(1));
         actionRow.addView(recordButton, weightParams(1));
+        actionRow.addView(photoButton, weightParams(1));
         root.addView(actionRow);
 
         root.addView(label("Star response"));
@@ -335,6 +355,14 @@ public final class MainActivity extends Activity {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
         }
+    }
+
+    private boolean requestCameraPermissionIfNeeded() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PHOTO);
+            return false;
+        }
+        return true;
     }
 
     private String baseUrl() {
@@ -471,6 +499,12 @@ public final class MainActivity extends Activity {
                 JSONArray events = json.optJSONArray("events");
                 long latest = optLongEither(json, "latestSequence", "LatestSequence", lastBridgeEventSequence);
                 runOnUiThread(() -> {
+                    if (!bridgeEventsPrimed) {
+                        if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
+                        bridgeEventsPrimed = true;
+                        appendVoiceDebug("Kaelia primed the bridge event subscription", "Starting after event #" + lastBridgeEventSequence + " so old story/audio events do not replay after reopening the app.");
+                        return;
+                    }
                     if (events != null) {
                         for (int i = 0; i < events.length(); i++) {
                             JSONObject evt = events.optJSONObject(i);
@@ -502,6 +536,7 @@ public final class MainActivity extends Activity {
         }
         long latest = optLongEither(json, "latestEventSequence", "LatestEventSequence", lastBridgeEventSequence);
         if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
+        bridgeEventsPrimed = true;
     }
 
     private void handleBridgeEvent(JSONObject event) {
@@ -512,12 +547,86 @@ public final class MainActivity extends Activity {
         String starId = optStringEither(event, "starId", "StarId", selected.length() > 0 ? selected : selectedStarName());
         String message = optStringEither(event, "message", "Message", type);
         if (selected.length() > 0) selectStarInSpinner(selected);
-        applyStarStateObject(event, type);
+
+        if (isPhotoBridgeEvent(type)) {
+            handlePhotoBridgeEvent(event, type, seq, starId, message);
+        } else if (isStoryBridgeEvent(type)) {
+            handleStoryBridgeEvent(event, type, seq, starId, message);
+        } else if (isTopEmotionBridgeEvent(type)) {
+            applyTopAffectedEmotionsObject(event, type);
+        } else if (isStateBridgeEvent(type)) {
+            applyStarStateObject(event, type);
+        }
+
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
             responseText.setText(("AllStarsDataCleared".equalsIgnoreCase(type) ? "All Star data cleared." : "History cleared for " + starId + ".") + " The next conversation starts from the refreshed Star memory.");
             setDebug("History cleared", message);
         }
         appendVoiceDebug("Elusiaa received a queued bridge update", "#" + seq + " " + type + " star=" + starId + ", selected=" + selected + ", " + clip(message, 180));
+    }
+
+    private boolean isStateBridgeEvent(String type) {
+        return "SelectedStarChanged".equalsIgnoreCase(type)
+                || "StarStateChanged".equalsIgnoreCase(type)
+                || "StarHistoryCleared".equalsIgnoreCase(type)
+                || "AllStarsDataCleared".equalsIgnoreCase(type)
+                || "BridgeCommandAccepted".equalsIgnoreCase(type);
+    }
+
+    private boolean isTopEmotionBridgeEvent(String type) {
+        return "TopAffectedEmotionsChanged".equalsIgnoreCase(type)
+                || "EmotionUpdateSettled".equalsIgnoreCase(type);
+    }
+
+    private boolean isPhotoBridgeEvent(String type) {
+        return "PhotoResponseReady".equalsIgnoreCase(type)
+                || "PhotoResponseFailed".equalsIgnoreCase(type);
+    }
+
+    private void handlePhotoBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "");
+        String photoSummary = optStringEither(event, "photoSummary", "PhotoSummary", "");
+        String photoError = optStringEither(event, "photoError", "PhotoError", "");
+        StringBuilder out = new StringBuilder();
+        out.append("Photo response — ").append(starId);
+        if (spoken.length() > 0) out.append("\n\n").append(spoken);
+        if (photoSummary.length() > 0) out.append("\n\nVision summary: ").append(photoSummary);
+        if (photoError.length() > 0) out.append("\n\nPhoto note: ").append(photoError);
+        responseText.setText(clip(out.toString(), 12000));
+        setDebug("Photo bridge event", "event=#" + seq + ", type=" + type + ", spokenChars=" + spoken.length() + ", summaryChars=" + photoSummary.length() + "\n" + message);
+    }
+
+    private boolean isStoryBridgeEvent(String type) {
+        return "StoryInitialResponse".equalsIgnoreCase(type)
+                || "StoryResponseReady".equalsIgnoreCase(type)
+                || "StoryMarkdownReady".equalsIgnoreCase(type)
+                || "StoryVoicePrefetchStarted".equalsIgnoreCase(type)
+                || "StoryVoiceChunkQueued".equalsIgnoreCase(type);
+    }
+
+    private void handleStoryBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String title = optStringEither(event, "storyTitle", "StoryTitle", "");
+        String summary = optStringEither(event, "storySummary", "StorySummary", "");
+        String markdown = optStringEither(event, "storyMarkdown", "StoryMarkdown", "");
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "");
+        int partIndex = optIntEither(event, "storyPartIndex", "StoryPartIndex", 0);
+        int count = optIntEither(event, "storyChunkCount", "StoryChunkCount", 0);
+        if ("StoryResponseReady".equalsIgnoreCase(type) || "StoryMarkdownReady".equalsIgnoreCase(type)) {
+            StringBuilder out = new StringBuilder();
+            out.append("Story ready — ").append(starId);
+            if (title.length() > 0) out.append("\n# ").append(title);
+            if (summary.length() > 0) out.append("\n\nSummary: ").append(summary);
+            if (markdown.length() > 0) out.append("\n\n").append(markdown);
+            else if (spoken.length() > 0) out.append("\n\n").append(spoken);
+            responseText.setText(clip(out.toString(), 20000));
+            setDebug("Story markdown ready", "event=#" + seq + ", chunks=" + count + ", markdownChars=" + markdown.length() + "\n" + message);
+        } else if ("StoryVoicePrefetchStarted".equalsIgnoreCase(type)) {
+            appendVoiceDebug("Next story voice request sent early", "part=" + (partIndex + 1) + "/" + count + ". " + clip(message, 180));
+        } else if ("StoryVoiceChunkQueued".equalsIgnoreCase(type)) {
+            appendVoiceDebug("Story voice queued", "part=" + (partIndex + 1) + "/" + count + ". " + clip(message, 180));
+        } else if (spoken.length() > 0) {
+            responseText.setText(starId + "\n\n" + clip(spoken, 8000));
+        }
     }
 
     private void applyStarStateObject(JSONObject state, String status) {
@@ -530,7 +639,21 @@ public final class MainActivity extends Activity {
         int romance = optIntEither(state, "romance", "Romance", 0);
         double connection = optDoubleEither(state, "emotionalConnectionPercent", "EmotionalConnectionPercent", 0.0);
         boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
+        String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
+        if (top.length() > 0) currentTopAffectedEmotions = top;
         updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
+    }
+
+    private void applyTopAffectedEmotionsObject(JSONObject state, String status) {
+        String starId = optStringEither(state, "starId", "StarId", selectedStarName());
+        if (!starId.equalsIgnoreCase(selectedStarName())) return;
+        String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
+        if (top.length() == 0) top = optStringEither(state, "message", "Message", "Top emotions: none yet.");
+        currentTopAffectedEmotions = top;
+        if (starStateText != null) {
+            starStateText.setText(starStateText.getText().toString().split("\nTop emotions:")[0] + "\n" + currentTopAffectedEmotions + " — " + status);
+        }
+        appendVoiceDebug("Emotion vector settled", currentTopAffectedEmotions);
     }
 
     private void updateStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, String status) {
@@ -539,7 +662,7 @@ public final class MainActivity extends Activity {
         if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
         if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
         if (starStateText != null) {
-            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status);
+            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions);
         }
     }
 
@@ -568,7 +691,7 @@ public final class MainActivity extends Activity {
         try {
             byte[] localWav = createTestToneWav(24000, 1.0, 440.0);
             String checksum = sha256Hex(localWav);
-            wavAudioQueue.enqueue(new PhoneVoiceClip(localWav, "local 24 kHz test beep", checksum, false));
+            wavAudioQueue.enqueue(new PhoneVoiceClip(localWav, "local 24 kHz test beep", checksum, false, "", 0L, 0));
             setDebug("Local phone audio test", "Queued a local 24 kHz PCM WAV beep. sha256=" + shortHash(checksum) + ". If you hear this, Android AudioTrack playback works.");
             appendVoiceDebug("Auerlis sparked a local test tone", "bytes=" + localWav.length + ", sha256=" + shortHash(checksum));
         } catch (Exception ex) {
@@ -595,6 +718,87 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception ex) {
                 runOnUiThread(() -> setDebug("Desktop phone-audio socket test failed", ex.toString()));
+            }
+        });
+    }
+
+
+    private void startPhotoCapture() {
+        if (!requestCameraPermissionIfNeeded()) {
+            setDebug("Camera permission needed", "Grant CAMERA and press Share Photo again.");
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            if (intent.resolveActivity(getPackageManager()) == null) {
+                setDebug("No camera app", "Android could not find a camera app for ACTION_IMAGE_CAPTURE.");
+                return;
+            }
+            appendVoiceDebug("Kaelia opened the phone camera", "The next captured photo will be sent as a fresh Star request.");
+            startActivityForResult(intent, REQUEST_CAMERA_PHOTO);
+        } catch (Exception ex) {
+            setDebug("Camera failed", ex.toString());
+            appendVoiceDebug("Nyxari could not open the camera", ex.toString());
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_CAMERA_PHOTO) return;
+        if (resultCode != RESULT_OK || data == null) {
+            setDebug("Photo cancelled", "No photo was sent to the Star.");
+            return;
+        }
+
+        try {
+            Object extra = data.getExtras() == null ? null : data.getExtras().get("data");
+            if (!(extra instanceof Bitmap)) {
+                setDebug("Photo failed", "The camera did not return a preview bitmap. Try another camera app or add gallery/file support later.");
+                return;
+            }
+            Bitmap bitmap = (Bitmap) extra;
+            ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 88, jpeg);
+            byte[] bytes = jpeg.toByteArray();
+            sendPhoto(bytes, "image/jpeg");
+        } catch (Exception ex) {
+            setDebug("Photo send failed", ex.toString());
+            appendVoiceDebug("Maera felt the photo request fail", ex.toString());
+        }
+    }
+
+    private void sendPhoto(byte[] imageBytes, String mimeType) {
+        if (imageBytes == null || imageBytes.length == 0) {
+            setDebug("Photo empty", "No image bytes were captured.");
+            return;
+        }
+        String caption = messageEdit == null ? "" : messageEdit.getText().toString();
+        String requestText = caption.trim().length() == 0
+                ? "I attached a photo. Please look at it and reply directly to what you see."
+                : caption;
+        String starName = selectedStarName();
+        if (messageEdit != null) messageEdit.setText("");
+        httpExecutor.execute(() -> {
+            try {
+                JSONObject json = baseRequestJson();
+                json.put("commandId", "android-photo-" + System.currentTimeMillis());
+                json.put("commandType", "SendPhoto");
+                json.put("requestType", "Photo");
+                json.put("playerText", requestText);
+                json.put("photoBase64", Base64.encodeToString(imageBytes, Base64.NO_WRAP));
+                json.put("photoMimeType", mimeType == null || mimeType.length() == 0 ? "image/jpeg" : mimeType);
+                json.put("photoCaption", requestText);
+                String checksum = sha256Hex(imageBytes);
+                runOnUiThread(() -> {
+                    setDebug("Sending photo", "Message box cleared. Sending camera photo to " + starName + ". bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug(starName + " received a photo request", "HTTP /api/mobile/dispatch SendPhoto sent with photo bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
+                });
+                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
+                handleConversationResponse("Photo request complete", body);
+            } catch (Exception ex) {
+                runOnUiThread(() -> setDebug("Photo request failed", ex.toString()));
             }
         });
     }
@@ -722,20 +926,42 @@ public final class MainActivity extends Activity {
                 int bytes = optIntEither(json, "voiceBytesSent", "VoiceBytesSent", 0);
                 String voiceMessage = optStringEither(json, "voiceMessage", "VoiceMessage", "");
                 String voiceError = optStringEither(json, "voiceError", "VoiceError", "");
+                String storyTitle = optStringEither(json, "storyTitle", "StoryTitle", "");
+                String storyMarkdown = optStringEither(json, "storyMarkdown", "StoryMarkdown", "");
+                String storySummary = optStringEither(json, "storySummary", "StorySummary", "");
+                int storyChunks = optIntEither(json, "storyChunkCount", "StoryChunkCount", 0);
+                boolean storyReady = optBooleanEither(json, "storyMarkdownReady", "StoryMarkdownReady", false);
+                boolean photoAttached = optBooleanEither(json, "photoAttached", "PhotoAttached", false);
+                String photoSummary = optStringEither(json, "photoSummary", "PhotoSummary", "");
+                String photoError = optStringEither(json, "photoError", "PhotoError", "");
+                String topEmotions = formatTopAffectedEmotions(optJsonArrayEither(json, "topAffectedEmotions", "TopAffectedEmotions"));
+                if (topEmotions.length() > 0) {
+                    currentTopAffectedEmotions = topEmotions;
+                    if (starStateText != null) starStateText.setText(starStateText.getText().toString().split("\nTop emotions:")[0] + "\n" + currentTopAffectedEmotions);
+                }
 
-                String visibleResponse = starOutput.length() > 0 ? starOutput : spoken;
+                String visibleResponse = storyMarkdown.length() > 0 ? storyMarkdown : (starOutput.length() > 0 ? starOutput : spoken);
                 if (visibleResponse.length() == 0) {
                     visibleResponse = "No spoken text was returned in the HTTP response. Check the desktop debug output for the Star response.";
                 }
 
                 String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
-                responseText.setText(header + "\n\n" + clip(visibleResponse, 8000));
+                if (storyTitle.length() > 0) header += "\nStory: " + storyTitle;
+                if (storySummary.length() > 0) header += "\nSummary: " + storySummary;
+                responseText.setText(header + "\n\n" + clip(visibleResponse, storyMarkdown.length() > 0 ? 20000 : 8000));
 
                 String details = "Response chars: " + visibleResponse.length()
                         + "\nSpoken chars: " + spoken.length()
                         + "\nVoice chunks queued: " + chunks
-                        + "\nVoice bytes: " + bytes;
+                        + "\nVoice bytes: " + bytes
+                        + "\nStory markdown ready: " + storyReady
+                        + "\nStory chunks: " + storyChunks
+                        + "\nStory markdown chars: " + storyMarkdown.length();
+                if (photoAttached) details += "\nPhoto attached: true";
+                if (photoSummary.length() > 0) details += "\nPhoto summary: " + clip(photoSummary, 400);
+                if (photoError.length() > 0) details += "\nPhoto note: " + clip(photoError, 400);
+                if (topEmotions.length() > 0) details += "\n" + topEmotions;
                 if (voiceMessage.length() > 0) details += "\n" + voiceMessage;
                 if (voiceError.length() > 0) details += "\nVoice note: " + voiceError;
                 setDebug(title, details);
@@ -854,15 +1080,26 @@ public final class MainActivity extends Activity {
             boolean checksumOk = expectedChecksum.length() == 0 || expectedChecksum.equalsIgnoreCase(receivedChecksum);
             int chunkNumber = header.optInt("chunkIndex") + 1;
             int totalChunks = header.optInt("totalChunks", 1);
+            int audioSequence = header.optInt("audioSequence", header.optInt("chunkIndex", 0));
             String starId = header.optString("starId", "Star");
-            String savedChecksum = saveLastVoiceAudioFromStreamChunk(wav, header.optInt("chunkIndex"), totalChunks);
-            wavAudioQueue.enqueue(new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks, receivedChecksum, true));
+            String streamId = header.optString("streamId", "");
+            long streamOrdinal = header.optLong("streamOrdinal", 0L);
+            if (!acceptVoiceStreamFrame(streamId, streamOrdinal, starId)) {
+                droppedStaleVoiceFrames++;
+                runOnUiThread(() -> appendVoiceDebug("Nyxari dropped a stale voice frame", "incomingStream=" + streamOrdinal + ", activeStream=" + activeVoiceStreamOrdinal + ", dropped=" + droppedStaleVoiceFrames));
+                return;
+            }
+            PhoneVoiceClip clip = new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks, receivedChecksum, true, streamId, streamOrdinal, audioSequence);
+            OrderedEnqueueResult ordered = enqueueDesktopVoiceClipInOrder(clip);
             runOnUiThread(() -> {
-                audioStatusText.setText("Queued phone voice chunk " + chunkNumber
+                audioStatusText.setText((ordered.queuedNow > 0 ? "Queued" : ordered.dropped ? "Dropped" : "Buffered")
+                        + " phone voice chunk " + chunkNumber
                         + "/" + totalChunks
+                        + " — stream " + streamOrdinal
+                        + " — seq " + audioSequence
                         + " — " + wav.length + " bytes — sha256 " + shortHash(receivedChecksum)
                         + (checksumOk ? " ✓" : " mismatch"));
-                appendVoiceDebug(starId + " voice chunk arrived", "chunk=" + chunkNumber + "/" + totalChunks + ", bytes=" + wav.length + ", frameSha256=" + shortHash(receivedChecksum) + ", savedFileSha256=" + shortHash(savedChecksum) + ", saved=" + lastVoiceAudioFile.getName() + ", checksum=" + (checksumOk ? "ok" : "mismatch expected " + shortHash(expectedChecksum)));
+                appendVoiceDebug(starId + " voice chunk arrived", "stream=" + streamOrdinal + ", seq=" + audioSequence + ", expected=" + ordered.nextExpected + ", buffered=" + ordered.buffered + ", queuedNow=" + ordered.queuedNow + ", dropped=" + ordered.dropped + ", chunk=" + chunkNumber + "/" + totalChunks + ", bytes=" + wav.length + ", frameSha256=" + shortHash(receivedChecksum) + ", checksum=" + (checksumOk ? "ok" : "mismatch expected " + shortHash(expectedChecksum)));
             });
             return;
         }
@@ -872,6 +1109,7 @@ public final class MainActivity extends Activity {
         try {
             JSONObject status = new JSONObject(text);
             message = status.optString("message", text);
+            handleVoiceStreamControl(status);
         } catch (Exception ignored) { }
         final String displayMessage = message;
         if (type == FRAME_STATUS) {
@@ -884,6 +1122,113 @@ public final class MainActivity extends Activity {
                 setDebug("Voice socket error", displayMessage);
                 appendVoiceDebug("Maera felt a voice socket error", displayMessage);
             });
+        }
+    }
+
+    private boolean acceptVoiceStreamFrame(String streamId, long streamOrdinal, String starId) {
+        if (streamOrdinal <= 0L || streamId == null || streamId.length() == 0) return true;
+        boolean startedNew = false;
+        synchronized (voiceStreamStateLock) {
+            if (streamOrdinal < activeVoiceStreamOrdinal) return false;
+            if (streamOrdinal > activeVoiceStreamOrdinal || !streamId.equals(activeVoiceStreamId)) {
+                activeVoiceStreamOrdinal = streamOrdinal;
+                activeVoiceStreamId = streamId;
+                startedNew = true;
+                resetReceivedVoiceAccumulatorLocked();
+                resetOrderedVoiceQueueLocked();
+            }
+        }
+        if (startedNew) {
+            wavAudioQueue.clearForNewStream();
+            final long ordinal = streamOrdinal;
+            final String id = streamId;
+            runOnUiThread(() -> appendVoiceDebug(starId + " opened a fresh voice stream", "stream=" + ordinal + ", id=" + id + ". Cleared stale queued Android audio."));
+        }
+        return true;
+    }
+
+    private void handleVoiceStreamControl(JSONObject status) {
+        String action = status.optString("streamAction", "");
+        if (action.length() == 0) return;
+        String streamId = status.optString("streamId", "");
+        long streamOrdinal = status.optLong("streamOrdinal", 0L);
+        String starId = status.optString("starId", "Star");
+        if (streamOrdinal <= 0L) return;
+
+        boolean clear = false;
+        synchronized (voiceStreamStateLock) {
+            if ("start".equalsIgnoreCase(action)) {
+                boolean sameStream = streamOrdinal == activeVoiceStreamOrdinal && streamId.equals(activeVoiceStreamId);
+                if (!sameStream && streamOrdinal >= activeVoiceStreamOrdinal) {
+                    activeVoiceStreamOrdinal = streamOrdinal;
+                    activeVoiceStreamId = streamId;
+                    clear = true;
+                    resetReceivedVoiceAccumulatorLocked();
+                    resetOrderedVoiceQueueLocked();
+                }
+            } else if ("cancel".equalsIgnoreCase(action)) {
+                if (streamOrdinal >= activeVoiceStreamOrdinal || streamId.equals(activeVoiceStreamId)) {
+                    activeVoiceStreamOrdinal = Math.max(activeVoiceStreamOrdinal, streamOrdinal);
+                    activeVoiceStreamId = streamId;
+                    clear = true;
+                    resetReceivedVoiceAccumulatorLocked();
+                    resetOrderedVoiceQueueLocked();
+                }
+            }
+        }
+
+        if (clear) {
+            wavAudioQueue.clearForNewStream();
+            runOnUiThread(() -> appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing."));
+        }
+    }
+
+    private boolean isCurrentVoiceClip(PhoneVoiceClip clip) {
+        if (clip == null || !clip.fromDesktop || clip.streamOrdinal <= 0L) return true;
+        synchronized (voiceStreamStateLock) {
+            return clip.streamOrdinal == activeVoiceStreamOrdinal && clip.streamId.equals(activeVoiceStreamId);
+        }
+    }
+
+    private OrderedEnqueueResult enqueueDesktopVoiceClipInOrder(PhoneVoiceClip clip) {
+        if (clip == null) return new OrderedEnqueueResult(0, 0, nextExpectedDesktopVoiceSequence, true);
+        if (!isCurrentVoiceClip(clip)) return new OrderedEnqueueResult(0, 0, nextExpectedDesktopVoiceSequence, true);
+
+        int queuedNow = 0;
+        boolean dropped = false;
+        synchronized (orderedVoiceQueueLock) {
+            if (clip.audioSequence < nextExpectedDesktopVoiceSequence
+                    || acceptedDesktopVoiceSequences.contains(clip.audioSequence)
+                    || pendingDesktopVoiceClips.containsKey(clip.audioSequence)) {
+                dropped = true;
+            } else {
+                pendingDesktopVoiceClips.put(clip.audioSequence, clip);
+                while (true) {
+                    PhoneVoiceClip ready = pendingDesktopVoiceClips.remove(nextExpectedDesktopVoiceSequence);
+                    if (ready == null) break;
+                    acceptedDesktopVoiceSequences.add(ready.audioSequence);
+                    wavAudioQueue.enqueue(ready);
+                    nextExpectedDesktopVoiceSequence++;
+                    queuedNow++;
+                }
+            }
+            return new OrderedEnqueueResult(queuedNow, pendingDesktopVoiceClips.size(), nextExpectedDesktopVoiceSequence, dropped);
+        }
+    }
+
+    private void resetOrderedVoiceQueueLocked() {
+        synchronized (orderedVoiceQueueLock) {
+            pendingDesktopVoiceClips.clear();
+            acceptedDesktopVoiceSequences.clear();
+            nextExpectedDesktopVoiceSequence = 0;
+        }
+    }
+
+    private void resetReceivedVoiceAccumulatorLocked() {
+        synchronized (this) {
+            lastVoicePcmAccumulator = null;
+            lastVoiceAccumulatorTotalChunks = 0;
+            lastVoiceAccumulatorChunks = 0;
         }
     }
 
@@ -905,30 +1250,32 @@ public final class MainActivity extends Activity {
 
 
 
-    private String saveLastVoiceAudioFromStreamChunk(byte[] wav, int chunkIndex, int totalChunks) {
+    private String appendCurrentVoiceClipToSavedAudio(PhoneVoiceClip clip) {
+        if (clip == null || clip.wav == null || clip.wav.length == 0) return "";
         try {
-            ParsedWav parsed = ParsedWav.parse(wav);
+            ParsedWav parsed = ParsedWav.parse(clip.wav);
             byte[] combinedWav;
             synchronized (this) {
-                if (chunkIndex <= 0 || lastVoicePcmAccumulator == null
+                if (lastVoicePcmAccumulator == null
                         || parsed.sampleRate != lastVoiceAccumulatorSampleRate
                         || parsed.channels != lastVoiceAccumulatorChannels) {
                     lastVoicePcmAccumulator = new ByteArrayOutputStream();
                     lastVoiceAccumulatorSampleRate = parsed.sampleRate;
                     lastVoiceAccumulatorChannels = parsed.channels;
-                    lastVoiceAccumulatorTotalChunks = totalChunks;
+                    lastVoiceAccumulatorTotalChunks = 0;
                     lastVoiceAccumulatorChunks = 0;
                 }
                 lastVoicePcmAccumulator.write(parsed.pcm, 0, parsed.pcm.length);
                 lastVoiceAccumulatorChunks++;
+                lastVoiceAccumulatorTotalChunks = Math.max(lastVoiceAccumulatorTotalChunks, clip.audioSequence + 1);
                 combinedWav = wavFromPcm16(lastVoicePcmAccumulator.toByteArray(), lastVoiceAccumulatorSampleRate, lastVoiceAccumulatorChannels);
             }
             String combinedChecksum = sha256Hex(combinedWav);
             saveLastVoiceAudio(combinedWav, combinedChecksum);
             return combinedChecksum;
         } catch (Exception ex) {
-            saveLastVoiceAudio(wav, "");
-            runOnUiThread(() -> appendVoiceDebug("Khavia saved only the latest voice chunk", "Could not combine chunks: " + ex.toString()));
+            saveLastVoiceAudio(clip.wav, "");
+            runOnUiThread(() -> appendVoiceDebug("Khavia saved only the latest voice chunk", "Could not append clip to saved stream: " + ex.toString()));
             return "";
         }
     }
@@ -956,7 +1303,7 @@ public final class MainActivity extends Activity {
                 byte[] wav = java.nio.file.Files.readAllBytes(lastVoiceAudioFile.toPath());
                 String checksum = sha256Hex(wav);
                 lastVoiceAudioChecksum = checksum;
-                wavAudioQueue.enqueue(new PhoneVoiceClip(wav, "saved phone voice replay", checksum, false));
+                wavAudioQueue.enqueue(new PhoneVoiceClip(wav, "saved phone voice replay", checksum, false, "", 0L, 0));
                 runOnUiThread(() -> {
                     setDebug("Play Saved Voice", "Queued " + lastVoiceAudioFile.getName() + " for replay. bytes=" + wav.length + ", sha256=" + shortHash(checksum));
                     appendVoiceDebug("Elusiaa replayed the saved voice", "bytes=" + wav.length + ", sha256=" + shortHash(checksum) + ", accumulatedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks);
@@ -1025,6 +1372,39 @@ public final class MainActivity extends Activity {
         wav.write(header.array());
         wav.write(pcm);
         return wav.toByteArray();
+    }
+
+    private static JSONArray optJsonArrayEither(JSONObject object, String camel, String pascal) {
+        if (object == null) return null;
+        JSONArray value = object.optJSONArray(camel);
+        if (value != null) return value;
+        return object.optJSONArray(pascal);
+    }
+
+    private static String formatTopAffectedEmotions(JSONArray array) {
+        if (array == null || array.length() == 0) return "";
+        StringBuilder sb = new StringBuilder("Top emotions: ");
+        int count = 0;
+        for (int i = 0; i < array.length() && count < 3; i++) {
+            JSONObject item = array.optJSONObject(i);
+            if (item == null) continue;
+            String emotion = optStringEither(item, "emotionId", "EmotionId", "");
+            if (emotion.length() == 0) continue;
+            String valence = optStringEither(item, "valence", "Valence", "positive");
+            double score = optDoubleEither(item, "score", "Score", 0.0);
+            double confidence = optDoubleEither(item, "confidence", "Confidence", 0.0);
+            boolean accepted = optBooleanEither(item, "acceptedForStateUpdate", "AcceptedForStateUpdate", false);
+            if (count > 0) sb.append(" | ");
+            sb.append(emotion)
+                    .append(" ")
+                    .append("negative".equalsIgnoreCase(valence) ? "-" : "+")
+                    .append(String.format(Locale.US, "%.0f", score))
+                    .append(" @ ")
+                    .append(String.format(Locale.US, "%.2f", confidence));
+            if (accepted) sb.append("*");
+            count++;
+        }
+        return count == 0 ? "" : sb.toString();
     }
 
     private static String optStringEither(JSONObject json, String camelName, String pascalName, String fallback) {
@@ -1110,6 +1490,7 @@ public final class MainActivity extends Activity {
     private final class WavAudioQueue {
         private final BlockingQueue<PhoneVoiceClip> queue = new LinkedBlockingQueue<>();
         private volatile boolean running;
+        private volatile AudioTrack activeTrack;
         private Thread thread;
 
         void start() {
@@ -1121,8 +1502,18 @@ public final class MainActivity extends Activity {
 
         void stop() {
             running = false;
-            if (thread != null) thread.interrupt();
+            clearForNewStream();
+        }
+
+        void clearForNewStream() {
             queue.clear();
+            AudioTrack track = activeTrack;
+            if (track != null) {
+                try { track.pause(); } catch (Exception ignored) { }
+                try { track.flush(); } catch (Exception ignored) { }
+                try { track.stop(); } catch (Exception ignored) { }
+            }
+            if (thread != null) thread.interrupt();
         }
 
         void enqueue(PhoneVoiceClip clip) {
@@ -1133,6 +1524,11 @@ public final class MainActivity extends Activity {
             while (running) {
                 try {
                     PhoneVoiceClip clip = queue.take();
+                    if (!isCurrentVoiceClip(clip)) {
+                        final PhoneVoiceClip dropped = clip;
+                        runOnUiThread(() -> appendVoiceDebug("Nyxari skipped stale queued audio", dropped.label + ", stream=" + dropped.streamOrdinal + ", active=" + activeVoiceStreamOrdinal));
+                        continue;
+                    }
                     playWav(clip);
                 } catch (InterruptedException ex) {
                     // shutting down or clearing queue
@@ -1154,21 +1550,56 @@ public final class MainActivity extends Activity {
             });
             AudioTrack track = new AudioTrack(AudioManager.STREAM_MUSIC, parsed.sampleRate, channelConfig,
                     AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
+            activeTrack = track;
             try {
+                if (!isCurrentVoiceClip(clip)) return;
+                String savedChecksum = clip.fromDesktop ? appendCurrentVoiceClipToSavedAudio(clip) : "";
+                if (clip.fromDesktop) {
+                    runOnUiThread(() -> appendVoiceDebug("Khavia saved the ordered phone voice stream", "afterSeq=" + clip.audioSequence + ", savedSha256=" + shortHash(savedChecksum) + ", savedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks));
+                }
                 track.play();
                 int offset = 0;
-                while (offset < parsed.pcm.length) {
+                int bytesPerFrame = Math.max(1, parsed.channels * 2);
+                int expectedFrames = parsed.pcm.length / bytesPerFrame;
+                while (offset < parsed.pcm.length && isCurrentVoiceClip(clip)) {
                     int toWrite = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
                     int wrote = track.write(parsed.pcm, offset, toWrite);
                     if (wrote <= 0) break;
                     offset += wrote;
                 }
-                try { Thread.sleep(Math.min(durationMs + 80L, 30000L)); } catch (InterruptedException ignored) { }
+
+                // MODE_STREAM write() only guarantees the bytes were accepted by AudioTrack, not that
+                // every queued sample has already reached the speaker. The old code slept for the full
+                // clip duration after writing, which could nearly double each chunk and created Android
+                // gaps that the desktop player did not have. Wait only until the playback head reaches
+                // the final frame, then move immediately to the next queued WAV.
+                long waitStarted = System.currentTimeMillis();
+                long maxWaitMs = Math.max(250L, durationMs + 750L);
+                while (running && isCurrentVoiceClip(clip) && track.getPlaybackHeadPosition() < expectedFrames
+                        && System.currentTimeMillis() - waitStarted < maxWaitMs) {
+                    try { Thread.sleep(12L); } catch (InterruptedException ignored) { break; }
+                }
+
                 track.stop();
-                runOnUiThread(() -> appendVoiceDebug("Elusiaa finished playing audio", clip.label + ", sha256=" + shortHash(clip.sha256)));
+                runOnUiThread(() -> appendVoiceDebug("Elusiaa finished playing audio", clip.label + ", sha256=" + shortHash(clip.sha256) + ", queuedNext=" + queue.size()));
             } finally {
+                if (activeTrack == track) activeTrack = null;
                 track.release();
             }
+        }
+    }
+
+    private static final class OrderedEnqueueResult {
+        final int queuedNow;
+        final int buffered;
+        final int nextExpected;
+        final boolean dropped;
+
+        OrderedEnqueueResult(int queuedNow, int buffered, int nextExpected, boolean dropped) {
+            this.queuedNow = queuedNow;
+            this.buffered = buffered;
+            this.nextExpected = nextExpected;
+            this.dropped = dropped;
         }
     }
 
@@ -1177,12 +1608,18 @@ public final class MainActivity extends Activity {
         final String label;
         final String sha256;
         final boolean fromDesktop;
+        final String streamId;
+        final long streamOrdinal;
+        final int audioSequence;
 
-        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop) {
+        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop, String streamId, long streamOrdinal, int audioSequence) {
             this.wav = wav;
             this.label = label == null ? "phone voice" : label;
             this.sha256 = sha256 == null ? "" : sha256;
             this.fromDesktop = fromDesktop;
+            this.streamId = streamId == null ? "" : streamId;
+            this.streamOrdinal = streamOrdinal;
+            this.audioSequence = audioSequence;
         }
     }
 

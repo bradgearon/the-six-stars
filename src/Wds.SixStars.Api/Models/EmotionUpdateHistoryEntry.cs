@@ -13,6 +13,7 @@ namespace Wds.SixStars.Api.Models
         public List<string> AcceptedPositiveSignals { get; set; } = new List<string>();
         public List<string> AcceptedNegativeSignals { get; set; } = new List<string>();
         public List<string> AcceptedCombos { get; set; } = new List<string>();
+        public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
         public RelationshipDelta SuggestedDelta { get; set; } = RelationshipDelta.Zero();
         public RelationshipDelta ActualDelta { get; set; } = RelationshipDelta.Zero();
         public double EmotionalConnectionPercentBefore { get; set; }

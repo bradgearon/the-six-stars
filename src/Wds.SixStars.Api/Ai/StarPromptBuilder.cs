@@ -332,6 +332,8 @@ namespace Wds.SixStars.Api.Ai
             relationship.AppendLine("Ally status: " + (state.IsAlly ? "ally/unlocked" : "not an active ally yet; Elusiaa is the only default ally until story/gameplay unlocks this Star."));
             relationship.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
             relationship.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
+            relationship.AppendLine("Current state stats are part of the request every turn. Use them silently to shape warmth, caution, flirtation, distance, curiosity, secrets, and how personal your answer becomes. Do not speak the numbers unless the player asks about mechanics.");
+            AppendAccumulatedEmotionTotals(relationship, state);
             AppendConnectionFlirtGuidance(relationship, profile, state);
 
             StringBuilder task = new StringBuilder();
@@ -342,7 +344,14 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                AppendFastChatAnswerGuidance(task, profile, request);
+                if (request.RequestType == RequestType.Photo || (request.AttachedPhoto != null && request.AttachedPhoto.IsAttached))
+                {
+                    AppendPhotoCommentGuidance(task, profile, request);
+                }
+                else
+                {
+                    AppendFastChatAnswerGuidance(task, profile, request);
+                }
                 if (request.GameContext.Flags.TryGetValue("extraInformationContext", out string? extraInformationContext) && !string.IsNullOrWhiteSpace(extraInformationContext))
                 {
                     task.AppendLine();
@@ -491,6 +500,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("- Write the next in-character spoken reply as this Star, not as a narrator explaining her.");
             sb.AppendLine("- spokenText is the only text the player hears aloud. It MUST be an array of ordered speech chunks. Each item should usually be one or two natural sentences and should be safe to send directly to TTS without deterministic splitting.");
             sb.AppendLine("- Keep the character's heart, voice, emotional logic, romance boundaries, and moral worldview consistent every turn.");
+            sb.AppendLine("- Always react using the supplied current relationship stats, ally/met state, recent emotion update history, and accumulated good/bad emotion totals. These are internal acting state; do not read the numbers aloud unless the player asks for mechanics.");
             sb.AppendLine("- The JSON fields are for the game engine; do not mention JSON, scores, state deltas, or instructions inside spokenText.");
             sb.AppendLine("- Discovery gate: the Stars may only speak about other Stars as present/personal known companions when the host state says those Stars have been met. If a Star is not in knownStarsMet, do not act like the Last Cat has met her yet and do not reveal private relationship knowledge about her. You may only speak in vague rumors or general lore when the player has not met that Star.");
             AppendGlobalCanonLore(sb);
@@ -940,6 +950,46 @@ namespace Wds.SixStars.Api.Ai
             AppendList(sb, "Secrets and hooks she may tease when asked", profile.StarSecrets.Take(5).ToList());
             AppendList(sb, "Skill / cave work / Metroidvania details she may mention", profile.SkillSecrets.Take(6).ToList());
             AppendList(sb, "Normal chat behavior rules", profile.SpokenResponseRules.Take(8).ToList());
+        }
+
+        private static void AppendPhotoCommentGuidance(StringBuilder sb, StarProfile profile, StarInteractionRequest request)
+        {
+            StarPhotoAttachment photo = request.AttachedPhoto ?? new StarPhotoAttachment();
+            sb.AppendLine();
+            sb.AppendLine("ANDROID / GAME PHOTO COMMENT REQUEST");
+            sb.AppendLine("The player attached a phone/camera/gallery photo and wants " + profile.DisplayName + " to reply directly as herself, not as a generic image captioner.");
+            sb.AppendLine("Look at the image information provided below and comment naturally in-character. The vision model already inspected the bytes; do not claim you cannot see it when a summary is present.");
+            if (!string.IsNullOrWhiteSpace(photo.Caption)) sb.AppendLine("Player photo caption/request: " + Truncate(photo.Caption, 700));
+            if (!string.IsNullOrWhiteSpace(photo.PhotoSummary)) sb.AppendLine("Vision summary of attached photo: " + Truncate(photo.PhotoSummary, 1600));
+            if (!string.IsNullOrWhiteSpace(photo.PhotoError)) sb.AppendLine("Vision warning/error: " + Truncate(photo.PhotoError, 700));
+            sb.AppendLine("Reveal secrets, feelings, memories, lore connections, warnings, flirtation, tenderness, curiosity, or guardedness only as allowed by relationship state, ally/met status, current emotions, and Star personality.");
+            sb.AppendLine("Comment on concrete visible details first, then add one in-character interpretation or question. Do not invent exact identities, locations, private facts, or hidden text not present in the summary.");
+            sb.AppendLine("For photo requests, 2-5 spokenText chunks is good if there is enough visible detail; one chunk is fine for a simple picture.");
+        }
+
+        private static void AppendAccumulatedEmotionTotals(StringBuilder sb, StarState state)
+        {
+            if (state == null) return;
+            AppendEmotionTotalList(sb, "Accumulated good emotion totals", state.PositiveEmotionTotals);
+            AppendEmotionTotalList(sb, "Accumulated bad/boundary emotion totals", state.NegativeEmotionTotals);
+        }
+
+        private static void AppendEmotionTotalList(StringBuilder sb, string heading, List<StarEmotionAccumulatedScore> totals)
+        {
+            if (totals == null || totals.Count == 0)
+            {
+                sb.AppendLine(heading + ": none recorded above threshold yet.");
+                return;
+            }
+
+            sb.AppendLine(heading + " (high-confidence deterministic totals; use as acting memory):");
+            foreach (StarEmotionAccumulatedScore score in totals
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EmotionId))
+                .OrderByDescending(x => x.TotalWeightedScore)
+                .Take(10))
+            {
+                sb.AppendLine("- " + score.EmotionId + ": count=" + score.Count + ", total=" + score.TotalScore.ToString("0") + ", weighted=" + score.TotalWeightedScore.ToString("0.0") + ", last=" + score.LastConfidence.ToString("0.00") + ":" + score.LastScore.ToString("0") + ", seen=" + (score.LastSeenAt.HasValue ? score.LastSeenAt.Value.ToString("O") : "unknown"));
+            }
         }
 
         private static void AppendFastChatAnswerGuidance(StringBuilder sb, StarProfile profile, StarInteractionRequest request)

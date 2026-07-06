@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -44,6 +45,43 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         {
             lock (_gate) return _clients.Count;
         }
+    }
+
+    public MobileAudioStreamSession CreateStreamSession(string streamId, long streamOrdinal, string sessionId, string starId, bool isStory, string reason)
+    {
+        List<int> targetClientIds;
+        lock (_gate) targetClientIds = _clients.Select(x => x.Id).ToList();
+        return new MobileAudioStreamSession
+        {
+            StreamId = string.IsNullOrWhiteSpace(streamId) ? Guid.NewGuid().ToString("N") : streamId,
+            StreamOrdinal = streamOrdinal,
+            SessionId = sessionId ?? string.Empty,
+            StarId = starId ?? string.Empty,
+            IsStory = isStory,
+            Reason = reason ?? string.Empty,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TargetClientIds = targetClientIds
+        };
+    }
+
+    public async Task<MobileAudioSendResult> SendStreamControlAsync(MobileAudioStreamSession session, string action, string message, CancellationToken cancellationToken)
+    {
+        if (session == null) return MobileAudioSendResult.Empty(ClientCount);
+        byte[] payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            message = message ?? string.Empty,
+            streamAction = action ?? string.Empty,
+            streamId = session.StreamId,
+            streamOrdinal = session.StreamOrdinal,
+            sessionId = session.SessionId,
+            starId = session.StarId,
+            isStory = session.IsStory,
+            targetClientCount = session.TargetClientIds.Count,
+            reason = session.Reason,
+            startedAtUtc = session.StartedAtUtc,
+            sentAtUtc = DateTimeOffset.UtcNow
+        }, _jsonOptions));
+        return await BroadcastFrameAsync(FrameStatus, payload, cancellationToken, session.TargetClientIds).ConfigureAwait(false);
     }
 
     public void Start(int port)
@@ -92,7 +130,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         return await BroadcastFrameAsync(FrameError, payload, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<MobileAudioSendResult> SendVoiceChunkAsync(VoiceSynthesisResult result, int chunkIndex, int totalChunks, CancellationToken cancellationToken)
+    public async Task<MobileAudioSendResult> SendVoiceChunkAsync(VoiceSynthesisResult result, int chunkIndex, int totalChunks, CancellationToken cancellationToken, MobileAudioStreamSession? streamSession = null, MobileAudioFrameContext? frameContext = null)
     {
         if (result == null || result.WavAudio == null || result.WavAudio.Length == 0)
         {
@@ -101,11 +139,16 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
 
         byte[] wavCopy = CopyBytes(result.WavAudio);
         string checksum = Sha256Hex(wavCopy);
+        int audioSequence = streamSession?.NextAudioSequence() ?? chunkIndex;
         string header = JsonSerializer.Serialize(new
         {
             chunkIndex,
             totalChunks,
-            starId = result.StarId ?? string.Empty,
+            audioSequence,
+            streamId = streamSession?.StreamId ?? string.Empty,
+            streamOrdinal = streamSession?.StreamOrdinal ?? 0L,
+            sessionId = streamSession?.SessionId ?? string.Empty,
+            starId = result.StarId ?? streamSession?.StarId ?? string.Empty,
             voiceId = result.VoiceId ?? string.Empty,
             mimeType = string.IsNullOrWhiteSpace(result.MimeType) ? "audio/wav" : result.MimeType,
             bytes = wavCopy.Length,
@@ -113,6 +156,14 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             sha256Short = checksum.Length > 12 ? checksum.Substring(0, 12) : checksum,
             durationMs = result.DurationMs,
             source = result.Source ?? string.Empty,
+            isStory = streamSession?.IsStory ?? frameContext?.IsStory ?? false,
+            storyId = frameContext?.StoryId ?? string.Empty,
+            storyTitle = frameContext?.StoryTitle ?? string.Empty,
+            storyPartIndex = frameContext?.StoryPartIndex ?? 0,
+            storyChunkCount = frameContext?.StoryChunkCount ?? 0,
+            ttsPartIndex = frameContext?.TtsPartIndex ?? chunkIndex,
+            ttsTotalParts = frameContext?.TtsTotalParts ?? totalChunks,
+            streamStartedAtUtc = streamSession?.StartedAtUtc,
             sentAtUtc = DateTimeOffset.UtcNow
         }, _jsonOptions);
 
@@ -122,7 +173,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         Buffer.BlockCopy(headerBytes, 0, payload, 4, headerBytes.Length);
         Buffer.BlockCopy(wavCopy, 0, payload, 4 + headerBytes.Length, wavCopy.Length);
 
-        return await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken).ConfigureAwait(false);
+        return await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken, streamSession?.TargetClientIds).ConfigureAwait(false);
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -187,13 +238,16 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         }
     }
 
-    private async Task<MobileAudioSendResult> BroadcastFrameAsync(byte frameType, byte[] payload, CancellationToken cancellationToken)
+    private async Task<MobileAudioSendResult> BroadcastFrameAsync(byte frameType, byte[] payload, CancellationToken cancellationToken, IReadOnlyCollection<int>? targetClientIds = null)
     {
+        HashSet<int>? targetSet = targetClientIds == null ? null : new HashSet<int>(targetClientIds);
         List<ClientConnection> snapshot;
-        lock (_gate) snapshot = new List<ClientConnection>(_clients);
+        lock (_gate) snapshot = targetSet == null
+            ? new List<ClientConnection>(_clients)
+            : _clients.Where(x => targetSet.Contains(x.Id)).ToList();
         if (snapshot.Count == 0)
         {
-            return MobileAudioSendResult.Empty(0);
+            return MobileAudioSendResult.Empty(ClientCount);
         }
 
         int sentClients = 0;
@@ -313,6 +367,33 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             _sendLock.Dispose();
         }
     }
+}
+
+public sealed class MobileAudioStreamSession
+{
+    private int _nextAudioSequence;
+
+    public string StreamId { get; set; } = string.Empty;
+    public long StreamOrdinal { get; set; }
+    public string SessionId { get; set; } = string.Empty;
+    public string StarId { get; set; } = string.Empty;
+    public bool IsStory { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public List<int> TargetClientIds { get; set; } = new List<int>();
+
+    public int NextAudioSequence() => Interlocked.Increment(ref _nextAudioSequence) - 1;
+}
+
+public sealed class MobileAudioFrameContext
+{
+    public bool IsStory { get; set; }
+    public string StoryId { get; set; } = string.Empty;
+    public string StoryTitle { get; set; } = string.Empty;
+    public int StoryPartIndex { get; set; }
+    public int StoryChunkCount { get; set; }
+    public int TtsPartIndex { get; set; }
+    public int TtsTotalParts { get; set; }
 }
 
 public sealed class MobileAudioSendResult

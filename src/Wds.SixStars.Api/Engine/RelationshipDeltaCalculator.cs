@@ -76,10 +76,56 @@ namespace Wds.SixStars.Api.Engine
             response.AcceptedNegativeEmotionSignals.AddRange(negativeSignals.Select(x => x.ToString()));
             response.AcceptedRelationshipCombos.Clear();
             response.AcceptedRelationshipCombos.AddRange(acceptedCombos);
+            response.TopAffectedEmotions.Clear();
+            response.TopAffectedEmotions.AddRange(BuildTopAffectedEmotions(response.EmotionalEffectVector, response.NegativeEmotionVector));
             response.DeterministicEmotionUpdateSummary = BuildSummary(currentState, positiveSignals, negativeSignals, acceptedCombos, response.SuggestedStateDeltas, delta, romanceGate);
             response.Debug.Notes.Add(response.DeterministicEmotionUpdateSummary);
 
             return delta;
+        }
+
+        public static List<TopAffectedEmotion> BuildTopAffectedEmotions(string? emotionalEffectVector, string? negativeEmotionVector, int maxCount = 3)
+        {
+            List<TopAffectedEmotion> all = new List<TopAffectedEmotion>();
+
+            foreach (EmotionVectorScore signal in ParseVector(emotionalEffectVector, StarEmotionMatrix.StandardEmotionIds))
+            {
+                if (signal == null || string.IsNullOrWhiteSpace(signal.Id)) continue;
+                if (signal.Confidence <= 0 && signal.Score <= 0) continue;
+                all.Add(CreateTopAffectedEmotion(signal, "positive"));
+            }
+
+            foreach (EmotionVectorScore signal in ParseVector(negativeEmotionVector, NegativeEmotionIds))
+            {
+                if (signal == null || string.IsNullOrWhiteSpace(signal.Id)) continue;
+                if (signal.Confidence <= 0 && signal.Score <= 0) continue;
+                all.Add(CreateTopAffectedEmotion(signal, "negative"));
+            }
+
+            return all
+                .OrderByDescending(x => x.WeightedScore)
+                .ThenByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .ThenBy(x => x.EmotionId, StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(1, maxCount <= 0 ? 3 : maxCount))
+                .ToList();
+        }
+
+        private static TopAffectedEmotion CreateTopAffectedEmotion(EmotionVectorScore signal, string valence)
+        {
+            double weighted = signal.WeightedScore;
+            bool accepted = signal.IsHighSignal();
+            string sign = string.Equals(valence, "negative", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
+            return new TopAffectedEmotion
+            {
+                EmotionId = signal.Id,
+                Valence = valence,
+                Confidence = signal.Confidence,
+                Score = signal.Score,
+                WeightedScore = weighted,
+                AcceptedForStateUpdate = accepted,
+                Summary = signal.Id + " " + sign + signal.Score.ToString("0") + " confidence " + signal.Confidence.ToString("0.00") + (accepted ? " accepted" : " observed")
+            };
         }
 
         public static List<EmotionVectorScore> ParseVector(string? vector, IReadOnlyList<string> ids)

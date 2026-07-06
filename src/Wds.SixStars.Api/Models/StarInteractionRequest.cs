@@ -12,6 +12,7 @@ namespace Wds.SixStars.Api.Models
         public string PlayerText { get; set; } = string.Empty;
         public GameContext GameContext { get; set; } = new GameContext();
         public StoryOptions StoryOptions { get; set; } = new StoryOptions();
+        public StarPhotoAttachment AttachedPhoto { get; set; } = new StarPhotoAttachment();
 
         /// <summary>
         /// Recent safe summaries of the user's screen. The API keeps the last five per session,

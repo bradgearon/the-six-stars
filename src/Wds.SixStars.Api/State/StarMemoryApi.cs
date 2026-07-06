@@ -721,10 +721,13 @@ namespace Wds.SixStars.Api.State
             state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
             state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
             state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
+            state.LastTopAffectedEmotions = RelationshipDeltaCalculator.BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector);
             if (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel))
             {
                 state.EmotionalConnectionSkillLevel = "interested_private_potential_partner";
             }
+
+            AccumulateDeterministicEmotionTotals(state, request, now);
 
             state.EmotionUpdateHistory.Insert(0, new EmotionUpdateHistoryEntry
             {
@@ -736,6 +739,7 @@ namespace Wds.SixStars.Api.State
                 AcceptedPositiveSignals = request.AcceptedPositiveSignals.ToList(),
                 AcceptedNegativeSignals = request.AcceptedNegativeSignals.ToList(),
                 AcceptedCombos = request.AcceptedCombos.ToList(),
+                TopAffectedEmotions = state.LastTopAffectedEmotions.ToList(),
                 SuggestedDelta = request.SuggestedDelta,
                 ActualDelta = applied,
                 EmotionalConnectionPercentBefore = emotionalConnectionBefore,
@@ -744,6 +748,75 @@ namespace Wds.SixStars.Api.State
                 Summary = request.DeterministicEmotionSummary ?? string.Empty
             });
             Trim(state.EmotionUpdateHistory, 80);
+        }
+
+        private static void AccumulateDeterministicEmotionTotals(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state == null || request == null) return;
+            List<EmotionVectorScore> positive = RelationshipDeltaCalculator.ParseVector(request.EmotionalEffectVector, Wds.SixStars.Api.Stars.StarEmotionMatrix.StandardEmotionIds)
+                .Where(x => ShouldAccumulateEmotion(x))
+                .ToList();
+            List<EmotionVectorScore> negative = RelationshipDeltaCalculator.ParseVector(request.NegativeEmotionVector, RelationshipDeltaCalculator.NegativeEmotionIds)
+                .Where(x => ShouldAccumulateEmotion(x))
+                .ToList();
+
+            foreach (EmotionVectorScore signal in positive)
+            {
+                AccumulateOneEmotion(state.PositiveEmotionTotals, signal, "positive", now);
+            }
+
+            foreach (EmotionVectorScore signal in negative)
+            {
+                AccumulateOneEmotion(state.NegativeEmotionTotals, signal, "negative", now);
+            }
+
+            TrimAccumulatedEmotionTotals(state.PositiveEmotionTotals, 64);
+            TrimAccumulatedEmotionTotals(state.NegativeEmotionTotals, 64);
+        }
+
+        private static bool ShouldAccumulateEmotion(EmotionVectorScore signal)
+        {
+            if (signal == null || string.IsNullOrWhiteSpace(signal.Id)) return false;
+            return signal.Confidence >= 0.70 && signal.Score >= 80;
+        }
+
+        private static void AccumulateOneEmotion(List<StarEmotionAccumulatedScore> totals, EmotionVectorScore signal, string valence, DateTimeOffset now)
+        {
+            if (totals == null || signal == null || string.IsNullOrWhiteSpace(signal.Id)) return;
+            StarEmotionAccumulatedScore? existing = totals.FirstOrDefault(x => string.Equals(x.EmotionId, signal.Id, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                existing = new StarEmotionAccumulatedScore
+                {
+                    EmotionId = signal.Id,
+                    Valence = valence,
+                    FirstSeenAt = now
+                };
+                totals.Add(existing);
+            }
+
+            existing.Valence = valence;
+            existing.Count += 1;
+            existing.TotalScore += signal.Score;
+            existing.TotalWeightedScore += signal.WeightedScore;
+            existing.LastConfidence = signal.Confidence;
+            existing.LastScore = signal.Score;
+            existing.LastReason = signal.ToString();
+            existing.LastSeenAt = now;
+        }
+
+        private static void TrimAccumulatedEmotionTotals(List<StarEmotionAccumulatedScore> totals, int maxCount)
+        {
+            if (totals == null || totals.Count <= maxCount) return;
+            List<StarEmotionAccumulatedScore> keep = totals
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EmotionId))
+                .GroupBy(x => x.EmotionId, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.TotalWeightedScore).First())
+                .OrderByDescending(x => x.TotalWeightedScore)
+                .Take(Math.Max(1, maxCount))
+                .ToList();
+            totals.Clear();
+            totals.AddRange(keep);
         }
 
         private static void UpdateStoryHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)

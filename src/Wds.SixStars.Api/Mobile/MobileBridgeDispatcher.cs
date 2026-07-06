@@ -143,6 +143,7 @@ public sealed class MobileBridgeDispatcher
         if (compact.Equals("SetAlly", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAlly", StringComparison.OrdinalIgnoreCase)) return "SetAlly";
         if (compact.Equals("ClearHistory", StringComparison.OrdinalIgnoreCase) || compact.Equals("ClearStarHistory", StringComparison.OrdinalIgnoreCase)) return "ClearHistory";
         if (compact.Equals("ClearAllData", StringComparison.OrdinalIgnoreCase) || compact.Equals("ClearAll", StringComparison.OrdinalIgnoreCase) || compact.Equals("ResetAllStars", StringComparison.OrdinalIgnoreCase)) return "ClearAllData";
+        if (compact.Equals("SendPhoto", StringComparison.OrdinalIgnoreCase) || compact.Equals("Photo", StringComparison.OrdinalIgnoreCase) || compact.Equals("SharePhoto", StringComparison.OrdinalIgnoreCase) || compact.Equals("PhotoRequest", StringComparison.OrdinalIgnoreCase)) return "SendPhoto";
         if (compact.Equals("Refresh", StringComparison.OrdinalIgnoreCase) || compact.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)) return "RefreshState";
         return value.Trim();
     }
@@ -158,6 +159,17 @@ public sealed class MobileBridgeDispatchCommand
     public bool? IsMet { get; set; }
     public bool? IsAlly { get; set; }
     public string Reason { get; set; } = string.Empty;
+    public string RequestType { get; set; } = string.Empty;
+    public string PlayerText { get; set; } = string.Empty;
+    public string Area { get; set; } = string.Empty;
+    public string Quest { get; set; } = string.Empty;
+    public bool RomanceMode { get; set; } = true;
+    public bool SpeakOnDesktop { get; set; }
+    public bool ReturnAudio { get; set; } = true;
+    public string ClientName { get; set; } = "SixStarsMobileAndroid";
+    public string PhotoBase64 { get; set; } = string.Empty;
+    public string PhotoMimeType { get; set; } = "image/jpeg";
+    public string PhotoCaption { get; set; } = string.Empty;
     public DateTimeOffset RequestedAt { get; set; }
 }
 
@@ -172,6 +184,31 @@ public sealed class MobileBridgeDispatchResult
     public bool IsAlly { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
+    public string RequestType { get; set; } = string.Empty;
+    public string Transcript { get; set; } = string.Empty;
+    public string SpokenText { get; set; } = string.Empty;
+    public string StarOutput { get; set; } = string.Empty;
+    public string ConversationSummary { get; set; } = string.Empty;
+    public string ChangesSummary { get; set; } = string.Empty;
+    public bool VoiceRequested { get; set; }
+    public bool VoiceSocketConnected { get; set; }
+    public int VoiceChunksSent { get; set; }
+    public int VoiceBytesSent { get; set; }
+    public string VoiceMessage { get; set; } = string.Empty;
+    public string VoiceError { get; set; } = string.Empty;
+    public string StoryId { get; set; } = string.Empty;
+    public string StoryTitle { get; set; } = string.Empty;
+    public string StoryMarkdown { get; set; } = string.Empty;
+    public string StorySummary { get; set; } = string.Empty;
+    public int StoryPartIndex { get; set; }
+    public bool StoryIsFinished { get; set; }
+    public bool StoryMarkdownReady { get; set; }
+    public bool StoryAutoplayPlanned { get; set; }
+    public int StoryChunkCount { get; set; }
+    public bool PhotoAttached { get; set; }
+    public string PhotoSummary { get; set; } = string.Empty;
+    public string PhotoError { get; set; } = string.Empty;
+    public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
     public StarState? State { get; set; }
     public MobileBridgeDispatchEvent? Event { get; set; }
 }
@@ -195,6 +232,18 @@ public sealed class MobileBridgeDispatchEvent
     public bool IsGirlfriendReady { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
+    public string StoryId { get; set; } = string.Empty;
+    public string StoryTitle { get; set; } = string.Empty;
+    public string StoryMarkdown { get; set; } = string.Empty;
+    public string StorySummary { get; set; } = string.Empty;
+    public int StoryPartIndex { get; set; }
+    public bool StoryIsFinished { get; set; }
+    public int StoryChunkCount { get; set; }
+    public string SpokenText { get; set; } = string.Empty;
+    public bool PhotoAttached { get; set; }
+    public string PhotoSummary { get; set; } = string.Empty;
+    public string PhotoError { get; set; } = string.Empty;
+    public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
     public DateTimeOffset CreatedAt { get; set; }
 
     public static MobileBridgeDispatchEvent FromResult(MobileBridgeDispatchCommand command, MobileBridgeDispatchResult result)
@@ -216,7 +265,21 @@ public sealed class MobileBridgeDispatchEvent
             EmotionalConnectionPercent = state?.EmotionalConnectionPercent ?? 0,
             IsGirlfriendReady = state?.IsGirlfriendReady ?? false,
             Message = result.Message,
-            Error = result.Error
+            Error = result.Error,
+            StoryId = result.StoryId,
+            StoryTitle = result.StoryTitle,
+            StoryMarkdown = result.StoryMarkdown,
+            StorySummary = result.StorySummary,
+            StoryPartIndex = result.StoryPartIndex,
+            StoryIsFinished = result.StoryIsFinished,
+            StoryChunkCount = result.StoryChunkCount,
+            SpokenText = result.SpokenText,
+            PhotoAttached = result.PhotoAttached,
+            PhotoSummary = result.PhotoSummary,
+            PhotoError = result.PhotoError,
+            TopAffectedEmotions = result.TopAffectedEmotions.Count > 0
+                ? result.TopAffectedEmotions.ToList()
+                : (state?.LastTopAffectedEmotions?.ToList() ?? new List<TopAffectedEmotion>())
         };
     }
 }
