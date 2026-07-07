@@ -209,6 +209,10 @@ public sealed class MobileBridgeDispatchResult
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string EmotionalEffectVector { get; set; } = string.Empty;
+    public string NegativeEmotionVector { get; set; } = string.Empty;
+    public string LastEmotionVectorsText { get; set; } = string.Empty;
+    public string InterstarStatusText { get; set; } = string.Empty;
     public string DailyStateSlotId { get; set; } = string.Empty;
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
@@ -249,6 +253,10 @@ public sealed class MobileBridgeDispatchEvent
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string EmotionalEffectVector { get; set; } = string.Empty;
+    public string NegativeEmotionVector { get; set; } = string.Empty;
+    public string LastEmotionVectorsText { get; set; } = string.Empty;
+    public string InterstarStatusText { get; set; } = string.Empty;
     public string DailyStateSlotId { get; set; } = string.Empty;
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
@@ -287,6 +295,10 @@ public sealed class MobileBridgeDispatchEvent
             PhotoAttached = result.PhotoAttached,
             PhotoSummary = result.PhotoSummary,
             PhotoError = result.PhotoError,
+            EmotionalEffectVector = !string.IsNullOrWhiteSpace(result.EmotionalEffectVector) ? result.EmotionalEffectVector : (state?.LastEmotionalEffectVector ?? string.Empty),
+            NegativeEmotionVector = !string.IsNullOrWhiteSpace(result.NegativeEmotionVector) ? result.NegativeEmotionVector : (state?.LastNegativeEmotionVector ?? string.Empty),
+            LastEmotionVectorsText = result.LastEmotionVectorsText ?? string.Empty,
+            InterstarStatusText = result.InterstarStatusText ?? string.Empty,
             DailyStateSlotId = !string.IsNullOrWhiteSpace(result.DailyStateSlotId) ? result.DailyStateSlotId : (state?.TodayState?.SlotId ?? string.Empty),
             DailyStateLocalDate = !string.IsNullOrWhiteSpace(result.DailyStateLocalDate) ? result.DailyStateLocalDate : (state?.TodayState?.LocalDate ?? string.Empty),
             DailyStateGeneratedAt = result.DailyStateGeneratedAt ?? state?.TodayState?.GeneratedAt,

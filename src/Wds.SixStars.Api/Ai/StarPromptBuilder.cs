@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.DailyState;
+using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
@@ -57,6 +58,134 @@ namespace Wds.SixStars.Api.Ai
             {
                 new ChatMessage("system", system),
                 new ChatMessage("user", user)
+            };
+        }
+
+
+        public IReadOnlyList<ChatMessage> BuildInterstarRelayMessages(
+            StarProfile originProfile,
+            StarProfile targetProfile,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState originState,
+            StarState targetState)
+        {
+            StringBuilder system = new StringBuilder();
+            system.AppendLine("You are " + originProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
+            system.AppendLine("INTERSTAR RELAY MODE. Decide what you would naturally tell " + targetProfile.DisplayName + " about the Last Cat after your recent conversation.");
+            system.AppendLine("Return compact JSON only. Do not speak to the player. Do not award points. Do not invent that the target heard the conversation directly.");
+            system.AppendLine("Only set shouldTell=true when the conversation is emotionally meaningful, practically important, funny enough to share, worrying, or relevant to the target Star's personality. If it is small talk and not useful, set shouldTell=false.");
+            system.AppendLine("whatOriginWouldTellTarget should be written as the origin Star's concise private report to the target Star, 1-5 sentences. Include emotional nuance, not just a transcript.");
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("ORIGIN STAR");
+            AppendInterstarProfile(user, originProfile, originState);
+            user.AppendLine();
+            user.AppendLine("TARGET STAR");
+            AppendInterstarProfile(user, targetProfile, targetState);
+            user.AppendLine();
+            user.AppendLine("LATEST CONVERSATION WITH THE LAST CAT");
+            user.AppendLine("Player said:");
+            user.AppendLine(QuoteBlock(originalRequest.PlayerText));
+            user.AppendLine("Origin Star answered:");
+            user.AppendLine(QuoteBlock(originResponse.SpokenText));
+            user.AppendLine("Origin emotional vectors: good=" + (originResponse.EmotionalEffectVector ?? string.Empty) + " bad=" + (originResponse.NegativeEmotionVector ?? string.Empty));
+            user.AppendLine("Origin deterministic summary: " + Truncate(originResponse.DeterministicEmotionUpdateSummary ?? string.Empty, 600));
+            user.AppendLine("Known top emotions: " + string.Join(", ", (originResponse.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).Select(x => x.ToString())));
+            user.AppendLine();
+            StarInterstarInfluenceRule relayRule = (originProfile.InterstarRules ?? new List<StarInterstarInfluenceRule>())
+                .LastOrDefault(x => x != null && string.Equals(x.TargetStarId, targetProfile.StarId, StringComparison.OrdinalIgnoreCase))
+                ?? new StarInterstarInfluenceRule { TargetStarId = targetProfile.StarId };
+            user.AppendLine("Interstar rule context: origin ally=" + originState.IsAlly + "; target met=" + targetState.IsMet + "; target ally=" + targetState.IsAlly + "; relayWeight=" + relayRule.RelayWeight.ToString("0.00") + "; positiveMultiplier=" + relayRule.PositiveMultiplier.ToString("0.00") + "; negativeMultiplier=" + relayRule.NegativeMultiplier.ToString("0.00") + "; cooldownSeconds=" + relayRule.CooldownSeconds + ".");
+            List<string> relayTopicTags = relayRule.TopicTags ?? new List<string>();
+            if (relayTopicTags.Count > 0) user.AppendLine("Rule topic tags: " + string.Join(", ", relayTopicTags.Take(8)) + ".");
+            user.AppendLine("Now decide whether " + originProfile.DisplayName + " would tell " + targetProfile.DisplayName + " anything, and what she would tell her.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system.ToString()),
+                new ChatMessage("user", user.ToString())
+            };
+        }
+
+        public IReadOnlyList<ChatMessage> BuildInterstarReactionMessages(
+            StarProfile targetProfile,
+            InterstarRelayMessage relay,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState targetState)
+        {
+            StringBuilder system = new StringBuilder();
+            system.AppendLine("You are " + targetProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
+            system.AppendLine("INTERSTAR REACTION VECTOR MODE. Another Star privately told you about her recent conversation with the Last Cat.");
+            system.AppendLine("Return compact JSON only. Do not write spokenText. Do not talk to the player. Do not directly award relationship points; suggestedStateDeltas are only hints.");
+            system.AppendLine("Compute emotionalEffectVector and negativeEmotionVector for how YOU now feel about the Last Cat after hearing the relay.");
+            system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
+            system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            system.AppendLine("Keep the update modest because this is second-hand information. Strong signals require the relay to matter strongly to your personality/domain.");
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("TARGET STAR STATE / PERSONALITY");
+            AppendInterstarProfile(user, targetProfile, targetState);
+            user.AppendLine();
+            user.AppendLine("WHAT " + relay.OriginStarId + " TOLD YOU");
+            user.AppendLine(QuoteBlock(relay.WhatOriginWouldTellTarget));
+            user.AppendLine("Relay summary: " + Truncate(relay.Summary ?? string.Empty, 360));
+            user.AppendLine("Relay reason: " + Truncate(relay.Reason ?? string.Empty, 360));
+            user.AppendLine();
+            user.AppendLine("ORIGINAL PLAYER MESSAGE TO " + relay.OriginStarId + ":");
+            user.AppendLine(QuoteBlock(originalRequest.PlayerText));
+            user.AppendLine("Origin Star foreground reply:");
+            user.AppendLine(QuoteBlock(originResponse.SpokenText));
+            user.AppendLine();
+            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat now.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system.ToString()),
+                new ChatMessage("user", user.ToString())
+            };
+        }
+
+        public IReadOnlyList<ChatMessage> BuildInterstarFeedbackMessages(
+            StarProfile originProfile,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState originState,
+            IReadOnlyList<InterstarReactionSummary> reactions)
+        {
+            StringBuilder system = new StringBuilder();
+            system.AppendLine("You are " + originProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
+            system.AppendLine("INTERSTAR FEEDBACK VECTOR MODE. Other Stars reacted emotionally to what you told them about the Last Cat.");
+            system.AppendLine("Return compact JSON only. Do not write spokenText. Compute how their responses make YOU feel about the Last Cat now.");
+            system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
+            system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            system.AppendLine("Keep this very modest; it is a reflection pass, not a second full conversation.");
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("ORIGIN STAR STATE / PERSONALITY");
+            AppendInterstarProfile(user, originProfile, originState);
+            user.AppendLine();
+            user.AppendLine("ORIGINAL LAST CAT MESSAGE");
+            user.AppendLine(QuoteBlock(originalRequest.PlayerText));
+            user.AppendLine("Your spoken reply was:");
+            user.AppendLine(QuoteBlock(originResponse.SpokenText));
+            user.AppendLine();
+            user.AppendLine("OTHER STARS' PRIVATE REACTIONS");
+            foreach (InterstarReactionSummary reaction in reactions ?? Array.Empty<InterstarReactionSummary>())
+            {
+                user.AppendLine("- " + reaction.StarId + " heard from " + reaction.SourceStarId + ": " + Truncate(reaction.RelaySummary, 240));
+                user.AppendLine("  vectors good=" + Truncate(reaction.EmotionalEffectVector, 260) + " bad=" + Truncate(reaction.NegativeEmotionVector, 120));
+                user.AppendLine("  applied delta H/T/R/C=" + reaction.AppliedDelta.Heart + "/" + reaction.AppliedDelta.Trust + "/" + reaction.AppliedDelta.Romance + "/" + reaction.AppliedDelta.EmotionalConnectionPercent.ToString("0.00"));
+                if (!string.IsNullOrWhiteSpace(reaction.TopAffectedEmotionsText)) user.AppendLine("  top=" + reaction.TopAffectedEmotionsText);
+            }
+            user.AppendLine();
+            user.AppendLine("Return your feedback emotional vectors toward the Last Cat now.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system.ToString()),
+                new ChatMessage("user", user.ToString())
             };
         }
 
@@ -273,21 +402,7 @@ namespace Wds.SixStars.Api.Ai
         private string BuildCompactReviewUserMessage(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
             StringBuilder history = new StringBuilder();
-            List<ConversationLogEntry> usableReviewHistory = state.MemoryLog.Where(IsUsableConversationTurn).Take(Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20))).ToList();
-            if (usableReviewHistory.Count > 0)
-            {
-                int i = 1;
-                foreach (ConversationLogEntry entry in usableReviewHistory)
-                {
-                    history.AppendLine("- Turn " + i + ": player=" + QuoteInline(Truncate(entry.PlayerText, 180)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 220)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) history.AppendLine("  summary=" + Truncate(entry.Summary, 220));
-                    i++;
-                }
-            }
-            else
-            {
-                history.AppendLine("No usable prior spoken turns are recorded for this Star yet. Technical parser-fallback turns are intentionally omitted from roleplay memory.");
-            }
+            AppendRecentConversationHistory(history, profile, state, Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: false);
 
             StringBuilder memory = new StringBuilder();
             memory.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
@@ -399,21 +514,10 @@ namespace Wds.SixStars.Api.Ai
             }
 
             StringBuilder recentTurns = new StringBuilder();
-            List<ConversationLogEntry> usableSpeechHistory = state.MemoryLog.Where(IsUsableConversationTurn).Take(4).ToList();
-            if (usableSpeechHistory.Count > 0)
-            {
-                recentTurns.AppendLine("Most recent usable turns:");
-                int i = 1;
-                foreach (ConversationLogEntry entry in usableSpeechHistory)
-                {
-                    recentTurns.AppendLine("- Turn " + i + ": player=" + QuoteInline(Truncate(entry.PlayerText, 160)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 160)));
-                    i++;
-                }
-            }
-            else
-            {
-                recentTurns.AppendLine("No usable prior spoken turns recorded yet. Ignore earlier technical parser-fallback messages.");
-            }
+            AppendRecentConversationHistory(recentTurns, profile, state, Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true);
+
+            StringBuilder importantMemory = new StringBuilder();
+            AppendForegroundImportantMemoryContext(importantMemory, profile, state);
 
             StringBuilder relationship = new StringBuilder();
             relationship.AppendLine("Relationship status: " + BuildRelationshipStatus(state));
@@ -495,6 +599,7 @@ namespace Wds.SixStars.Api.Ai
                 { "LastRememberedReply", BuildLastUsableStarReply(state) },
                 { "StoryHistoryContext", storyHistory.ToString().TrimEnd() },
                 { "RecentConversationTurns", recentTurns.ToString().TrimEnd() },
+                { "ImportantMemoryContext", importantMemory.ToString().TrimEnd() },
                 { "LatestScreenOneLine", BuildLatestScreenOneLine(request.RecentScreenCaptures) },
                 { "TodayStarStateContext", todayStateContext.ToString().TrimEnd() },
                 { "TaskSpecificGuidance", task.ToString().TrimEnd() },
@@ -503,6 +608,59 @@ namespace Wds.SixStars.Api.Ai
             };
 
             return _templates.Render("speech_user.sbn", data);
+        }
+
+        private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact)
+        {
+            List<ConversationLogEntry> usableHistory = state.MemoryLog
+                .Where(IsUsableConversationTurn)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+
+            sb.AppendLine("RECENT CONVERSATION HISTORY FROM MEMORY LOG — newest first. Use this for continuity, follow-ups, pronouns, tone, and relationship pacing.");
+            if (usableHistory.Count == 0)
+            {
+                sb.AppendLine("No usable prior spoken turns are recorded for this Star yet. Technical parser-fallback turns are intentionally omitted from roleplay memory.");
+                return;
+            }
+
+            int i = 1;
+            foreach (ConversationLogEntry entry in usableHistory)
+            {
+                if (compact)
+                {
+                    sb.AppendLine("- Turn " + i + ": requestType=" + entry.RequestType + "; player=" + QuoteInline(Truncate(entry.PlayerText, 220)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 240)));
+                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 240));
+                }
+                else
+                {
+                    sb.AppendLine("- Turn " + i + " (" + (i == 1 ? "most recent" : "older") + ") at " + entry.CreatedAt.ToString("o") + "; requestType=" + entry.RequestType);
+                    sb.AppendLine("  player=" + QuoteInline(Truncate(entry.PlayerText, 260)));
+                    sb.AppendLine("  " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 320)));
+                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 300));
+                    if (entry.ImportantQuotes.Count > 0) sb.AppendLine("  impactfulQuotes=" + string.Join(" | ", entry.ImportantQuotes.Take(4)));
+                    if (entry.RelationshipEvents.Count > 0) sb.AppendLine("  relationshipEvents=" + string.Join(" | ", entry.RelationshipEvents.Take(4)));
+                    if (entry.Tags.Count > 0) sb.AppendLine("  tags=" + string.Join(", ", entry.Tags.Take(6)));
+                }
+                i++;
+            }
+        }
+
+        private static void AppendForegroundImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            sb.AppendLine("IMPORTANT MEMORY AVAILABLE TO THIS FOREGROUND REPLY");
+            sb.AppendLine("This is a compact continuity slice in addition to the recent conversation history above.");
+            AppendList(sb, "Important exact player quotes", state.ImportantPlayerQuotes.Take(10).ToList());
+            AppendList(sb, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(8).ToList());
+            AppendList(sb, "Relationship events", state.RelationshipEvents.Take(8).ToList());
+            if (state.StoryHistory.Count > 0)
+            {
+                sb.AppendLine("Stories already told by " + profile.DisplayName + ":");
+                foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(6))
+                {
+                    sb.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + Truncate(story.Summary, 180));
+                }
+            }
         }
 
         private static void AppendTodayStateContext(StringBuilder sb, StarInteractionRequest request)
@@ -574,7 +732,7 @@ namespace Wds.SixStars.Api.Ai
         {
             return "emotionalEffectVector is a compact machine-readable emotion hint for the player's latest statement. It tells the system whether the player made this Star feel each emotion. Use the canonical emotion order exactly: "
                 + string.Join(", ", StarEmotionMatrix.StandardEmotionIds)
-                + ". Format exactly as confidence:score;confidence:score;... with one pair per emotion in that order. Confidence is 0.00-1.00. Score is 0-100. Use 0.00:0 for emotions not implied. Example shape: 0.03:20;0.75:45;0.00:0;... No names, spaces, reasons, brackets, or extra text.";
+                + ". Format exactly as confidence:score;confidence:score;... with one pair per emotion in that order. The vector must contain exactly one pair for every listed emotion; include trailing 0.00:0 pairs. Confidence is 0.00-1.00. Score is 0-100. Use 0.00:0 for emotions not implied, but use low nonzero confidence (for example 0.05-0.35) for real light reactions such as being mildly flattered, intrigued, safe, or hopeful. Use high confidence only for strong, specific emotional impact. Example shape: 0.03:20;0.75:45;0.00:0;... No names, spaces, reasons, brackets, or extra text.";
         }
 
 
@@ -1322,6 +1480,27 @@ namespace Wds.SixStars.Api.Ai
             if (screens.Count == 0) return "no recent screen vision provided";
             ScreenCaptureSummary latest = screens.OrderByDescending(x => x.CapturedAt).First();
             return latest.CapturedAt.ToString("o") + " in " + latest.ActiveApp + ": " + Truncate(latest.CompanionSafeSummary, 220);
+        }
+
+
+        private static void AppendInterstarProfile(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            sb.AppendLine("Star: " + profile.DisplayName + " (" + profile.StarId + ")");
+            sb.AppendLine("Element/domain: " + profile.Element + " / " + profile.Domain);
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 420));
+            if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
+            if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 500));
+            List<string> friends = profile.FriendsAndContacts ?? new List<string>();
+            List<string> formNotes = profile.BenaveilFormInteractions ?? new List<string>();
+            if (friends.Count > 0) sb.AppendLine("Friends/contacts: " + Truncate(string.Join("; ", friends.Take(6)), 600));
+            if (formNotes.Count > 0) sb.AppendLine("Benaveil/form concerns: " + Truncate(string.Join("; ", formNotes.Take(4)), 600));
+            sb.AppendLine("Relationship to Last Cat: " + BuildRelationshipStage(state));
+            List<TopAffectedEmotion> top = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>();
+            if (top.Count > 0) sb.AppendLine("Last top emotions toward Last Cat: " + string.Join(", ", top.Take(4).Select(x => x.ToString())));
+            List<StarEmotionAccumulatedScore> positiveTotals = state.PositiveEmotionTotals ?? new List<StarEmotionAccumulatedScore>();
+            List<StarEmotionAccumulatedScore> negativeTotals = state.NegativeEmotionTotals ?? new List<StarEmotionAccumulatedScore>();
+            if (positiveTotals.Count > 0) sb.AppendLine("Good emotion totals: " + string.Join(", ", positiveTotals.Take(5).Select(x => x.EmotionId + "=" + x.TotalScore.ToString("0"))));
+            if (negativeTotals.Count > 0) sb.AppendLine("Bad/boundary emotion totals: " + string.Join(", ", negativeTotals.Take(5).Select(x => x.EmotionId + "=" + x.TotalScore.ToString("0"))));
         }
 
         private static string QuoteBlock(string? value)

@@ -334,7 +334,7 @@ public sealed partial class MainViewModel
                     SessionId = sessionId,
                     StarId = starId,
                     RequestType = "Photo",
-                    PlayerText = string.IsNullOrWhiteSpace(command.PlayerText) ? FirstNonEmpty(command.PhotoCaption, "I attached a photo. Please look at it and reply directly to what you see.") : command.PlayerText,
+                    PlayerText = string.IsNullOrWhiteSpace(command.PlayerText) ? FirstNonEmptyForMobile(command.PhotoCaption, "I attached a photo. Please look at it and reply directly to what you see.") : command.PlayerText,
                     Area = string.IsNullOrWhiteSpace(command.Area) ? Area : command.Area,
                     Quest = string.IsNullOrWhiteSpace(command.Quest) ? Quest : command.Quest,
                     RomanceMode = command.RomanceMode,
@@ -343,7 +343,7 @@ public sealed partial class MainViewModel
                     ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid" : command.ClientName,
                     PhotoBase64 = command.PhotoBase64 ?? string.Empty,
                     PhotoMimeType = string.IsNullOrWhiteSpace(command.PhotoMimeType) ? "image/jpeg" : command.PhotoMimeType,
-                    PhotoCaption = FirstNonEmpty(command.PhotoCaption, command.PlayerText)
+                    PhotoCaption = FirstNonEmptyForMobile(command.PhotoCaption, command.PlayerText)
                 };
 
                 MobileBridgeResponse photoResponse = await ProcessMobileConversationAsync(photoRequest, string.Empty, cancellationToken).ConfigureAwait(false);
@@ -377,7 +377,11 @@ public sealed partial class MainViewModel
                     PhotoAttached = photoResponse.PhotoAttached,
                     PhotoSummary = photoResponse.PhotoSummary ?? string.Empty,
                     PhotoError = photoResponse.PhotoError ?? string.Empty,
-                    TopAffectedEmotions = photoResponse.TopAffectedEmotions.Count > 0 ? photoResponse.TopAffectedEmotions.ToList() : (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList()
+                    TopAffectedEmotions = photoResponse.TopAffectedEmotions.Count > 0 ? photoResponse.TopAffectedEmotions.ToList() : (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                    EmotionalEffectVector = FirstNonEmptyForMobile(photoResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
+                    NegativeEmotionVector = FirstNonEmptyForMobile(photoResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
+                    LastEmotionVectorsText = FirstNonEmptyForMobile(photoResponse.LastEmotionVectorsText, FormatEmotionVectors(photoResponse.EmotionalEffectVector, photoResponse.NegativeEmotionVector)),
+                    InterstarStatusText = InterstarStatusText
                 });
                 return result;
             }
@@ -454,12 +458,16 @@ public sealed partial class MainViewModel
             PhotoAttached = response.PhotoAttached,
             PhotoSummary = response.PhotoSummary,
             PhotoError = response.PhotoError,
-            DailyStateSlotId = FirstNonEmpty(response.DailyStateSlotId, state.TodayState?.SlotId),
-            DailyStateLocalDate = FirstNonEmpty(response.DailyStateLocalDate, state.TodayState?.LocalDate),
+            DailyStateSlotId = FirstNonEmptyForMobile(response.DailyStateSlotId, state.TodayState?.SlotId),
+            DailyStateLocalDate = FirstNonEmptyForMobile(response.DailyStateLocalDate, state.TodayState?.LocalDate),
             DailyStateGeneratedAt = response.DailyStateGeneratedAt ?? state.TodayState?.GeneratedAt,
-            DailyStateSummary = FirstNonEmpty(response.DailyStateSummary, state.TodayState?.Summary),
-            DailyStateXml = FirstNonEmpty(response.DailyStateXml, state.TodayState?.Xml),
-            TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList()
+            DailyStateSummary = FirstNonEmptyForMobile(response.DailyStateSummary, state.TodayState?.Summary),
+            DailyStateXml = FirstNonEmptyForMobile(response.DailyStateXml, state.TodayState?.Xml),
+            TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            EmotionalEffectVector = FirstNonEmptyForMobile(response.EmotionalEffectVector, state.LastEmotionalEffectVector),
+            NegativeEmotionVector = FirstNonEmptyForMobile(response.NegativeEmotionVector, state.LastNegativeEmotionVector),
+            LastEmotionVectorsText = FirstNonEmptyForMobile(response.LastEmotionVectorsText, FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector)),
+            InterstarStatusText = InterstarStatusText
         };
     }
 
@@ -481,7 +489,11 @@ public sealed partial class MainViewModel
             DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
             DailyStateXml = state.TodayState?.Xml ?? string.Empty,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
-            Message = message
+            EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
+            NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
+            LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
+                InterstarStatusText = InterstarStatusText,
+                Message = message
         };
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
@@ -500,6 +512,10 @@ public sealed partial class MainViewModel
             EmotionalConnectionPercent = state.EmotionalConnectionPercent,
             IsGirlfriendReady = state.IsGirlfriendReady,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
+            NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
+            LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
+            InterstarStatusText = InterstarStatusText,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
             DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
@@ -531,6 +547,9 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
                 TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
+                LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
                 DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
                 DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
                 DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
@@ -558,6 +577,9 @@ public sealed partial class MainViewModel
             emotionalConnectionPercent = state.EmotionalConnectionPercent,
             isGirlfriendReady = state.IsGirlfriendReady,
             topAffectedEmotions = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>(),
+            emotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
+            negativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
+            lastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
             todayState = state.TodayState,
             dailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             dailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -588,6 +610,9 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
                 TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
+                LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
                 Message = message
             });
         }
@@ -597,14 +622,14 @@ public sealed partial class MainViewModel
         }
     }
 
-    private void PublishMobileBridgeTopEmotionUpdate(StarInteractionResponse response)
+    private void PublishMobileBridgeTopEmotionUpdate(StarInteractionResponse response, string eventType = "TopAffectedEmotionsChanged")
     {
         if (response == null) return;
         try
         {
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
-                EventType = "TopAffectedEmotionsChanged",
+                EventType = string.IsNullOrWhiteSpace(eventType) ? "TopAffectedEmotionsChanged" : eventType,
                 SourceClientId = "desktop-runtime",
                 SessionId = DefaultSessionId,
                 StarId = response.StarId ?? SelectedStarId,
@@ -612,12 +637,38 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = response.EmotionalConnectionPercentAfter,
                 IsGirlfriendReady = response.IsGirlfriendReadyAfter,
                 TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+                LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector),
                 Message = FormatTopAffectedEmotions(response.TopAffectedEmotions)
             });
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish top affected emotions update: " + ex.Message);
+        }
+    }
+
+
+    private void PublishMobileBridgeInterstarStatus(InterstarUpdateStatusEventArgs args)
+    {
+        if (args == null) return;
+        try
+        {
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "InterstarUpdate" + (string.IsNullOrWhiteSpace(args.Phase) ? "Status" : args.Phase),
+                SourceClientId = "desktop-runtime",
+                SessionId = string.IsNullOrWhiteSpace(args.SessionId) ? DefaultSessionId : args.SessionId,
+                StarId = string.IsNullOrWhiteSpace(args.TargetStarId) ? args.OriginStarId : args.TargetStarId,
+                SelectedStarId = SelectedStarId,
+                InterstarStatusText = "Interstar state: " + args.Phase + " — " + args.Message,
+                Message = args.Message
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish interstar status update: " + ex.Message);
         }
     }
 
@@ -1307,6 +1358,10 @@ public sealed partial class MainViewModel
             PhotoSummary = TryGetLatestPhotoSummary(response, mobileRequest),
             PhotoError = TryGetLatestPhotoError(response),
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
+            NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+            LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector),
+            InterstarStatusText = InterstarStatusText,
             DailyStateSlotId = GetFlag(runtimeRequest, "todayStarStateSlotId"),
             DailyStateLocalDate = GetFlag(runtimeRequest, "todayStarStateLocalDate"),
             DailyStateGeneratedAt = TryParseDateTimeOffset(GetFlag(runtimeRequest, "todayStarStateGeneratedAt")),
@@ -1598,7 +1653,10 @@ public sealed partial class MainViewModel
             StoryPartIndex = response.StoryPartIndex,
             StoryIsFinished = response.StoryIsFinished,
             StoryChunkCount = _storySpeechAdapter.CountStoryChunks(response.StoryMarkdown),
-            SpokenText = response.SpokenText ?? string.Empty
+            SpokenText = response.SpokenText ?? string.Empty,
+            EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
+            NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+            LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector)
         });
     }
 
@@ -1866,7 +1924,7 @@ public sealed partial class MainViewModel
         return RequestType.Chat;
     }
 
-    private static string FirstNonEmpty(params string?[] values)
+    private static string FirstNonEmptyForMobile(params string?[] values)
     {
         foreach (string? value in values)
         {

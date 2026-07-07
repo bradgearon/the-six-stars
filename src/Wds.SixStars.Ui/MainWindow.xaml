@@ -4,14 +4,14 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Six Stars Dev Harness" Height="900" Width="1320"
+        Title="Six Stars Dev Harness" Height="980" Width="1420"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="2.15*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="3*" />
+            <RowDefinition Height="180" />
+            <RowDefinition Height="3.15*" />
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Padding="12" BorderBrush="#DDD" BorderThickness="1" CornerRadius="8">
@@ -168,14 +168,31 @@
             </GroupBox>
         </Grid>
 
-        <DockPanel Grid.Row="2" Margin="0,0,0,12">
-            <Button Content="Send Current Request" Command="{Binding SendCommand}" Width="150" Height="38" DockPanel.Dock="Left" />
-            <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
-            <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Width="140" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
-            <TextBlock Text="{Binding TopAffectedEmotionsText}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#664A7A" FontWeight="SemiBold" DockPanel.Dock="Left" />
-            <TextBlock Text="{Binding TodayStarStateText}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#3C6F66" FontWeight="SemiBold" DockPanel.Dock="Left" />
-            <TextBlock Text="{Binding Status}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
-        </DockPanel>
+        <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="Send Current Request" Command="{Binding SendCommand}" Width="150" Height="38" />
+                <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" />
+                <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Width="140" Height="38" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <Border Grid.Column="2" Padding="8" BorderBrush="#DDD" BorderThickness="1" CornerRadius="8" Background="#FAFAFA" MinHeight="160">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="Runtime Status / Daily State" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,5" />
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#555" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding TopAffectedEmotionsText}" TextWrapping="Wrap" Foreground="#664A7A" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding InterstarStatusText}" TextWrapping="Wrap" Foreground="#5B4B8A" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding TodayStarStateText}" TextWrapping="Wrap" Foreground="#3C6F66" FontWeight="SemiBold" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
 
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
@@ -184,15 +201,32 @@
                 <ColumnDefinition Width="1*" />
             </Grid.ColumnDefinitions>
 
-            <GroupBox Grid.Column="0" Header="Star Spoken Output">
-                <TextBox Text="{Binding StarOutput}"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         FontSize="15"
-                         Padding="10" />
-            </GroupBox>
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1.7*" />
+                    <RowDefinition Height="10" />
+                    <RowDefinition Height="0.8*" />
+                </Grid.RowDefinitions>
+                <GroupBox Grid.Row="0" Header="Star Spoken Output">
+                    <TextBox Text="{Binding StarOutput}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontSize="15"
+                             Padding="10" />
+                </GroupBox>
+                <GroupBox Grid.Row="2" Header="Last Emotional Vectors">
+                    <TextBox Text="{Binding LastEmotionVectorsText}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Padding="10" />
+                </GroupBox>
+            </Grid>
 
             <GroupBox Grid.Column="2" Header="Debug JSON / Unity Payload">
                 <TextBox Text="{Binding DebugJson}"

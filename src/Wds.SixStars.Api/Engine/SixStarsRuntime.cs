@@ -28,6 +28,11 @@ namespace Wds.SixStars.Api.Engine
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
         private readonly StarDailyStateService? _dailyStateService;
+        private readonly object _interstarGate = new object();
+        private CancellationTokenSource? _interstarCycleCts;
+        private readonly SemaphoreSlim _interstarUpdateQueue = new SemaphoreSlim(1, 1);
+        private readonly TimeSpan _interstarSettleDelay = ResolveInterstarSettleDelay();
+        private readonly Dictionary<string, DateTimeOffset> _interstarCooldowns = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
         private static readonly object StoryRandomGate = new object();
         private static readonly Random StoryRandom = new Random();
 
@@ -37,6 +42,10 @@ namespace Wds.SixStars.Api.Engine
         public event EventHandler<Exception>? StoryGenerationFailed;
         public event EventHandler<StarDailyStateUpdatedEventArgs>? DailyStateUpdated;
         public event EventHandler<Exception>? DailyStateUpdateFailed;
+        public event EventHandler<InterstarUpdateStatusEventArgs>? InterstarUpdateStatusChanged;
+        public event EventHandler<StarInteractionResponse>? InterstarMicroUpdateCompleted;
+        public event EventHandler<InterstarUpdateCycleResult>? InterstarUpdateCycleCompleted;
+        public event EventHandler<Exception>? InterstarUpdateFailed;
 
         public SixStarsRuntime(
             IStarProfileProvider profileProvider,
@@ -107,6 +116,19 @@ namespace Wds.SixStars.Api.Engine
                 _dailyStateService.DailyStateUpdated += (_, args) => DailyStateUpdated?.Invoke(this, args);
                 _dailyStateService.DailyStateUpdateFailed += (_, ex) => DailyStateUpdateFailed?.Invoke(this, ex);
             }
+        }
+
+
+        private static TimeSpan ResolveInterstarSettleDelay()
+        {
+            string? value = Environment.GetEnvironmentVariable("SIX_STARS_INTERSTAR_SETTLE_SECONDS");
+            if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double seconds))
+            {
+                if (seconds < 5) seconds = 5;
+                if (seconds > 600) seconds = 600;
+                return TimeSpan.FromSeconds(seconds);
+            }
+            return TimeSpan.FromMinutes(1);
         }
 
         public Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -235,6 +257,9 @@ namespace Wds.SixStars.Api.Engine
 
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
+            CancelPendingInterstarCycle("New Star conversation request started for " + request.StarId + ".");
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ConversationStarted", "Conversation with " + request.StarId + " started; any pending interstar ripple timer was cancelled.", 0, 0);
+
             if (_screenContextStore != null && request.RecentScreenCaptures.Count == 0)
             {
                 request.RecentScreenCaptures.AddRange(await _screenContextStore.GetRecentAsync(request.SessionId, _recentScreenCount, cancellationToken).ConfigureAwait(false));
@@ -263,6 +288,20 @@ namespace Wds.SixStars.Api.Engine
             }
             response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
+            response.UnityEvents.Add(new UnityEventEnvelope
+            {
+                Type = "StarConversationForegroundCompleted",
+                Target = request.StarId,
+                Data =
+                {
+                    { "sessionId", request.SessionId ?? string.Empty },
+                    { "starId", request.StarId ?? string.Empty },
+                    { "requestType", request.RequestType.ToString() },
+                    { "spokenParts", response.SpokenParts.Count.ToString() },
+                    { "note", "Foreground conversation reply finished; background emotion/memory review will settle after voice is ready." }
+                }
+            });
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; waiting for voice-ready background review before interstar updates can queue.", 0, 0);
 
             if (_agent is IStarTurnAnalyzer analyzer)
             {
@@ -320,6 +359,16 @@ namespace Wds.SixStars.Api.Engine
                 }
             }
 
+            if (record == null)
+            {
+                StarDailyStateRecord? fallbackRecord = await TryReadDailyStateFallbackAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+                if (fallbackRecord != null)
+                {
+                    record = fallbackRecord;
+                    request.GameContext.RecentEvents.Add("No daily Star state existed yet for session " + request.SessionId + "; using current daily Star state from session " + fallbackRecord.SessionId + ".");
+                }
+            }
+
             if (record == null && state.TodayState != null && state.TodayState.IsAvailable)
             {
                 request.GameContext.Flags["todayStarStateXml"] = state.TodayState.Xml ?? string.Empty;
@@ -328,21 +377,62 @@ namespace Wds.SixStars.Api.Engine
                 request.GameContext.Flags["todayStarStateSlotId"] = state.TodayState.SlotId ?? string.Empty;
                 request.GameContext.Flags["todayStarStateLocalDate"] = state.TodayState.LocalDate ?? string.Empty;
                 request.GameContext.Flags["todayStarStateFilePath"] = state.TodayState.FilePath ?? string.Empty;
+                request.GameContext.RecentEvents.Add("Today's generated Star state XML is attached from the selected Star state cache.");
                 return;
             }
 
             if (record != null && !string.IsNullOrWhiteSpace(record.XmlContent))
             {
-                string xml = record.XmlContent;
-                if (xml.Length > 12000) xml = xml.Substring(0, 12000) + "\n<!-- daily-star-state truncated for prompt -->";
-                request.GameContext.Flags["todayStarStateXml"] = xml;
-                request.GameContext.Flags["todayStarStateSummary"] = record.Summary ?? string.Empty;
-                request.GameContext.Flags["todayStarStateGeneratedAt"] = record.GeneratedAt.ToString("o");
-                request.GameContext.Flags["todayStarStateSlotId"] = record.SlotId ?? string.Empty;
-                request.GameContext.Flags["todayStarStateLocalDate"] = record.LocalDate ?? string.Empty;
-                request.GameContext.Flags["todayStarStateFilePath"] = record.FilePath ?? string.Empty;
-                request.GameContext.RecentEvents.Add("Today's generated Star state XML is attached for " + request.StarId + " from slot " + record.SlotId + ".");
+                AttachDailyStateRecordToRequest(request, record);
             }
+        }
+
+        private async Task<StarDailyStateRecord?> TryReadDailyStateFallbackAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            if (_dailyStateService == null) return null;
+            string currentSession = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            string[] candidates =
+            {
+                "desktop-local-dev",
+                "android-phone-dev",
+                "local-dev"
+            };
+
+            foreach (string candidate in candidates.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (string.Equals(candidate, currentSession, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    StarDailyStateRecord? record = await _dailyStateService.ReadCurrentAsync(candidate, starId, cancellationToken).ConfigureAwait(false);
+                    if (record != null && !string.IsNullOrWhiteSpace(record.XmlContent))
+                    {
+                        return record;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // Fallback daily state is optional. Missing daily XML in another session should not fail this request.
+                }
+            }
+
+            return null;
+        }
+
+        private static void AttachDailyStateRecordToRequest(StarInteractionRequest request, StarDailyStateRecord record)
+        {
+            string xml = record.XmlContent ?? string.Empty;
+            if (xml.Length > 12000) xml = xml.Substring(0, 12000) + "\n<!-- daily-star-state truncated for prompt -->";
+            request.GameContext.Flags["todayStarStateXml"] = xml;
+            request.GameContext.Flags["todayStarStateSummary"] = record.Summary ?? string.Empty;
+            request.GameContext.Flags["todayStarStateGeneratedAt"] = record.GeneratedAt.ToString("o");
+            request.GameContext.Flags["todayStarStateSlotId"] = record.SlotId ?? string.Empty;
+            request.GameContext.Flags["todayStarStateLocalDate"] = record.LocalDate ?? string.Empty;
+            request.GameContext.Flags["todayStarStateFilePath"] = record.FilePath ?? string.Empty;
+            request.GameContext.RecentEvents.Add("Today's generated Star state XML is attached for " + request.StarId + " from slot " + record.SlotId + ".");
         }
 
         private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
@@ -1436,6 +1526,8 @@ namespace Wds.SixStars.Api.Engine
                         ApplyVoiceDefaults(profile, analyzed);
                         await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, token).ConfigureAwait(false);
                         BackgroundAnalysisCompleted?.Invoke(this, analyzed);
+                        NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
+                        ScheduleInterstarCycleAfterSettlement(request, analyzed);
                     }
                     finally
                     {
@@ -1539,6 +1631,343 @@ namespace Wds.SixStars.Api.Engine
 
             response.UnityEvents.AddRange(update.UnityEvents);
             response.Debug.Notes.Add("StarMemoryApi updated durable state from background/full analysis. Interaction count: " + update.State.InteractionCount + ".");
+        }
+
+
+        private void ScheduleInterstarCycleAfterSettlement(StarInteractionRequest request, StarInteractionResponse originResponse)
+        {
+            if (!(_agent is IInterstarUpdateAgent interstarAgent))
+            {
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Unavailable", "Interstar ripple skipped because the active Star agent does not implement interstar update mode.", 0, 0);
+                return;
+            }
+
+            if (!IsEligibleForInterstarCycle(request, originResponse))
+            {
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "NotQueued", "Interstar ripple not queued for " + request.StarId + "; this turn had no settled emotion vectors/top emotions or was an internal/debug update.", 0, 0);
+                return;
+            }
+
+            CancellationTokenSource cts;
+            lock (_interstarGate)
+            {
+                _interstarCycleCts?.Cancel();
+                _interstarCycleCts?.Dispose();
+                _interstarCycleCts = new CancellationTokenSource();
+                cts = _interstarCycleCts;
+            }
+
+            int delaySeconds = (int)Math.Round(_interstarSettleDelay.TotalSeconds);
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Queued", "Interstar emotional ripple queued for " + request.StarId + "; waiting " + delaySeconds + " second(s) for conversation to settle.", 0, 0);
+            originResponse.UnityEvents.Add(new UnityEventEnvelope
+            {
+                Type = "InterstarUpdateQueued",
+                Target = request.StarId,
+                Data =
+                {
+                    { "sessionId", request.SessionId ?? string.Empty },
+                    { "originStarId", request.StarId ?? string.Empty },
+                    { "settleDelaySeconds", delaySeconds.ToString() },
+                    { "note", "Interstar updates begin only after the primary background response and the settle timeout." }
+                }
+            });
+
+            StarInteractionRequest requestClone = CloneInterstarSourceRequest(request);
+            StarInteractionResponse responseClone = CloneInterstarOriginResponse(originResponse);
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(_interstarSettleDelay, cts.Token).ConfigureAwait(false);
+                    await _interstarUpdateQueue.WaitAsync(cts.Token).ConfigureAwait(false);
+                    try
+                    {
+                        await RunInterstarCycleAsync(interstarAgent, requestClone, responseClone, cts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _interstarUpdateQueue.Release();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Cancelled", "Interstar ripple cancelled before it settled, usually because a newer conversation started.", 0, 0);
+                }
+                catch (Exception ex)
+                {
+                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Failed", "Interstar ripple failed: " + ex.Message, 0, 0);
+                    InterstarUpdateFailed?.Invoke(this, ex);
+                }
+            }, CancellationToken.None);
+        }
+
+        private async Task RunInterstarCycleAsync(IInterstarUpdateAgent interstarAgent, StarInteractionRequest originalRequest, StarInteractionResponse originResponse, CancellationToken cancellationToken)
+        {
+            string sessionId = string.IsNullOrWhiteSpace(originalRequest.SessionId) ? "local-dev" : originalRequest.SessionId;
+            string originStarId = originalRequest.StarId;
+            StarProfile originProfile = _profileProvider.GetProfile(originStarId);
+            StarState originState = await _memoryApi.GetStarStateAsync(sessionId, originStarId, cancellationToken).ConfigureAwait(false);
+            List<StarProfile> targets = new List<StarProfile>();
+
+            foreach (StarProfile candidate in _profileProvider.GetAllProfiles())
+            {
+                if (candidate == null || string.IsNullOrWhiteSpace(candidate.StarId)) continue;
+                if (string.Equals(candidate.StarId, originStarId, StringComparison.OrdinalIgnoreCase)) continue;
+                StarState candidateState = await _memoryApi.GetStarStateAsync(sessionId, candidate.StarId, cancellationToken).ConfigureAwait(false);
+                if (IsInterstarTargetEligible(originProfile, originState, candidate, candidateState))
+                {
+                    targets.Add(candidate);
+                }
+            }
+
+            targets = targets.Take(5).ToList();
+            NotifyInterstarStatus(sessionId, originStarId, string.Empty, "Started", "Interstar ripple started for " + originStarId + " with " + targets.Count + " eligible target Star(s).", targets.Count, 0);
+
+            InterstarUpdateCycleResult cycle = new InterstarUpdateCycleResult
+            {
+                SessionId = sessionId,
+                OriginStarId = originStarId,
+                Message = "Interstar ripple completed for " + originStarId + "."
+            };
+
+            int completed = 0;
+            foreach (StarProfile targetProfile in targets)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                StarState targetState = await _memoryApi.GetStarStateAsync(sessionId, targetProfile.StarId, cancellationToken).ConfigureAwait(false);
+                NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "RelayStarted", "Asking " + originProfile.DisplayName + " what she would tell " + targetProfile.DisplayName + " about the Last Cat.", targets.Count, completed);
+
+                InterstarRelayMessage relay = await interstarAgent.GenerateInterstarRelayAsync(originProfile, targetProfile, originalRequest, originResponse, originState, targetState, cancellationToken).ConfigureAwait(false);
+                if (!relay.ShouldTell || string.IsNullOrWhiteSpace(relay.WhatOriginWouldTellTarget))
+                {
+                    NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "Skipped", originProfile.DisplayName + " had no meaningful interstar relay for " + targetProfile.DisplayName + ".", targets.Count, completed);
+                    continue;
+                }
+
+                StarInterstarInfluenceRule targetRule = ResolveInterstarRule(originProfile, targetProfile.StarId);
+                if (!TryReserveInterstarCooldown(sessionId, originStarId, targetProfile.StarId, targetRule, relay.CooldownKey))
+                {
+                    NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "Skipped", originProfile.DisplayName + " already sent a similar interstar ripple to " + targetProfile.DisplayName + " recently; cooldown is still active.", targets.Count, completed);
+                    continue;
+                }
+
+                NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "ReactionStarted", "Asking " + targetProfile.DisplayName + " how she feels about the Last Cat after hearing " + originProfile.DisplayName + "'s relay.", targets.Count, completed);
+                StarInteractionResponse targetReaction = await interstarAgent.AnalyzeInterstarReactionAsync(targetProfile, relay, originalRequest, originResponse, targetState, cancellationToken).ConfigureAwait(false);
+                StarInteractionRequest targetRequest = CreateInterstarMicroRequest(originalRequest, targetProfile.StarId, "Interstar relay from " + originProfile.DisplayName + ": " + relay.WhatOriginWouldTellTarget);
+                await ApplyAnalysisAndMemoryUpdateAsync(targetRequest, targetReaction, cancellationToken).ConfigureAwait(false);
+                InterstarMicroUpdateCompleted?.Invoke(this, targetReaction);
+
+                completed++;
+                string top = FormatTopAffectedForInterstar(targetReaction.TopAffectedEmotions);
+                cycle.Reactions.Add(new InterstarReactionSummary
+                {
+                    StarId = targetProfile.StarId,
+                    SourceStarId = originStarId,
+                    RelaySummary = relay.Summary,
+                    EmotionalEffectVector = targetReaction.EmotionalEffectVector ?? string.Empty,
+                    NegativeEmotionVector = targetReaction.NegativeEmotionVector ?? string.Empty,
+                    AppliedDelta = targetReaction.StateDeltas ?? RelationshipDelta.Zero(),
+                    TopAffectedEmotionsText = top,
+                    DeterministicSummary = targetReaction.DeterministicEmotionUpdateSummary ?? string.Empty
+                });
+                NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "ReactionCompleted", targetProfile.DisplayName + " interstar vector settled. " + top, targets.Count, completed);
+            }
+
+            if (cycle.Reactions.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                NotifyInterstarStatus(sessionId, originStarId, originStarId, "FeedbackStarted", "Asking " + originProfile.DisplayName + " how the other Stars' reactions affect her feelings about the Last Cat.", targets.Count, completed);
+                StarState latestOriginState = await _memoryApi.GetStarStateAsync(sessionId, originStarId, cancellationToken).ConfigureAwait(false);
+                StarInteractionResponse originFeedback = await interstarAgent.AnalyzeInterstarFeedbackAsync(originProfile, originalRequest, originResponse, latestOriginState, cycle.Reactions, cancellationToken).ConfigureAwait(false);
+                StarInteractionRequest feedbackRequest = CreateInterstarMicroRequest(originalRequest, originStarId, "Interstar feedback from affected Stars after " + originProfile.DisplayName + " shared the recent Last Cat conversation.");
+                await ApplyAnalysisAndMemoryUpdateAsync(feedbackRequest, originFeedback, cancellationToken).ConfigureAwait(false);
+                cycle.OriginFeedbackApplied = true;
+                InterstarMicroUpdateCompleted?.Invoke(this, originFeedback);
+                NotifyInterstarStatus(sessionId, originStarId, originStarId, "FeedbackCompleted", originProfile.DisplayName + " feedback vector settled. " + FormatTopAffectedForInterstar(originFeedback.TopAffectedEmotions), targets.Count, completed);
+            }
+
+            cycle.Message = "Interstar ripple completed for " + originProfile.DisplayName + ": " + completed + " target update(s), origin feedback=" + cycle.OriginFeedbackApplied + ".";
+            NotifyInterstarStatus(sessionId, originStarId, string.Empty, "Completed", cycle.Message, targets.Count, completed);
+            InterstarUpdateCycleCompleted?.Invoke(this, cycle);
+        }
+
+        private bool IsEligibleForInterstarCycle(StarInteractionRequest request, StarInteractionResponse response)
+        {
+            if (request == null || response == null) return false;
+            if (request.GameContext != null && request.GameContext.Flags.TryGetValue("interstarMicroUpdate", out string? micro) && string.Equals(micro, "true", StringComparison.OrdinalIgnoreCase)) return false;
+            if (request.RequestType == RequestType.Debug) return false;
+            if (string.IsNullOrWhiteSpace(request.StarId)) return false;
+            if (string.IsNullOrWhiteSpace(response.EmotionalEffectVector) && string.IsNullOrWhiteSpace(response.NegativeEmotionVector) && response.TopAffectedEmotions.Count == 0) return false;
+            return true;
+        }
+
+        private bool IsInterstarTargetEligible(StarProfile originProfile, StarState originState, StarProfile targetProfile, StarState targetState)
+        {
+            StarInterstarInfluenceRule rule = ResolveInterstarRule(originProfile, targetProfile.StarId);
+            if (!rule.Enabled) return false;
+            if (rule.RequiresOriginAlly && !originState.IsAlly) return false;
+            if (rule.RequiresTargetAlly && !targetState.IsAlly) return false;
+            if (rule.RequiresTargetMet && !targetState.IsMet && !targetState.IsAlly) return false;
+            if (originState.EmotionalConnectionPercent < rule.MinOriginConnectionPercent) return false;
+            if (targetState.EmotionalConnectionPercent < rule.MinTargetConnectionPercent) return false;
+            return true;
+        }
+
+        private static StarInterstarInfluenceRule ResolveInterstarRule(StarProfile originProfile, string targetStarId)
+        {
+            StarInterstarInfluenceRule? authored = (originProfile.InterstarRules ?? new List<StarInterstarInfluenceRule>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.TargetStarId))
+                .LastOrDefault(x => string.Equals(x.TargetStarId, targetStarId, StringComparison.OrdinalIgnoreCase));
+            if (authored != null) return authored;
+            return new StarInterstarInfluenceRule
+            {
+                TargetStarId = targetStarId,
+                Enabled = true,
+                RequiresOriginAlly = true,
+                RequiresTargetMet = true,
+                RequiresTargetAlly = false,
+                RelayWeight = 1.0,
+                PositiveMultiplier = 1.0,
+                NegativeMultiplier = 1.0,
+                CooldownSeconds = 600,
+                MaxPerCycle = 1
+            };
+        }
+
+
+        private bool TryReserveInterstarCooldown(string sessionId, string originStarId, string targetStarId, StarInterstarInfluenceRule rule, string? relayCooldownKey)
+        {
+            int cooldownSeconds = Math.Max(0, rule?.CooldownSeconds ?? 0);
+            if (cooldownSeconds <= 0) return true;
+            string key = string.Join("|",
+                string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId.Trim(),
+                string.IsNullOrWhiteSpace(originStarId) ? "origin" : originStarId.Trim(),
+                string.IsNullOrWhiteSpace(targetStarId) ? "target" : targetStarId.Trim(),
+                string.IsNullOrWhiteSpace(relayCooldownKey) ? "default" : relayCooldownKey.Trim());
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            lock (_interstarGate)
+            {
+                if (_interstarCooldowns.TryGetValue(key, out DateTimeOffset last) && (now - last).TotalSeconds < cooldownSeconds)
+                {
+                    return false;
+                }
+                _interstarCooldowns[key] = now;
+                if (_interstarCooldowns.Count > 256)
+                {
+                    DateTimeOffset cutoff = now.AddHours(-6);
+                    foreach (string oldKey in _interstarCooldowns.Where(x => x.Value < cutoff).Select(x => x.Key).ToList())
+                    {
+                        _interstarCooldowns.Remove(oldKey);
+                    }
+                }
+                return true;
+            }
+        }
+
+        private void CancelPendingInterstarCycle(string reason)
+        {
+            lock (_interstarGate)
+            {
+                if (_interstarCycleCts == null) return;
+                try
+                {
+                    _interstarCycleCts.Cancel();
+                    _interstarCycleCts.Dispose();
+                }
+                catch
+                {
+                }
+                _interstarCycleCts = null;
+            }
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Interstar cycle cancelled: " + reason);
+        }
+
+        private void NotifyInterstarStatus(string sessionId, string originStarId, string targetStarId, string phase, string message, int queuedTargets, int completedTargets)
+        {
+            InterstarUpdateStatusEventArgs args = new InterstarUpdateStatusEventArgs
+            {
+                SessionId = sessionId ?? string.Empty,
+                OriginStarId = originStarId ?? string.Empty,
+                TargetStarId = targetStarId ?? string.Empty,
+                Phase = phase ?? string.Empty,
+                Message = message ?? string.Empty,
+                QueuedTargets = queuedTargets,
+                CompletedTargets = completedTargets,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            System.Diagnostics.Debug.WriteLine("[Interstar] " + args.Phase + " " + args.OriginStarId + "->" + args.TargetStarId + ": " + args.Message);
+            InterstarUpdateStatusChanged?.Invoke(this, args);
+        }
+
+        private static StarInteractionRequest CreateInterstarMicroRequest(StarInteractionRequest source, string targetStarId, string syntheticPlayerText)
+        {
+            GameContext context = CloneGameContext(source.GameContext ?? new GameContext());
+            context.Flags["interstarMicroUpdate"] = "true";
+            context.Flags["interstarOriginStarId"] = source.StarId ?? string.Empty;
+            context.RecentEvents.Add("Internal interstar emotional ripple update. This is not a direct player statement; it is a micro-update caused by a settled Star conversation.");
+            return new StarInteractionRequest
+            {
+                SessionId = source.SessionId,
+                StarId = targetStarId,
+                Speaker = "InterstarSystem",
+                RequestType = RequestType.BattleUpdate,
+                PlayerText = syntheticPlayerText ?? string.Empty,
+                GameContext = context,
+                StoryOptions = new StoryOptions(),
+                AttachedPhoto = new StarPhotoAttachment(),
+                RecentScreenCaptures = source.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+            };
+        }
+
+        private static StarInteractionRequest CloneInterstarSourceRequest(StarInteractionRequest source)
+        {
+            return new StarInteractionRequest
+            {
+                SessionId = source.SessionId,
+                StarId = source.StarId,
+                Speaker = source.Speaker,
+                RequestType = source.RequestType,
+                PlayerText = source.PlayerText,
+                GameContext = CloneGameContext(source.GameContext ?? new GameContext()),
+                StoryOptions = CloneStoryOptions(source.StoryOptions),
+                AttachedPhoto = ClonePhotoAttachment(source.AttachedPhoto),
+                RecentScreenCaptures = source.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+            };
+        }
+
+        private static StarInteractionResponse CloneInterstarOriginResponse(StarInteractionResponse source)
+        {
+            StarInteractionResponse clone = new StarInteractionResponse
+            {
+                StarId = source.StarId,
+                EmotionalPurpose = source.EmotionalPurpose,
+                EmotionalEffectVector = source.EmotionalEffectVector,
+                NegativeEmotionVector = source.NegativeEmotionVector,
+                DeterministicEmotionUpdateSummary = source.DeterministicEmotionUpdateSummary,
+                SuggestedStateDeltas = source.SuggestedStateDeltas ?? RelationshipDelta.Zero(),
+                StateDeltas = source.StateDeltas ?? RelationshipDelta.Zero(),
+                ConversationSummary = source.ConversationSummary,
+                ChangesSummary = source.ChangesSummary
+            };
+            clone.SetSpokenParts(source.SpokenParts);
+            clone.TopAffectedEmotions.AddRange(source.TopAffectedEmotions ?? new List<TopAffectedEmotion>());
+            clone.AcceptedPositiveEmotionSignals.AddRange(source.AcceptedPositiveEmotionSignals ?? new List<string>());
+            clone.AcceptedNegativeEmotionSignals.AddRange(source.AcceptedNegativeEmotionSignals ?? new List<string>());
+            clone.AcceptedRelationshipCombos.AddRange(source.AcceptedRelationshipCombos ?? new List<string>());
+            return clone;
+        }
+
+        private static string FormatTopAffectedForInterstar(IEnumerable<TopAffectedEmotion>? emotions)
+        {
+            List<TopAffectedEmotion> list = (emotions ?? Enumerable.Empty<TopAffectedEmotion>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EmotionId))
+                .OrderByDescending(x => x.WeightedScore)
+                .ThenByDescending(x => x.Score)
+                .Take(3)
+                .ToList();
+            if (list.Count == 0) return "top emotions: none";
+            return "top emotions: " + string.Join(" | ", list.Select(x => x.ToString()));
         }
 
         private static void ApplyVoiceDefaults(StarProfile profile, StarInteractionResponse response)

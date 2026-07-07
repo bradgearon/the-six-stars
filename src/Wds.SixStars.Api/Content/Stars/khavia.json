@@ -802,5 +802,112 @@
       },
       "cooldownTurns": 3
     }
+  ],
+  "interstarRules": [
+    {
+      "targetStarId": "Elusiaa",
+      "enabled": true,
+      "requiresOriginAlly": true,
+      "requiresTargetMet": true,
+      "requiresTargetAlly": false,
+      "minOriginConnectionPercent": 0,
+      "minTargetConnectionPercent": 0,
+      "relayWeight": 1.0,
+      "positiveMultiplier": 1.0,
+      "negativeMultiplier": 1.0,
+      "cooldownSeconds": 600,
+      "maxPerCycle": 1,
+      "topicTags": [
+        "mercy",
+        "discernment",
+        "comfort",
+        "patience",
+        "holy-restraint"
+      ]
+    },
+    {
+      "targetStarId": "Kaelia",
+      "enabled": true,
+      "requiresOriginAlly": true,
+      "requiresTargetMet": true,
+      "requiresTargetAlly": false,
+      "minOriginConnectionPercent": 0,
+      "minTargetConnectionPercent": 0,
+      "relayWeight": 1.0,
+      "positiveMultiplier": 1.0,
+      "negativeMultiplier": 1.0,
+      "cooldownSeconds": 600,
+      "maxPerCycle": 1,
+      "topicTags": [
+        "hope",
+        "fatalism",
+        "meaning",
+        "void",
+        "persistence"
+      ]
+    },
+    {
+      "targetStarId": "Maera",
+      "enabled": true,
+      "requiresOriginAlly": true,
+      "requiresTargetMet": true,
+      "requiresTargetAlly": false,
+      "minOriginConnectionPercent": 0,
+      "minTargetConnectionPercent": 0,
+      "relayWeight": 1.0,
+      "positiveMultiplier": 1.0,
+      "negativeMultiplier": 1.0,
+      "cooldownSeconds": 600,
+      "maxPerCycle": 1,
+      "topicTags": [
+        "safe-attachment",
+        "boundaries",
+        "life",
+        "possession",
+        "presence"
+      ]
+    },
+    {
+      "targetStarId": "Auerlis",
+      "enabled": true,
+      "requiresOriginAlly": true,
+      "requiresTargetMet": true,
+      "requiresTargetAlly": false,
+      "minOriginConnectionPercent": 0,
+      "minTargetConnectionPercent": 0,
+      "relayWeight": 1.0,
+      "positiveMultiplier": 1.0,
+      "negativeMultiplier": 1.0,
+      "cooldownSeconds": 600,
+      "maxPerCycle": 1,
+      "topicTags": [
+        "joy",
+        "courage",
+        "music",
+        "playfulness",
+        "hope"
+      ]
+    },
+    {
+      "targetStarId": "Nyxari",
+      "enabled": true,
+      "requiresOriginAlly": true,
+      "requiresTargetMet": true,
+      "requiresTargetAlly": false,
+      "minOriginConnectionPercent": 0,
+      "minTargetConnectionPercent": 0,
+      "relayWeight": 1.0,
+      "positiveMultiplier": 1.0,
+      "negativeMultiplier": 1.0,
+      "cooldownSeconds": 600,
+      "maxPerCycle": 1,
+      "topicTags": [
+        "identity",
+        "fragmentation",
+        "truth",
+        "integration",
+        "meaning"
+      ]
+    }
   ]
 }

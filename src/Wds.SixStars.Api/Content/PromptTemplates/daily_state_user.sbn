@@ -21,6 +21,7 @@ PREVIOUS DAILY STATE XML
 {{ PreviousDailyStateXml }}
 
 Write the new current-day state as compact JSON fields. This is not a spoken reply.
+Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. Only moodTags, recentPeopleSeen, recentEvents, todayIntentions, and conversationHooks should be arrays of strings.
 Guidelines:
 - situationSummary: one compact paragraph about where she is emotionally and narratively right now.
 - feelingsSummary: what she currently feels toward the Last Cat, herself, the other Stars, and the world.

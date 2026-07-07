@@ -3,7 +3,7 @@ Star: {{ StarDisplayName }}
 RequestType: {{ RequestType }}
 Player latest message:
 {{ PlayerTextBlock }}
-Exact foreground spokenText already sent to voice generation. Copy this exact array into your response:
+Exact foreground spokenText already sent to voice generation. Use this array only for conversationSummary context; do not copy spokenText into your response unless the schema explicitly asks for it:
 {{ ForegroundSpokenPartsJson }}
 Relationship before this review:
 {{ RelationshipContext }}

@@ -63,6 +63,9 @@ namespace Wds.SixStars.Api.Stars
         /// <summary>Per-Star deterministic combo rules that scan recent stored emotion vectors.</summary>
         public List<StarEmotionComboRule> ComboRules { get; set; } = new List<StarEmotionComboRule>();
 
+        /// <summary>Rules controlling which other Stars may receive delayed emotional ripple updates from this Star.</summary>
+        public List<StarInterstarInfluenceRule> InterstarRules { get; set; } = new List<StarInterstarInfluenceRule>();
+
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
     }
 }

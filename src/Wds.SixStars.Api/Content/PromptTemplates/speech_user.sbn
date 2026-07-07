@@ -11,6 +11,7 @@ Ongoing summary: {{ OngoingSummary }}
 Last remembered reply from {{ StarDisplayName }}: {{ LastRememberedReply }}
 {{ StoryHistoryContext }}
 {{ RecentConversationTurns }}
+{{ ImportantMemoryContext }}
 Latest screen/vision update: {{ LatestScreenOneLine }}
 {{ TodayStarStateContext }}
 

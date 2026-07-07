@@ -2,14 +2,26 @@ package com.wds.sixstarsmobile;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Movie;
+import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
+import android.net.Uri;
 import android.provider.MediaStore;
 import android.os.Bundle;
 import android.os.Handler;
@@ -18,7 +30,11 @@ import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.AdapterView;
+import android.widget.FrameLayout;
+import android.widget.GridLayout;
+import android.widget.ImageView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -45,7 +61,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
@@ -56,12 +75,25 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public final class MainActivity extends Activity {
+    private static final String PREFS_NAME = "SixStarsMobilePrefs";
+    private static final String PREF_PROD_MODE = "prodMode";
+    private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
     private static final int REQUEST_RECORD_AUDIO = 301;
     private static final int REQUEST_CAMERA_PHOTO = 302;
+    private static final int REQUEST_IMAGE_SEND = 303;
     private static final int SAMPLE_RATE = 16000;
     private static final int FRAME_STATUS = 1;
     private static final int FRAME_AUDIO_WAV = 2;
     private static final int FRAME_ERROR = 3;
+    private static final String[] STANDARD_EMOTION_IDS = new String[]{
+            "Happy", "Amused", "Playful", "Comforted", "Safe", "Protected", "Trusting", "Respected",
+            "Admiring", "Affectionate", "Vulnerable", "Hopeful", "Wondrous", "Intrigued", "Impassioned",
+            "Determined", "Concerned", "Confused", "Unsure", "Frustrated", "Angry", "Hurt", "Sad",
+            "Melancholy", "Lonely", "Guilty", "Suspicious", "Flattered", "Attracted", "Tender", "Yearning", "Jealous"
+    };
+    private static final String[] NEGATIVE_EMOTION_IDS = new String[]{
+            "Irritated", "Disrespected", "Pressured", "CreepedOut", "Bored", "Hurt", "Unsafe"
+    };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService httpExecutor = Executors.newSingleThreadExecutor();
@@ -80,6 +112,26 @@ public final class MainActivity extends Activity {
     private TextView responseText;
     private TextView debugText;
     private TextView voiceDebugText;
+    private TextView emotionVectorsText;
+    private TextView interstarStatusText;
+    private TextView prodStarNameText;
+    private TextView prodStarSubtitleText;
+    private TextView prodRelationshipText;
+    private TextView prodMiniStatusText;
+    private PixelStarAnimationView prodSpriteView;
+    private TextView prodTalkButtonText;
+    private View prodTalkButton;
+    private View prodPhotoButton;
+    private View prodVoiceActions;
+    private Button prodCancelVoiceButton;
+    private Button prodSendVoiceButton;
+    private Button prodSendTextButton;
+    private View prodTextToggleButton;
+    private View prodTextComposer;
+    private TextView prodConversationText;
+    private String prodAnimationState = "idle";
+    private AlertDialog activeStarSelectionDialog;
+    private boolean prodMode = true;
     private Button recordButton;
     private Button photoButton;
     private Button toggleMetButton;
@@ -91,6 +143,8 @@ public final class MainActivity extends Activity {
     private boolean selectedStarIsMet;
     private boolean selectedStarIsAlly;
     private String currentTopAffectedEmotions = "Top emotions: none yet.";
+    private String currentLastEmotionVectors = "Last emotional vectors: none yet.";
+    private String currentInterstarStatus = "Interstar state: idle.";
     private String currentDailyStarState = "Today: no daily Star state yet.";
     private long lastBridgeEventSequence;
     private boolean bridgeEventsPrimed;
@@ -113,6 +167,7 @@ public final class MainActivity extends Activity {
     private String connectedAudioHost = "";
     private int connectedAudioPort = -1;
     private final WavAudioQueue wavAudioQueue = new WavAudioQueue();
+    private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
     private final Object voiceStreamStateLock = new Object();
     private String activeVoiceStreamId = "";
     private long activeVoiceStreamOrdinal = 0L;
@@ -144,6 +199,7 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
+        prodMode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_PROD_MODE, true);
         buildUi();
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
@@ -162,6 +218,14 @@ public final class MainActivity extends Activity {
     }
 
     private void buildUi() {
+        if (prodMode) {
+            buildProdUi();
+            return;
+        }
+        buildDevUi();
+    }
+
+    private void buildDevUi() {
         ScrollView scrollView = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -174,6 +238,10 @@ public final class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         title.setPadding(0, 0, 0, dp(10));
         root.addView(title);
+
+        Button prodToggleButton = button("Switch to Prod Mode");
+        prodToggleButton.setOnClickListener(v -> switchUiMode(true));
+        root.addView(prodToggleButton);
 
         connectionStatusText = label("Connecting to desktop host...");
         connectionStatusText.setTextSize(14);
@@ -202,7 +270,7 @@ public final class MainActivity extends Activity {
         LinearLayout selectors = row();
         starSpinner = new Spinner(this);
         starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"}));
+                STAR_IDS));
         requestTypeSpinner = new Spinner(this);
         requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
@@ -223,6 +291,16 @@ public final class MainActivity extends Activity {
 
         starStateText = label("Elusiaa is met and allied by default.");
         root.addView(starStateText);
+
+        root.addView(label("Last emotional vectors"));
+        emotionVectorsText = output(currentLastEmotionVectors, 4);
+        emotionVectorsText.setTextIsSelectable(true);
+        root.addView(emotionVectorsText);
+
+        root.addView(label("Interstar status"));
+        interstarStatusText = output(currentInterstarStatus, 2);
+        interstarStatusText.setTextIsSelectable(true);
+        root.addView(interstarStatusText);
 
         LinearLayout starControlRow = row();
         toggleMetButton = button("Mark Met");
@@ -300,6 +378,444 @@ public final class MainActivity extends Activity {
         setContentView(scrollView);
     }
 
+
+    private void buildProdUi() {
+        prodStarNameText = null;
+        prodStarSubtitleText = null;
+        prodRelationshipText = null;
+        prodMiniStatusText = null;
+        prodSpriteView = null;
+        prodTalkButtonText = null;
+        prodTalkButton = null;
+        prodPhotoButton = null;
+        prodVoiceActions = null;
+        prodCancelVoiceButton = null;
+        prodSendVoiceButton = null;
+        prodSendTextButton = null;
+        prodTextToggleButton = null;
+        prodTextComposer = null;
+        prodConversationText = null;
+
+        createProdHiddenControls();
+        setContentView(R.layout.activity_prod_companion);
+
+        prodStarNameText = findViewById(R.id.prod_star_name);
+        prodStarSubtitleText = findViewById(R.id.prod_star_subtitle);
+        prodRelationshipText = findViewById(R.id.prod_relationship);
+        prodTalkButtonText = findViewById(R.id.prod_talk_text);
+        prodTalkButton = findViewById(R.id.prod_talk_button);
+        prodPhotoButton = findViewById(R.id.prod_photo_button);
+        prodVoiceActions = findViewById(R.id.prod_voice_actions);
+        prodCancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
+        prodSendVoiceButton = findViewById(R.id.prod_send_voice_button);
+        prodSendTextButton = findViewById(R.id.prod_send_text_button);
+        prodTextToggleButton = findViewById(R.id.prod_text_toggle_button);
+        prodTextComposer = findViewById(R.id.prod_text_composer);
+        prodConversationText = findViewById(R.id.prod_conversation_text);
+        messageEdit = findViewById(R.id.prod_message_edit);
+
+        View titlePanel = findViewById(R.id.prod_star_title_panel);
+        View avatarFrame = findViewById(R.id.prod_avatar_frame);
+        View catAvatar = findViewById(R.id.prod_cat_avatar);
+        View.OnClickListener openStars = v -> showStarSelectionDialog();
+        View.OnClickListener openCompanionMenu = v -> showProdCompanionMenu();
+        titlePanel.setOnClickListener(openStars);
+        prodStarNameText.setOnClickListener(openStars);
+        prodStarSubtitleText.setOnClickListener(openStars);
+        avatarFrame.setOnClickListener(openCompanionMenu);
+        catAvatar.setOnClickListener(openCompanionMenu);
+        titlePanel.setContentDescription("Open Star selector");
+        prodStarNameText.setContentDescription("Open Star selector");
+        prodStarSubtitleText.setContentDescription("Open Star selector");
+        avatarFrame.setContentDescription("Open companion menu and status");
+        catAvatar.setContentDescription("Open companion menu and status");
+
+        FrameLayout stage = findViewById(R.id.prod_stage);
+        prodSpriteView = new PixelStarAnimationView(this);
+        stage.addView(prodSpriteView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER));
+
+        prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
+        if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
+        prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
+        prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
+        prodTextToggleButton.setOnClickListener(v -> toggleProdTextComposer());
+        prodSendTextButton.setOnClickListener(v -> sendMessage());
+
+        messageEdit.setHint("Type a message to the selected Star...");
+        messageEdit.setSingleLine(false);
+        messageEdit.setMinLines(2);
+        messageEdit.setMaxLines(4);
+
+        refreshProdStarUi(selectedStarName());
+        refreshProdConversationWindow();
+        updateProdRecordingUi();
+        updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, "Prod ready");
+    }
+
+    private void createProdHiddenControls() {
+        serverUrlEdit = input("http://192.168.1.217:8066", false);
+        starSpinner = new Spinner(this);
+        starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, STAR_IDS));
+        starSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (suppressStarSelectionDispatch) return;
+                refreshProdStarUi(starSpinner.getSelectedItem().toString());
+                dispatchSelectStar(starSpinner.getSelectedItem().toString());
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        requestTypeSpinner = new Spinner(this);
+        requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
+                new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
+        areaEdit = input("VirethornCaves", false);
+        questEdit = input(prodMode ? "AndroidProdCompanion" : "AndroidPhoneBridge", false);
+        romanceCheck = new CheckBox(this);
+        romanceCheck.setText("Romance Mode");
+        romanceCheck.setChecked(true);
+        playOnPhoneCheck = new CheckBox(this);
+        playOnPhoneCheck.setText("Play Star voice on this phone");
+        playOnPhoneCheck.setChecked(true);
+        playOnPhoneCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked) testConnection(false); else closeAudioSocket();
+        });
+        connectionStatusText = new TextView(this);
+        audioStatusText = new TextView(this);
+        responseText = new TextView(this);
+        debugText = new TextView(this);
+        voiceDebugText = new TextView(this);
+        starStateText = new TextView(this);
+        emotionVectorsText = new TextView(this);
+        interstarStatusText = new TextView(this);
+        responseText.setText("");
+        debugText.setText("Prod status ready.");
+        voiceDebugText.setText("Prod voice journal ready.");
+    }
+
+
+    private void showProdCompanionMenu() {
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(14), dp(14), dp(14), dp(8));
+
+        TextView title = prodText("Last Cat Console", 22, 0xFFEAF7FF, true);
+        title.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(title);
+
+        TextView sub = prodText("Production view stays clean. Status, vectors, bridge controls, and Dev Mode live here.", 12, 0xFFB6E6F2, false);
+        sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(sub);
+
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setPadding(0, dp(10), 0, dp(4));
+
+        TextView bridgeLabel = prodText("Desktop bridge URL", 12, 0xFF9EE8F0, true);
+        controls.addView(bridgeLabel);
+        EditText bridgeUrl = input(baseUrl(), false);
+        bridgeUrl.setSingleLine(true);
+        bridgeUrl.setText(serverUrlEdit == null ? "" : serverUrlEdit.getText().toString());
+        controls.addView(bridgeUrl, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
+
+        CheckBox playPhone = new CheckBox(this);
+        playPhone.setText("Play Star voice on this phone");
+        playPhone.setTextColor(0xFFEAF7FF);
+        playPhone.setChecked(playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+        controls.addView(playPhone);
+
+        CheckBox romance = new CheckBox(this);
+        romance.setText("Romance Mode");
+        romance.setTextColor(0xFFEAF7FF);
+        romance.setChecked(romanceCheck == null || romanceCheck.isChecked());
+        controls.addView(romance);
+
+        LinearLayout buttons = row();
+        Button save = prodButton("Save Settings");
+        Button test = prodButton("Test Bridge");
+        buttons.addView(save, weightParams(1));
+        buttons.addView(test, weightParams(1));
+        controls.addView(buttons);
+
+        LinearLayout buttons2 = row();
+        Button audio = prodButton("Test Audio");
+        Button dev = prodButton("Dev Mode");
+        buttons2.addView(audio, weightParams(1));
+        buttons2.addView(dev, weightParams(1));
+        controls.addView(buttons2);
+
+        TextView status = prodOutput(buildProdMenuStatusText(), 12);
+        status.setTextIsSelectable(true);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(status);
+        controls.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(360)));
+        outer.addView(controls);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(outer)
+                .setNegativeButton("Close", null)
+                .create();
+        dialog.setOnShowListener(d -> {
+            dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            save.setOnClickListener(v -> {
+                if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
+                if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
+                if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
+                setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()));
+                status.setText(buildProdMenuStatusText());
+                testConnection(false);
+            });
+            test.setOnClickListener(v -> {
+                if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
+                testConnection(true);
+                mainHandler.postDelayed(() -> status.setText(buildProdMenuStatusText()), 900);
+            });
+            audio.setOnClickListener(v -> testPhoneAudio());
+            dev.setOnClickListener(v -> { dialog.dismiss(); switchUiMode(false); });
+        });
+        dialog.show();
+    }
+
+    private String buildProdMenuStatusText() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Star: ").append(selectedStarName()).append('\n');
+        sb.append(prodRelationshipText == null ? "Relationship: unknown" : prodRelationshipText.getText()).append("\n\n");
+        sb.append(nonEmptyText(connectionStatusText, "Connection: not checked yet.")).append('\n');
+        sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
+        sb.append(currentDailyStarState == null ? "Today: no daily Star state yet." : currentDailyStarState).append("\n\n");
+        sb.append(currentInterstarStatus == null ? "Interstar state: idle." : currentInterstarStatus).append("\n\n");
+        sb.append(currentLastEmotionVectors == null ? "Last emotional vectors: none yet." : currentLastEmotionVectors).append("\n");
+        sb.append(currentTopAffectedEmotions == null ? "Top emotions: none yet." : currentTopAffectedEmotions).append("\n\n");
+        sb.append("Last Star response:\n").append(nonEmptyText(responseText, "No response yet.")).append("\n\n");
+        sb.append("Debug:\n").append(nonEmptyText(debugText, "No debug status yet.")).append("\n\n");
+        sb.append("Voice journal:\n").append(nonEmptyText(voiceDebugText, "No voice journal yet."));
+        return sb.toString();
+    }
+
+    private String nonEmptyText(TextView view, String fallback) {
+        if (view == null || view.getText() == null) return fallback;
+        String text = view.getText().toString().trim();
+        return text.length() == 0 ? fallback : text;
+    }
+
+    private void showStarSelectionDialog() {
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(12), dp(12), dp(12), dp(8));
+        TextView title = prodText("Choose a Star", 22, 0xFFEAF7FF, true);
+        title.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(title);
+        TextView sub = prodText("Tap a portrait to switch companions. The cat portrait opens app status and settings.", 12, 0xFFB6E6F2, false);
+        sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(sub);
+
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(2);
+        grid.setPadding(0, dp(10), 0, dp(6));
+        for (String starId : STAR_IDS) {
+            StarMeta meta = starMeta(starId);
+            LinearLayout card = starSelectionCard(meta);
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+            lp.width = 0;
+            lp.height = GridLayout.LayoutParams.WRAP_CONTENT;
+            lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+            grid.addView(card, lp);
+        }
+        outer.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(outer)
+                .setNegativeButton("Close", null)
+                .create();
+        activeStarSelectionDialog = dialog;
+        dialog.setOnDismissListener(d -> { if (activeStarSelectionDialog == dialog) activeStarSelectionDialog = null; });
+        dialog.setOnShowListener(d -> {
+            dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+        });
+        dialog.show();
+    }
+
+    private LinearLayout starSelectionCard(StarMeta meta) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.setPadding(dp(8), dp(8), dp(8), dp(8));
+        card.setBackground(makeProdPanel(0xDD111827, meta.accentColor, 16));
+        ImageView portrait = new ImageView(this);
+        portrait.setImageResource(meta.portraitResId);
+        portrait.setAdjustViewBounds(true);
+        portrait.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        card.addView(portrait, new LinearLayout.LayoutParams(dp(96), dp(96)));
+        TextView name = prodText(meta.id, 15, 0xFFFFFFFF, true);
+        name.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.addView(name);
+        TextView sub = prodText(meta.element + " • " + meta.domain, 11, 0xFFCFFAFE, false);
+        sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        card.addView(sub);
+        card.setOnClickListener(v -> {
+            selectStarInSpinner(meta.id);
+            refreshProdStarUi(meta.id);
+            dispatchSelectStar(meta.id);
+            if (activeStarSelectionDialog != null) activeStarSelectionDialog.dismiss();
+        });
+        return card;
+    }
+
+    private void switchUiMode(boolean useProd) {
+        prodMode = useProd;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_PROD_MODE, useProd).apply();
+        buildUi();
+        testConnection(false);
+    }
+
+    private void prodTalkButtonTapped() {
+        if (recording) {
+            stopRecording(true);
+        } else {
+            startRecording();
+        }
+    }
+
+    private void cancelProdVoiceRecording() {
+        stopRecording(false);
+        appendProdConversationLine("System", "Voice cancelled.");
+    }
+
+    private void sendProdVoiceRecording() {
+        stopRecording(true);
+    }
+
+    private void toggleProdTextComposer() {
+        if (prodTextComposer == null) return;
+        boolean show = prodTextComposer.getVisibility() != View.VISIBLE;
+        prodTextComposer.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show && messageEdit != null) messageEdit.requestFocus();
+    }
+
+    private void updateProdRecordingUi() {
+        if (prodTalkButtonText != null) prodTalkButtonText.setText(recording ? "Send Voice" : "Talk");
+        if (prodVoiceActions != null) prodVoiceActions.setVisibility(recording ? View.VISIBLE : View.GONE);
+        setProdAnimationState(recording ? "talking" : "idle");
+    }
+
+    private void setProdAnimationState(String state) {
+        prodAnimationState = (state == null || state.length() == 0) ? "idle" : state.toLowerCase(Locale.US);
+        if (prodSpriteView != null) {
+            prodSpriteView.setStarAnimation(selectedStarName(), prodAnimationState, starMeta(selectedStarName()).frameResIds);
+        }
+    }
+
+    private void pulseProdTalkingThenIdle(long delayMs) {
+        setProdAnimationState("talking");
+        mainHandler.postDelayed(() -> {
+            if (!recording) setProdAnimationState("idle");
+        }, Math.max(800L, delayMs));
+    }
+
+    private void appendProdConversationLine(String speaker, String text) {
+        if (!prodMode || text == null || text.trim().length() == 0) return;
+        String star = selectedStarName();
+        ArrayList<String> lines = prodConversationByStar.get(star);
+        if (lines == null) {
+            lines = new ArrayList<>();
+            prodConversationByStar.put(star, lines);
+        }
+        lines.add((speaker == null || speaker.length() == 0 ? "System" : speaker) + ": " + text.trim().replace('\n', ' '));
+        while (lines.size() > 10) lines.remove(0);
+        refreshProdConversationWindow();
+    }
+
+    private void refreshProdConversationWindow() {
+        if (prodConversationText == null) return;
+        ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
+        if (lines == null || lines.size() == 0) {
+            prodConversationText.setText("No conversation yet. Tap Talk or open Text.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        int start = Math.max(0, lines.size() - 8);
+        for (int i = start; i < lines.size(); i++) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(lines.get(i));
+        }
+        prodConversationText.setText(sb.toString());
+    }
+
+    private void refreshProdStarUi(String starId) {
+        if (prodStarNameText == null) return;
+        StarMeta meta = starMeta(starId);
+        prodStarNameText.setText(meta.id);
+        prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain + " • tap to switch");
+        if (prodSpriteView != null) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
+        refreshProdConversationWindow();
+    }
+
+    private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, String status) {
+        refreshProdStarUi(starId);
+        if (prodRelationshipText != null) {
+            prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? "   Ready" : ""));
+        }
+        if (prodMiniStatusText != null) prodMiniStatusText.setText(status);
+    }
+
+    private LinearLayout.LayoutParams prodBlockParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(7), 0, dp(7));
+        return lp;
+    }
+
+    private TextView prodText(String text, int sp, int color, boolean bold) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(sp);
+        tv.setTextColor(color);
+        if (bold) tv.setTypeface(Typeface.DEFAULT_BOLD);
+        tv.setIncludeFontPadding(true);
+        return tv;
+    }
+
+    private TextView prodOutput(String text, int minLines) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextColor(0xFFE5E7EB);
+        view.setTextSize(12);
+        view.setMinLines(minLines);
+        view.setPadding(dp(10), dp(8), dp(10), dp(8));
+        view.setBackground(makeProdPanel(0xB90B1220, 0x6656D3E8, 14));
+        return view;
+    }
+
+    private Button prodButton(String text) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextColor(0xFFEAF7FF);
+        button.setAllCaps(false);
+        button.setBackground(makeProdPanel(0xCC172033, 0xFF00D5D7, 14));
+        return button;
+    }
+
+    private GradientDrawable makeProdPanel(int fillColor, int strokeColor, int radiusDp) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(fillColor);
+        bg.setCornerRadius(dp(radiusDp));
+        bg.setStroke(dp(1), strokeColor);
+        return bg;
+    }
+
+    private StarMeta starMeta(String starId) {
+        String id = starId == null ? "Elusiaa" : starId;
+        if (id.equalsIgnoreCase("Kaelia")) return new StarMeta("Kaelia", "Void", "Fatalism", 0xFF8B5CF6, R.drawable.portrait_kaelia, new int[]{R.drawable.star_kaelia_idle_0});
+        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0, R.drawable.star_maera_idle_1, R.drawable.star_maera_idle_2, R.drawable.star_maera_idle_3, R.drawable.star_maera_idle_4, R.drawable.star_maera_idle_5});
+        if (id.equalsIgnoreCase("Khavia")) return new StarMeta("Khavia", "Water", "Friendship", 0xFF22D3EE, R.drawable.portrait_khavia, new int[]{R.drawable.star_khavia_idle_0});
+        if (id.equalsIgnoreCase("Auerlis")) return new StarMeta("Auerlis", "Fire", "Joy", 0xFFF97316, R.drawable.portrait_auerlis, new int[]{R.drawable.star_auerlis_idle_0});
+        if (id.equalsIgnoreCase("Nyxari")) return new StarMeta("Nyxari", "Shadow", "Fragmentation", 0xFF60A5FA, R.drawable.portrait_nyxari, new int[]{R.drawable.star_nyxari_idle_0});
+        return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0, R.drawable.star_elusiaa_idle_1, R.drawable.star_elusiaa_idle_2, R.drawable.star_elusiaa_idle_3, R.drawable.star_elusiaa_idle_4, R.drawable.star_elusiaa_idle_5});
+    }
+
     private TextView label(String text) {
         TextView label = new TextView(this);
         label.setText(text);
@@ -372,9 +888,13 @@ public final class MainActivity extends Activity {
         return value.length() == 0 ? "http://192.168.1.217:8066" : value;
     }
 
+    private String currentSessionId() {
+        return prodMode ? "android-phone-prod" : "android-phone-dev";
+    }
+
     private JSONObject baseRequestJson() throws Exception {
         JSONObject json = new JSONObject();
-        json.put("sessionId", "android-phone-dev");
+        json.put("sessionId", currentSessionId());
         json.put("starId", starSpinner.getSelectedItem().toString());
         json.put("requestType", requestTypeSpinner.getSelectedItem().toString());
         json.put("area", areaEdit.getText().toString());
@@ -454,7 +974,7 @@ public final class MainActivity extends Activity {
                 json.put("commandId", "android-" + System.currentTimeMillis());
                 json.put("commandType", commandType);
                 json.put("sourceClientId", "SixStarsMobileAndroid");
-                json.put("sessionId", "android-phone-dev");
+                json.put("sessionId", currentSessionId());
                 json.put("starId", starId == null || starId.length() == 0 ? selectedStarName() : starId);
                 if (isMet != null) json.put("isMet", isMet.booleanValue());
                 if (isAlly != null) json.put("isAlly", isAlly.booleanValue());
@@ -555,6 +1075,8 @@ public final class MainActivity extends Activity {
             handleStoryBridgeEvent(event, type, seq, starId, message);
         } else if (isTopEmotionBridgeEvent(type)) {
             applyTopAffectedEmotionsObject(event, type);
+        } else if (isInterstarBridgeEvent(type)) {
+            applyInterstarStatusObject(event, type);
         } else if (isDailyStateBridgeEvent(type)) {
             applyDailyStateObject(event, type);
         } else if (isStateBridgeEvent(type)) {
@@ -578,7 +1100,20 @@ public final class MainActivity extends Activity {
 
     private boolean isTopEmotionBridgeEvent(String type) {
         return "TopAffectedEmotionsChanged".equalsIgnoreCase(type)
-                || "EmotionUpdateSettled".equalsIgnoreCase(type);
+                || "EmotionUpdateSettled".equalsIgnoreCase(type)
+                || "InterstarEmotionUpdateSettled".equalsIgnoreCase(type);
+    }
+
+    private boolean isInterstarBridgeEvent(String type) {
+        return type != null && type.toLowerCase(Locale.US).startsWith("interstarupdate");
+    }
+
+    private void applyInterstarStatusObject(JSONObject event, String status) {
+        String supplied = optStringEither(event, "interstarStatusText", "InterstarStatusText", "");
+        String message = optStringEither(event, "message", "Message", status);
+        currentInterstarStatus = supplied.length() > 0 ? supplied : ("Interstar state: " + status + " — " + message);
+        if (interstarStatusText != null) interstarStatusText.setText(currentInterstarStatus);
+        appendVoiceDebug("Interstar update", currentInterstarStatus);
     }
 
     private boolean isDailyStateBridgeEvent(String type) {
@@ -594,8 +1129,8 @@ public final class MainActivity extends Activity {
         if (summary.length() == 0) summary = "daily Star state refreshed";
         currentDailyStarState = "Today" + (slot.length() > 0 ? " [" + slot + "]" : "") + ": " + clip(summary, 220);
         if (starStateText != null) {
-            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
-            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + " — " + status);
+            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0].split("\nInterstar state:")[0];
+            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus + " — " + status);
         }
         appendVoiceDebug("Daily Star state refreshed", currentDailyStarState);
     }
@@ -663,6 +1198,7 @@ public final class MainActivity extends Activity {
         boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;
+        updateEmotionVectorsFromJson(state);
         String daily = extractDailyStateLine(state);
         if (daily.length() > 0) currentDailyStarState = daily;
         updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
@@ -674,9 +1210,10 @@ public final class MainActivity extends Activity {
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() == 0) top = optStringEither(state, "message", "Message", "Top emotions: none yet.");
         currentTopAffectedEmotions = top;
+        updateEmotionVectorsFromJson(state);
         if (starStateText != null) {
-            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
-            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + " — " + status);
+            String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0].split("\nInterstar state:")[0];
+            starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus + " — " + status);
         }
         appendVoiceDebug("Emotion vector settled", currentTopAffectedEmotions);
     }
@@ -686,8 +1223,32 @@ public final class MainActivity extends Activity {
         selectedStarIsAlly = ally;
         if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
         if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
+        updateProdStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
         if (starStateText != null) {
-            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState);
+            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus);
+            updateEmotionVectorsUi();
+            if (interstarStatusText != null) interstarStatusText.setText(currentInterstarStatus);
+        }
+    }
+
+
+    private void updateEmotionVectorsFromJson(JSONObject json) {
+        if (json == null) return;
+        String positive = firstNonEmpty(
+                optStringEither(json, "emotionalEffectVector", "EmotionalEffectVector", ""),
+                optStringEither(json, "lastEmotionalEffectVector", "LastEmotionalEffectVector", ""));
+        String negative = firstNonEmpty(
+                optStringEither(json, "negativeEmotionVector", "NegativeEmotionVector", ""),
+                optStringEither(json, "lastNegativeEmotionVector", "LastNegativeEmotionVector", ""));
+        String suppliedText = optStringEither(json, "lastEmotionVectorsText", "LastEmotionVectorsText", "");
+        if (positive.length() == 0 && negative.length() == 0 && suppliedText.length() == 0) return;
+        currentLastEmotionVectors = suppliedText.length() > 0 ? suppliedText : formatEmotionVectors(positive, negative);
+        updateEmotionVectorsUi();
+    }
+
+    private void updateEmotionVectorsUi() {
+        if (emotionVectorsText != null) {
+            emotionVectorsText.setText(currentLastEmotionVectors);
         }
     }
 
@@ -715,6 +1276,7 @@ public final class MainActivity extends Activity {
         } finally {
             suppressStarSelectionDispatch = false;
         }
+        refreshProdStarUi(starId);
     }
 
     private int findStarPosition(String starId) {
@@ -763,62 +1325,92 @@ public final class MainActivity extends Activity {
 
 
     private void startPhotoCapture() {
-        if (!requestCameraPermissionIfNeeded()) {
-            setDebug("Camera permission needed", "Grant CAMERA and press Share Photo again.");
-            return;
-        }
-
         try {
-            Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-            if (intent.resolveActivity(getPackageManager()) == null) {
-                setDebug("No camera app", "Android could not find a camera app for ACTION_IMAGE_CAPTURE.");
-                return;
+            Intent choosePhoto = new Intent(Intent.ACTION_GET_CONTENT);
+            choosePhoto.setType("image/*");
+            choosePhoto.addCategory(Intent.CATEGORY_OPENABLE);
+
+            Intent chooser = Intent.createChooser(choosePhoto, "Send image to " + selectedStarName());
+
+            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                if (camera.resolveActivity(getPackageManager()) != null) {
+                    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
+                }
+            } else {
+                requestCameraPermissionIfNeeded();
             }
-            appendVoiceDebug("Kaelia opened the phone camera", "The next captured photo will be sent as a fresh Star request.");
-            startActivityForResult(intent, REQUEST_CAMERA_PHOTO);
+
+            appendVoiceDebug("The Last Cat opened the image picker", "Choose a gallery image or camera photo to send to " + selectedStarName() + ".");
+            startActivityForResult(chooser, REQUEST_IMAGE_SEND);
         } catch (Exception ex) {
-            setDebug("Camera failed", ex.toString());
-            appendVoiceDebug("Nyxari could not open the camera", ex.toString());
+            setDebug("Image picker failed", ex.toString());
+            appendVoiceDebug("Nyxari could not open the image picker", ex.toString());
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_CAMERA_PHOTO) return;
+        if (requestCode != REQUEST_IMAGE_SEND && requestCode != REQUEST_CAMERA_PHOTO) return;
         if (resultCode != RESULT_OK || data == null) {
-            setDebug("Photo cancelled", "No photo was sent to the Star.");
+            setDebug("Image cancelled", "No image was sent to the Star.");
             return;
         }
 
         try {
-            Object extra = data.getExtras() == null ? null : data.getExtras().get("data");
-            if (!(extra instanceof Bitmap)) {
-                setDebug("Photo failed", "The camera did not return a preview bitmap. Try another camera app or add gallery/file support later.");
+            Uri uri = data.getData();
+            if (uri != null) {
+                byte[] bytes = readAllBytes(getContentResolver().openInputStream(uri));
+                String mimeType = getContentResolver().getType(uri);
+                sendPhoto(bytes, mimeType == null || mimeType.length() == 0 ? "image/jpeg" : mimeType);
                 return;
             }
-            Bitmap bitmap = (Bitmap) extra;
-            ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 88, jpeg);
-            byte[] bytes = jpeg.toByteArray();
-            sendPhoto(bytes, "image/jpeg");
+
+            Object extra = data.getExtras() == null ? null : data.getExtras().get("data");
+            if (extra instanceof Bitmap) {
+                Bitmap bitmap = (Bitmap) extra;
+                ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 88, jpeg);
+                sendPhoto(jpeg.toByteArray(), "image/jpeg");
+                return;
+            }
+
+            setDebug("Image failed", "The picker did not return image bytes. Try another camera or gallery app.");
         } catch (Exception ex) {
-            setDebug("Photo send failed", ex.toString());
-            appendVoiceDebug("Maera felt the photo request fail", ex.toString());
+            setDebug("Image send failed", ex.toString());
+            appendVoiceDebug("Maera felt the image request fail", ex.toString());
+        }
+    }
+
+    private byte[] readAllBytes(InputStream input) throws Exception {
+        if (input == null) return new byte[0];
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[16 * 1024];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        } finally {
+            try { input.close(); } catch (Exception ignored) { }
         }
     }
 
     private void sendPhoto(byte[] imageBytes, String mimeType) {
         if (imageBytes == null || imageBytes.length == 0) {
-            setDebug("Photo empty", "No image bytes were captured.");
+            setDebug("Image empty", "No image bytes were selected.");
             return;
         }
         String caption = messageEdit == null ? "" : messageEdit.getText().toString();
         String requestText = caption.trim().length() == 0
-                ? "I attached a photo. Please look at it and reply directly to what you see."
+                ? "I attached an image. Please look at it and reply directly to what you see."
                 : caption;
         String starName = selectedStarName();
+        appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
+        if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         httpExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -831,13 +1423,13 @@ public final class MainActivity extends Activity {
                 json.put("photoCaption", requestText);
                 String checksum = sha256Hex(imageBytes);
                 runOnUiThread(() -> {
-                    setDebug("Sending photo", "Message box cleared. Sending camera photo to " + starName + ". bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
-                    appendVoiceDebug(starName + " received a photo request", "HTTP /api/mobile/dispatch SendPhoto sent with photo bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
+                    setDebug("Sending image", "Message box cleared. Sending camera photo to " + starName + ". bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug(starName + " received an image request", "HTTP /api/mobile/dispatch SendPhoto sent with image bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
                 });
                 String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
-                handleConversationResponse("Photo request complete", body);
+                handleConversationResponse("Image request complete", body);
             } catch (Exception ex) {
-                runOnUiThread(() -> setDebug("Photo request failed", ex.toString()));
+                runOnUiThread(() -> setDebug("Image request failed", ex.toString()));
             }
         });
     }
@@ -851,7 +1443,10 @@ public final class MainActivity extends Activity {
             return;
         }
         String starName = selectedStarName();
+        appendProdConversationLine("You", playerText);
         if (messageEdit != null) messageEdit.setText("");
+        if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
+        pulseProdTalkingThenIdle(3500L);
         httpExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -886,8 +1481,9 @@ public final class MainActivity extends Activity {
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
         audioRecord.startRecording();
         recording = true;
-        recordButton.setText("Stop / Send");
-        setDebug("Recording", "Speak now. Press Stop / Send when finished.");
+        if (recordButton != null) recordButton.setText("Stop / Send");
+        updateProdRecordingUi();
+        setDebug("Recording", "Speak now. Press Send Voice when finished, or Cancel to discard.");
 
         recordingThread = new Thread(() -> {
             byte[] buffer = new byte[2048];
@@ -916,6 +1512,7 @@ public final class MainActivity extends Activity {
             recordingThread = null;
         }
         if (recordButton != null) recordButton.setText("Record Voice");
+        updateProdRecordingUi();
 
         if (send && wasRecording) {
             byte[] pcm;
@@ -926,6 +1523,8 @@ public final class MainActivity extends Activity {
                 setDebug("Recording too short", "Captured " + pcm.length + " bytes. Record at least about one second.");
                 return;
             }
+            appendProdConversationLine("You", "[voice message]");
+            pulseProdTalkingThenIdle(3000L);
             sendAudio(pcm);
         }
     }
@@ -977,19 +1576,31 @@ public final class MainActivity extends Activity {
                 if (topEmotions.length() > 0) {
                     currentTopAffectedEmotions = topEmotions;
                 }
+                updateEmotionVectorsFromJson(json);
                 String dailyLine = extractDailyStateLine(json);
                 if (dailyLine.length() > 0) {
                     currentDailyStarState = dailyLine;
                 }
-                if (starStateText != null && (topEmotions.length() > 0 || dailyLine.length() > 0)) {
-                    String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0];
-                    starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState);
+                String interstar = optStringEither(json, "interstarStatusText", "InterstarStatusText", "");
+                if (interstar.length() > 0) {
+                    currentInterstarStatus = interstar;
+                    if (interstarStatusText != null) interstarStatusText.setText(currentInterstarStatus);
+                }
+                if (starStateText != null && (topEmotions.length() > 0 || dailyLine.length() > 0 || interstar.length() > 0)) {
+                    String base = starStateText.getText().toString().split("\nTop emotions:")[0].split("\nToday:")[0].split("\nInterstar state:")[0];
+                    starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus);
                 }
 
                 String visibleResponse = storyMarkdown.length() > 0 ? storyMarkdown : (starOutput.length() > 0 ? starOutput : spoken);
                 if (visibleResponse.length() == 0) {
                     visibleResponse = "No spoken text was returned in the HTTP response. Check the desktop debug output for the Star response.";
                 }
+
+                if (transcript.length() > 0 && title.toLowerCase(Locale.US).contains("voice")) {
+                    appendProdConversationLine("You", transcript);
+                }
+                appendProdConversationLine(starId, clip(visibleResponse, 900));
+                pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visibleResponse.length() * 18L)));
 
                 String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
@@ -1434,6 +2045,74 @@ public final class MainActivity extends Activity {
         return object.optJSONArray(pascal);
     }
 
+
+    private static String formatEmotionVectors(String positiveVector, String negativeVector) {
+        ArrayList<VectorSignal> positives = parseEmotionVector(positiveVector, STANDARD_EMOTION_IDS, "+");
+        ArrayList<VectorSignal> negatives = parseEmotionVector(negativeVector, NEGATIVE_EMOTION_IDS, "-");
+        sortVectorSignals(positives);
+        sortVectorSignals(negatives);
+        if (positives.size() == 0 && negatives.size() == 0) return "Last emotional vectors: none yet.";
+        StringBuilder sb = new StringBuilder("Last emotional vectors:\n");
+        if (positives.size() > 0) {
+            sb.append("Good: ").append(joinVectorSignals(positives, 8));
+        }
+        if (negatives.size() > 0) {
+            if (positives.size() > 0) sb.append("\n");
+            sb.append("Bad: ").append(joinVectorSignals(negatives, 8));
+        }
+        if ((positiveVector != null && positiveVector.length() > 0) || (negativeVector != null && negativeVector.length() > 0)) {
+            sb.append("\nRaw good=").append(positiveVector == null ? "" : positiveVector)
+                    .append(" | bad=").append(negativeVector == null ? "" : negativeVector);
+        }
+        return sb.toString();
+    }
+
+    private static ArrayList<VectorSignal> parseEmotionVector(String vector, String[] ids, String sign) {
+        ArrayList<VectorSignal> list = new ArrayList<>();
+        if (ids == null || ids.length == 0) return list;
+        String[] parts = vector == null ? new String[0] : vector.split(";");
+        for (int i = 0; i < ids.length; i++) {
+            double confidence = 0.0;
+            double score = 0.0;
+            if (i < parts.length) {
+                String[] pair = parts[i].trim().split(":");
+                if (pair.length >= 2) {
+                    try { confidence = Double.parseDouble(pair[0]); } catch (Exception ignored) { }
+                    try { score = Double.parseDouble(pair[1]); } catch (Exception ignored) { }
+                }
+            }
+            if (confidence > 0 || score > 0) {
+                list.add(new VectorSignal(ids[i], sign, confidence, score));
+            }
+        }
+        return list;
+    }
+
+    private static void sortVectorSignals(ArrayList<VectorSignal> list) {
+        Collections.sort(list, new Comparator<VectorSignal>() {
+            @Override
+            public int compare(VectorSignal a, VectorSignal b) {
+                int weighted = Double.compare(b.weightedScore(), a.weightedScore());
+                if (weighted != 0) return weighted;
+                return Double.compare(b.score, a.score);
+            }
+        });
+    }
+
+    private static String joinVectorSignals(ArrayList<VectorSignal> list, int maxCount) {
+        StringBuilder sb = new StringBuilder();
+        int count = Math.min(Math.max(1, maxCount), list.size());
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(" | ");
+            VectorSignal item = list.get(i);
+            sb.append(item.sign).append(item.id).append(" ")
+                    .append(String.format(Locale.US, "%.0f", item.score))
+                    .append(" @ ")
+                    .append(String.format(Locale.US, "%.2f", item.confidence));
+        }
+        return sb.toString();
+    }
+
     private static String formatTopAffectedEmotions(JSONArray array) {
         if (array == null || array.length() == 0) return "";
         StringBuilder sb = new StringBuilder("Top emotions: ");
@@ -1458,6 +2137,33 @@ public final class MainActivity extends Activity {
             count++;
         }
         return count == 0 ? "" : sb.toString();
+    }
+
+
+    private static String firstNonEmpty(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            if (value != null && value.trim().length() > 0) return value.trim();
+        }
+        return "";
+    }
+
+    private static final class VectorSignal {
+        final String id;
+        final String sign;
+        final double confidence;
+        final double score;
+
+        VectorSignal(String id, String sign, double confidence, double score) {
+            this.id = id == null ? "" : id;
+            this.sign = sign == null ? "+" : sign;
+            this.confidence = Math.max(0.0, Math.min(1.0, confidence));
+            this.score = Math.max(0.0, Math.min(100.0, score));
+        }
+
+        double weightedScore() {
+            return confidence * score;
+        }
     }
 
     private static String optStringEither(JSONObject json, String camelName, String pascalName, String fallback) {
@@ -1538,6 +2244,188 @@ public final class MainActivity extends Activity {
         if (text == null) return "";
         if (text.length() <= max) return text;
         return text.substring(0, Math.max(0, max - 3)) + "...";
+    }
+
+
+    private static final class StarMeta {
+        final String id;
+        final String element;
+        final String domain;
+        final int accentColor;
+        final int portraitResId;
+        final int[] frameResIds;
+        StarMeta(String id, String element, String domain, int accentColor, int portraitResId, int[] frameResIds) {
+            this.id = id;
+            this.element = element;
+            this.domain = domain;
+            this.accentColor = accentColor;
+            this.portraitResId = portraitResId;
+            this.frameResIds = frameResIds;
+        }
+    }
+
+    private final class PixelStarAnimationView extends View {
+        private final Paint paint = new Paint();
+        private Movie gifMovie;
+        private long gifStartedAt;
+        private String activeAssetPath = "";
+        private Bitmap[] frames = new Bitmap[0];
+        private int frameIndex;
+        private long frameDurationMs = 180L;
+        private final Runnable frameAnimator = new Runnable() {
+            @Override public void run() {
+                if (frames.length > 1 && gifMovie == null) {
+                    frameIndex = (frameIndex + 1) % frames.length;
+                    invalidate();
+                    mainHandler.postDelayed(this, frameDurationMs);
+                }
+            }
+        };
+        private final Runnable gifAnimator = new Runnable() {
+            @Override public void run() {
+                if (gifMovie != null) {
+                    invalidate();
+                    mainHandler.postDelayed(this, 33L);
+                }
+            }
+        };
+
+        PixelStarAnimationView(Activity context) {
+            super(context);
+            paint.setFilterBitmap(false);
+            paint.setDither(false);
+            setWillNotDraw(false);
+        }
+
+        void setStarAnimation(String starId, String state, int[] fallbackResourceIds) {
+            String normalizedStar = normalizeAssetPart(starId);
+            String normalizedState = normalizeAssetPart(state == null || state.length() == 0 ? "idle" : state);
+            mainHandler.removeCallbacks(frameAnimator);
+            mainHandler.removeCallbacks(gifAnimator);
+            gifMovie = null;
+            frames = new Bitmap[0];
+
+            String[] candidates = new String[]{
+                    "star_animations/" + normalizedStar + "/" + normalizedState + ".gif",
+                    "star_animations/" + normalizedStar + "/idle.gif"
+            };
+            for (String path : candidates) {
+                Movie movie = loadGifMovie(path);
+                if (movie != null && movie.width() > 0 && movie.height() > 0) {
+                    gifMovie = movie;
+                    activeAssetPath = path;
+                    gifStartedAt = System.currentTimeMillis();
+                    invalidate();
+                    mainHandler.postDelayed(gifAnimator, 33L);
+                    return;
+                }
+            }
+
+            int[] conventionFrames = findConventionFrameResources(normalizedStar, normalizedState);
+            if (conventionFrames.length == 0 && !"idle".equals(normalizedState)) {
+                conventionFrames = findConventionFrameResources(normalizedStar, "idle");
+            }
+            setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
+        }
+
+        private Movie loadGifMovie(String assetPath) {
+            try (InputStream in = getAssets().open(assetPath)) {
+                return Movie.decodeStream(in);
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+
+        private int[] findConventionFrameResources(String star, String state) {
+            ArrayList<Integer> ids = new ArrayList<>();
+            for (int i = 0; i < 96; i++) {
+                int resId = getResources().getIdentifier("star_" + star + "_" + state + "_" + i,
+                        "drawable", getPackageName());
+                if (resId == 0) break;
+                ids.add(resId);
+            }
+            int[] values = new int[ids.size()];
+            for (int i = 0; i < ids.size(); i++) values[i] = ids.get(i);
+            return values;
+        }
+
+        private String normalizeAssetPart(String value) {
+            if (value == null) return "idle";
+            return value.trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_]+", "_");
+        }
+
+        void setFrameResources(int[] resourceIds) {
+            mainHandler.removeCallbacks(frameAnimator);
+            mainHandler.removeCallbacks(gifAnimator);
+            gifMovie = null;
+            if (resourceIds == null || resourceIds.length == 0) {
+                frames = new Bitmap[0];
+                invalidate();
+                return;
+            }
+            Bitmap[] next = new Bitmap[resourceIds.length];
+            for (int i = 0; i < resourceIds.length; i++) {
+                next[i] = BitmapFactory.decodeResource(getResources(), resourceIds[i]);
+            }
+            frames = next;
+            frameIndex = 0;
+            invalidate();
+            if (frames.length > 1) mainHandler.postDelayed(frameAnimator, frameDurationMs);
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            mainHandler.removeCallbacks(frameAnimator);
+            mainHandler.removeCallbacks(gifAnimator);
+            super.onDetachedFromWindow();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            if (gifMovie != null) {
+                drawGif(canvas);
+                return;
+            }
+            drawFrame(canvas);
+        }
+
+        private void drawGif(Canvas canvas) {
+            int duration = gifMovie.duration();
+            if (duration <= 0) duration = 1000;
+            int relTime = (int) ((System.currentTimeMillis() - gifStartedAt) % duration);
+            gifMovie.setTime(relTime);
+            int vw = getWidth() - getPaddingLeft() - getPaddingRight();
+            int vh = getHeight() - getPaddingTop() - getPaddingBottom();
+            int bw = gifMovie.width();
+            int bh = gifMovie.height();
+            if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return;
+            float scale = Math.min((float) vw / bw, (float) vh / bh);
+            if (scale > 1f) scale = Math.max(1f, (float) Math.floor(scale));
+            int drawW = Math.max(1, Math.round(bw * scale));
+            int drawH = Math.max(1, Math.round(bh * scale));
+            int left = getPaddingLeft() + (vw - drawW) / 2;
+            int top = getPaddingTop() + (vh - drawH) / 2;
+            canvas.save();
+            canvas.translate(left, top);
+            canvas.scale(scale, scale);
+            gifMovie.draw(canvas, 0, 0);
+            canvas.restore();
+        }
+
+        private void drawFrame(Canvas canvas) {
+            if (frames.length == 0 || frames[frameIndex] == null) return;
+            Bitmap bitmap = frames[frameIndex];
+            int vw = getWidth() - getPaddingLeft() - getPaddingRight();
+            int vh = getHeight() - getPaddingTop() - getPaddingBottom();
+            if (vw <= 0 || vh <= 0 || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return;
+            float scale = Math.min((float) vw / bitmap.getWidth(), (float) vh / bitmap.getHeight());
+            if (scale > 1f) scale = Math.max(1f, (float) Math.floor(scale));
+            int drawW = Math.max(1, Math.round(bitmap.getWidth() * scale));
+            int drawH = Math.max(1, Math.round(bitmap.getHeight() * scale));
+            int left = getPaddingLeft() + (vw - drawW) / 2;
+            int top = getPaddingTop() + (vh - drawH) / 2;
+            Rect dst = new Rect(left, top, left + drawW, top + drawH);
+            canvas.drawBitmap(bitmap, null, dst, paint);
+        }
     }
 
     private final class WavAudioQueue {

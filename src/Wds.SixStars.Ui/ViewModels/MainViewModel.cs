@@ -73,6 +73,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _debugJson = string.Empty;
     private string _status = "Ready.";
     private string _topAffectedEmotionsText = "Top emotions: none yet.";
+    private string _lastEmotionVectorsText = "Last emotional vectors: none yet.";
+    private string _interstarStatusText = "Interstar state: idle.";
     private string _todayStarStateText = "Today: no daily Star state yet.";
     private string _speechStatus = "Voice input stopped. Click Start Listen to enable amplitude VAD and real Whisper transcription.";
     private string _voiceInputStatus = "Amplitude VAD idle. No audio captured yet.";
@@ -237,7 +239,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 response.StateDeltas.BenaveilInfluence,
                 response.StateDeltas.EmotionalConnectionPercent);
             TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
-            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%. " + TopAffectedEmotionsText;
+            LastEmotionVectorsText = FormatEmotionVectorsForResponse(response);
+            Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
             PublishMobileBridgeTopEmotionUpdate(response);
             DebugJson = _llmDebugLog.ToString()
                 + "\n================ BACKGROUND DETERMINISTIC EMOTION UPDATE ================\n"
@@ -247,6 +250,32 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Status = "Background emotion/memory update failed: " + ex.Message;
         });
+        _runtime.InterstarUpdateStatusChanged += (_, args) => OnUiThread(() =>
+        {
+            InterstarStatusText = "Interstar state: " + args.Phase + " — " + args.Message;
+            if (!string.Equals(args.Phase, "Cancelled", StringComparison.OrdinalIgnoreCase))
+            {
+                Status = args.Message;
+            }
+            PublishMobileBridgeInterstarStatus(args);
+        });
+        _runtime.InterstarMicroUpdateCompleted += (_, response) => OnUiThread(() =>
+        {
+            InterstarStatusText = "Interstar state: micro-update settled for " + response.StarId + " — " + FormatTopAffectedEmotions(response.TopAffectedEmotions);
+            PublishMobileBridgeTopEmotionUpdate(response, "InterstarEmotionUpdateSettled");
+            DebugJson = _llmDebugLog.ToString()
+                + "\n================ INTERSTAR MICRO UPDATE ================\n"
+                + CreateEnhancedDebugOutput(new { interstarMicroUpdate = true, starId = response.StarId }, response);
+        });
+        _runtime.InterstarUpdateCycleCompleted += (_, result) => OnUiThread(() =>
+        {
+            InterstarStatusText = "Interstar state: " + result.Message;
+            Status = result.Message;
+        });
+        _runtime.InterstarUpdateFailed += (_, ex) => OnUiThread(() =>
+        {
+            InterstarStatusText = "Interstar state: failed — " + ex.Message;
+        });
         _runtime.StoryGenerationCompleted += (_, response) => _ = HandleGeneratedStoryResponseAsync(response);
         _runtime.StoryGenerationFailed += (_, ex) => OnUiThread(() =>
         {
@@ -255,7 +284,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _runtime.DailyStateUpdated += (_, args) => OnUiThread(() =>
         {
             TodayStarStateText = FormatTodayStarState(args.Record.SlotId, args.Record.Summary);
-            Status = "Daily Star state refreshed for " + args.Record.StarId + " (" + args.Record.SlotId + "): " + args.Record.Summary;
+            Status = "Daily Star state refreshed for " + args.Record.StarId + " (" + args.Record.SlotId + ").";
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "DailyStarStateUpdated",
@@ -581,6 +610,18 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _topAffectedEmotionsText;
         set => SetProperty(ref _topAffectedEmotionsText, value);
+    }
+
+    public string LastEmotionVectorsText
+    {
+        get => _lastEmotionVectorsText;
+        set => SetProperty(ref _lastEmotionVectorsText, value);
+    }
+
+    public string InterstarStatusText
+    {
+        get => _interstarStatusText;
+        set => SetProperty(ref _interstarStatusText, value);
     }
 
     public string TodayStarStateText
@@ -2206,6 +2247,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             TrackStoryFromResponse(response);
             StarOutput = FormatStarOutput(response);
+            LastEmotionVectorsText = FormatEmotionVectorsForResponse(response);
+            TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
             DebugJson = _llmDebugLog.ToString()
                 + "\n================ PARSED STAR RESPONSE / UNITY PAYLOAD ================\n"
                 + CreateEnhancedDebugOutput(request, response);
@@ -2612,6 +2655,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
             StarState state = await _runtime.GetStarStateAsync(DefaultSessionId, starId, CancellationToken.None);
+            string todayStateText = await ResolveTodayStarStateTextForUiAsync(starId, state, CancellationToken.None).ConfigureAwait(false);
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -2625,8 +2669,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     _isLoadingSelectedStarState = false;
                 }
                 TopAffectedEmotionsText = FormatTopAffectedEmotions(state.LastTopAffectedEmotions);
-                TodayStarStateText = FormatTodayStarState(state.TodayState?.SlotId, state.TodayState?.Summary);
-                Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + "). " + TopAffectedEmotionsText;
+                LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector);
+                TodayStarStateText = todayStateText;
+                Status = starId + " state loaded (met=" + state.IsMet + ", ally=" + state.IsAlly + ", Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", Connection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, Ready " + state.IsGirlfriendReady + ").";
             });
         }
         catch (Exception ex)
@@ -2987,6 +3032,103 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             string accepted = x.AcceptedForStateUpdate ? "*" : string.Empty;
             return x.EmotionId + " " + sign + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00") + accepted;
         }));
+    }
+
+
+    private static string FormatEmotionVectorsForResponse(StarInteractionResponse response)
+    {
+        if (response == null) return "Last emotional vectors: none yet.";
+        string text = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector);
+        if (text == "Last emotional vectors: none yet." && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+        {
+            return "Last emotional vectors: waiting for background emotion/memory update to settle after voice playback. The panel will fill when the deterministic review finishes.";
+        }
+        return text;
+    }
+
+
+    private static string FormatEmotionVectors(string? emotionalEffectVector, string? negativeEmotionVector)
+    {
+        List<string> positive = RelationshipDeltaCalculator.ParseVector(emotionalEffectVector, StarEmotionMatrix.StandardEmotionIds)
+            .Where(x => x != null && (x.Confidence > 0 || x.Score > 0))
+            .OrderByDescending(x => x.WeightedScore)
+            .ThenByDescending(x => x.Score)
+            .Take(8)
+            .Select(x => "+" + x.Id + " " + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00"))
+            .ToList();
+
+        List<string> negative = RelationshipDeltaCalculator.ParseVector(negativeEmotionVector, RelationshipDeltaCalculator.NegativeEmotionIds)
+            .Where(x => x != null && (x.Confidence > 0 || x.Score > 0))
+            .OrderByDescending(x => x.WeightedScore)
+            .ThenByDescending(x => x.Score)
+            .Take(8)
+            .Select(x => "-" + x.Id + " " + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00"))
+            .ToList();
+
+        if (positive.Count == 0 && negative.Count == 0)
+        {
+            return "Last emotional vectors: none yet.";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.Append("Last emotional vectors");
+        if (positive.Count > 0)
+        {
+            sb.AppendLine(":");
+            sb.Append("Good: ").Append(string.Join(" | ", positive));
+        }
+        if (negative.Count > 0)
+        {
+            if (positive.Count > 0) sb.AppendLine();
+            else sb.Append(": ");
+            sb.Append("Bad: ").Append(string.Join(" | ", negative));
+        }
+        if (!string.IsNullOrWhiteSpace(emotionalEffectVector) || !string.IsNullOrWhiteSpace(negativeEmotionVector))
+        {
+            sb.AppendLine();
+            sb.Append("Raw good=").Append(emotionalEffectVector ?? string.Empty).Append(" | bad=").Append(negativeEmotionVector ?? string.Empty);
+        }
+        return sb.ToString();
+    }
+
+    private async Task<string> ResolveTodayStarStateTextForUiAsync(string starId, StarState state, CancellationToken cancellationToken)
+    {
+        if (state?.TodayState != null && state.TodayState.IsAvailable)
+        {
+            return FormatTodayStarState(state.TodayState.SlotId, state.TodayState.Summary);
+        }
+
+        string[] sessions =
+        {
+            DefaultSessionId,
+            "android-phone-dev",
+            "local-dev"
+        };
+
+        foreach (string sessionId in sessions.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                StarDailyStateRecord? record = await _runtime.GetCurrentDailyStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (record == null || string.IsNullOrWhiteSpace(record.XmlContent)) continue;
+                string text = FormatTodayStarState(record.SlotId, record.Summary);
+                if (!string.Equals(sessionId, DefaultSessionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    text += " (loaded from " + sessionId + " fallback daily XML)";
+                }
+                return text;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[DailyState] Could not load UI daily state for " + sessionId + "/" + starId + ": " + ex.Message);
+            }
+        }
+
+        return "Today: no daily Star state yet.";
     }
 
     private static string FormatTodayStarState(string? slotId, string? summary)

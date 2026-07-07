@@ -266,11 +266,29 @@ namespace Wds.SixStars.Api.Engine
                 return _cache;
             }
 
-            using (FileStream stream = File.OpenRead(_filePath))
+            try
             {
-                SixStarsSaveData? loaded = await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                _cache = loaded ?? new SixStarsSaveData { SessionId = sessionId };
-                if (string.IsNullOrWhiteSpace(_cache.SessionId)) _cache.SessionId = sessionId;
+                using (FileStream stream = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                {
+                    SixStarsSaveData? loaded = await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                    _cache = loaded ?? new SixStarsSaveData { SessionId = sessionId };
+                    if (string.IsNullOrWhiteSpace(_cache.SessionId)) _cache.SessionId = sessionId;
+                    return _cache;
+                }
+            }
+            catch (FileNotFoundException)
+            {
+                _cache = new SixStarsSaveData { SessionId = sessionId };
+                return _cache;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                _cache = new SixStarsSaveData { SessionId = sessionId };
+                return _cache;
+            }
+            catch (JsonException)
+            {
+                _cache = new SixStarsSaveData { SessionId = sessionId };
                 return _cache;
             }
         }

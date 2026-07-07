@@ -13,7 +13,7 @@ using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator
+    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IInterstarUpdateAgent
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -45,8 +45,10 @@ namespace Wds.SixStars.Api.Ai
                 AllowTrailingCommas = true,
                 ReadCommentHandling = JsonCommentHandling.Skip
             };
+            _jsonOptions.Converters.Add(new FlexibleStringJsonConverter());
             _jsonOptions.Converters.Add(new LenientStoryKindJsonConverter());
             _jsonOptions.Converters.Add(new JsonStringEnumConverter());
+            _jsonOptions.Converters.Add(new FlexibleListJsonConverterFactory());
         }
 
 
@@ -188,6 +190,92 @@ namespace Wds.SixStars.Api.Ai
             return model;
         }
 
+
+        public async Task<InterstarRelayMessage> GenerateInterstarRelayAsync(
+            StarProfile originProfile,
+            StarProfile targetProfile,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState originState,
+            StarState targetState,
+            CancellationToken cancellationToken)
+        {
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending INTERSTAR relay request from " + originProfile.StarId + " to " + targetProfile.StarId + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildInterstarRelayMessages(originProfile, targetProfile, originalRequest, originResponse, originState, targetState),
+                StarResponseJsonSchema.CreateInterstarRelayResponseFormat(),
+                _reviewMaxTokens,
+                "interstar-origin-relay",
+                cancellationToken).ConfigureAwait(false);
+
+            InterstarRelayMessage? relay = JsonSerializer.Deserialize<InterstarRelayMessage>(ExtractJson(json), _jsonOptions);
+            if (relay == null) throw new InvalidOperationException("Interstar relay returned empty JSON.");
+            relay.OriginStarId = string.IsNullOrWhiteSpace(relay.OriginStarId) ? originProfile.StarId : relay.OriginStarId;
+            relay.TargetStarId = string.IsNullOrWhiteSpace(relay.TargetStarId) ? targetProfile.StarId : relay.TargetStarId;
+            relay.Priority = Clamp01(relay.Priority);
+            relay.Summary = CleanOneLine(relay.Summary, 360);
+            relay.WhatOriginWouldTellTarget = CleanOneLine(relay.WhatOriginWouldTellTarget, 900);
+            relay.Reason = CleanOneLine(relay.Reason, 360);
+            relay.CooldownKey = CleanOneLine(relay.CooldownKey, 120);
+            return relay;
+        }
+
+        public async Task<StarInteractionResponse> AnalyzeInterstarReactionAsync(
+            StarProfile targetProfile,
+            InterstarRelayMessage relay,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState targetState,
+            CancellationToken cancellationToken)
+        {
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending INTERSTAR reaction vector request for " + targetProfile.StarId + " from " + relay.OriginStarId + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildInterstarReactionMessages(targetProfile, relay, originalRequest, originResponse, targetState),
+                StarResponseJsonSchema.CreateInterstarVectorResponseFormat("six_stars_interstar_reaction_vector"),
+                _reviewMaxTokens,
+                "interstar-target-reaction-vector",
+                cancellationToken).ConfigureAwait(false);
+
+            StarStructuredModelResponse model = ParseInterstarVector(json, targetProfile, "interstar reaction vector");
+            StarInteractionResponse response = BuildInteractionResponseFromModel(targetProfile, originalRequest, targetState, model);
+            response.SetSpokenParts(Array.Empty<string>());
+            response.SpokenText = string.Empty;
+            response.EmotionalPurpose = "Interstar micro-update: " + targetProfile.DisplayName + " reacted privately to what " + relay.OriginStarId + " told her about the Last Cat.";
+            response.ChangesSummary = string.IsNullOrWhiteSpace(response.ChangesSummary)
+                ? targetProfile.DisplayName + " heard a private interstar relay from " + relay.OriginStarId + " and reacted emotionally toward the Last Cat."
+                : response.ChangesSummary;
+            response.Debug.Notes.Add("StructuredStarAgent used REAL LLM interstar target reaction vector pass.");
+            return response;
+        }
+
+        public async Task<StarInteractionResponse> AnalyzeInterstarFeedbackAsync(
+            StarProfile originProfile,
+            StarInteractionRequest originalRequest,
+            StarInteractionResponse originResponse,
+            StarState originState,
+            IReadOnlyList<InterstarReactionSummary> reactions,
+            CancellationToken cancellationToken)
+        {
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending INTERSTAR feedback vector request for origin " + originProfile.StarId + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildInterstarFeedbackMessages(originProfile, originalRequest, originResponse, originState, reactions),
+                StarResponseJsonSchema.CreateInterstarVectorResponseFormat("six_stars_interstar_origin_feedback_vector"),
+                _reviewMaxTokens,
+                "interstar-origin-feedback-vector",
+                cancellationToken).ConfigureAwait(false);
+
+            StarStructuredModelResponse model = ParseInterstarVector(json, originProfile, "interstar origin feedback vector");
+            StarInteractionResponse response = BuildInteractionResponseFromModel(originProfile, originalRequest, originState, model);
+            response.SetSpokenParts(Array.Empty<string>());
+            response.SpokenText = string.Empty;
+            response.EmotionalPurpose = "Interstar micro-update: " + originProfile.DisplayName + " reacted privately to the other Stars' emotional responses about the Last Cat.";
+            response.ChangesSummary = string.IsNullOrWhiteSpace(response.ChangesSummary)
+                ? originProfile.DisplayName + " felt the emotional ripple from the other Stars after sharing the recent conversation."
+                : response.ChangesSummary;
+            response.Debug.Notes.Add("StructuredStarAgent used REAL LLM interstar origin feedback vector pass.");
+            return response;
+        }
+
         public async Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
         {
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Sending FAST spoken response request to LLM for {request.StarId}...");
@@ -278,7 +366,7 @@ namespace Wds.SixStars.Api.Ai
                 cancellationToken).ConfigureAwait(false);
 
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received background review response ({json.Length} chars)");
-            StarStructuredModelResponse model = Parse(json, profile, request, state);
+            StarStructuredModelResponse model = Parse(json, profile, request, state, requireSpokenText: false);
             NormalizeModelCollections(model);
             if (model.SpokenParts.Count == 0)
             {
@@ -305,6 +393,8 @@ namespace Wds.SixStars.Api.Ai
                 StoryIsFinished = model.StoryIsFinished,
                 StoryPartIndex = model.StoryPartIndex,
                 EmotionalPurpose = model.EmotionalPurpose ?? string.Empty,
+                EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
                 VoiceDirective = model.VoiceDirective ?? VoiceDirective.Empty(),
                 SuggestedStateDeltas = model.SuggestedStateDeltas ?? RelationshipDelta.Zero(),
                 ConversationSummary = string.IsNullOrWhiteSpace(model.ConversationSummary)
@@ -406,6 +496,51 @@ namespace Wds.SixStars.Api.Ai
                 if (!string.IsNullOrWhiteSpace(rule)) directive.Avoid.Add("Do not violate voice rule: " + rule);
             }
             return directive;
+        }
+
+
+        private StarStructuredModelResponse ParseInterstarVector(string rawContent, StarProfile profile, string purpose)
+        {
+            string json = ExtractJson(rawContent);
+            try
+            {
+                StarStructuredModelResponse? model = JsonSerializer.Deserialize<StarStructuredModelResponse>(json, _jsonOptions);
+                if (model == null) throw new InvalidOperationException(purpose + " response could not be deserialized.");
+                ApplyCommonJsonAliases(json, model);
+                NormalizeModelCollections(model);
+                model.StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId;
+                return model;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+            {
+                System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] " + purpose + " JSON parsing failed; returning zero-vector micro update: " + ex.Message);
+                StarStructuredModelResponse model = new StarStructuredModelResponse
+                {
+                    StarId = profile.StarId,
+                    EmotionalEffectVector = BuildZeroVector(StarEmotionMatrix.StandardEmotionIds.Length),
+                    NegativeEmotionVector = BuildZeroVector(RelationshipDeltaCalculator.NegativeEmotionIds.Length),
+                    SuggestedStateDeltas = RelationshipDelta.Zero(),
+                    ConversationSummary = profile.DisplayName + " received an interstar update, but the vector response could not be read.",
+                    ChangesSummary = purpose + " parse failed: " + ex.Message,
+                    WisdomScore = 0
+                };
+                model.RiskFlags.Add("interstar_vector_parse_failed");
+                NormalizeModelCollections(model);
+                return model;
+            }
+        }
+
+        private static string BuildZeroVector(int count)
+        {
+            if (count <= 0) return string.Empty;
+            return string.Join(";", Enumerable.Range(0, count).Select(_ => "0.00:0"));
+        }
+
+        private static string CleanOneLine(string? value, int maxLength)
+        {
+            string text = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (maxLength > 0 && text.Length > maxLength) text = text.Substring(0, maxLength).Trim();
+            return text;
         }
 
         private StarSpeechModelResponse ParseSpeech(string rawContent, StarProfile profile, StarInteractionRequest request)
@@ -818,7 +953,7 @@ namespace Wds.SixStars.Api.Ai
             return trimmed.Substring(0, maxLength).Trim() + "...";
         }
 
-        private StarStructuredModelResponse Parse(string rawContent, StarProfile profile, StarInteractionRequest request, StarState state)
+        private StarStructuredModelResponse Parse(string rawContent, StarProfile profile, StarInteractionRequest request, StarState state, bool requireSpokenText = true)
         {
             string json = ExtractJson(rawContent);
             if (!json.TrimEnd().EndsWith("}"))
@@ -832,6 +967,13 @@ namespace Wds.SixStars.Api.Ai
                 if (model == null) throw new InvalidOperationException("Structured model response could not be deserialized.");
                 ApplyCommonJsonAliases(json, model);
                 model.SpokenParts = CleanSpeechParts(model.SpokenParts);
+                if (!requireSpokenText)
+                {
+                    // Background emotion/memory review intentionally does not have to return spokenText.
+                    // The foreground reply has already gone to TTS, and AnalyzeTurnAsync will copy those
+                    // foreground speech chunks back onto the background response after parsing.
+                    return model;
+                }
                 if (model.SpokenParts.Count == 0)
                 {
                     model.SpokenParts.AddRange(ExtractLikelySpokenParts(rawContent));
@@ -967,6 +1109,14 @@ namespace Wds.SixStars.Api.Ai
                 if (string.IsNullOrWhiteSpace(model.ChangesSummary))
                 {
                     model.ChangesSummary = GetString(root, "changesSummary") ?? GetString(root, "changes_summary") ?? GetString(root, "turnSummary") ?? GetString(root, "turn_summary") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.EmotionalEffectVector))
+                {
+                    model.EmotionalEffectVector = GetString(root, "emotionalEffectVector") ?? GetString(root, "emotional_effect_vector") ?? GetString(root, "positiveEmotionVector") ?? GetString(root, "positive_emotion_vector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.NegativeEmotionVector))
+                {
+                    model.NegativeEmotionVector = GetString(root, "negativeEmotionVector") ?? GetString(root, "negative_emotion_vector") ?? GetString(root, "boundaryEmotionVector") ?? GetString(root, "boundary_emotion_vector") ?? string.Empty;
                 }
             }
             catch

@@ -149,7 +149,7 @@ namespace Wds.SixStars.Api.Ai
                 { "additionalProperties", false },
                 { "required", new[]
                     {
-                        "starId", "spokenText", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
+                        "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
@@ -209,6 +209,63 @@ namespace Wds.SixStars.Api.Ai
             };
 
             return WrapSchema("six_stars_fast_spoken_text_only", schema);
+        }
+
+
+        public static object CreateInterstarRelayResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "originStarId", "targetStarId", "shouldTell", "priority", "summary", "whatOriginWouldTellTarget", "reason", "cooldownKey" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "originStarId", StringProperty(80) },
+                        { "targetStarId", StringProperty(80) },
+                        { "shouldTell", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "priority", NumberProperty(0, 1) },
+                        { "summary", StringProperty(360) },
+                        { "whatOriginWouldTellTarget", StringProperty(900) },
+                        { "reason", StringProperty(360) },
+                        { "cooldownKey", StringProperty(120) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_interstar_relay", schema);
+        }
+
+        public static object CreateInterstarVectorResponseFormat(string schemaName = "six_stars_interstar_vector_update")
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[]
+                    {
+                        "starId", "emotionalEffectVector", "negativeEmotionVector", "suggestedStateDeltas",
+                        "conversationSummary", "changesSummary", "memoryNotes", "relationshipEvents", "loreUsed", "riskFlags", "wisdomScore"
+                    }
+                },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
+                        { "suggestedStateDeltas", DeltaObject() },
+                        { "conversationSummary", StringProperty(900) },
+                        { "changesSummary", StringProperty(500) },
+                        { "memoryNotes", StringArray(5) },
+                        { "relationshipEvents", StringArray(5) },
+                        { "loreUsed", StringArray(5) },
+                        { "riskFlags", StringArray(3) },
+                        { "wisdomScore", NumberProperty(0, 1) }
+                    }
+                }
+            };
+
+            return WrapSchema(schemaName, schema);
         }
 
         public static object CreateStorySpeechResponseFormat(bool continuation)

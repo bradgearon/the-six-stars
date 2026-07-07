@@ -34,25 +34,48 @@ namespace Wds.SixStars.Api.DailyState
             try
             {
                 string metaPath = BuildCurrentMetaPath(sessionId, starId);
-                if (!File.Exists(metaPath)) return null;
-                using (FileStream stream = File.OpenRead(metaPath))
+                if (!File.Exists(metaPath))
                 {
-                    StarDailyStateRecord? record = await JsonSerializer.DeserializeAsync<StarDailyStateRecord>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                    if (record == null) return null;
-                    if (!string.IsNullOrWhiteSpace(record.FilePath) && File.Exists(record.FilePath))
+                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was missing.", cancellationToken).ConfigureAwait(false);
+                }
+
+                try
+                {
+                    using (FileStream stream = new FileStream(metaPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
                     {
-                        record.XmlContent = await ReadAllTextAsync(record.FilePath, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
-                        if (File.Exists(currentXmlPath))
+                        StarDailyStateRecord? record = await JsonSerializer.DeserializeAsync<StarDailyStateRecord>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                        if (record == null)
                         {
-                            record.FilePath = currentXmlPath;
-                            record.XmlContent = await ReadAllTextAsync(currentXmlPath, cancellationToken).ConfigureAwait(false);
+                            return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was empty.", cancellationToken).ConfigureAwait(false);
                         }
+
+                        if (!string.IsNullOrWhiteSpace(record.FilePath) && File.Exists(record.FilePath))
+                        {
+                            record.XmlContent = await ReadAllTextAsync(record.FilePath, cancellationToken).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
+                            if (File.Exists(currentXmlPath))
+                            {
+                                record.FilePath = currentXmlPath;
+                                record.XmlContent = await ReadAllTextAsync(currentXmlPath, cancellationToken).ConfigureAwait(false);
+                            }
+                        }
+                        return record;
                     }
-                    return record;
+                }
+                catch (FileNotFoundException)
+                {
+                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON disappeared during read.", cancellationToken).ConfigureAwait(false);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata directory was missing.", cancellationToken).ConfigureAwait(false);
+                }
+                catch (JsonException)
+                {
+                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was unreadable.", cancellationToken).ConfigureAwait(false);
                 }
             }
             finally
@@ -104,6 +127,26 @@ namespace Wds.SixStars.Api.DailyState
             {
                 _gate.Release();
             }
+        }
+
+
+        private async Task<StarDailyStateRecord?> TryReadCurrentXmlOnlyAsync(string sessionId, string starId, string summary, CancellationToken cancellationToken)
+        {
+            string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
+            if (!File.Exists(currentXmlPath)) return null;
+            string xml = await ReadAllTextAsync(currentXmlPath, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(xml)) return null;
+            return new StarDailyStateRecord
+            {
+                SessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId,
+                StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId,
+                LocalDate = DateTime.Now.ToString("yyyy-MM-dd"),
+                SlotId = "current-xml-fallback",
+                GeneratedAt = File.GetLastWriteTimeUtc(currentXmlPath),
+                FilePath = currentXmlPath,
+                Summary = summary,
+                XmlContent = xml
+            };
         }
 
         private string BuildCurrentXmlPath(string sessionId, string starId)

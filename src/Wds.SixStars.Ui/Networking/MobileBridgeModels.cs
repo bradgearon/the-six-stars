@@ -65,6 +65,10 @@ public sealed class MobileBridgeResponse
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public string EmotionalEffectVector { get; set; } = string.Empty;
+    public string NegativeEmotionVector { get; set; } = string.Empty;
+    public string LastEmotionVectorsText { get; set; } = string.Empty;
+    public string InterstarStatusText { get; set; } = string.Empty;
     public string DailyStateSlotId { get; set; } = string.Empty;
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
