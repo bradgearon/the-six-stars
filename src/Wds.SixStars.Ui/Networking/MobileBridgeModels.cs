@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Mobile;
 
 namespace Wds.SixStars.Ui.Networking;
 
@@ -66,6 +67,7 @@ public sealed class MobileBridgeResponse
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public List<MobileConversationHistoryItem> RecentConversationHistory { get; set; } = new List<MobileConversationHistoryItem>();
     public string EmotionalEffectVector { get; set; } = string.Empty;
     public string NegativeEmotionVector { get; set; } = string.Empty;
     public string LastEmotionVectorsText { get; set; } = string.Empty;

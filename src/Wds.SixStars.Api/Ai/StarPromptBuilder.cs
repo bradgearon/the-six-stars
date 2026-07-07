@@ -640,15 +640,13 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact)
         {
-            List<ConversationLogEntry> usableHistory = state.MemoryLog
-                .Where(IsUsableConversationTurn)
-                .Take(Math.Max(1, maxItems))
-                .ToList();
+            List<ConversationLogEntry> usableHistory = GetUsableRecentConversationHistory(state, Math.Max(1, maxItems));
 
-            sb.AppendLine("RECENT CONVERSATION HISTORY FROM MEMORY LOG — newest first. Use this for continuity, follow-ups, pronouns, tone, and relationship pacing.");
+            sb.AppendLine("RECENT CONVERSATION HISTORY FROM MEMORY LOG / SAVED STATE — newest first. Use this for continuity, follow-ups, pronouns, tone, and relationship pacing.");
             if (usableHistory.Count == 0)
             {
                 sb.AppendLine("No usable prior spoken turns are recorded for this Star yet. Technical parser-fallback turns are intentionally omitted from roleplay memory.");
+                if (!string.IsNullOrWhiteSpace(state.ConversationSummary)) sb.AppendLine("Fallback saved conversation summary: " + Truncate(state.ConversationSummary, 500));
                 return;
             }
 
@@ -1418,6 +1416,29 @@ namespace Wds.SixStars.Api.Ai
             return entry == null ? "none yet" : QuoteInline(Truncate(entry.StarResponse, 360));
         }
 
+        private static List<ConversationLogEntry> GetUsableRecentConversationHistory(StarState state, int maxItems)
+        {
+            List<ConversationLogEntry> history = new List<ConversationLogEntry>();
+            if (state?.MemoryLog != null)
+            {
+                history.AddRange(state.MemoryLog.Where(IsUsableConversationTurn));
+            }
+
+            if (history.Count == 0 && state?.OldConversationArchives != null)
+            {
+                history.AddRange(state.OldConversationArchives
+                    .Where(x => x != null)
+                    .OrderByDescending(x => x.EndedAt)
+                    .SelectMany(x => x.Entries ?? new List<ConversationLogEntry>())
+                    .Where(IsUsableConversationTurn));
+            }
+
+            return history
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
         private static bool IsUsableConversationTurn(ConversationLogEntry entry)
         {
             if (entry == null) return false;
@@ -1522,7 +1543,7 @@ namespace Wds.SixStars.Api.Ai
             List<string> formNotes = profile.BenaveilFormInteractions ?? new List<string>();
             if (friends.Count > 0) sb.AppendLine("Friends/contacts: " + Truncate(string.Join("; ", friends.Take(6)), 600));
             if (formNotes.Count > 0) sb.AppendLine("Benaveil/form concerns: " + Truncate(string.Join("; ", formNotes.Take(4)), 600));
-            sb.AppendLine("Relationship to Last Cat: " + BuildRelationshipStage(state));
+            sb.AppendLine("Relationship to Last Cat: " + BuildRelationshipStatus(state));
             List<TopAffectedEmotion> top = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>();
             if (top.Count > 0) sb.AppendLine("Last top emotions toward Last Cat: " + string.Join(", ", top.Take(4).Select(x => x.ToString())));
             List<StarEmotionAccumulatedScore> positiveTotals = state.PositiveEmotionTotals ?? new List<StarEmotionAccumulatedScore>();

@@ -20,7 +20,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly Func<CancellationToken, Task<object>> _testAudioHandler;
     private readonly Func<object> _healthFactory;
     private readonly Func<object> _starsFactory;
-    private readonly Func<CancellationToken, Task<object>> _stateFactory;
+    private readonly Func<string, CancellationToken, Task<object>> _stateFactory;
     private readonly MobileBridgeDispatcher _dispatcher;
     private readonly JsonSerializerOptions _jsonOptions;
     private TcpListener? _listener;
@@ -40,7 +40,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Func<CancellationToken, Task<object>> testAudioHandler,
         Func<object> healthFactory,
         Func<object> starsFactory,
-        Func<CancellationToken, Task<object>> stateFactory,
+        Func<string, CancellationToken, Task<object>> stateFactory,
         MobileBridgeDispatcher dispatcher)
     {
         Port = port;
@@ -140,7 +140,10 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
                 if (request.Method == "GET" && request.Path == "/api/mobile/state")
                 {
-                    object response = await _stateFactory(serverToken).ConfigureAwait(false);
+                    string sessionId = request.Query.TryGetValue("sessionId", out string? sessionText) && !string.IsNullOrWhiteSpace(sessionText)
+                        ? sessionText.Trim()
+                        : "android-phone-dev";
+                    object response = await _stateFactory(sessionId, serverToken).ConfigureAwait(false);
                     await WriteJsonAsync(stream, 200, response, serverToken).ConfigureAwait(false);
                     return;
                 }

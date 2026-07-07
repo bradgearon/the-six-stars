@@ -206,12 +206,13 @@ public sealed partial class MainViewModel
         };
     }
 
-    private async Task<object> CreateMobileStatePayloadAsync(CancellationToken cancellationToken)
+    private async Task<object> CreateMobileStatePayloadAsync(string sessionId, CancellationToken cancellationToken)
     {
+        string safeSessionId = string.IsNullOrWhiteSpace(sessionId) ? "android-phone-dev" : sessionId.Trim();
         List<object> states = new List<object>();
         foreach (string starId in StarIds)
         {
-            StarState state = await _runtime.GetStarStateAsync("android-phone-dev", starId, cancellationToken).ConfigureAwait(false);
+            StarState state = await _runtime.GetStarStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
             states.Add(CreateMobileStarStateDto(state));
         }
 
@@ -219,7 +220,7 @@ public sealed partial class MainViewModel
         {
             ok = true,
             selectedStarId = SelectedStarId,
-            sessionId = "android-phone-dev",
+            sessionId = safeSessionId,
             stars = states,
             latestEventSequence = _mobileBridgeDispatcher.GetEventsAfter(long.MaxValue).LatestSequence,
             time = DateTimeOffset.Now
@@ -387,6 +388,7 @@ public sealed partial class MainViewModel
                     PhotoSummary = photoResponse.PhotoSummary ?? string.Empty,
                     PhotoError = photoResponse.PhotoError ?? string.Empty,
                     TopAffectedEmotions = photoResponse.TopAffectedEmotions.Count > 0 ? photoResponse.TopAffectedEmotions.ToList() : (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                    RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
                     EmotionalEffectVector = FirstNonEmptyForMobile(photoResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
                     NegativeEmotionVector = FirstNonEmptyForMobile(photoResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
                     LastEmotionVectorsText = FirstNonEmptyForMobile(photoResponse.LastEmotionVectorsText, FormatEmotionVectors(photoResponse.EmotionalEffectVector, photoResponse.NegativeEmotionVector)),
@@ -474,6 +476,7 @@ public sealed partial class MainViewModel
             DailyStateSummary = FirstNonEmptyForMobile(response.DailyStateSummary, state.TodayState?.Summary),
             DailyStateXml = FirstNonEmptyForMobile(response.DailyStateXml, state.TodayState?.Xml),
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             EmotionalEffectVector = FirstNonEmptyForMobile(response.EmotionalEffectVector, state.LastEmotionalEffectVector),
             NegativeEmotionVector = FirstNonEmptyForMobile(response.NegativeEmotionVector, state.LastNegativeEmotionVector),
             LastEmotionVectorsText = FirstNonEmptyForMobile(response.LastEmotionVectorsText, FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector)),
@@ -500,6 +503,7 @@ public sealed partial class MainViewModel
             DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
             DailyStateXml = state.TodayState?.Xml ?? string.Empty,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
             NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
@@ -524,6 +528,7 @@ public sealed partial class MainViewModel
             EmotionalConnectionPercent = state.EmotionalConnectionPercent,
             IsGirlfriendReady = state.IsGirlfriendReady,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
             NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
@@ -560,6 +565,7 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
                 TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
                 EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
                 LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
@@ -575,6 +581,95 @@ public sealed partial class MainViewModel
         {
             System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish selected Star update: " + ex.Message);
         }
+    }
+
+    private static List<MobileConversationHistoryItem> CreateMobileRecentConversationHistory(StarState state, int maxItems)
+    {
+        if (state == null) return new List<MobileConversationHistoryItem>();
+
+        List<ConversationLogEntry> entries = new List<ConversationLogEntry>();
+        if (state.MemoryLog != null)
+        {
+            entries.AddRange(state.MemoryLog.Where(IsUsableMobileConversationTurn));
+        }
+
+        if (entries.Count == 0 && state.OldConversationArchives != null)
+        {
+            entries.AddRange(state.OldConversationArchives
+                .Where(x => x != null)
+                .OrderByDescending(x => x.EndedAt)
+                .SelectMany(x => x.Entries ?? new List<ConversationLogEntry>())
+                .Where(IsUsableMobileConversationTurn)
+                .OrderByDescending(x => x.CreatedAt));
+        }
+
+        return entries
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Max(1, maxItems))
+            .Select(x => new MobileConversationHistoryItem
+            {
+                CreatedAt = x.CreatedAt,
+                RequestType = x.RequestType ?? string.Empty,
+                PlayerText = x.PlayerText ?? string.Empty,
+                StarResponse = x.StarResponse ?? string.Empty,
+                Summary = x.Summary ?? string.Empty
+            })
+            .ToList();
+    }
+
+    private static List<MobileConversationHistoryItem> CreateMobileRecentConversationHistoryFromResponse(MobileBridgeRequest mobileRequest, StarInteractionRequest runtimeRequest, StarInteractionResponse response, int maxItems)
+    {
+        List<MobileConversationHistoryItem> items = new List<MobileConversationHistoryItem>();
+        if (response != null && !string.IsNullOrWhiteSpace(response.SpokenText))
+        {
+            string playerText = runtimeRequest?.PlayerText;
+            if (string.IsNullOrWhiteSpace(playerText)) playerText = mobileRequest?.PlayerText;
+            if (string.IsNullOrWhiteSpace(playerText)) playerText = mobileRequest?.PhotoCaption;
+
+            items.Add(new MobileConversationHistoryItem
+            {
+                CreatedAt = DateTimeOffset.Now,
+                RequestType = (runtimeRequest?.RequestType ?? ParseMobileRequestType(mobileRequest?.RequestType)).ToString(),
+                PlayerText = playerText ?? string.Empty,
+                StarResponse = response.SpokenText ?? string.Empty,
+                Summary = !string.IsNullOrWhiteSpace(response.ConversationSummary)
+                    ? response.ConversationSummary
+                    : (response.ChangesSummary ?? string.Empty)
+            });
+        }
+
+        return items
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarResponse))
+            .OrderByDescending(x => x.CreatedAt)
+            .Take(Math.Max(1, maxItems))
+            .ToList();
+    }
+
+    private static List<MobileConversationHistoryItem> CreateMobileConversationHistoryFromResponse(StarInteractionResponse response, int maxItems)
+    {
+        if (response == null || string.IsNullOrWhiteSpace(response.SpokenText)) return new List<MobileConversationHistoryItem>();
+        return new List<MobileConversationHistoryItem>
+        {
+            new MobileConversationHistoryItem
+            {
+                CreatedAt = DateTimeOffset.Now,
+                RequestType = string.Empty,
+                PlayerText = string.Empty,
+                StarResponse = response.SpokenText ?? string.Empty,
+                Summary = response.ConversationSummary ?? string.Empty
+            }
+        }.Take(Math.Max(1, maxItems)).ToList();
+    }
+
+    private static bool IsUsableMobileConversationTurn(ConversationLogEntry entry)
+    {
+        if (entry == null) return false;
+        if (string.IsNullOrWhiteSpace(entry.PlayerText)) return false;
+        if (string.IsNullOrWhiteSpace(entry.StarResponse)) return false;
+        string text = entry.StarResponse;
+        return text.IndexOf("thoughts came back in a shape the system could not fully read", StringComparison.OrdinalIgnoreCase) < 0
+            && text.IndexOf("answer came back in a strange shape", StringComparison.OrdinalIgnoreCase) < 0
+            && !(text.IndexOf("received your words", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("try again", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private static object CreateMobileStarStateDto(StarState state)
@@ -594,6 +689,7 @@ public sealed partial class MainViewModel
             emotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
             negativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
             lastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
+            recentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             todayState = state.TodayState,
             dailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             dailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -625,6 +721,7 @@ public sealed partial class MainViewModel
                 EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                 IsGirlfriendReady = state.IsGirlfriendReady,
                 TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
                 EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
                 LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
@@ -813,6 +910,29 @@ public sealed partial class MainViewModel
         return await ProcessMobileConversationAsync(request, transcript: string.Empty, cancellationToken).ConfigureAwait(false);
     }
 
+    private void PublishMobileTranscriptReady(MobileBridgeRequest request, string transcriptText)
+    {
+        if (string.IsNullOrWhiteSpace(transcriptText)) return;
+        try
+        {
+            string starId = ResolveDefaultStarId(request.StarId);
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "MobileTranscriptReady",
+                SourceClientId = "desktop-whisper",
+                SessionId = string.IsNullOrWhiteSpace(request.SessionId) ? "android-phone-dev" : request.SessionId,
+                StarId = starId,
+                SelectedStarId = SelectedStarId,
+                Transcript = transcriptText.Trim(),
+                Message = "Voice transcript ready for " + starId + "; LLM response is now processing."
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish mobile transcript event: " + ex.Message);
+        }
+    }
+
     private async Task<MobileBridgeResponse> ProcessMobileAudioAsync(MobileBridgeRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.AudioBase64))
@@ -848,6 +968,13 @@ public sealed partial class MainViewModel
         }
 
         request.PlayerText = transcriptText;
+        OnUiThread(() =>
+        {
+            LastTranscript = transcriptText;
+            MobileBridgeStatus = "Android voice transcribed; sending transcript to the Star LLM.";
+            AppendMobileBridgeVoiceDebug("Android voice transcript ready", TruncateForUi(transcriptText, 220));
+        });
+        PublishMobileTranscriptReady(request, transcriptText);
         MobileBridgeResponse response = await ProcessMobileConversationAsync(request, transcriptText, cancellationToken).ConfigureAwait(false);
         response.Transcript = transcriptText;
         return response;
@@ -1374,6 +1501,7 @@ public sealed partial class MainViewModel
             PhotoSummary = TryGetLatestPhotoSummary(response, mobileRequest),
             PhotoError = TryGetLatestPhotoError(response),
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+            RecentConversationHistory = CreateMobileRecentConversationHistoryFromResponse(mobileRequest, runtimeRequest, response, 10),
             EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
             NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector),

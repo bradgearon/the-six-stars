@@ -210,6 +210,7 @@ public sealed class MobileBridgeDispatchResult
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public List<MobileConversationHistoryItem> RecentConversationHistory { get; set; } = new List<MobileConversationHistoryItem>();
     public string EmotionalEffectVector { get; set; } = string.Empty;
     public string NegativeEmotionVector { get; set; } = string.Empty;
     public string LastEmotionVectorsText { get; set; } = string.Empty;
@@ -243,6 +244,7 @@ public sealed class MobileBridgeDispatchEvent
     public bool IsGirlfriend { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
+    public string Transcript { get; set; } = string.Empty;
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;
@@ -255,6 +257,7 @@ public sealed class MobileBridgeDispatchEvent
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
     public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+    public List<MobileConversationHistoryItem> RecentConversationHistory { get; set; } = new List<MobileConversationHistoryItem>();
     public string EmotionalEffectVector { get; set; } = string.Empty;
     public string NegativeEmotionVector { get; set; } = string.Empty;
     public string LastEmotionVectorsText { get; set; } = string.Empty;
@@ -265,6 +268,34 @@ public sealed class MobileBridgeDispatchEvent
     public string DailyStateSummary { get; set; } = string.Empty;
     public string DailyStateXml { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
+
+    private static List<MobileConversationHistoryItem> CreateRecentHistoryFromState(StarState? state)
+    {
+        if (state?.MemoryLog == null) return new List<MobileConversationHistoryItem>();
+        return state.MemoryLog
+            .Where(IsUsableConversationTurn)
+            .Take(10)
+            .Select(x => new MobileConversationHistoryItem
+            {
+                CreatedAt = x.CreatedAt,
+                RequestType = x.RequestType ?? string.Empty,
+                PlayerText = x.PlayerText ?? string.Empty,
+                StarResponse = x.StarResponse ?? string.Empty,
+                Summary = x.Summary ?? string.Empty
+            })
+            .ToList();
+    }
+
+    private static bool IsUsableConversationTurn(ConversationLogEntry entry)
+    {
+        if (entry == null) return false;
+        if (string.IsNullOrWhiteSpace(entry.PlayerText)) return false;
+        if (string.IsNullOrWhiteSpace(entry.StarResponse)) return false;
+        string text = entry.StarResponse;
+        return text.IndexOf("thoughts came back in a shape the system could not fully read", StringComparison.OrdinalIgnoreCase) < 0
+            && text.IndexOf("answer came back in a strange shape", StringComparison.OrdinalIgnoreCase) < 0
+            && !(text.IndexOf("received your words", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("try again", StringComparison.OrdinalIgnoreCase) >= 0);
+    }
 
     public static MobileBridgeDispatchEvent FromResult(MobileBridgeDispatchCommand command, MobileBridgeDispatchResult result)
     {
@@ -287,6 +318,7 @@ public sealed class MobileBridgeDispatchEvent
             IsGirlfriendReady = state?.IsGirlfriendReady ?? false,
             Message = result.Message,
             Error = result.Error,
+            Transcript = result.Transcript,
             StoryId = result.StoryId,
             StoryTitle = result.StoryTitle,
             StoryMarkdown = result.StoryMarkdown,
@@ -298,6 +330,9 @@ public sealed class MobileBridgeDispatchEvent
             PhotoAttached = result.PhotoAttached,
             PhotoSummary = result.PhotoSummary,
             PhotoError = result.PhotoError,
+            RecentConversationHistory = result.RecentConversationHistory.Count > 0
+                ? result.RecentConversationHistory.ToList()
+                : CreateRecentHistoryFromState(state),
             EmotionalEffectVector = !string.IsNullOrWhiteSpace(result.EmotionalEffectVector) ? result.EmotionalEffectVector : (state?.LastEmotionalEffectVector ?? string.Empty),
             NegativeEmotionVector = !string.IsNullOrWhiteSpace(result.NegativeEmotionVector) ? result.NegativeEmotionVector : (state?.LastNegativeEmotionVector ?? string.Empty),
             LastEmotionVectorsText = result.LastEmotionVectorsText ?? string.Empty,

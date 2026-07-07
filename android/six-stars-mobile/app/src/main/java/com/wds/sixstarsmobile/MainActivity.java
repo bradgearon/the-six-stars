@@ -96,7 +96,10 @@ public final class MainActivity extends Activity {
     };
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService httpExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
+    // Long conversation/image/voice requests must not block health checks or bridge-event polling.
+    // The event poller is how Android can show "transcribed" / "LLM ready" while the main HTTP request is still waiting.
+    private final ExecutorService requestExecutor = Executors.newSingleThreadExecutor();
     private final Object socketLock = new Object();
 
     private EditText serverUrlEdit;
@@ -130,6 +133,7 @@ public final class MainActivity extends Activity {
     private View prodTextToggleButton;
     private View prodTextComposer;
     private TextView prodConversationText;
+    private ScrollView prodConversationScroll;
     private String prodAnimationState = "idle";
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
@@ -160,6 +164,7 @@ public final class MainActivity extends Activity {
 
     private volatile boolean destroyed;
     private volatile boolean recording;
+    private volatile boolean bridgePollInFlight;
     private AudioRecord audioRecord;
     private Thread recordingThread;
     private ByteArrayOutputStream recordedPcm;
@@ -216,6 +221,7 @@ public final class MainActivity extends Activity {
         closeAudioSocket();
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
+        requestExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -398,6 +404,7 @@ public final class MainActivity extends Activity {
         prodTextToggleButton = null;
         prodTextComposer = null;
         prodConversationText = null;
+        prodConversationScroll = null;
 
         createProdHiddenControls();
         setContentView(R.layout.activity_prod_companion);
@@ -416,6 +423,7 @@ public final class MainActivity extends Activity {
         prodTextToggleButton = findViewById(R.id.prod_text_toggle_button);
         prodTextComposer = findViewById(R.id.prod_text_composer);
         prodConversationText = findViewById(R.id.prod_conversation_text);
+        prodConversationScroll = findViewById(R.id.prod_conversation_scroll);
         messageEdit = findViewById(R.id.prod_message_edit);
 
         View titlePanel = findViewById(R.id.prod_star_title_panel);
@@ -434,12 +442,7 @@ public final class MainActivity extends Activity {
         avatarFrame.setContentDescription("Open companion menu and status");
         catAvatar.setContentDescription("Open companion menu and status");
 
-        FrameLayout stage = findViewById(R.id.prod_stage);
-        prodSpriteView = new PixelStarAnimationView(this);
-        stage.addView(prodSpriteView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER));
+        prodSpriteView = findViewById(R.id.prod_sprite_view);
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
@@ -729,9 +732,25 @@ public final class MainActivity extends Activity {
             lines = new ArrayList<>();
             prodConversationByStar.put(star, lines);
         }
-        lines.add((speaker == null || speaker.length() == 0 ? "System" : speaker) + ": " + text.trim().replace('\n', ' '));
-        while (lines.size() > 10) lines.remove(0);
+        String line = (speaker == null || speaker.length() == 0 ? "System" : speaker) + ": " + text.trim().replace('\n', ' ');
+        if (speaker != null && speaker.equalsIgnoreCase(selectedStarName()) && lines.size() > 0 && lines.get(0).startsWith("You: ")) {
+            lines.add(1, line);
+        } else {
+            lines.add(0, line);
+        }
+        while (lines.size() > 12) lines.remove(lines.size() - 1);
         refreshProdConversationWindow();
+    }
+
+    private boolean recentProdConversationAlreadyHas(String speaker, String text) {
+        if (!prodMode || text == null || text.trim().length() == 0) return false;
+        ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
+        if (lines == null || lines.size() == 0) return false;
+        String expected = (speaker == null || speaker.length() == 0 ? "System" : speaker) + ": " + text.trim().replace('\n', ' ');
+        for (int i = 0; i < Math.min(lines.size(), 6); i++) {
+            if (lines.get(i).equals(expected)) return true;
+        }
+        return false;
     }
 
     private void refreshProdConversationWindow() {
@@ -739,15 +758,21 @@ public final class MainActivity extends Activity {
         ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
         if (lines == null || lines.size() == 0) {
             prodConversationText.setText("No conversation yet. Tap Talk or open Text.");
+            if (prodConversationScroll != null) {
+                prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
+            }
             return;
         }
         StringBuilder sb = new StringBuilder();
-        int start = Math.max(0, lines.size() - 8);
-        for (int i = start; i < lines.size(); i++) {
+        int end = Math.min(lines.size(), 10);
+        for (int i = 0; i < end; i++) {
             if (sb.length() > 0) sb.append('\n');
             sb.append(lines.get(i));
         }
         prodConversationText.setText(sb.toString());
+        if (prodConversationScroll != null) {
+            prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
+        }
     }
 
     private void refreshProdStarUi(String starId) {
@@ -1007,10 +1032,43 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private static String urlEncode(String value) {
+        try {
+            return java.net.URLEncoder.encode(value == null ? "" : value, "UTF-8");
+        } catch (Exception ignored) {
+            return value == null ? "" : value;
+        }
+    }
+
+    private void seedProdConversationFromStateIfNeeded(String starId, JSONObject state) {
+        if (!prodMode || starId == null || state == null) return;
+        ArrayList<String> existing = prodConversationByStar.get(starId);
+        if (existing != null && existing.size() > 0) return;
+
+        JSONArray history = optJsonArrayEither(state, "recentConversationHistory", "RecentConversationHistory");
+        if (history == null || history.length() == 0) return;
+
+        ArrayList<String> lines = new ArrayList<>();
+        for (int i = 0; i < history.length() && lines.size() < 12; i++) {
+            JSONObject item = history.optJSONObject(i);
+            if (item == null) continue;
+            String player = optStringEither(item, "playerText", "PlayerText", "").trim().replace('\n', ' ');
+            String star = optStringEither(item, "starResponse", "StarResponse", "").trim().replace('\n', ' ');
+            if (player.length() > 0) lines.add("You: " + clip(player, 360));
+            if (star.length() > 0 && lines.size() < 12) lines.add(starId + ": " + clip(star, 520));
+        }
+
+        if (lines.size() > 0) {
+            prodConversationByStar.put(starId, lines);
+            refreshProdConversationWindow();
+            appendVoiceDebug("Nyxari restored conversation history", "Loaded " + lines.size() + " recent line(s) for " + starId + " from desktop Star state.");
+        }
+    }
+
     private void fetchMobileState(boolean manual) {
         httpExecutor.execute(() -> {
             try {
-                String body = get(baseUrl() + "/api/mobile/state", 12000);
+                String body = get(baseUrl() + "/api/mobile/state?sessionId=" + urlEncode(currentSessionId()), 12000);
                 JSONObject json = new JSONObject(body);
                 runOnUiThread(() -> {
                     applyMobileStatePayload(json);
@@ -1023,6 +1081,8 @@ public final class MainActivity extends Activity {
     }
 
     private void pollBridgeEvents() {
+        if (bridgePollInFlight) return;
+        bridgePollInFlight = true;
         httpExecutor.execute(() -> {
             try {
                 String body = get(baseUrl() + "/api/mobile/events?after=" + lastBridgeEventSequence + "&max=25", 10000);
@@ -1046,6 +1106,8 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception ignored) {
                 // Connection status is already shown by the health loop.
+            } finally {
+                bridgePollInFlight = false;
             }
         });
     }
@@ -1079,7 +1141,9 @@ public final class MainActivity extends Activity {
         String message = optStringEither(event, "message", "Message", type);
         if (selected.length() > 0) selectStarInSpinner(selected);
 
-        if (isPhotoBridgeEvent(type)) {
+        if (isTranscriptBridgeEvent(type)) {
+            handleTranscriptBridgeEvent(event, type, seq, starId, message);
+        } else if (isPhotoBridgeEvent(type)) {
             handlePhotoBridgeEvent(event, type, seq, starId, message);
         } else if (isGirlfriendBridgeEvent(type)) {
             handleGirlfriendBridgeEvent(event, type, seq, starId, message);
@@ -1096,10 +1160,49 @@ public final class MainActivity extends Activity {
         }
 
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
+            if ("AllStarsDataCleared".equalsIgnoreCase(type)) prodConversationByStar.clear();
+            else if (starId != null && starId.length() > 0) prodConversationByStar.remove(starId);
+            refreshProdConversationWindow();
             responseText.setText(("AllStarsDataCleared".equalsIgnoreCase(type) ? "All Star data cleared." : "History cleared for " + starId + ".") + " The next conversation starts from the refreshed Star memory.");
             setDebug("History cleared", message);
         }
         appendVoiceDebug("Elusiaa received a queued bridge update", "#" + seq + " " + type + " star=" + starId + ", selected=" + selected + ", " + clip(message, 180));
+    }
+
+    private boolean isTranscriptBridgeEvent(String type) {
+        return "MobileTranscriptReady".equalsIgnoreCase(type)
+                || "AndroidTranscriptReady".equalsIgnoreCase(type);
+    }
+
+    private void handleTranscriptBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String transcript = optStringEither(event, "transcript", "Transcript", "").trim();
+        if (transcript.length() == 0) {
+            transcript = optStringEither(event, "playerText", "PlayerText", "").trim();
+        }
+        if (transcript.length() == 0) return;
+        boolean replaced = replaceLatestProdVoicePlaceholder(transcript);
+        if (!replaced) appendProdConversationLine("You", transcript);
+        if (prodMiniStatusText != null) prodMiniStatusText.setText("Heard: " + clip(transcript, 120));
+        responseText.setText("Transcript ready — " + starId + "\n\nYou said: " + clip(transcript, 1000) + "\n\nWaiting for her response...");
+        setDebug("Voice transcript ready", "event=#" + seq + " " + type + "; LLM response is still processing on the desktop.\n" + clip(transcript, 600));
+        appendVoiceDebug(starId + " heard your voice", "Transcript ready before LLM response: " + clip(transcript, 160));
+    }
+
+    private boolean replaceLatestProdVoicePlaceholder(String transcript) {
+        if (!prodMode || transcript == null || transcript.trim().length() == 0) return false;
+        String star = selectedStarName();
+        ArrayList<String> lines = prodConversationByStar.get(star);
+        if (lines == null || lines.size() == 0) return false;
+        for (int i = 0; i < Math.min(lines.size(), 4); i++) {
+            String line = lines.get(i);
+            String lower = line.toLowerCase(Locale.US);
+            if (lower.startsWith("you: [voice message]") || lower.startsWith("you: [voice")) {
+                lines.set(i, "You: " + transcript.trim().replace('\n', ' '));
+                refreshProdConversationWindow();
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isStateBridgeEvent(String type) {
@@ -1232,6 +1335,7 @@ public final class MainActivity extends Activity {
         updateEmotionVectorsFromJson(state);
         String daily = extractDailyStateLine(state);
         if (daily.length() > 0) currentDailyStarState = daily;
+        seedProdConversationFromStateIfNeeded(starId, state);
         updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, girlfriend, status);
     }
 
@@ -1443,7 +1547,7 @@ public final class MainActivity extends Activity {
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
-        httpExecutor.execute(() -> {
+        requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("commandId", "android-photo-" + System.currentTimeMillis());
@@ -1479,7 +1583,7 @@ public final class MainActivity extends Activity {
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         pulseProdTalkingThenIdle(3500L);
-        httpExecutor.execute(() -> {
+        requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("playerText", playerText);
@@ -1562,7 +1666,7 @@ public final class MainActivity extends Activity {
     }
 
     private void sendAudio(byte[] pcm16) {
-        httpExecutor.execute(() -> {
+        requestExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
                 JSONObject json = baseRequestJson();
@@ -1629,7 +1733,10 @@ public final class MainActivity extends Activity {
                 }
 
                 if (transcript.length() > 0 && title.toLowerCase(Locale.US).contains("voice")) {
-                    appendProdConversationLine("You", transcript);
+                    boolean replacedTranscript = replaceLatestProdVoicePlaceholder(transcript);
+                    if (!replacedTranscript && !recentProdConversationAlreadyHas("You", transcript)) {
+                        appendProdConversationLine("You", transcript);
+                    }
                 }
                 appendProdConversationLine(starId, clip(visibleResponse, 900));
                 pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visibleResponse.length() * 18L)));
@@ -2318,170 +2425,6 @@ public final class MainActivity extends Activity {
             this.accentColor = accentColor;
             this.portraitResId = portraitResId;
             this.frameResIds = frameResIds;
-        }
-    }
-
-    private final class PixelStarAnimationView extends View {
-        private final Paint paint = new Paint();
-        private Movie gifMovie;
-        private long gifStartedAt;
-        private String activeAssetPath = "";
-        private Bitmap[] frames = new Bitmap[0];
-        private int frameIndex;
-        private long frameDurationMs = 180L;
-        private final Runnable frameAnimator = new Runnable() {
-            @Override public void run() {
-                if (frames.length > 1 && gifMovie == null) {
-                    frameIndex = (frameIndex + 1) % frames.length;
-                    invalidate();
-                    mainHandler.postDelayed(this, frameDurationMs);
-                }
-            }
-        };
-        private final Runnable gifAnimator = new Runnable() {
-            @Override public void run() {
-                if (gifMovie != null) {
-                    invalidate();
-                    mainHandler.postDelayed(this, 33L);
-                }
-            }
-        };
-
-        PixelStarAnimationView(Activity context) {
-            super(context);
-            paint.setFilterBitmap(false);
-            paint.setDither(false);
-            setWillNotDraw(false);
-        }
-
-        void setStarAnimation(String starId, String state, int[] fallbackResourceIds) {
-            String normalizedStar = normalizeAssetPart(starId);
-            String normalizedState = normalizeAssetPart(state == null || state.length() == 0 ? "idle" : state);
-            mainHandler.removeCallbacks(frameAnimator);
-            mainHandler.removeCallbacks(gifAnimator);
-            gifMovie = null;
-            frames = new Bitmap[0];
-
-            String[] candidates = new String[]{
-                    "star_animations/" + normalizedStar + "/" + normalizedState + ".gif",
-                    "star_animations/" + normalizedStar + "/idle.gif"
-            };
-            for (String path : candidates) {
-                Movie movie = loadGifMovie(path);
-                if (movie != null && movie.width() > 0 && movie.height() > 0) {
-                    gifMovie = movie;
-                    activeAssetPath = path;
-                    gifStartedAt = System.currentTimeMillis();
-                    invalidate();
-                    mainHandler.postDelayed(gifAnimator, 33L);
-                    return;
-                }
-            }
-
-            int[] conventionFrames = findConventionFrameResources(normalizedStar, normalizedState);
-            if (conventionFrames.length == 0 && !"idle".equals(normalizedState)) {
-                conventionFrames = findConventionFrameResources(normalizedStar, "idle");
-            }
-            setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
-        }
-
-        private Movie loadGifMovie(String assetPath) {
-            try (InputStream in = getAssets().open(assetPath)) {
-                return Movie.decodeStream(in);
-            } catch (Exception ignored) {
-                return null;
-            }
-        }
-
-        private int[] findConventionFrameResources(String star, String state) {
-            ArrayList<Integer> ids = new ArrayList<>();
-            for (int i = 0; i < 96; i++) {
-                int resId = getResources().getIdentifier("star_" + star + "_" + state + "_" + i,
-                        "drawable", getPackageName());
-                if (resId == 0) break;
-                ids.add(resId);
-            }
-            int[] values = new int[ids.size()];
-            for (int i = 0; i < ids.size(); i++) values[i] = ids.get(i);
-            return values;
-        }
-
-        private String normalizeAssetPart(String value) {
-            if (value == null) return "idle";
-            return value.trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_]+", "_");
-        }
-
-        void setFrameResources(int[] resourceIds) {
-            mainHandler.removeCallbacks(frameAnimator);
-            mainHandler.removeCallbacks(gifAnimator);
-            gifMovie = null;
-            if (resourceIds == null || resourceIds.length == 0) {
-                frames = new Bitmap[0];
-                invalidate();
-                return;
-            }
-            Bitmap[] next = new Bitmap[resourceIds.length];
-            for (int i = 0; i < resourceIds.length; i++) {
-                next[i] = BitmapFactory.decodeResource(getResources(), resourceIds[i]);
-            }
-            frames = next;
-            frameIndex = 0;
-            invalidate();
-            if (frames.length > 1) mainHandler.postDelayed(frameAnimator, frameDurationMs);
-        }
-
-        @Override protected void onDetachedFromWindow() {
-            mainHandler.removeCallbacks(frameAnimator);
-            mainHandler.removeCallbacks(gifAnimator);
-            super.onDetachedFromWindow();
-        }
-
-        @Override protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            if (gifMovie != null) {
-                drawGif(canvas);
-                return;
-            }
-            drawFrame(canvas);
-        }
-
-        private void drawGif(Canvas canvas) {
-            int duration = gifMovie.duration();
-            if (duration <= 0) duration = 1000;
-            int relTime = (int) ((System.currentTimeMillis() - gifStartedAt) % duration);
-            gifMovie.setTime(relTime);
-            int vw = getWidth() - getPaddingLeft() - getPaddingRight();
-            int vh = getHeight() - getPaddingTop() - getPaddingBottom();
-            int bw = gifMovie.width();
-            int bh = gifMovie.height();
-            if (vw <= 0 || vh <= 0 || bw <= 0 || bh <= 0) return;
-            float scale = Math.min((float) vw / bw, (float) vh / bh);
-            if (scale > 1f) scale = Math.max(1f, (float) Math.floor(scale));
-            int drawW = Math.max(1, Math.round(bw * scale));
-            int drawH = Math.max(1, Math.round(bh * scale));
-            int left = getPaddingLeft() + (vw - drawW) / 2;
-            int top = getPaddingTop() + (vh - drawH) / 2;
-            canvas.save();
-            canvas.translate(left, top);
-            canvas.scale(scale, scale);
-            gifMovie.draw(canvas, 0, 0);
-            canvas.restore();
-        }
-
-        private void drawFrame(Canvas canvas) {
-            if (frames.length == 0 || frames[frameIndex] == null) return;
-            Bitmap bitmap = frames[frameIndex];
-            int vw = getWidth() - getPaddingLeft() - getPaddingRight();
-            int vh = getHeight() - getPaddingTop() - getPaddingBottom();
-            if (vw <= 0 || vh <= 0 || bitmap.getWidth() <= 0 || bitmap.getHeight() <= 0) return;
-            float scale = Math.min((float) vw / bitmap.getWidth(), (float) vh / bitmap.getHeight());
-            if (scale > 1f) scale = Math.max(1f, (float) Math.floor(scale));
-            int drawW = Math.max(1, Math.round(bitmap.getWidth() * scale));
-            int drawH = Math.max(1, Math.round(bitmap.getHeight() * scale));
-            int left = getPaddingLeft() + (vw - drawW) / 2;
-            int top = getPaddingTop() + (vh - drawH) / 2;
-            Rect dst = new Rect(left, top, left + drawW, top + drawH);
-            canvas.drawBitmap(bitmap, null, dst, paint);
         }
     }
 

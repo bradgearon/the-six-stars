@@ -3,6 +3,7 @@
     android:id="@+id/prod_shell"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:background="@drawable/ui_prod_background">
 
     <LinearLayout
@@ -10,22 +11,22 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:paddingStart="14dp"
-        android:paddingTop="16dp"
-        android:paddingEnd="14dp"
-        android:paddingBottom="14dp">
+        android:paddingStart="10dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="16dp">
 
         <LinearLayout
             android:id="@+id/prod_header"
             android:layout_width="match_parent"
-            android:layout_height="82dp"
+            android:layout_height="74dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <FrameLayout
                 android:id="@+id/prod_avatar_frame"
-                android:layout_width="78dp"
-                android:layout_height="78dp"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
                 android:background="@drawable/ui_avatar_frame"
                 android:clickable="true"
                 android:contentDescription="Open companion menu"
@@ -34,8 +35,8 @@
 
                 <ImageView
                     android:id="@+id/prod_cat_avatar"
-                    android:layout_width="66dp"
-                    android:layout_height="66dp"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
                     android:layout_gravity="center"
                     android:adjustViewBounds="true"
                     android:scaleType="fitCenter"
@@ -45,8 +46,8 @@
             <LinearLayout
                 android:id="@+id/prod_star_title_panel"
                 android:layout_width="0dp"
-                android:layout_height="78dp"
-                android:layout_marginStart="10dp"
+                android:layout_height="70dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:background="@drawable/prod_title_panel"
                 android:clickable="true"
@@ -64,7 +65,7 @@
                     android:fontFamily="monospace"
                     android:text="Star"
                     android:textColor="#EAF7FF"
-                    android:textSize="30sp"
+                    android:textSize="28sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -74,7 +75,7 @@
                     android:fontFamily="monospace"
                     android:text="Tap to choose a Star"
                     android:textColor="#9EE8F0"
-                    android:textSize="12sp" />
+                    android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -82,10 +83,23 @@
             android:id="@+id/prod_stage"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="10dp"
-            android:layout_marginBottom="8dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
             android:layout_weight="1"
-            android:background="@drawable/ui_character_frame" />
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:background="@drawable/ui_character_frame">
+
+            <com.wds.sixstarsmobile.PixelStarAnimationView
+                android:id="@+id/prod_sprite_view"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:paddingStart="8dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="10dp" />
+        </FrameLayout>
 
         <TextView
             android:id="@+id/prod_relationship"
@@ -94,10 +108,10 @@
             android:fontFamily="monospace"
             android:gravity="center"
             android:paddingTop="2dp"
-            android:paddingBottom="6dp"
+            android:paddingBottom="4dp"
             android:text="Heart 0   Trust 0   Romance 0"
             android:textColor="#FFEEF6"
-            android:textSize="13sp" />
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/prod_breakup_button"
@@ -126,7 +140,7 @@
             <LinearLayout
                 android:id="@+id/prod_primary_action_row"
                 android:layout_width="match_parent"
-                android:layout_height="64dp"
+                android:layout_height="58dp"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -161,14 +175,14 @@
                         android:fontFamily="monospace"
                         android:text="Talk"
                         android:textColor="#ECE9FF"
-                        android:textSize="30sp"
+                        android:textSize="28sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
                 <FrameLayout
                     android:id="@+id/prod_photo_button"
-                    android:layout_width="64dp"
-                    android:layout_height="64dp"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
                     android:background="@drawable/prod_text_panel"
                     android:clickable="true"
                     android:contentDescription="Send image"
@@ -223,7 +237,7 @@
         <LinearLayout
             android:id="@+id/prod_text_toggle_button"
             android:layout_width="match_parent"
-            android:layout_height="42dp"
+            android:layout_height="38dp"
             android:layout_marginStart="24dp"
             android:layout_marginEnd="24dp"
             android:layout_marginBottom="6dp"
@@ -289,7 +303,7 @@
         <ScrollView
             android:id="@+id/prod_conversation_scroll"
             android:layout_width="match_parent"
-            android:layout_height="118dp"
+            android:layout_height="104dp"
             android:background="@drawable/prod_history_panel"
             android:fillViewport="true"
             android:padding="8dp">
@@ -301,7 +315,7 @@
                 android:fontFamily="monospace"
                 android:text="No conversation yet. Tap Talk or open Text."
                 android:textColor="#F6E7D2"
-                android:textSize="12sp" />
+                android:textSize="13sp" />
         </ScrollView>
     </LinearLayout>
 </FrameLayout>
