@@ -137,3 +137,7 @@ The Android message box now starts blank and clears immediately after a text req
 The Android app now includes **Clear All Data** in addition to the selected-Star history clear. It dispatches through `/api/mobile/dispatch` using `commandType=ClearAllData`, so the desktop dispatcher resets every local Android-session Star state and publishes queued state events back to the phone.
 
 Old-memory recall is handled on the desktop runtime. Android sends a normal message; if the selected Star needs old quotes, markers, lore, or archived conversation details, the runtime performs the information follow-up pass and Android receives the final answer like any other Star reply.
+
+## Android voice stream ordinal reset note
+
+The Android client now resets its active voice-stream guard when the phone voice socket reconnects. It also accepts an explicit `streamAction=start` status frame as a new stream even if the stream ordinal is lower than a previous session. This prevents valid desktop voice chunks from being dropped as stale after the desktop bridge restarts its stream counter.

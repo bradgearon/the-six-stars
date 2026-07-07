@@ -277,9 +277,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             InterstarStatusText = "Interstar state: failed — " + ex.Message;
         });
         _runtime.StoryGenerationCompleted += (_, response) => _ = HandleGeneratedStoryResponseAsync(response);
+        _runtime.GirlfriendProposalCompleted += (_, response) => _ = HandleGeneratedGirlfriendProposalResponseAsync(response);
         _runtime.StoryGenerationFailed += (_, ex) => OnUiThread(() =>
         {
             Status = "Story generation failed after thinking phrase: " + ex.Message;
+        });
+        _runtime.GirlfriendProposalFailed += (_, ex) => OnUiThread(() =>
+        {
+            Status = "Girlfriend proposal response failed after thinking phrase: " + ex.Message;
         });
         _runtime.DailyStateUpdated += (_, args) => OnUiThread(() =>
         {
@@ -1196,6 +1201,57 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 Status = "Generated story narration failed: " + ex.Message;
                 DebugJson = _llmDebugLog.ToString()
                     + "\n================ GENERATED STORY NARRATION ERROR ================\n"
+                    + ex;
+            });
+        }
+    }
+
+    private async Task HandleGeneratedGirlfriendProposalResponseAsync(StarInteractionResponse response)
+    {
+        CancellationToken token = _operationController.CurrentToken;
+        try
+        {
+            if (IsMobileBridgeStoryResponse(response))
+            {
+                await HandleGeneratedMobileGirlfriendProposalResponseAsync(response).ConfigureAwait(false);
+                return;
+            }
+
+            while (IsProcessingRuntime && !token.IsCancellationRequested)
+            {
+                await Task.Delay(100, token).ConfigureAwait(false);
+            }
+
+            token.ThrowIfCancellationRequested();
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = true;
+                StarOutput = FormatStarOutput(response);
+                Status = "Generated girlfriend proposal answer is ready. Speaking now...";
+                DebugJson = _llmDebugLog.ToString()
+                    + "\n================ GIRLFRIEND PROPOSAL READY ================\n"
+                    + CreateEnhancedDebugOutput(new
+                    {
+                        girlfriendProposalGeneratedAfterThinkingPhrase = true,
+                        response.StarId,
+                        spokenParts = response.SpokenParts.Count
+                    }, response);
+            });
+
+            await SpeakStarResponseAsync(response, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() => Status = "Generated girlfriend proposal answer was cancelled before narration started.");
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                Status = "Generated girlfriend proposal narration failed: " + ex.Message;
+                DebugJson = _llmDebugLog.ToString()
+                    + "\n================ GIRLFRIEND PROPOSAL NARRATION ERROR ================\n"
                     + ex;
             });
         }

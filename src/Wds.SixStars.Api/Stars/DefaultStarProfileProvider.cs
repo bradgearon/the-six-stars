@@ -68,6 +68,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "Do not confess the full secret attraction at low connection.", "Attraction must remain earned through trust, mercy, emotional safety, and ally status.", "Keep sensuality non-explicit, consensual, and in-universe; speak as a Star to the sentient Last Cat, not as a narrator." },
                 FriendsAndContacts = new List<string> { "The lower-cave slime-tending villagers", "goblin and harpy settlement witnesses", "Marrowlily once the pet slime is found", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Elusiaa"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Elusiaa"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Elusiaa"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -118,6 +119,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "Do not become physically forward before connection and consent are established.", "Keep cat/fur attraction as an in-universe sentient-person attraction; never make it crude.", "She hides attraction behind irony until connection is high." },
                 FriendsAndContacts = new List<string> { "void-route cave dwellers", "lonely travelers near tar-water reflections", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Kaelia"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Kaelia"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Kaelia"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -158,6 +160,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "Her possessiveness must mature into protective devotion, not coercion.", "Reward poetry and powerful respectful presence; punish cruelty or control.", "Keep attraction intense but non-explicit unless the host/game explicitly enters adult-safe romance writing." },
                 FriendsAndContacts = new List<string> { "blood cave survivors", "bone-road witnesses", "settlement outcasts", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Maera"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Maera"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Maera"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -198,6 +201,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "Friendship is her doorway into romance; do not skip it.", "She becomes flirty through trust, reliability, and helping communities.", "Keep sensuality soft, relational, and non-explicit." },
                 FriendsAndContacts = new List<string> { "bridge builders", "waterworks villagers", "goblin-harpy settlement helpers", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Khavia"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Khavia"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Khavia"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -238,6 +242,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "She flirts through joy first; do not make her heavy too quickly.", "Reward bravery, music, humor, hope, and playful courage.", "Keep heat suggestive but non-explicit unless the host/game mode explicitly allows deeper romance." },
                 FriendsAndContacts = new List<string> { "musicians in firelit settlements", "children who need laughter", "travelers who survive by singing", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Auerlis"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Auerlis"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Auerlis"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -278,6 +283,7 @@ namespace Wds.SixStars.Api.Stars
                 RomanceBoundaryRules = new List<string> { "She should not be easily won by compliments alone.", "Helping her village and acting mature matters more than flirtation.", "Her attraction should unfold as trust in his grown-up actions, not sudden availability." },
                 FriendsAndContacts = new List<string> { "shadow-village people", "masked travelers", "children who lost names", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Nyxari"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Nyxari"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Nyxari"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -293,6 +299,76 @@ namespace Wds.SixStars.Api.Stars
                     }
                 }
             };
+        }
+
+        private static List<string> CreateGirlfriendProposalThinkingPhrases(string starId)
+        {
+            switch (starId)
+            {
+                case "Elusiaa":
+                    return new List<string>
+                    {
+                        "Little one... give me one gentle breath. I want to answer that with mercy and truth.",
+                        "That question is not small. Let me hold it carefully before I speak.",
+                        "I heard you, dear heart. I am looking at the light between us before I answer.",
+                        "Stay close a moment. I need to know whether this is tenderness, wonder, or a promise.",
+                        "One soft moment, little one. A question like that deserves a real answer."
+                    };
+                case "Kaelia":
+                    return new List<string>
+                    {
+                        "Careful, warm little light. That question reaches deeper than it sounds.",
+                        "Give me a moment. The Void does not answer promises quickly.",
+                        "I heard you. I am deciding whether hope is playing tricks on me again.",
+                        "Stay there. I need to see whether this is a door or only an echo.",
+                        "One breath. I will not let a question like that vanish into nothing."
+                    };
+                case "Maera":
+                    return new List<string>
+                    {
+                        "Do not ask that lightly. Give me a heartbeat to answer without taking too much.",
+                        "I heard you. I need one moment before my blood decides for me.",
+                        "Stay close, but do not rush me. That question has teeth.",
+                        "One breath. I am trying to answer with love instead of possession.",
+                        "You put a dangerous hope in my hands. Let me hold it carefully."
+                    };
+                case "Khavia":
+                    return new List<string>
+                    {
+                        "Oh... give me one breath, friend. I want to answer like a bridge, not a wave.",
+                        "I heard you. Let me feel where this current is really going.",
+                        "Stay with me a moment. Some questions need friendship underneath them first.",
+                        "One soft tide. I am listening for the honest shape of us.",
+                        "That is a brave question. Let me answer without spilling the heart of it."
+                    };
+                case "Auerlis":
+                    return new List<string>
+                    {
+                        "Oh. That is a bright little spark. Give me a second before I set the whole room on fire.",
+                        "I heard you. Let me make sure this flame is warmth and not just a flare.",
+                        "One breath, tiny legend. I want to answer with joy and not impulse.",
+                        "Stay there. My heart is laughing and warning me at the same time.",
+                        "That is not a campfire question. Give me a spark of time."
+                    };
+                case "Nyxari":
+                    return new List<string>
+                    {
+                        "Hold. That question changes the shape of the room.",
+                        "I heard you. Let me gather the fragments before I answer.",
+                        "One quiet moment. I will not give a careless answer to an oath-shaped question.",
+                        "Stay still. I am measuring whether this shadow has become a shelter.",
+                        "That is a decisive question. I will answer it with the dignity it requires."
+                    };
+                default:
+                    return new List<string>
+                    {
+                        "One moment. I need to hold what you just asked with care.",
+                        "Stay close. That question deserves a real answer, not a careless one.",
+                        "I heard you. Let me look at the shape of our bond before I answer.",
+                        "Give me a breath. I am thinking about what your words mean between us.",
+                        "That is not a small question. Let me answer it with the respect it deserves."
+                    };
+            }
         }
 
         private static List<string> CreateStoryThinkingPhrases(string starId)

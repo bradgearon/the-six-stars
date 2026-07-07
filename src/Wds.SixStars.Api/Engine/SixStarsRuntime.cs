@@ -40,6 +40,8 @@ namespace Wds.SixStars.Api.Engine
         public event EventHandler<Exception>? BackgroundAnalysisFailed;
         public event EventHandler<StarInteractionResponse>? StoryGenerationCompleted;
         public event EventHandler<Exception>? StoryGenerationFailed;
+        public event EventHandler<StarInteractionResponse>? GirlfriendProposalCompleted;
+        public event EventHandler<Exception>? GirlfriendProposalFailed;
         public event EventHandler<StarDailyStateUpdatedEventArgs>? DailyStateUpdated;
         public event EventHandler<Exception>? DailyStateUpdateFailed;
         public event EventHandler<InterstarUpdateStatusEventArgs>? InterstarUpdateStatusChanged;
@@ -178,6 +180,74 @@ namespace Wds.SixStars.Api.Engine
             return _memoryApi.ImportSaveDataAsync(saveData, cancellationToken);
         }
 
+        public async Task<string> GetCurrentGirlfriendStarIdAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId, cancellationToken).ConfigureAwait(false);
+            StarState? girlfriend = (saveData.Stars ?? new List<StarState>())
+                .FirstOrDefault(x => x != null && x.IsGirlfriend);
+            return girlfriend?.StarId ?? string.Empty;
+        }
+
+        public async Task<StarState> SetExclusiveGirlfriendAsync(string sessionId, string starId, bool isGirlfriend, string reason, CancellationToken cancellationToken)
+        {
+            sessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            starId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (saveData.Stars == null) saveData.Stars = new List<StarState>();
+
+            StarState? selected = saveData.Stars.FirstOrDefault(x => string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase));
+            if (selected == null)
+            {
+                selected = await _memoryApi.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                saveData.Stars.Add(selected);
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (isGirlfriend)
+            {
+                foreach (StarState state in saveData.Stars.Where(x => x != null))
+                {
+                    if (string.Equals(state.StarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        state.IsGirlfriend = true;
+                        state.IsGirlfriendReady = true;
+                        state.GirlfriendSince = state.GirlfriendSince ?? now;
+                        state.IsMet = true;
+                        state.IsAlly = true;
+                        state.GirlfriendReadinessSummary = "Girlfriend path accepted. This Star is currently the Last Cat's girlfriend.";
+                        state.GirlfriendHistory.Insert(0, "Accepted girlfriend path: " + (string.IsNullOrWhiteSpace(reason) ? "direct proposal" : reason));
+                        state.RelationshipEvents.Insert(0, "Became the Last Cat's girlfriend through an exclusive girlfriend proposal.");
+                        selected = state;
+                    }
+                    else if (state.IsGirlfriend)
+                    {
+                        state.IsGirlfriend = false;
+                        state.GirlfriendHistory.Insert(0, "Girlfriend path cleared because another Star became the exclusive girlfriend.");
+                    }
+                }
+            }
+            else
+            {
+                selected.IsGirlfriend = false;
+                selected.GirlfriendSince = null;
+                selected.GirlfriendHistory.Insert(0, "Girlfriend path ended: " + (string.IsNullOrWhiteSpace(reason) ? "breakup" : reason));
+                selected.RelationshipEvents.Insert(0, "Girlfriend path ended by host/player action.");
+                if (selected.IsAlly && selected.EmotionalConnectionPercent >= 25 && selected.Heart >= 6 && selected.Trust >= 4 && selected.Romance >= 3)
+                {
+                    selected.IsGirlfriendReady = true;
+                    selected.GirlfriendReadinessSummary = "Ready for girlfriend path again if both sides choose it.";
+                }
+                else
+                {
+                    selected.IsGirlfriendReady = false;
+                    selected.GirlfriendReadinessSummary = "Not currently girlfriend-ready after breakup; rebuild trust, heart, romance, and connection.";
+                }
+            }
+
+            await _memoryApi.ImportSaveDataAsync(saveData, cancellationToken).ConfigureAwait(false);
+            return selected;
+        }
+
 
         public Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
@@ -270,6 +340,15 @@ namespace Wds.SixStars.Api.Engine
             StarMemorySnapshot snapshot = await _memoryApi.GetStarMemorySnapshotAsync(request.SessionId, request.StarId, _recentHistoryCount, cancellationToken).ConfigureAwait(false);
             StarState state = snapshot.State;
             await AttachDailyStateContextForRequestAsync(request, state, cancellationToken).ConfigureAwait(false);
+
+            GirlfriendProposalDecision? girlfriendProposal = await TryPrepareGirlfriendProposalAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+            if (girlfriendProposal != null && !IsGirlfriendProposalWorkerRequest(request))
+            {
+                StarInteractionResponse thinkingResponse = CreateGirlfriendProposalThinkingResponse(profile, request, girlfriendProposal);
+                ApplyVoiceDefaults(profile, thinkingResponse);
+                QueueGirlfriendProposalDecisionAfterThinkingResponse(profile, request, state, girlfriendProposal, cancellationToken);
+                return thinkingResponse;
+            }
 
             StarRequestIntentResult? requestIntent = await ClassifyAndPrepareRequestModeAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
 
@@ -1068,6 +1147,12 @@ namespace Wds.SixStars.Api.Engine
                 && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static bool IsGirlfriendProposalWorkerRequest(StarInteractionRequest request)
+        {
+            return request.GameContext.Flags.TryGetValue("girlfriendProposalWorker", out string? value)
+                && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static StarInteractionResponse CreateStoryThinkingResponse(StarProfile profile, StarInteractionRequest request, StarRequestIntentResult? requestIntent)
         {
             string phrase = PickStoryThinkingPhrase(profile);
@@ -1140,6 +1225,268 @@ namespace Wds.SixStars.Api.Engine
             {
                 return phrases[StoryRandom.Next(phrases.Count)];
             }
+        }
+
+        private async Task<GirlfriendProposalDecision?> TryPrepareGirlfriendProposalAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
+        {
+            if (request.RequestType != RequestType.Chat) return null;
+            if (IsGirlfriendProposalWorkerRequest(request)) return null;
+            if (!LooksLikeGirlfriendProposal(request.PlayerText)) return null;
+
+            string currentGirlfriend = await GetCurrentGirlfriendStarIdAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
+            bool alreadyTaken = !string.IsNullOrWhiteSpace(currentGirlfriend) && !string.Equals(currentGirlfriend, request.StarId, StringComparison.OrdinalIgnoreCase);
+            bool alreadyThisGirlfriend = string.Equals(currentGirlfriend, request.StarId, StringComparison.OrdinalIgnoreCase) || state.IsGirlfriend;
+            bool eligible = state.IsAlly && (state.IsGirlfriendReady || (state.EmotionalConnectionPercent >= 25 && state.Heart >= 6 && state.Trust >= 4 && state.Romance >= 3));
+            string decision = alreadyThisGirlfriend ? "already_girlfriend" : alreadyTaken ? "blocked_existing_girlfriend" : eligible ? "eligible_accept_possible" : "not_ready_no_for_now";
+            string reason;
+            if (alreadyThisGirlfriend)
+            {
+                reason = profile.DisplayName + " is already the Last Cat's girlfriend.";
+            }
+            else if (alreadyTaken)
+            {
+                reason = "Another Star is already the Last Cat's girlfriend: " + currentGirlfriend + ". The answer must be no unless that relationship is ended first.";
+            }
+            else if (eligible)
+            {
+                reason = "The deterministic girlfriend readiness gate is open. Ask the Star to answer in character and decide whether she accepts now.";
+            }
+            else
+            {
+                reason = "The relationship is not girlfriend-ready yet. The Star should answer no/not yet in character and describe the path forward.";
+            }
+
+            request.GameContext.Flags["girlfriendProposalDetected"] = "true";
+            request.GameContext.Flags["girlfriendProposalDecision"] = decision;
+            request.GameContext.Flags["existingGirlfriendStarId"] = currentGirlfriend;
+            request.GameContext.Flags["girlfriendProposalReason"] = reason;
+            request.GameContext.RecentEvents.Add("Girlfriend proposal micro-intent detected from the player. A quick thinking line will play, then a full girlfriend proposal answer will be generated with current relationship state.");
+
+            return new GirlfriendProposalDecision
+            {
+                Decision = decision,
+                ExistingGirlfriendStarId = currentGirlfriend,
+                IsAlreadyCurrentGirlfriend = alreadyThisGirlfriend,
+                IsBlockedByExistingGirlfriend = alreadyTaken,
+                IsEligibleToAccept = eligible && !alreadyTaken,
+                ShouldAcceptByDeterministicGate = eligible && !alreadyTaken && !alreadyThisGirlfriend,
+                Reason = reason
+            };
+        }
+
+        private static bool LooksLikeGirlfriendProposal(string? text)
+        {
+            string t = (text ?? string.Empty).ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(t)) return false;
+            return ContainsAny(t,
+                "be my girlfriend",
+                "will you be my girlfriend",
+                "would you be my girlfriend",
+                "can you be my girlfriend",
+                "be my girl",
+                "be my gf",
+                "will you go out with me",
+                "would you go out with me",
+                "go out with me",
+                "date me",
+                "be with me")
+                || (t.Contains("girlfriend") && ContainsAny(t, "be", "become", "my", "ask", "asking", "would", "will", "could", "want"));
+        }
+
+        private static StarInteractionResponse CreateGirlfriendProposalThinkingResponse(StarProfile profile, StarInteractionRequest request, GirlfriendProposalDecision decision)
+        {
+            string phrase = PickGirlfriendProposalThinkingPhrase(profile);
+            StarInteractionResponse response = new StarInteractionResponse
+            {
+                StarId = profile.StarId,
+                EmotionalPurpose = "Immediate girlfriend-proposal acknowledgement while the full relationship-state decision pass runs in the background.",
+                VoiceDirective = VoiceDirective.Empty(),
+                SuggestedStateDeltas = RelationshipDelta.Zero(),
+                StateDeltas = RelationshipDelta.Zero(),
+                ConversationSummary = string.Empty,
+                ChangesSummary = profile.DisplayName + " heard the girlfriend proposal and is thinking before answering fully.",
+                StoryIsFinished = true,
+                Debug = new DebugInfo
+                {
+                    DetectedIntent = "GirlfriendProposal",
+                    WisdomScore = 0
+                }
+            };
+            response.SetSpokenParts(new[] { phrase });
+            response.Debug.Notes.Add("Girlfriend proposal quick-response path used. The full yes/no proposal answer is running in the background.");
+            response.Debug.Notes.Add("Girlfriend proposal decision gate: " + decision.Decision + "; reason=" + decision.Reason);
+            response.UnityEvents.Add(new UnityEventEnvelope
+            {
+                Type = "GirlfriendProposalStarted",
+                Target = profile.StarId,
+                Data =
+                {
+                    { "note", "Spoke a preprogrammed girlfriend-proposal thinking phrase immediately. Full proposal answer is running in the background." },
+                    { "playerText", request.PlayerText ?? string.Empty },
+                    { "decision", decision.Decision },
+                    { "existingGirlfriendStarId", decision.ExistingGirlfriendStarId ?? string.Empty },
+                    { "sessionId", request.SessionId ?? string.Empty },
+                    { "mobileBridge", GetGameContextFlag(request.GameContext, "mobileBridge", "false") }
+                }
+            });
+            return response;
+        }
+
+        private static string PickGirlfriendProposalThinkingPhrase(StarProfile profile)
+        {
+            List<string> phrases = profile.GirlfriendProposalThinkingPhrases
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .ToList();
+            if (phrases.Count == 0)
+            {
+                phrases.AddRange(new[]
+                {
+                    "One moment. I need to hold what you just asked with care.",
+                    "Stay close. That question deserves a real answer, not a careless one.",
+                    "I heard you. Let me look at the shape of our bond before I answer.",
+                    "Give me a breath. I am thinking about what your words mean between us.",
+                    "That is not a small question. Let me answer it with the respect it deserves."
+                });
+            }
+            lock (StoryRandomGate)
+            {
+                return phrases[StoryRandom.Next(phrases.Count)];
+            }
+        }
+
+        private static StarInteractionRequest CloneRequestForGirlfriendProposal(StarInteractionRequest request)
+        {
+            return new StarInteractionRequest
+            {
+                SessionId = request.SessionId,
+                StarId = request.StarId,
+                Speaker = request.Speaker,
+                RequestType = RequestType.Chat,
+                PlayerText = request.PlayerText,
+                GameContext = CloneGameContext(request.GameContext),
+                StoryOptions = CloneStoryOptions(request.StoryOptions),
+                AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
+                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+            };
+        }
+
+        private void QueueGirlfriendProposalDecisionAfterThinkingResponse(StarProfile profile, StarInteractionRequest request, StarState state, GirlfriendProposalDecision initialDecision, CancellationToken cancellationToken)
+        {
+            StarInteractionRequest workerRequest = CloneRequestForGirlfriendProposal(request);
+            workerRequest.GameContext.Flags["girlfriendProposalWorker"] = "true";
+            workerRequest.GameContext.Flags["girlfriendProposalDecision"] = initialDecision.Decision;
+            workerRequest.GameContext.Flags["existingGirlfriendStarId"] = initialDecision.ExistingGirlfriendStarId ?? string.Empty;
+            workerRequest.GameContext.Flags["girlfriendProposalReason"] = initialDecision.Reason ?? string.Empty;
+            workerRequest.GameContext.RecentEvents.Add("The Star already answered with a preprogrammed girlfriend-proposal thinking phrase; now generate the real yes/no answer using full state.");
+
+            CancellationToken storyToken;
+            lock (_backgroundGate)
+            {
+                _backgroundStoryGenerationCts?.Cancel();
+                _backgroundStoryGenerationCts?.Dispose();
+                _backgroundStoryGenerationCts = new CancellationTokenSource();
+                storyToken = _backgroundStoryGenerationCts.Token;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await PopulateKnownStarContextAsync(workerRequest, storyToken).ConfigureAwait(false);
+                    StarMemorySnapshot latestSnapshot = await _memoryApi.GetStarMemorySnapshotAsync(workerRequest.SessionId, workerRequest.StarId, _recentHistoryCount, storyToken).ConfigureAwait(false);
+                    StarState latestState = latestSnapshot.State;
+                    await AttachDailyStateContextForRequestAsync(workerRequest, latestState, storyToken).ConfigureAwait(false);
+
+                    string currentGirlfriend = await GetCurrentGirlfriendStarIdAsync(workerRequest.SessionId, storyToken).ConfigureAwait(false);
+                    bool blockedByOther = !string.IsNullOrWhiteSpace(currentGirlfriend) && !string.Equals(currentGirlfriend, workerRequest.StarId, StringComparison.OrdinalIgnoreCase);
+                    bool alreadyThis = string.Equals(currentGirlfriend, workerRequest.StarId, StringComparison.OrdinalIgnoreCase) || latestState.IsGirlfriend;
+                    bool eligible = latestState.IsAlly && (latestState.IsGirlfriendReady || (latestState.EmotionalConnectionPercent >= 25 && latestState.Heart >= 6 && latestState.Trust >= 4 && latestState.Romance >= 3));
+                    bool shouldAccept = eligible && !blockedByOther && !alreadyThis;
+
+                    workerRequest.GameContext.Flags["existingGirlfriendStarId"] = currentGirlfriend;
+                    workerRequest.GameContext.Flags["girlfriendProposalDecision"] = alreadyThis ? "already_girlfriend" : blockedByOther ? "blocked_existing_girlfriend" : shouldAccept ? "accept" : "not_ready_no_for_now";
+                    workerRequest.GameContext.Flags["girlfriendProposalReason"] = blockedByOther
+                        ? "Another Star is already the exclusive girlfriend: " + currentGirlfriend + ". The Star must say no unless that relationship ends first."
+                        : alreadyThis
+                            ? profile.DisplayName + " is already the Last Cat's girlfriend; she should affirm the current relationship."
+                            : shouldAccept
+                                ? "The readiness gate is open. She may say yes if it fits her voice and current relationship."
+                                : "The readiness gate is not open yet; she should gently say not yet and describe the path forward.";
+                    workerRequest.GameContext.RecentEvents.Add("Current exclusive girlfriend: " + (string.IsNullOrWhiteSpace(currentGirlfriend) ? "none" : currentGirlfriend) + ". Girlfriend proposal decision flag: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + ".");
+
+                    StarInteractionResponse proposalResponse = await _agent.GenerateAsync(profile, workerRequest, latestState, storyToken).ConfigureAwait(false);
+                    ApplyVoiceDefaults(profile, proposalResponse);
+                    proposalResponse.Debug.DetectedIntent = "GirlfriendProposal";
+                    proposalResponse.Debug.Notes.Add("Girlfriend proposal worker decision: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + "; reason=" + workerRequest.GameContext.Flags["girlfriendProposalReason"]);
+
+                    if (shouldAccept)
+                    {
+                        latestState = await SetExclusiveGirlfriendAsync(workerRequest.SessionId, workerRequest.StarId, true, "Accepted direct girlfriend proposal from: " + (workerRequest.PlayerText ?? string.Empty), storyToken).ConfigureAwait(false);
+                        proposalResponse.IsGirlfriendReadyAfter = true;
+                        proposalResponse.RelationshipEvents.Add("Accepted girlfriend proposal; exclusive girlfriend state stored.");
+                    }
+                    else if (alreadyThis)
+                    {
+                        proposalResponse.IsGirlfriendReadyAfter = true;
+                    }
+
+                    if (_agent is IStarTurnAnalyzer analyzer)
+                    {
+                        proposalResponse.StateDeltas = RelationshipDelta.Zero();
+                        string backgroundAnalysisId = Guid.NewGuid().ToString("N");
+                        proposalResponse.BackgroundAnalysisId = backgroundAnalysisId;
+                        proposalResponse.UnityEvents.Add(new UnityEventEnvelope
+                        {
+                            Type = "BackgroundStarAnalysisWaitingForVoice",
+                            Target = workerRequest.StarId,
+                            Data =
+                            {
+                                { "backgroundAnalysisId", backgroundAnalysisId },
+                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated girlfriend proposal voice playback completes." }
+                            }
+                        });
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, latestState, proposalResponse);
+                    }
+
+                    proposalResponse.UnityEvents.Add(new UnityEventEnvelope
+                    {
+                        Type = "GirlfriendProposalCompleted",
+                        Target = workerRequest.StarId,
+                        Data =
+                        {
+                            { "sessionId", workerRequest.SessionId ?? string.Empty },
+                            { "mobileBridge", GetGameContextFlag(workerRequest.GameContext, "mobileBridge", "false") },
+                            { "decision", workerRequest.GameContext.Flags["girlfriendProposalDecision"] },
+                            { "accepted", shouldAccept ? "true" : "false" },
+                            { "existingGirlfriendStarId", currentGirlfriend ?? string.Empty },
+                            { "note", "The full girlfriend proposal response is ready and should now be spoken." }
+                        }
+                    });
+
+                    GirlfriendProposalCompleted?.Invoke(this, proposalResponse);
+                }
+                catch (OperationCanceledException)
+                {
+                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Girlfriend proposal generation cancelled for " + profile.StarId + ".");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Girlfriend proposal generation failed: " + ex);
+                    GirlfriendProposalFailed?.Invoke(this, ex);
+                }
+            }, CancellationToken.None);
+        }
+
+        private sealed class GirlfriendProposalDecision
+        {
+            public string Decision { get; set; } = string.Empty;
+            public string ExistingGirlfriendStarId { get; set; } = string.Empty;
+            public bool IsAlreadyCurrentGirlfriend { get; set; }
+            public bool IsBlockedByExistingGirlfriend { get; set; }
+            public bool IsEligibleToAccept { get; set; }
+            public bool ShouldAcceptByDeterministicGate { get; set; }
+            public string Reason { get; set; } = string.Empty;
         }
 
         private static StarInteractionRequest CloneRequestForBackgroundStory(StarInteractionRequest request)
@@ -1354,20 +1701,43 @@ namespace Wds.SixStars.Api.Engine
                 if (StoryIntentLexicon.TryFindStoryIntentTrigger(request.PlayerText, out string storyIntentTrigger))
                 {
                     request.GameContext.Flags["storyIntentTrigger"] = storyIntentTrigger;
-                    request.GameContext.Flags["storyIntentCheckSource"] = "deterministic_story_alias";
-                    request.GameContext.Flags["storyIntentConfidence"] = "0.95";
-                    request.GameContext.Flags["storyIntentReason"] = "A direct story request word was detected before the foreground Star turn, so the runtime promoted the request to Story mode without waiting for an uncertain classifier vote.";
-                    request.GameContext.Flags["autoPromotedToStory"] = "true";
-                    request.RequestType = RequestType.Story;
-                    request.GameContext.RecentEvents.Add("Deterministic story adapter promoted this normal voice/chat message into Story mode because the player used a story trigger: " + storyIntentTrigger + ".");
-                    intent = new StarRequestIntentResult
+                    request.GameContext.Flags["storyIntentCheckSource"] = "llm_required_after_story_alias";
+                    request.GameContext.RecentEvents.Add("A story-like word was detected (" + storyIntentTrigger + "), so the runtime is asking the micro-intent LLM classifier before changing modes.");
+
+                    if (_agent is IStarRequestIntentClassifier classifier)
                     {
-                        IsStoryRequest = true,
-                        Confidence = 0.95,
-                        StorySeed = request.PlayerText ?? string.Empty,
-                        Source = "deterministic_story_alias",
-                        Reason = "Detected story trigger: " + storyIntentTrigger
-                    };
+                        intent = await classifier.ClassifyRequestIntentAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+                        request.GameContext.Flags["storyIntentCheckSource"] = intent.Source;
+                        request.GameContext.Flags["storyIntentConfidence"] = intent.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                        request.GameContext.Flags["storyIntentReason"] = intent.Reason ?? string.Empty;
+
+                        if (intent.IsStoryRequest && intent.Confidence >= 0.60)
+                        {
+                            request.GameContext.Flags["autoPromotedToStory"] = "true";
+                            request.RequestType = RequestType.Story;
+                            request.GameContext.RecentEvents.Add("Story micro-intent LLM confirmed Story mode with confidence " + intent.Confidence.ToString("0.00") + ".");
+                        }
+                        else
+                        {
+                            request.GameContext.Flags["autoPromotedToStory"] = "false";
+                            request.GameContext.RecentEvents.Add("Story word detected, but micro-intent LLM kept this as Chat. Reason: " + (intent.Reason ?? string.Empty));
+                        }
+                    }
+                    else
+                    {
+                        bool strictFallback = LooksLikeDirectStoryCommand(request.PlayerText);
+                        intent = new StarRequestIntentResult
+                        {
+                            IsStoryRequest = strictFallback,
+                            Confidence = strictFallback ? 0.62 : 0.20,
+                            StorySeed = strictFallback ? (request.PlayerText ?? string.Empty) : string.Empty,
+                            Source = "strict_story_heuristic_no_llm",
+                            Reason = strictFallback ? "Direct story command detected without classifier." : "Story word was present but no direct story command was detected."
+                        };
+                        request.GameContext.Flags["storyIntentConfidence"] = intent.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                        request.GameContext.Flags["storyIntentReason"] = intent.Reason;
+                        if (strictFallback) request.RequestType = RequestType.Story;
+                    }
                 }
                 else if (_agent is IStarRequestIntentClassifier)
                 {
@@ -1385,6 +1755,24 @@ namespace Wds.SixStars.Api.Engine
             }
 
             return intent;
+        }
+
+        private static bool LooksLikeDirectStoryCommand(string? text)
+        {
+            string t = (text ?? string.Empty).Trim().ToLowerInvariant();
+            if (t.Length == 0) return false;
+            return t.StartsWith("tell me a story")
+                || t.StartsWith("tell a story")
+                || t.StartsWith("tell me another story")
+                || t.StartsWith("continue the story")
+                || t.StartsWith("finish the story")
+                || t.StartsWith("start a story")
+                || t.StartsWith("make up a story")
+                || t.StartsWith("give me a story")
+                || t.StartsWith("narrate")
+                || t.Contains("tell me a new long story")
+                || t.Contains("can you tell me a story")
+                || t.Contains("will you tell me a story");
         }
 
         private static void PrepareStoryOptionsForNewOrContinuingStory(StarInteractionRequest request, StarState state, StarRequestIntentResult? intent)

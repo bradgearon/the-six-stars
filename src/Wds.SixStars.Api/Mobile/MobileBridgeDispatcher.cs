@@ -182,6 +182,7 @@ public sealed class MobileBridgeDispatchResult
     public string SelectedStarId { get; set; } = string.Empty;
     public bool IsMet { get; set; }
     public bool IsAlly { get; set; }
+    public bool IsGirlfriend { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
@@ -239,6 +240,7 @@ public sealed class MobileBridgeDispatchEvent
     public int Romance { get; set; }
     public double EmotionalConnectionPercent { get; set; }
     public bool IsGirlfriendReady { get; set; }
+    public bool IsGirlfriend { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
     public string StoryId { get; set; } = string.Empty;
@@ -277,6 +279,7 @@ public sealed class MobileBridgeDispatchEvent
             SelectedStarId = result.SelectedStarId,
             IsMet = state?.IsMet ?? result.IsMet,
             IsAlly = state?.IsAlly ?? result.IsAlly,
+            IsGirlfriend = state?.IsGirlfriend ?? result.IsGirlfriend,
             Heart = state?.Heart ?? 0,
             Trust = state?.Trust ?? 0,
             Romance = state?.Romance ?? 0,

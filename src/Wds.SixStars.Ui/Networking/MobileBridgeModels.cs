@@ -46,6 +46,7 @@ public sealed class MobileBridgeResponse
     public double EmotionalConnectionDelta { get; set; }
     public double EmotionalConnectionAfter { get; set; }
     public bool IsGirlfriendReadyAfter { get; set; }
+    public bool IsGirlfriendAfter { get; set; }
     public bool VoiceRequested { get; set; }
     public bool VoiceSocketConnected { get; set; }
     public int VoiceChunksSent { get; set; }

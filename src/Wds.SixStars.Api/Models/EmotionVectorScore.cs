@@ -10,7 +10,7 @@ namespace Wds.SixStars.Api.Models
 
         public double WeightedScore => Confidence * Score;
 
-        public bool IsHighSignal(double minConfidence = 0.70, double minScore = 80)
+        public bool IsHighSignal(double minConfidence = 0.40, double minScore = 25)
         {
             return Confidence >= minConfidence && Score >= minScore;
         }

@@ -273,6 +273,13 @@ public sealed partial class MainViewModel
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " ally=" + state.IsAlly + ", met=" + state.IsMet + "."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + (state.IsAlly ? " joined as an ally." : " ally flag was removed."));
             }
+            case "BreakupGirlfriend":
+            {
+                StarState state = await _runtime.SetExclusiveGirlfriendAsync(sessionId, starId, false, string.IsNullOrWhiteSpace(command.Reason) ? "Android prod breakup button" : command.Reason, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " girlfriend relationship ended."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " is no longer marked as girlfriend.");
+            }
+
             case "ClearHistory":
             {
                 StarState state = await _runtime.ResetStarMemoryAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
@@ -310,6 +317,7 @@ public sealed partial class MainViewModel
                         SelectedStarId = SelectedStarId,
                         IsMet = reset.IsMet,
                         IsAlly = reset.IsAlly,
+                        IsGirlfriend = reset.IsGirlfriend,
                         Heart = reset.Heart,
                         Trust = reset.Trust,
                         Romance = reset.Romance,
@@ -359,6 +367,7 @@ public sealed partial class MainViewModel
                     SelectedStarId = SelectedStarId,
                     IsMet = state.IsMet,
                     IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
                     Heart = state.Heart,
                     Trust = state.Trust,
                     Romance = state.Romance,
@@ -431,6 +440,7 @@ public sealed partial class MainViewModel
             SelectedStarId = SelectedStarId,
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
+            IsGirlfriend = state.IsGirlfriend,
             State = state,
             Message = response.Ok ? "Conversation response ready." : response.VoiceError,
             Error = response.Ok ? string.Empty : response.VoiceError,
@@ -482,6 +492,7 @@ public sealed partial class MainViewModel
             SelectedStarId = SelectedStarId,
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
+            IsGirlfriend = state.IsGirlfriend,
             State = state,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -506,6 +517,7 @@ public sealed partial class MainViewModel
             SelectedStarId = SelectedStarId,
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
+            IsGirlfriend = state.IsGirlfriend,
             Heart = state.Heart,
             Trust = state.Trust,
             Romance = state.Romance,
@@ -541,6 +553,7 @@ public sealed partial class MainViewModel
                 SelectedStarId = starId,
                 IsMet = state.IsMet,
                 IsAlly = state.IsAlly,
+                IsGirlfriend = state.IsGirlfriend,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -571,6 +584,7 @@ public sealed partial class MainViewModel
             starId = state.StarId,
             isMet = state.IsMet,
             isAlly = state.IsAlly,
+            isGirlfriend = state.IsGirlfriend,
             heart = state.Heart,
             trust = state.Trust,
             romance = state.Romance,
@@ -604,6 +618,7 @@ public sealed partial class MainViewModel
                 SelectedStarId = SelectedStarId,
                 IsMet = state.IsMet,
                 IsAlly = state.IsAlly,
+                IsGirlfriend = state.IsGirlfriend,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -1343,6 +1358,7 @@ public sealed partial class MainViewModel
             EmotionalConnectionDelta = response.StateDeltas.EmotionalConnectionPercent,
             EmotionalConnectionAfter = response.EmotionalConnectionPercentAfter,
             IsGirlfriendReadyAfter = response.IsGirlfriendReadyAfter,
+            IsGirlfriendAfter = false,
             VoiceRequested = mobileRequest.ReturnAudio,
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
             StoryId = response.StoryId ?? string.Empty,
@@ -1645,6 +1661,7 @@ public sealed partial class MainViewModel
             SessionId = "android-phone-dev",
             StarId = response.StarId ?? SelectedStarId,
             SelectedStarId = SelectedStarId,
+            IsGirlfriend = response.RelationshipEvents.Any(x => x.IndexOf("Accepted girlfriend proposal", StringComparison.OrdinalIgnoreCase) >= 0),
             Message = message,
             StoryId = response.StoryId ?? string.Empty,
             StoryTitle = response.StoryTitle ?? string.Empty,
@@ -1658,6 +1675,81 @@ public sealed partial class MainViewModel
             NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector)
         });
+    }
+
+    private async Task HandleGeneratedMobileGirlfriendProposalResponseAsync(StarInteractionResponse response)
+    {
+        PublishMobileGirlfriendProposalEvent(response, "GirlfriendProposalResponseReady", "The full girlfriend proposal response is ready for Android.");
+        OnUiThread(() =>
+        {
+            StarOutput = FormatStarOutput(response);
+            Status = "Generated Android girlfriend proposal response is ready. Streaming narration to phone.";
+            AppendMobileBridgeVoiceDebug("Girlfriend proposal ready", (response.StarId ?? "Star") + " response chars=" + (response.SpokenText?.Length ?? 0));
+        });
+
+        string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
+        StarInteractionRequest runtimeRequest = new StarInteractionRequest
+        {
+            StarId = response.StarId ?? SelectedStarId,
+            RequestType = RequestType.Chat,
+            SessionId = sessionId
+        };
+        MobileBridgeResponse mobileResponse = CreateMobileResponse(new MobileBridgeRequest
+        {
+            StarId = response.StarId ?? SelectedStarId,
+            RequestType = "Chat",
+            ReturnAudio = true,
+            SessionId = sessionId
+        }, runtimeRequest, string.Empty, response);
+
+        try
+        {
+            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, null).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() => MobileBridgeStatus = "Android generated girlfriend proposal voice error: " + ex.Message);
+            try { ReleasePendingBackgroundAnalysis("Android generated girlfriend proposal voice failed: " + ex.Message); } catch { }
+        }
+    }
+
+    private void PublishMobileGirlfriendProposalEvent(StarInteractionResponse response, string eventType, string message)
+    {
+        if (response == null) return;
+        string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
+        string proposalDecision = ExtractUnityEventData(response, "decision", string.Empty);
+        bool proposalIsGirlfriend = response.RelationshipEvents.Any(x => x.IndexOf("Accepted girlfriend proposal", StringComparison.OrdinalIgnoreCase) >= 0)
+            || string.Equals(proposalDecision, "accept", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(proposalDecision, "already_girlfriend", StringComparison.OrdinalIgnoreCase);
+        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+        {
+            EventType = eventType,
+            SourceClientId = "desktop-runtime",
+            SessionId = sessionId,
+            StarId = response.StarId ?? SelectedStarId,
+            SelectedStarId = SelectedStarId,
+            IsGirlfriend = proposalIsGirlfriend,
+            Message = message,
+            SpokenText = response.SpokenText ?? string.Empty,
+            EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
+            NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+            LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector)
+        });
+    }
+
+    private static string ExtractUnityEventData(StarInteractionResponse response, string key, string fallback)
+    {
+        if (response != null)
+        {
+            foreach (UnityEventEnvelope envelope in response.UnityEvents ?? new List<UnityEventEnvelope>())
+            {
+                if (envelope != null && envelope.Data != null && envelope.Data.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+        }
+        return fallback;
     }
 
     private async Task SendMobileStoryVoiceWithPrefetchAsync(StarInteractionResponse firstResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope voiceStream)

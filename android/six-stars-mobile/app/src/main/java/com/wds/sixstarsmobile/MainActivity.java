@@ -122,6 +122,7 @@ public final class MainActivity extends Activity {
     private TextView prodTalkButtonText;
     private View prodTalkButton;
     private View prodPhotoButton;
+    private Button prodBreakupButton;
     private View prodVoiceActions;
     private Button prodCancelVoiceButton;
     private Button prodSendVoiceButton;
@@ -142,6 +143,7 @@ public final class MainActivity extends Activity {
     private boolean suppressStarSelectionDispatch;
     private boolean selectedStarIsMet;
     private boolean selectedStarIsAlly;
+    private boolean selectedStarIsGirlfriend;
     private String currentTopAffectedEmotions = "Top emotions: none yet.";
     private String currentLastEmotionVectors = "Last emotional vectors: none yet.";
     private String currentInterstarStatus = "Interstar state: idle.";
@@ -316,7 +318,7 @@ public final class MainActivity extends Activity {
         clearAllDataButton = button("Clear All Data");
         clearAllDataButton.setOnClickListener(v -> dispatchClearAllData());
         root.addView(clearAllDataButton);
-        updateStarStateUi("Elusiaa", true, true, 0, 0, 0, 0.0, false, "Ready");
+        updateStarStateUi("Elusiaa", true, true, 0, 0, 0, 0.0, false, false, "Ready");
 
         LinearLayout contextRow = row();
         areaEdit = input("VirethornCaves", false);
@@ -388,6 +390,7 @@ public final class MainActivity extends Activity {
         prodTalkButtonText = null;
         prodTalkButton = null;
         prodPhotoButton = null;
+        prodBreakupButton = null;
         prodVoiceActions = null;
         prodCancelVoiceButton = null;
         prodSendVoiceButton = null;
@@ -405,6 +408,7 @@ public final class MainActivity extends Activity {
         prodTalkButtonText = findViewById(R.id.prod_talk_text);
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
+        prodBreakupButton = findViewById(R.id.prod_breakup_button);
         prodVoiceActions = findViewById(R.id.prod_voice_actions);
         prodCancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
         prodSendVoiceButton = findViewById(R.id.prod_send_voice_button);
@@ -439,6 +443,7 @@ public final class MainActivity extends Activity {
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
+        if (prodBreakupButton != null) prodBreakupButton.setOnClickListener(v -> dispatchBreakupGirlfriend());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
         prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
         prodTextToggleButton.setOnClickListener(v -> toggleProdTextComposer());
@@ -452,7 +457,7 @@ public final class MainActivity extends Activity {
         refreshProdStarUi(selectedStarName());
         refreshProdConversationWindow();
         updateProdRecordingUi();
-        updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, "Prod ready");
+        updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, false, "Prod ready");
     }
 
     private void createProdHiddenControls() {
@@ -754,11 +759,12 @@ public final class MainActivity extends Activity {
         refreshProdConversationWindow();
     }
 
-    private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, String status) {
+    private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
         refreshProdStarUi(starId);
         if (prodRelationshipText != null) {
-            prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? "   Ready" : ""));
+            prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + (girlfriend ? "   Girlfriend" : (ready ? "   Ready" : "")));
         }
+        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
         if (prodMiniStatusText != null) prodMiniStatusText.setText(status);
     }
 
@@ -967,6 +973,10 @@ public final class MainActivity extends Activity {
         dispatchBridgeCommand("ClearAllData", selectedStarName(), null, null, "Android cleared all local Star data.");
     }
 
+    private void dispatchBreakupGirlfriend() {
+        dispatchBridgeCommand("BreakupGirlfriend", selectedStarName(), null, null, "Android prod breakup button ended girlfriend mode for this Star.");
+    }
+
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
         httpExecutor.execute(() -> {
             try {
@@ -1071,6 +1081,8 @@ public final class MainActivity extends Activity {
 
         if (isPhotoBridgeEvent(type)) {
             handlePhotoBridgeEvent(event, type, seq, starId, message);
+        } else if (isGirlfriendBridgeEvent(type)) {
+            handleGirlfriendBridgeEvent(event, type, seq, starId, message);
         } else if (isStoryBridgeEvent(type)) {
             handleStoryBridgeEvent(event, type, seq, starId, message);
         } else if (isTopEmotionBridgeEvent(type)) {
@@ -1096,6 +1108,24 @@ public final class MainActivity extends Activity {
                 || "StarHistoryCleared".equalsIgnoreCase(type)
                 || "AllStarsDataCleared".equalsIgnoreCase(type)
                 || "BridgeCommandAccepted".equalsIgnoreCase(type);
+    }
+
+    private boolean isGirlfriendBridgeEvent(String type) {
+        return "GirlfriendProposalResponseReady".equalsIgnoreCase(type)
+                || "GirlfriendProposalCompleted".equalsIgnoreCase(type);
+    }
+
+    private void handleGirlfriendBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "");
+        boolean girlfriend = optBooleanEither(event, "isGirlfriend", "IsGirlfriend", selectedStarIsGirlfriend);
+        selectedStarIsGirlfriend = girlfriend;
+        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
+        if (spoken.length() > 0) {
+            appendProdConversationLine(starId, clip(spoken, 900));
+            responseText.setText(starId + " — girlfriend proposal\n\n" + clip(spoken, 8000));
+            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + spoken.length() * 18L)));
+        }
+        setDebug("Girlfriend proposal response", "event=#" + seq + " " + type + " — " + message);
     }
 
     private boolean isTopEmotionBridgeEvent(String type) {
@@ -1196,12 +1226,13 @@ public final class MainActivity extends Activity {
         int romance = optIntEither(state, "romance", "Romance", 0);
         double connection = optDoubleEither(state, "emotionalConnectionPercent", "EmotionalConnectionPercent", 0.0);
         boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
+        boolean girlfriend = optBooleanEither(state, "isGirlfriend", "IsGirlfriend", false);
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;
         updateEmotionVectorsFromJson(state);
         String daily = extractDailyStateLine(state);
         if (daily.length() > 0) currentDailyStarState = daily;
-        updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
+        updateStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, girlfriend, status);
     }
 
     private void applyTopAffectedEmotionsObject(JSONObject state, String status) {
@@ -1218,14 +1249,15 @@ public final class MainActivity extends Activity {
         appendVoiceDebug("Emotion vector settled", currentTopAffectedEmotions);
     }
 
-    private void updateStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, String status) {
+    private void updateStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
         selectedStarIsMet = met;
         selectedStarIsAlly = ally;
+        selectedStarIsGirlfriend = girlfriend;
         if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
         if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
-        updateProdStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, status);
+        updateProdStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, girlfriend, status);
         if (starStateText != null) {
-            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (ready ? ", ready" : "") + " — " + status + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus);
+            starStateText.setText("✨ " + starId + " — met=" + met + ", ally=" + ally + ", Heart " + heart + ", Trust " + trust + ", Romance " + romance + ", Connection " + String.format(Locale.US, "%.1f", connection) + "%" + (girlfriend ? ", girlfriend" : (ready ? ", ready" : "")) + " — " + status + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus);
             updateEmotionVectorsUi();
             if (interstarStatusText != null) interstarStatusText.setText(currentInterstarStatus);
         }
@@ -1689,9 +1721,11 @@ public final class MainActivity extends Activity {
             synchronized (socketLock) {
                 audioSocket = socket;
             }
+            resetVoiceStreamStateForSocketReconnect();
             runOnUiThread(() -> {
                 audioStatusText.setText("Phone voice socket connected: " + host + ":" + port);
                 appendVoiceDebug("Elusiaa connected the voice socket", host + ":" + port);
+                appendVoiceDebug("Khavia reset the phone voice stream guard", "Fresh socket connection; accepting the desktop stream counter from the beginning again.");
             });
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (!destroyed && !socket.isClosed()) {
@@ -1786,8 +1820,15 @@ public final class MainActivity extends Activity {
         if (streamOrdinal <= 0L || streamId == null || streamId.length() == 0) return true;
         boolean startedNew = false;
         synchronized (voiceStreamStateLock) {
-            if (streamOrdinal < activeVoiceStreamOrdinal) return false;
-            if (streamOrdinal > activeVoiceStreamOrdinal || !streamId.equals(activeVoiceStreamId)) {
+            boolean sameStream = streamId.equals(activeVoiceStreamId);
+            if (!sameStream && activeVoiceStreamId.length() > 0 && streamOrdinal < activeVoiceStreamOrdinal) {
+                // The desktop can restart its stream counter after an app/socket reconnect. A valid
+                // new stream should arrive with a streamAction=start status frame first; that status
+                // frame resets activeVoiceStreamOrdinal even when the ordinal is lower. If no start
+                // frame has made this id active, keep treating lower-ordinal frames as stale.
+                return false;
+            }
+            if (!sameStream || streamOrdinal > activeVoiceStreamOrdinal) {
                 activeVoiceStreamOrdinal = streamOrdinal;
                 activeVoiceStreamId = streamId;
                 startedNew = true;
@@ -1816,7 +1857,11 @@ public final class MainActivity extends Activity {
         synchronized (voiceStreamStateLock) {
             if ("start".equalsIgnoreCase(action)) {
                 boolean sameStream = streamOrdinal == activeVoiceStreamOrdinal && streamId.equals(activeVoiceStreamId);
-                if (!sameStream && streamOrdinal >= activeVoiceStreamOrdinal) {
+                if (!sameStream) {
+                    // A fresh desktop process/socket may restart streamOrdinal at 1. Treat the
+                    // explicit start frame as authoritative even when its ordinal is lower than a
+                    // previous app session's active stream, otherwise the phone drops every new chunk
+                    // as stale and the text appears without sound.
                     activeVoiceStreamOrdinal = streamOrdinal;
                     activeVoiceStreamId = streamId;
                     clear = true;
@@ -1824,8 +1869,8 @@ public final class MainActivity extends Activity {
                     resetOrderedVoiceQueueLocked();
                 }
             } else if ("cancel".equalsIgnoreCase(action)) {
-                if (streamOrdinal >= activeVoiceStreamOrdinal || streamId.equals(activeVoiceStreamId)) {
-                    activeVoiceStreamOrdinal = Math.max(activeVoiceStreamOrdinal, streamOrdinal);
+                if (streamId.equals(activeVoiceStreamId) || streamOrdinal >= activeVoiceStreamOrdinal) {
+                    activeVoiceStreamOrdinal = streamOrdinal;
                     activeVoiceStreamId = streamId;
                     clear = true;
                     resetReceivedVoiceAccumulatorLocked();
@@ -1887,6 +1932,18 @@ public final class MainActivity extends Activity {
             lastVoiceAccumulatorTotalChunks = 0;
             lastVoiceAccumulatorChunks = 0;
         }
+    }
+
+
+    private void resetVoiceStreamStateForSocketReconnect() {
+        synchronized (voiceStreamStateLock) {
+            activeVoiceStreamId = "";
+            activeVoiceStreamOrdinal = 0L;
+            droppedStaleVoiceFrames = 0;
+            resetReceivedVoiceAccumulatorLocked();
+            resetOrderedVoiceQueueLocked();
+        }
+        wavAudioQueue.clearForNewStream();
     }
 
     private void closeAudioSocket() {

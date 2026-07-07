@@ -50,6 +50,7 @@ namespace Wds.SixStars.Api.Stars
         public List<string> SpokenResponseRules { get; set; } = new List<string>();
         public List<string> StorytellingRules { get; set; } = new List<string>();
         public List<string> StoryThinkingPhrases { get; set; } = new List<string>();
+        public List<string> GirlfriendProposalThinkingPhrases { get; set; } = new List<string>();
         public List<KnownPerson> PeopleKnown { get; set; } = new List<KnownPerson>();
         public List<StarLoreEntry> AngelStories { get; set; } = new List<StarLoreEntry>();
         public List<StarEmotionDefinition> Emotions { get; set; } = new List<StarEmotionDefinition>();

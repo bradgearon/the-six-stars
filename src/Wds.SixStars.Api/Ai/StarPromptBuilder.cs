@@ -196,7 +196,7 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("Decide whether the latest player message means the selected Star should enter LONG STORY MODE and begin narrating a story aloud.");
             system.AppendLine("Return JSON only. Do not roleplay. Do not answer the player.");
             system.AppendLine("Set isStoryRequest=true only when the player is asking for a story-like narration: story/stories, tale, fable, legend, myth, parable, saga, chronicle, folktale, yarn, bedtime story, cave story, narrated adventure, or similar. Active story playback is handled locally by the host after the first response.");
-            system.AppendLine("Use conversation history to catch indirect phrasing, but do not classify ordinary chat, code requests, ratings, design discussion, or questions ABOUT the story system as story requests.");
+            system.AppendLine("Use conversation history to catch indirect phrasing, but do not classify ordinary chat, code requests, ratings, design discussion, compliments using story-like metaphors, or questions ABOUT the story system as story requests. A message that merely contains the word story is NOT enough; the player must be asking the Star to narrate or continue a story now.");
             system.AppendLine("If true, storySeed should be the usable story request/seed in the player's words. If false, storySeed must be empty.");
 
             StringBuilder user = new StringBuilder();
@@ -554,6 +554,7 @@ namespace Wds.SixStars.Api.Ai
                     task.AppendLine(extraInformationContext);
                     task.AppendLine("Use this extra information to answer the same latest player message. If it answers the question, speak naturally as if you remembered or found the old note. If it still does not answer, say you searched your memory and cannot find enough yet.");
                 }
+                AppendGirlfriendProposalGuidance(task, profile, request, state);
             }
 
             StringBuilder contract = new StringBuilder();
@@ -608,6 +609,33 @@ namespace Wds.SixStars.Api.Ai
             };
 
             return _templates.Render("speech_user.sbn", data);
+        }
+
+        private static void AppendGirlfriendProposalGuidance(StringBuilder task, StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            if (task == null || request == null || request.GameContext == null) return;
+            if (!request.GameContext.Flags.TryGetValue("girlfriendProposalWorker", out string? worker) || !string.Equals(worker, "true", StringComparison.OrdinalIgnoreCase)) return;
+
+            string decision = GetFlag(request.GameContext, "girlfriendProposalDecision");
+            string existing = GetFlag(request.GameContext, "existingGirlfriendStarId");
+            string reason = GetFlag(request.GameContext, "girlfriendProposalReason");
+
+            task.AppendLine();
+            task.AppendLine("GIRLFRIEND PROPOSAL DECISION MODE");
+            task.AppendLine("The Last Cat has just asked " + profile.DisplayName + " to be his girlfriend. Answer directly in " + profile.DisplayName + "'s voice.");
+            task.AppendLine("Decision flag from deterministic relationship gate: " + (string.IsNullOrWhiteSpace(decision) ? "unknown" : decision) + ".");
+            task.AppendLine("Existing exclusive girlfriend: " + (string.IsNullOrWhiteSpace(existing) ? "none" : existing) + ".");
+            task.AppendLine("Gate reason: " + (string.IsNullOrWhiteSpace(reason) ? "none" : reason));
+            task.AppendLine("Current state: met=" + state.IsMet + ", ally=" + state.IsAlly + ", girlfriend=" + state.IsGirlfriend + ", girlfriendReady=" + state.IsGirlfriendReady + ", Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ".");
+            task.AppendLine("Only one Star can be the Last Cat's girlfriend at a time. If an existing girlfriend is someone else, you must say no because he is already committed, and you may ask him to end that relationship first if he truly means this.");
+            task.AppendLine("If decision=accept, say yes clearly and warmly in character. If decision=already_girlfriend, affirm that she already is his girlfriend. If decision=not_ready_no_for_now, say not yet with affection and give a clear path: become/keep ally status, build trust, heart, romance, emotional safety, and personality-matched connection. If decision=blocked_existing_girlfriend, refuse clearly but gracefully.");
+            task.AppendLine("Keep it concise: 2-5 spokenText chunks. Do not mention JSON, flags, numbers, or deterministic gates unless the player explicitly asked about mechanics.");
+        }
+
+        private static string GetFlag(GameContext context, string key)
+        {
+            if (context != null && context.Flags != null && context.Flags.TryGetValue(key, out string? value)) return value ?? string.Empty;
+            return string.Empty;
         }
 
         private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact)

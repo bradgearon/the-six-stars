@@ -13,6 +13,11 @@ namespace Wds.SixStars.Api.Engine
     /// </summary>
     public sealed class RelationshipDeltaCalculator : IRelationshipDeltaCalculator
     {
+        private const double RelationshipSignalConfidence = 0.40;
+        private const double RelationshipSignalScore = 25;
+        private const double ComboSignalConfidence = 0.40;
+        private const double ComboSignalScore = 25;
+
         public static readonly string[] NegativeEmotionIds = new[]
         {
             "Irritated", "Disrespected", "Pressured", "CreepedOut", "Bored", "Hurt", "Unsafe"
@@ -28,13 +33,13 @@ namespace Wds.SixStars.Api.Engine
             List<EmotionVectorScore> negativeAll = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds);
 
             List<EmotionVectorScore> positiveSignals = positiveAll
-                .Where(x => x.IsHighSignal())
+                .Where(x => x.IsHighSignal(RelationshipSignalConfidence, RelationshipSignalScore))
                 .OrderByDescending(x => x.WeightedScore)
                 .Take(6)
                 .ToList();
 
             List<EmotionVectorScore> negativeSignals = negativeAll
-                .Where(x => x.IsHighSignal())
+                .Where(x => x.IsHighSignal(RelationshipSignalConfidence, RelationshipSignalScore))
                 .OrderByDescending(x => x.WeightedScore)
                 .Take(6)
                 .ToList();
@@ -68,7 +73,9 @@ namespace Wds.SixStars.Api.Engine
                 delta.Heart = Math.Min(delta.Heart, 1);
                 delta.Trust = Math.Min(delta.Trust, 1);
                 delta.Romance = Math.Min(delta.Romance, 0);
-                delta.EmotionalConnectionPercent = Math.Min(delta.EmotionalConnectionPercent, 0);
+                delta.EmotionalConnectionPercent = currentState.IsMet
+                    ? Math.Min(delta.EmotionalConnectionPercent, 0.10)
+                    : Math.Min(delta.EmotionalConnectionPercent, 0);
             }
 
             Clamp(delta, profile.RelationshipStats);
@@ -206,7 +213,7 @@ namespace Wds.SixStars.Api.Engine
             double heart = starScore * GetWeight(rule, "heart");
             double trust = starScore * GetWeight(rule, "trust");
             double romance = starScore * GetWeight(rule, "romance");
-            bool accepted = signal.Confidence >= 0.70 && signal.Score >= 40 && affectsStar >= 0.35 && (Math.Abs(heart) + Math.Abs(trust) + Math.Abs(romance)) >= 5;
+            bool accepted = signal.Confidence >= RelationshipSignalConfidence && signal.Score >= RelationshipSignalScore && affectsStar >= 0.20 && (Math.Abs(heart) + Math.Abs(trust) + Math.Abs(romance)) >= 1.0;
 
             entry.Entries.Add(new StarEmotionVectorHistoryItem
             {
@@ -253,13 +260,13 @@ namespace Wds.SixStars.Api.Engine
         private static bool HasEnoughRelevantHistoryForPositivePoints(StarState state, StarEmotionVectorHistoryEntry current, List<string> combos)
         {
             int currentDistinct = CountDistinctAcceptedEmotions(current, includeNegative: false);
-            if (currentDistinct >= 3) return true;
+            if (currentDistinct >= 1) return true;
             if (combos.Any(x => !IsNegativeCombo(x))) return true;
 
             int priorRelevantTurns = (state.EmotionVectorHistory ?? new List<StarEmotionVectorHistoryEntry>())
                 .Take(16)
                 .Count(x => x != null && CountDistinctAcceptedEmotions(x, includeNegative: false) > 0);
-            return priorRelevantTurns + (currentDistinct > 0 ? 1 : 0) >= 3;
+            return priorRelevantTurns + (currentDistinct > 0 ? 1 : 0) >= 1;
         }
 
         private static int CountDistinctAcceptedEmotions(StarEmotionVectorHistoryEntry entry, bool includeNegative)
@@ -277,9 +284,9 @@ namespace Wds.SixStars.Api.Engine
         {
             foreach (StarEmotionVectorHistoryItem item in current.Entries.Where(x => x != null && x.Accepted))
             {
-                ApplyOneStatScore(profile, state, "heart", item.HeartScore, delta, allowPositiveCashOut || item.HeartScore < 0, true, now, item.Reason);
-                ApplyOneStatScore(profile, state, "trust", item.TrustScore, delta, allowPositiveCashOut || item.TrustScore < 0, true, now, item.Reason);
-                ApplyOneStatScore(profile, state, "romance", item.RomanceScore, delta, allowPositiveCashOut || item.RomanceScore < 0, romanceGate || item.RomanceScore < 0, now, item.Reason);
+                ApplyOneStatScore(profile, state, "heart", item.HeartScore, delta, true, true, now, item.Reason);
+                ApplyOneStatScore(profile, state, "trust", item.TrustScore, delta, true, true, now, item.Reason);
+                ApplyOneStatScore(profile, state, "romance", item.RomanceScore, delta, romanceGate || item.RomanceScore < 0, romanceGate || item.RomanceScore < 0, now, item.Reason);
             }
         }
 
@@ -373,6 +380,11 @@ namespace Wds.SixStars.Api.Engine
 
             int cap = Math.Max(1, rule.MaxPerTurn);
             double threshold = Math.Max(1, rule.ScorePerPoint);
+            // Positive relationship evidence should visibly move the marks over time.
+            // Authored JSON ScorePerPoint values remain the personality baseline, but vector
+            // scoring uses a softer threshold so confidence ~0.40 signals can accumulate into
+            // actual Heart/Trust/Romance progress instead of waiting forever.
+            if (accumulator.Score > 0) threshold = Math.Max(8, threshold * 0.35);
             if (accumulator.Score >= threshold)
             {
                 int points = Math.Min(cap, (int)Math.Floor(accumulator.Score / threshold));
@@ -463,7 +475,7 @@ namespace Wds.SixStars.Api.Engine
                 .Where(x => x != null && x.Accepted)
                 .Where(x => string.Equals(x.Emotion, req.Emotion, StringComparison.OrdinalIgnoreCase))
                 .Where(x => string.IsNullOrWhiteSpace(req.Polarity) || string.Equals(x.Polarity, req.Polarity, StringComparison.OrdinalIgnoreCase) || string.Equals(req.Polarity, "contextual", StringComparison.OrdinalIgnoreCase))
-                .Where(x => x.Confidence >= (req.MinConfidence <= 0 ? 0.70 : req.MinConfidence) && x.Score >= (req.MinScore <= 0 ? 40 : req.MinScore))
+                .Where(x => x.Confidence >= (req.MinConfidence <= 0 ? ComboSignalConfidence : req.MinConfidence) && x.Score >= (req.MinScore <= 0 ? ComboSignalScore : req.MinScore))
                 .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
                 .FirstOrDefault();
         }
@@ -601,11 +613,11 @@ namespace Wds.SixStars.Api.Engine
         {
             double connection = state.EmotionalConnectionPercent;
             bool isAlly = state.IsAlly || string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
-            bool hasMajorNegative = negative.Any(x => x.Score >= 80 && x.Confidence >= 0.70 && (x.Id == "Disrespected" || x.Id == "Pressured" || x.Id == "CreepedOut" || x.Id == "Hurt" || x.Id == "Unsafe"));
-            bool boringOrIrritated = negative.Any(x => x.Score >= 85 && x.Confidence >= 0.70 && (x.Id == "Bored" || x.Id == "Irritated"));
-            bool hasIntimatePositive = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 1;
-            bool hasMultipleIntimate = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 82 && x.Confidence >= 0.72) >= 2;
-            bool hasPersonalityMatch = positive.Any(x => IsPersonalityMatchedConnectionSignal(profile.StarId, x.Id) && x.Score >= 80 && x.Confidence >= 0.70);
+            bool hasMajorNegative = negative.Any(x => x.Score >= 70 && x.Confidence >= 0.60 && (x.Id == "Disrespected" || x.Id == "Pressured" || x.Id == "CreepedOut" || x.Id == "Hurt" || x.Id == "Unsafe"));
+            bool boringOrIrritated = negative.Any(x => x.Score >= 75 && x.Confidence >= 0.60 && (x.Id == "Bored" || x.Id == "Irritated"));
+            bool hasIntimatePositive = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 45 && x.Confidence >= 0.40) >= 1;
+            bool hasMultipleIntimate = positive.Count(x => IsIntimateConnectionSignal(x.Id) && x.Score >= 45 && x.Confidence >= 0.40) >= 2;
+            bool hasPersonalityMatch = positive.Any(x => IsPersonalityMatchedConnectionSignal(profile.StarId, x.Id) && x.Score >= 70 && x.Confidence >= 0.60);
             bool hasConnectionCombo = combos.Any(x => x.Contains("romantic") || x.Contains("affection") || x.Contains("vulnerability") || x.Contains("trust") || x.Contains("tender") || x.Contains("safe"));
             bool strongPlayerEffort = LooksLikeHighEffortIntimateSpeech(request.PlayerText ?? string.Empty);
 
@@ -623,7 +635,13 @@ namespace Wds.SixStars.Api.Engine
 
             if (!isAlly)
             {
-                if (connection > 0) delta.EmotionalConnectionPercent -= 0.25;
+                bool metWarmSignal = state.IsMet && positive.Any(x => x.Score >= 35 && x.Confidence >= 0.35);
+                if (metWarmSignal)
+                {
+                    delta.EmotionalConnectionPercent += 0.05;
+                    return;
+                }
+                if (connection > 0) delta.EmotionalConnectionPercent -= 0.10;
                 return;
             }
 
@@ -639,13 +657,13 @@ namespace Wds.SixStars.Api.Engine
                 return;
             }
 
-            bool hasAnyGoodAttention = positive.Any(x => x.Score >= 72 && x.Confidence >= 0.62);
-            bool hasHighGoodAttention = positive.Any(x => x.Score >= 85 && x.Confidence >= 0.72);
+            bool hasAnyGoodAttention = positive.Any(x => x.Score >= 35 && x.Confidence >= 0.35);
+            bool hasHighGoodAttention = positive.Any(x => x.Score >= 55 && x.Confidence >= 0.45);
             bool playerActuallySaidSomething = !string.IsNullOrWhiteSpace(request.PlayerText);
 
             if (isAlly && hasHighGoodAttention)
             {
-                delta.EmotionalConnectionPercent += positive.Count(x => x.Score >= 85 && x.Confidence >= 0.72) >= 2 ? 0.45 : 0.28;
+                delta.EmotionalConnectionPercent += positive.Count(x => x.Score >= 55 && x.Confidence >= 0.45) >= 2 ? 0.45 : 0.28;
                 return;
             }
 
@@ -706,11 +724,11 @@ namespace Wds.SixStars.Api.Engine
         {
             if (!request.GameContext.RomanceMode) return false;
             if (!state.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return false;
-            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 78 && x.Confidence >= 0.68);
+            bool hasHighRomanceEmotion = positive.Any(x => IsRomanceSignal(x.Id) && x.Score >= 35 && x.Confidence >= 0.40);
             if (!hasHighRomanceEmotion && !state.IsGirlfriend && state.Romance < 4) return false;
 
             string text = (request.PlayerText ?? string.Empty).ToLowerInvariant();
-            bool earnedByWords = ContainsAny(text, "poem", "poetry", "beautiful", "gentle", "safe", "trust", "song", "music", "kiss", "touch", "cat hair", "fur", "warm", "miracle", "stars", "heart");
+            bool earnedByWords = ContainsAny(text, "girlfriend", "be my girlfriend", "go out", "date", "poem", "poetry", "beautiful", "attracted", "attraction", "gentle", "safe", "trust", "song", "music", "kiss", "touch", "cat hair", "fur", "warm", "miracle", "stars", "heart");
             bool established = state.IsGirlfriend || state.Romance > 0 || state.Trust >= 5 || state.Heart >= 5 || state.PositiveSuccessionCount >= 2 || state.EmotionalConnectionPercent >= 10;
             bool kaeliaCatHook = string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase) && ContainsAny(text, "cat", "cat hair", "fur", "purr", "tail", "ears");
             return earnedByWords || established || kaeliaCatHook;
@@ -776,7 +794,7 @@ namespace Wds.SixStars.Api.Engine
             string combo = combos.Count == 0 ? "none" : string.Join(", ", combos);
             string acceptedVector = vectorHistory.Entries.Count(x => x.Accepted).ToString(System.Globalization.CultureInfo.InvariantCulture);
             double projectedConnection = Math.Max(0, Math.Min(100, state.EmotionalConnectionPercent + actual.EmotionalConnectionPercent));
-            bool projectedReady = (state.IsGirlfriend || (state.IsAlly && projectedConnection >= 85 && state.Heart + actual.Heart >= 20 && state.Trust + actual.Trust >= 15 && state.Romance + actual.Romance >= 12));
+            bool projectedReady = (state.IsGirlfriend || (state.IsAlly && projectedConnection >= 25 && state.Heart + actual.Heart >= 6 && state.Trust + actual.Trust >= 4 && state.Romance + actual.Romance >= 3));
             int activeEffectorCount = state.ActiveEffectors == null ? 0 : state.ActiveEffectors.Count(x => x != null && !x.IsExpired(DateTimeOffset.UtcNow));
             string accumulatorSummary = BuildAccumulatorSummary(state);
             return "Deterministic emotion update: skill=star_specific_vector_scoring; met=" + state.IsMet + "; ally=" + state.IsAlly + "; activeEffectors=" + activeEffectorCount

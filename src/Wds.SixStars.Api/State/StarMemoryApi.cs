@@ -96,6 +96,7 @@ namespace Wds.SixStars.Api.State
             };
             double emotionalConnectionBefore = state.EmotionalConnectionPercent;
             ApplyRelationshipDelta(state, applied);
+            AutoPromoteAllyIfReady(state, now);
             UpdateGirlfriendReadiness(state, now);
 
             if (!string.IsNullOrWhiteSpace(request.ConversationSummary))
@@ -893,9 +894,29 @@ namespace Wds.SixStars.Api.State
             state.EmotionalConnectionPercent = ClampPercent(state.EmotionalConnectionPercent + delta.EmotionalConnectionPercent);
         }
 
+        private static void AutoPromoteAllyIfReady(StarState state, DateTimeOffset now)
+        {
+            if (state == null) return;
+            if (state.IsAlly) return;
+            if (!state.IsMet) return;
+
+            bool readyByStats = state.Heart >= 3 && state.Trust >= 2;
+            bool readyByCombinedBond = state.Heart + state.Trust >= 6;
+            bool readyByConnection = state.EmotionalConnectionPercent >= 6.0;
+            if (!readyByStats && !readyByCombinedBond && !readyByConnection) return;
+
+            state.IsAlly = true;
+            state.RelationshipEvents.Insert(0, "Auto ally unlocked: repeated positive emotional-vector evidence made this met Star willing to join the Last Cat as an ally.");
+        }
+
         private static void UpdateGirlfriendReadiness(StarState state, DateTimeOffset now)
         {
-            bool ready = state.IsGirlfriend || (state.IsAlly && state.EmotionalConnectionPercent >= 85 && state.Heart >= 20 && state.Trust >= 15 && state.Romance >= 12);
+            const double ReadyConnection = 25.0;
+            const int ReadyHeart = 6;
+            const int ReadyTrust = 4;
+            const int ReadyRomance = 3;
+
+            bool ready = state.IsGirlfriend || (state.IsAlly && state.EmotionalConnectionPercent >= ReadyConnection && state.Heart >= ReadyHeart && state.Trust >= ReadyTrust && state.Romance >= ReadyRomance);
             if (ready && !state.IsGirlfriendReady)
             {
                 state.IsGirlfriendReady = true;
@@ -910,8 +931,8 @@ namespace Wds.SixStars.Api.State
             }
 
             state.GirlfriendReadinessSummary = ready
-                ? "Ready for girlfriend path if the story/game allows it."
-                : "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12.";
+                ? "Ready for girlfriend path: ask directly, and she can decide based on this bond."
+                : "Not ready: requires ally status, EmotionalConnectionPercent >= 25, Heart >= 6, Trust >= 4, and Romance >= 3. Build ally trust, safe affection, and personality-matched emotional vectors.";
         }
 
         private static double ClampPercent(double value)
