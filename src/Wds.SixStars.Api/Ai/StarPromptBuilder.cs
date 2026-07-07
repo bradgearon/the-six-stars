@@ -75,6 +75,7 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("INTERSTAR RELAY MODE. Decide what you would naturally tell " + targetProfile.DisplayName + " about the Last Cat after your recent conversation.");
             system.AppendLine("Return compact JSON only. Do not speak to the player. Do not award points. Do not invent that the target heard the conversation directly.");
             system.AppendLine("Only set shouldTell=true when the conversation is emotionally meaningful, practically important, funny enough to share, worrying, or relevant to the target Star's personality. If it is small talk and not useful, set shouldTell=false.");
+            system.AppendLine("Respect interstar intimacy: only share what the origin Star would realistically tell this specific target based on friendship, trust, excitement, concern, and how close the origin Star feels to the Last Cat. Do not over-share romantic/private vulnerability to a Star she is not close with.");
             system.AppendLine("whatOriginWouldTellTarget should be written as the origin Star's concise private report to the target Star, 1-5 sentences. Include emotional nuance, not just a transcript.");
 
             StringBuilder user = new StringBuilder();
@@ -123,6 +124,8 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
             system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep the update modest because this is second-hand information. Strong signals require the relay to matter strongly to your personality/domain.");
+            system.AppendLine("Also return replyToSourceStar: one concise in-character sentence you would actually say back to the source Star. It may be warm, excited, guarded, teasing, worried, or brief based on your friendship with her, your excitement about the situation, and your own closeness to the Last Cat.");
+            system.AppendLine("Do not confess more than your relationship state supports. If you barely know the source Star, reply politely and minimally. If you are close or the news deeply fits your domain, let the line carry more feeling.");
 
             StringBuilder user = new StringBuilder();
             user.AppendLine("TARGET STAR STATE / PERSONALITY");
@@ -138,7 +141,7 @@ namespace Wds.SixStars.Api.Ai
             user.AppendLine("Origin Star foreground reply:");
             user.AppendLine(QuoteBlock(originResponse.SpokenText));
             user.AppendLine();
-            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat now.");
+            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat now, plus replyToSourceStar as the one sentence you would say back to " + relay.OriginStarId + ".");
 
             return new List<ChatMessage>
             {
@@ -156,8 +159,8 @@ namespace Wds.SixStars.Api.Ai
         {
             StringBuilder system = new StringBuilder();
             system.AppendLine("You are " + originProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
-            system.AppendLine("INTERSTAR FEEDBACK VECTOR MODE. Other Stars reacted emotionally to what you told them about the Last Cat.");
-            system.AppendLine("Return compact JSON only. Do not write spokenText. Compute how their responses make YOU feel about the Last Cat now.");
+            system.AppendLine("INTERSTAR FEEDBACK VECTOR MODE. Other Stars reacted emotionally to what you told them about the Last Cat, and some replied back to you in one sentence.");
+            system.AppendLine("Return compact JSON only. Do not write spokenText. Compute how their emotional responses and reply lines make YOU feel about the Last Cat now.");
             system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
             system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep this very modest; it is a reflection pass, not a second full conversation.");
@@ -178,6 +181,7 @@ namespace Wds.SixStars.Api.Ai
                 user.AppendLine("  vectors good=" + Truncate(reaction.EmotionalEffectVector, 260) + " bad=" + Truncate(reaction.NegativeEmotionVector, 120));
                 user.AppendLine("  applied delta H/T/R/C=" + reaction.AppliedDelta.Heart + "/" + reaction.AppliedDelta.Trust + "/" + reaction.AppliedDelta.Romance + "/" + reaction.AppliedDelta.EmotionalConnectionPercent.ToString("0.00"));
                 if (!string.IsNullOrWhiteSpace(reaction.TopAffectedEmotionsText)) user.AppendLine("  top=" + reaction.TopAffectedEmotionsText);
+                if (!string.IsNullOrWhiteSpace(reaction.ReplyToSourceStar)) user.AppendLine("  said back to you: " + QuoteInline(Truncate(reaction.ReplyToSourceStar, 260)));
             }
             user.AppendLine();
             user.AppendLine("Return your feedback emotional vectors toward the Last Cat now.");
@@ -290,9 +294,9 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
-            string previousXml = request.PreviousRecord == null || string.IsNullOrWhiteSpace(request.PreviousRecord.XmlContent)
+            string previousJson = request.PreviousRecord == null || (string.IsNullOrWhiteSpace(request.PreviousRecord.JsonContent) && string.IsNullOrWhiteSpace(request.PreviousRecord.XmlContent))
                 ? "none"
-                : Truncate(request.PreviousRecord.XmlContent, 4000);
+                : Truncate(!string.IsNullOrWhiteSpace(request.PreviousRecord.JsonContent) ? request.PreviousRecord.JsonContent : request.PreviousRecord.XmlContent, 4000);
 
             Dictionary<string, string> systemData = new Dictionary<string, string>
             {
@@ -310,7 +314,7 @@ namespace Wds.SixStars.Api.Ai
                 { "RelationshipContext", relationship.ToString().TrimEnd() },
                 { "RecentConversationTurns", recent.ToString().TrimEnd() },
                 { "DurableMemoryContext", memory.ToString().TrimEnd() },
-                { "PreviousDailyStateXml", previousXml }
+                { "PreviousDailyStateJson", previousJson }
             };
 
             return new List<ChatMessage>
@@ -638,6 +642,15 @@ namespace Wds.SixStars.Api.Ai
             return string.Empty;
         }
 
+        private static bool IsTruthyFlag(StarInteractionRequest request, string key)
+        {
+            string value = GetFlag(request?.GameContext, key);
+            return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact)
         {
             List<ConversationLogEntry> usableHistory = GetUsableRecentConversationHistory(state, Math.Max(1, maxItems));
@@ -691,28 +704,32 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendTodayStateContext(StringBuilder sb, StarInteractionRequest request)
         {
-            string xml = string.Empty;
+            string json = string.Empty;
+            string legacyXml = string.Empty;
             string summary = string.Empty;
             string generatedAt = string.Empty;
             string slotId = string.Empty;
             if (request.GameContext != null && request.GameContext.Flags != null)
             {
-                request.GameContext.Flags.TryGetValue("todayStarStateXml", out xml);
+                request.GameContext.Flags.TryGetValue("todayStarStateJson", out json);
+                request.GameContext.Flags.TryGetValue("todayStarStateXml", out legacyXml);
                 request.GameContext.Flags.TryGetValue("todayStarStateSummary", out summary);
                 request.GameContext.Flags.TryGetValue("todayStarStateGeneratedAt", out generatedAt);
                 request.GameContext.Flags.TryGetValue("todayStarStateSlotId", out slotId);
             }
 
-            if (string.IsNullOrWhiteSpace(xml))
+            if (string.IsNullOrWhiteSpace(json) && !string.IsNullOrWhiteSpace(legacyXml)) json = legacyXml;
+
+            if (string.IsNullOrWhiteSpace(json))
             {
-                sb.AppendLine("TODAY STAR STATE XML: none yet. If the player asks what you are up to, answer from your profile, relationship state, and recent history without pretending to know a generated daily schedule.");
+                sb.AppendLine("TODAY STAR STATE JSON: none yet. If the player asks what you are up to, answer from your profile, relationship state, and recent history without pretending to know a generated daily schedule.");
                 return;
             }
 
-            sb.AppendLine("TODAY STAR STATE XML");
+            sb.AppendLine("TODAY STAR STATE JSON");
             sb.AppendLine("GeneratedAt=" + generatedAt + "; Slot=" + slotId + "; Summary=" + Truncate(summary, 300));
-            sb.AppendLine(xml.Trim());
-            sb.AppendLine("Use this current-day XML quietly when the player asks what you are doing, how you feel today, who you have seen, what has happened recently, what you want, or what your current situation is. Do not mention XML unless the player asks about system internals.");
+            sb.AppendLine(json.Trim());
+            sb.AppendLine("Use this current-day JSON quietly when the player asks what you are doing, how you feel today, who you have seen, what has happened recently, what you want, or what your current situation is. Do not mention JSON unless the player asks about system internals.");
         }
 
         private static void AppendStoryModeSystemContext(StringBuilder sb, StarProfile profile)
@@ -1308,6 +1325,15 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("It is okay to end with a small in-character question back, but only after answering the player's actual question.");
             sb.AppendLine("Emotion and relationship scoring is handled in the background review. In this foreground pass, simply let the relationship state shape her tone without mentioning scores or vectors.");
             sb.AppendLine("Connection system guidance: the API stores EmotionalConnectionPercent separately from Heart/Trust/Romance. The Star knows the current percent, but she should not talk about the number unless the player explicitly asks about relationship mechanics. To become girlfriend-ready, she must be an ally, have high connection, and have enough Heart/Trust/Romance. Non-allies should not act romantically available.");
+            if (IsTruthyFlag(request, "starInitiative"))
+            {
+                sb.AppendLine();
+                sb.AppendLine("STAR AT-REST INITIATIVE MODE");
+                sb.AppendLine("This is not a player command. The app is quietly asking whether " + profile.DisplayName + " wants to say something to the Last Cat while he is quiet, newly connected, or resting.");
+                sb.AppendLine("Use TODAY STAR STATE JSON, especially today.wantsToTalkAbout / conversationHooks, recent emotional/interstar feedback, and relationship state. Speak as if you chose to bring it up naturally.");
+                sb.AppendLine("Do not say the player asked this. Do not mention systems, JSON, vectors, mobile, reconnects, or initiative checks.");
+                sb.AppendLine("If she has something real to say, use 1-3 short spokenText chunks. If nothing feels important, give a brief gentle check-in or observation instead of forcing drama.");
+            }
             if (string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase))
             {
                 sb.AppendLine("Kaelia-specific romance hook: she has never pet a cat before; the Last Cat's warmth, fur/cat hair, purring nature, and impossible gentleness can make her physically and romantically drawn to him, but she is nervous and private about it because he is a cat. In this world that kind of cross-nature attraction can happen, but she should still require trust, consent, and emotional safety.");

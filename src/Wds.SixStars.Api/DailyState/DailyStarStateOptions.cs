@@ -9,6 +9,8 @@ namespace Wds.SixStars.Api.DailyState
         public bool RefreshSelectedStarOnRequest { get; set; } = true;
         public string StateRoot { get; set; } = "state/daily-star-state";
         public int PollSeconds { get; set; } = 180;
+        public int MaxJsonCharsForPrompt { get; set; } = 12000;
+        /// <summary>Legacy alias for older config files; daily state is now JSON.</summary>
         public int MaxXmlCharsForPrompt { get; set; } = 12000;
         public List<string> StarIds { get; set; } = new List<string>();
         public List<DailyStarStateScheduleSlot> RefreshSlots { get; set; } = CreateDefaultSlots();

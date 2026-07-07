@@ -283,7 +283,7 @@ public sealed partial class MainViewModel
 
             case "ClearHistory":
             {
-                StarState state = await _runtime.ResetStarMemoryAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await ResetStarEverywhereAsync(starId, sessionId, cancellationToken).ConfigureAwait(false);
                 _stateChangeTracker.Reset(starId);
                 OnUiThread(() =>
                 {
@@ -302,7 +302,7 @@ public sealed partial class MainViewModel
                 StarState selectedState = null!;
                 foreach (string star in StarIds.ToList())
                 {
-                    StarState reset = await _runtime.ResetStarMemoryAsync(sessionId, star, cancellationToken).ConfigureAwait(false);
+                    StarState reset = await ResetStarEverywhereAsync(star, sessionId, cancellationToken).ConfigureAwait(false);
                     _stateChangeTracker.Reset(star);
                     if (string.Equals(star, starId, StringComparison.OrdinalIgnoreCase) || string.Equals(star, SelectedStarId, StringComparison.OrdinalIgnoreCase))
                     {
@@ -324,7 +324,7 @@ public sealed partial class MainViewModel
                         Romance = reset.Romance,
                         EmotionalConnectionPercent = reset.EmotionalConnectionPercent,
                         IsGirlfriendReady = reset.IsGirlfriendReady,
-                        Message = "Elusiaa helped clear all local Android Star data for " + star + "."
+                        Message = "Elusiaa helped fully clear local Star data for " + star + " across desktop, Android dev, Android prod, daily JSON/XML cache, relationship scores, and conversation history."
                     });
                 }
                 if (selectedState == null) selectedState = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
@@ -334,7 +334,7 @@ public sealed partial class MainViewModel
                     StarOutput = string.Empty;
                     LastTranscript = string.Empty;
                 });
-                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept every Android Star memory shelf clean and refreshed the state.");
+                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept every Star memory shelf clean across desktop and Android sessions and refreshed the state.");
             }
             case "SendPhoto":
             {
@@ -392,6 +392,63 @@ public sealed partial class MainViewModel
                     EmotionalEffectVector = FirstNonEmptyForMobile(photoResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
                     NegativeEmotionVector = FirstNonEmptyForMobile(photoResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
                     LastEmotionVectorsText = FirstNonEmptyForMobile(photoResponse.LastEmotionVectorsText, FormatEmotionVectors(photoResponse.EmotionalEffectVector, photoResponse.NegativeEmotionVector)),
+                    InterstarStatusText = InterstarStatusText
+                });
+                return result;
+            }
+
+            case "MaybeStarInitiative":
+            {
+                MobileBridgeRequest initiativeRequest = new MobileBridgeRequest
+                {
+                    SessionId = sessionId,
+                    StarId = starId,
+                    RequestType = "Chat",
+                    PlayerText = string.IsNullOrWhiteSpace(command.PlayerText)
+                        ? "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, or interstar feedback that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in."
+                        : command.PlayerText,
+                    Area = string.IsNullOrWhiteSpace(command.Area) ? Area : command.Area,
+                    Quest = string.IsNullOrWhiteSpace(command.Quest) ? "AndroidProdStarInitiative" : command.Quest,
+                    RomanceMode = command.RomanceMode,
+                    SpeakOnDesktop = command.SpeakOnDesktop,
+                    ReturnAudio = command.ReturnAudio,
+                    ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid-StarInitiative" : command.ClientName
+                };
+
+                MobileBridgeResponse initiativeResponse = await ProcessMobileConversationAsync(initiativeRequest, string.Empty, cancellationToken).ConfigureAwait(false);
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "MaybeStarInitiative", sessionId, starId, state, initiativeResponse);
+                result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = initiativeResponse.Ok ? "StarInitiativeResponseReady" : "StarInitiativeResponseFailed",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    Heart = state.Heart,
+                    Trust = state.Trust,
+                    Romance = state.Romance,
+                    EmotionalConnectionPercent = state.EmotionalConnectionPercent,
+                    IsGirlfriendReady = state.IsGirlfriendReady,
+                    Message = initiativeResponse.Ok ? starId + " chose to say something at rest." : initiativeResponse.VoiceError,
+                    Error = initiativeResponse.Ok ? string.Empty : initiativeResponse.VoiceError,
+                    SpokenText = initiativeResponse.SpokenText ?? string.Empty,
+                    StoryId = initiativeResponse.StoryId ?? string.Empty,
+                    StoryTitle = initiativeResponse.StoryTitle ?? string.Empty,
+                    StoryMarkdown = initiativeResponse.StoryMarkdown ?? string.Empty,
+                    StorySummary = initiativeResponse.StorySummary ?? string.Empty,
+                    StoryPartIndex = initiativeResponse.StoryPartIndex,
+                    StoryIsFinished = initiativeResponse.StoryIsFinished,
+                    StoryChunkCount = initiativeResponse.StoryChunkCount,
+                    TopAffectedEmotions = initiativeResponse.TopAffectedEmotions.Count > 0 ? initiativeResponse.TopAffectedEmotions.ToList() : (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                    RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
+                    EmotionalEffectVector = FirstNonEmptyForMobile(initiativeResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
+                    NegativeEmotionVector = FirstNonEmptyForMobile(initiativeResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
+                    LastEmotionVectorsText = FirstNonEmptyForMobile(initiativeResponse.LastEmotionVectorsText, FormatEmotionVectors(initiativeResponse.EmotionalEffectVector, initiativeResponse.NegativeEmotionVector)),
                     InterstarStatusText = InterstarStatusText
                 });
                 return result;
@@ -474,7 +531,8 @@ public sealed partial class MainViewModel
             DailyStateLocalDate = FirstNonEmptyForMobile(response.DailyStateLocalDate, state.TodayState?.LocalDate),
             DailyStateGeneratedAt = response.DailyStateGeneratedAt ?? state.TodayState?.GeneratedAt,
             DailyStateSummary = FirstNonEmptyForMobile(response.DailyStateSummary, state.TodayState?.Summary),
-            DailyStateXml = FirstNonEmptyForMobile(response.DailyStateXml, state.TodayState?.Xml),
+            DailyStateJson = FirstNonEmptyForMobile(response.DailyStateJson, state.TodayState?.Json, state.TodayState?.Xml),
+            DailyStateXml = string.Empty,
             TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
             RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             EmotionalEffectVector = FirstNonEmptyForMobile(response.EmotionalEffectVector, state.LastEmotionalEffectVector),
@@ -501,7 +559,8 @@ public sealed partial class MainViewModel
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
             DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
             DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
-            DailyStateXml = state.TodayState?.Xml ?? string.Empty,
+            DailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
+            DailyStateXml = string.Empty,
             TopAffectedEmotions = (state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
             RecentConversationHistory = CreateMobileRecentConversationHistory(state, 10),
             EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
@@ -537,7 +596,8 @@ public sealed partial class MainViewModel
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
             DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
             DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
-            DailyStateXml = state.TodayState?.Xml ?? string.Empty,
+            DailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
+            DailyStateXml = string.Empty,
             Message = message
         });
         return result;
@@ -573,7 +633,8 @@ public sealed partial class MainViewModel
                 DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
                 DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
                 DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
-                DailyStateXml = state.TodayState?.Xml ?? string.Empty,
+                DailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
+            DailyStateXml = string.Empty,
                 Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
             });
         }
@@ -695,7 +756,8 @@ public sealed partial class MainViewModel
             dailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
             dailyStateGeneratedAt = state.TodayState?.GeneratedAt,
             dailyStateSummary = state.TodayState?.Summary ?? string.Empty,
-            dailyStateXml = state.TodayState?.Xml ?? string.Empty,
+            dailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
+            dailyStateXml = string.Empty,
             interactionCount = state.InteractionCount
         };
     }
@@ -1174,6 +1236,12 @@ public sealed partial class MainViewModel
         context.Flags["phoneAudioSocketConnected"] = ((_mobileBridgeAudioHost?.ClientCount ?? 0) > 0).ToString().ToLowerInvariant();
         context.Flags["speakOnDesktop"] = request.SpeakOnDesktop.ToString().ToLowerInvariant();
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
+        if (IsMobileStarInitiativeRequest(request))
+        {
+            context.Flags["starInitiative"] = "true";
+            context.Flags["initiativeReason"] = string.IsNullOrWhiteSpace(request.Quest) ? "mobile at-rest initiative" : request.Quest;
+            context.RecentEvents.Add("At-rest Star initiative check from Android/desktop bridge; the Star may speak naturally if she has something to say.");
+        }
         if (HasMobilePhoto(request))
         {
             context.Flags["androidPhotoAttached"] = "true";
@@ -1182,6 +1250,20 @@ public sealed partial class MainViewModel
             if (!string.IsNullOrWhiteSpace(request.PhotoCaption)) context.RecentEvents.Add("Android photo caption: " + TruncateForUi(request.PhotoCaption, 240));
         }
         return context;
+    }
+
+
+    private static bool IsMobileStarInitiativeRequest(MobileBridgeRequest request)
+    {
+        if (request == null) return false;
+        return ContainsIgnoreCase(request.ClientName, "StarInitiative")
+            || ContainsIgnoreCase(request.Quest, "StarInitiative");
+    }
+
+    private static bool ContainsIgnoreCase(string? value, string fragment)
+    {
+        return !string.IsNullOrWhiteSpace(value)
+            && value.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
 
@@ -1510,7 +1592,8 @@ public sealed partial class MainViewModel
             DailyStateLocalDate = GetFlag(runtimeRequest, "todayStarStateLocalDate"),
             DailyStateGeneratedAt = TryParseDateTimeOffset(GetFlag(runtimeRequest, "todayStarStateGeneratedAt")),
             DailyStateSummary = GetFlag(runtimeRequest, "todayStarStateSummary"),
-            DailyStateXml = GetFlag(runtimeRequest, "todayStarStateXml"),
+            DailyStateJson = GetFlag(runtimeRequest, "todayStarStateJson"),
+            DailyStateXml = string.Empty,
             VoiceMessage = mobileRequest.ReturnAudio
                 ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
                 : "Phone voice was not requested."

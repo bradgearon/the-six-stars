@@ -64,7 +64,14 @@ namespace Wds.SixStars.Api.Engine
         private static StarState CreateDefaultState(string starId)
         {
             bool elusiaa = string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
-            return new StarState { StarId = starId, IsMet = elusiaa, IsAlly = elusiaa };
+            return new StarState
+            {
+                StarId = starId,
+                IsMet = elusiaa,
+                IsAlly = elusiaa,
+                LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
+                TodayState = new StarDailyStateContext()
+            };
         }
 
         private static void NormalizeState(StarState state)

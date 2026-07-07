@@ -80,6 +80,8 @@
                     <Button Content="Send Message" Command="{Binding SendMessageCommand}" Margin="0,0,0,8" Height="36" />
                     <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Margin="0,0,0,8" Height="36" />
                     <Button Content="Interrupt Story" Command="{Binding InterruptStoryCommand}" Margin="0,0,0,8" Height="34" />
+                    <CheckBox Content="Auto Star at-rest lines" IsChecked="{Binding StarInitiativeEnabled, Mode=TwoWay}" Margin="0,0,0,6" />
+                    <Button Content="Ask Star If She Wants To Speak" Command="{Binding AskStarInitiativeNowCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />
                     <TextBlock Text="Send Message keeps RequestType=Chat and requires typed text. Tell Me A Story sets RequestType=Story; with blank message/seed, the selected Star invents the story herself. Interrupt Story stops local cached story autoplay. Clear Selected Star History resets one Star. Clear All Star Data resets every Star state saved locally and refreshes both desktop and Android dev sessions." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
@@ -228,16 +230,23 @@
                 </GroupBox>
             </Grid>
 
-            <GroupBox Grid.Column="2" Header="Debug JSON / Unity Payload">
-                <TextBox Text="{Binding DebugJson}"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="NoWrap"
-                         HorizontalScrollBarVisibility="Auto"
-                         VerticalScrollBarVisibility="Auto"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         Padding="10" />
+            <GroupBox Grid.Column="2" Header="Debug JSON / Unity Payload / Conversation Trace">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,6">
+                        <Button Content="Load Latest Conversation Log" Command="{Binding LoadLatestConversationDebugLogCommand}" Height="28" Margin="0,0,6,0" />
+                        <Button Content="Copy Log" Command="{Binding CopyLatestConversationDebugLogCommand}" Height="28" Margin="0,0,6,0" />
+                        <Button Content="Open In Notepad" Command="{Binding OpenLatestConversationDebugLogCommand}" Height="28" />
+                    </StackPanel>
+                    <TextBox Text="{Binding DebugJson}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             HorizontalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Padding="10" />
+                </DockPanel>
             </GroupBox>
         </Grid>
     </Grid>

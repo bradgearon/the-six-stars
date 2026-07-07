@@ -3,9 +3,9 @@ using System;
 namespace Wds.SixStars.Api.Models
 {
     /// <summary>
-    /// Compact pointer to the generated per-Star daily XML state. The XML file lives beside
+    /// Compact pointer to the generated per-Star daily JSON state. The JSON file lives beside
     /// the durable Star save state for desktop/prebuilt builds, while Unity can serialize
-    /// these simple fields or ignore the file path and provide its own XML string.
+    /// these simple fields or ignore the file path and provide its own JSON string.
     /// </summary>
     public sealed class StarDailyStateContext
     {
@@ -17,6 +17,9 @@ namespace Wds.SixStars.Api.Models
         public DateTimeOffset? GeneratedAt { get; set; }
         public string FilePath { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
+        public string Json { get; set; } = string.Empty;
+
+        /// <summary>Legacy compatibility only. New daily state uses Json.</summary>
         public string Xml { get; set; } = string.Empty;
     }
 }

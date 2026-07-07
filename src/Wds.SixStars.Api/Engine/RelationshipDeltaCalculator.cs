@@ -38,16 +38,21 @@ namespace Wds.SixStars.Api.Engine
             List<EmotionVectorScore> positiveAll = ParseVector(response.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds);
             List<EmotionVectorScore> negativeAll = ParseVector(response.NegativeEmotionVector, NegativeEmotionIds);
 
+            // Relationship scoring should not silently collapse the vector to the top few emotions.
+            // The model's score is the strength of the feeling and confidence is only a certainty multiplier,
+            // so every non-zero positive vector entry is useful Star-specific evidence.
             List<EmotionVectorScore> positiveSignals = positiveAll
-                .Where(IsMeaningfulRelationshipEvidence)
+                .Where(HasAnyEmotionEvidence)
                 .OrderByDescending(x => x.WeightedScore)
-                .Take(8)
+                .ThenByDescending(x => x.Score)
                 .ToList();
 
+            // Boundary/negative vectors still use a stronger floor before they can punish state, so tiny
+            // accidental negative noise does not hurt the player.
             List<EmotionVectorScore> negativeSignals = negativeAll
                 .Where(IsMeaningfulBoundaryEvidence)
                 .OrderByDescending(x => x.WeightedScore)
-                .Take(6)
+                .ThenByDescending(x => x.Score)
                 .ToList();
 
             RelationshipDelta delta = new RelationshipDelta();
@@ -93,13 +98,13 @@ namespace Wds.SixStars.Api.Engine
             response.AcceptedPositiveEmotionSignals.AddRange(vectorHistory.Entries
                 .Where(x => x.Accepted && !string.Equals(x.Polarity, "negative", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
-                .Take(8)
+                .ThenByDescending(x => x.Score)
                 .Select(FormatHistoryItem));
             response.AcceptedNegativeEmotionSignals.Clear();
             response.AcceptedNegativeEmotionSignals.AddRange(vectorHistory.Entries
                 .Where(x => x.Accepted && string.Equals(x.Polarity, "negative", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(x => x.WeightedScore * Math.Max(0.05, x.AffectsStar))
-                .Take(8)
+                .ThenByDescending(x => x.Score)
                 .Select(FormatHistoryItem));
             response.AcceptedRelationshipCombos.Clear();
             response.AcceptedRelationshipCombos.AddRange(acceptedCombos);
@@ -111,7 +116,7 @@ namespace Wds.SixStars.Api.Engine
             return delta;
         }
 
-        public static List<TopAffectedEmotion> BuildTopAffectedEmotions(string? emotionalEffectVector, string? negativeEmotionVector, int maxCount = 3)
+        public static List<TopAffectedEmotion> BuildTopAffectedEmotions(string? emotionalEffectVector, string? negativeEmotionVector, int maxCount = 0)
         {
             List<TopAffectedEmotion> all = new List<TopAffectedEmotion>();
 
@@ -129,13 +134,14 @@ namespace Wds.SixStars.Api.Engine
                 all.Add(CreateTopAffectedEmotion(signal, "negative"));
             }
 
-            return all
+            IEnumerable<TopAffectedEmotion> ordered = all
                 .OrderByDescending(x => x.WeightedScore)
                 .ThenByDescending(x => x.Score)
                 .ThenByDescending(x => x.Confidence)
-                .ThenBy(x => x.EmotionId, StringComparer.OrdinalIgnoreCase)
-                .Take(Math.Max(1, maxCount <= 0 ? 3 : maxCount))
-                .ToList();
+                .ThenBy(x => x.EmotionId, StringComparer.OrdinalIgnoreCase);
+
+            if (maxCount > 0) ordered = ordered.Take(maxCount);
+            return ordered.ToList();
         }
 
         public static List<EmotionVectorScore> ParseVector(string? vector, IReadOnlyList<string> ids)
@@ -220,9 +226,10 @@ namespace Wds.SixStars.Api.Engine
             double trust = starScore * GetWeight(rule, "trust");
             double romance = starScore * GetWeight(rule, "romance");
             bool isNegativePolarity = string.Equals(string.IsNullOrWhiteSpace(rule.Polarity) ? fallbackPolarity : rule.Polarity, "negative", StringComparison.OrdinalIgnoreCase);
-            bool accepted = (isNegativePolarity ? IsMeaningfulBoundaryEvidence(signal) : IsScorableEvidence(signal))
-                && affectsStar >= 0.20
-                && (Math.Abs(heart) + Math.Abs(trust) + Math.Abs(romance)) >= 0.01;
+            bool hasStatEffect = (Math.Abs(heart) + Math.Abs(trust) + Math.Abs(romance)) >= 0.001;
+            bool accepted = isNegativePolarity
+                ? (IsMeaningfulBoundaryEvidence(signal) && affectsStar > 0 && hasStatEffect)
+                : (HasAnyEmotionEvidence(signal) && affectsStar > 0 && hasStatEffect);
 
             entry.Entries.Add(new StarEmotionVectorHistoryItem
             {
@@ -561,15 +568,12 @@ namespace Wds.SixStars.Api.Engine
 
         private static bool IsMeaningfulRelationshipEvidence(EmotionVectorScore signal)
         {
-            // Anything non-zero can build stored Star-specific accumulators, but this list is used
-            // for turn-level summaries, connection, and legacy combo hints, so keep a tiny
-            // weighted floor to filter accidental dust like 0.01:0.
-            return HasAnyEmotionEvidence(signal) && signal.WeightedScore >= 2.0;
+            return HasAnyEmotionEvidence(signal);
         }
 
         private static bool IsComboWorthyEvidence(EmotionVectorScore signal)
         {
-            return HasAnyEmotionEvidence(signal) && signal.WeightedScore >= 2.0 && signal.Score >= 10;
+            return HasAnyEmotionEvidence(signal);
         }
 
         private static bool IsMeaningfulBoundaryEvidence(EmotionVectorScore signal)
@@ -589,17 +593,17 @@ namespace Wds.SixStars.Api.Engine
 
         private static bool IsIntimateEvidence(EmotionVectorScore signal)
         {
-            return HasAnyEmotionEvidence(signal) && signal.Score >= 20 && signal.WeightedScore >= 2.0;
+            return HasAnyEmotionEvidence(signal) && signal.Score >= 10;
         }
 
         private static bool IsPersonalityMatchEvidence(EmotionVectorScore signal)
         {
-            return HasAnyEmotionEvidence(signal) && signal.Score >= 25 && signal.WeightedScore >= 3.0;
+            return HasAnyEmotionEvidence(signal) && signal.Score >= 10;
         }
 
         private static bool IsRomanticEvidence(EmotionVectorScore signal)
         {
-            return HasAnyEmotionEvidence(signal) && signal.Score >= 20 && signal.WeightedScore >= 2.0;
+            return HasAnyEmotionEvidence(signal) && signal.Score >= 10;
         }
 
         private static void ApplyMajorNegativeSafetyDeltas(RelationshipDelta delta, List<EmotionVectorScore> negative, bool romanceMode)
@@ -884,7 +888,7 @@ namespace Wds.SixStars.Api.Engine
                 .Take(5)
                 .Select(FormatHistoryItem)
                 .ToList();
-            return top.Count == 0 ? "No high-certainty Star-specific emotion entries accepted." : "Accepted Star-specific emotions: " + string.Join(", ", top);
+            return top.Count == 0 ? "No non-zero Star-specific emotion entries accepted." : "Accepted Star-specific emotions: " + string.Join(", ", top);
         }
 
         private static string FormatHistoryItem(StarEmotionVectorHistoryItem item)

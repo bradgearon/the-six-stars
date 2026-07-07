@@ -17,11 +17,11 @@ RECENT CONVERSATION TURNS
 DURABLE MEMORY / MARKERS / STORIES
 {{ DurableMemoryContext }}
 
-PREVIOUS DAILY STATE XML
-{{ PreviousDailyStateXml }}
+PREVIOUS DAILY STATE JSON
+{{ PreviousDailyStateJson }}
 
 Write the new current-day state as compact JSON fields. This is not a spoken reply.
-Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. Only moodTags, recentPeopleSeen, recentEvents, todayIntentions, and conversationHooks should be arrays of strings.
+Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. Only moodTags, recentPeopleSeen, recentEvents, todayIntentions, thingsSheWantsToTalkAbout, and conversationHooks should be arrays of strings.
 Guidelines:
 - situationSummary: one compact paragraph about where she is emotionally and narratively right now.
 - feelingsSummary: what she currently feels toward the Last Cat, herself, the other Stars, and the world.
@@ -32,5 +32,6 @@ Guidelines:
 - recentEventsSummary and recentEvents: summarize recent conversation/game events, not technical parser notes.
 - privateSecretsOrHooks: secrets or hooks she might reveal only if relationship/emotional state supports it.
 - promptUseSummary: one line explaining how future requests should use this state.
+- thingsSheWantsToTalkAbout: 3-8 specific short things she may want to bring up with the Last Cat later if an at-rest initiative check asks whether she has anything to say. Make these personal to her domain, relationship posture, recent emotional/interstar feedback, and current daily state; do not use technical/system notes.
 - moodTags, todayIntentions, conversationHooks: short strings useful for prompt injection and UI/game debugging.
 Return JSON only.

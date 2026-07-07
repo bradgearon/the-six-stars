@@ -12,7 +12,7 @@ using Wds.SixStars.Api.State;
 namespace Wds.SixStars.Api.DailyState
 {
     /// <summary>
-    /// Maintains a small generated XML file for each Star's current day/slot.
+    /// Maintains a small generated JSON file for each Star's current day/slot.
     /// The file is regenerated at configured local-time windows and injected into normal Star prompts.
     /// </summary>
     public sealed class StarDailyStateService : IDisposable
@@ -85,11 +85,7 @@ namespace Wds.SixStars.Api.DailyState
             }
 
             string localDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            bool alreadyHasSlot = current != null
-                && string.Equals(current.LocalDate, localDate, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(current.SlotId, slot.SlotId, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(current.XmlContent);
-            if (alreadyHasSlot)
+            if (IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
             {
                 return current;
             }
@@ -100,6 +96,11 @@ namespace Wds.SixStars.Api.DailyState
         public async Task<StarDailyStateRecord?> ReadCurrentAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             return await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+        }
+
+        public async Task ClearStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            await _store.ClearStarAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
         }
 
         public async Task TouchSourceStateUpdatedAsync(string sessionId, string starId, StarState state, CancellationToken cancellationToken)
@@ -151,15 +152,12 @@ namespace Wds.SixStars.Api.DailyState
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 StarDailyStateRecord? current = await _store.ReadCurrentAsync(sessionId, profile.StarId, cancellationToken).ConfigureAwait(false);
-                if (current != null
-                    && string.Equals(current.LocalDate, localDate, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(current.SlotId, slot.SlotId, StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(current.XmlContent))
+                StarState state = await _memoryApi.GetStarStateAsync(sessionId, profile.StarId, cancellationToken).ConfigureAwait(false);
+                if (IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
                 {
                     continue;
                 }
 
-                StarState state = await _memoryApi.GetStarStateAsync(sessionId, profile.StarId, cancellationToken).ConfigureAwait(false);
                 await RefreshAsync(sessionId, profile.StarId, state, slot, "scheduled daily Star state refresh", cancellationToken).ConfigureAwait(false);
             }
         }
@@ -192,10 +190,7 @@ namespace Wds.SixStars.Api.DailyState
                 // Check again after acquiring the per-star gate; another request may have generated it.
                 string localDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 StarDailyStateRecord? current = await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                if (current != null
-                    && string.Equals(current.LocalDate, localDate, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(current.SlotId, slot.SlotId, StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(current.XmlContent))
+                if (IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
                 {
                     return current;
                 }
@@ -212,7 +207,7 @@ namespace Wds.SixStars.Api.DailyState
                     PreviousRecord = current
                 }, cancellationToken).ConfigureAwait(false);
 
-                string xml = BuildXml(profile, state, model, sessionId, localDate, slot.SlotId, DateTimeOffset.Now, reason);
+                string json = BuildJson(profile, state, model, sessionId, localDate, slot.SlotId, DateTimeOffset.Now, reason);
                 StarDailyStateRecord record = new StarDailyStateRecord
                 {
                     SessionId = sessionId,
@@ -221,11 +216,11 @@ namespace Wds.SixStars.Api.DailyState
                     SlotId = slot.SlotId,
                     GeneratedAt = DateTimeOffset.Now,
                     Summary = FirstNonEmpty(model.PromptUseSummary, model.SituationSummary, model.WhatSheIsDoingToday),
-                    XmlContent = xml
+                    JsonContent = json
                 };
 
                 record = await _store.WriteAsync(record, cancellationToken).ConfigureAwait(false);
-                await _memoryApi.SetStarDailyStateContextAsync(sessionId, profile.StarId, ToContext(record, _options.MaxXmlCharsForPrompt), cancellationToken).ConfigureAwait(false);
+                await _memoryApi.SetStarDailyStateContextAsync(sessionId, profile.StarId, ToContext(record, (_options.MaxJsonCharsForPrompt > 0 ? _options.MaxJsonCharsForPrompt : _options.MaxXmlCharsForPrompt)), cancellationToken).ConfigureAwait(false);
                 DailyStateUpdated?.Invoke(this, new StarDailyStateUpdatedEventArgs { Record = record, Generated = true, Reason = reason });
                 return record;
             }
@@ -282,14 +277,32 @@ namespace Wds.SixStars.Api.DailyState
             return false;
         }
 
-        private static StarDailyStateContext ToContext(StarDailyStateRecord record, int maxXmlChars)
+
+        private static bool IsCurrentRecordUsableForState(StarDailyStateRecord? current, string localDate, string slotId, StarState state)
         {
-            int max = Math.Max(1000, maxXmlChars <= 0 ? 12000 : maxXmlChars);
-            string xml = record.XmlContent ?? string.Empty;
-            if (xml.Length > max) xml = xml.Substring(0, max) + "\n<!-- daily-star-state truncated for prompt -->";
+            if (current == null || (string.IsNullOrWhiteSpace(current.JsonContent) && string.IsNullOrWhiteSpace(current.XmlContent))) return false;
+            if (!string.Equals(current.LocalDate, localDate, StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(current.SlotId, slotId, StringComparison.OrdinalIgnoreCase)) return false;
+
+            // A clear/reset or relationship update should invalidate the current-slot daily state even if
+            // the date/slot did not change. Otherwise prompts can keep receiving stale relationship
+            // numbers from today's generated daily state after the user presses Clear All Star Data.
+            if (state != null && state.LastDailyStateSourceUpdateAt.HasValue && current.GeneratedAt < state.LastDailyStateSourceUpdateAt.Value)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static StarDailyStateContext ToContext(StarDailyStateRecord record, int maxChars)
+        {
+            int max = Math.Max(1000, maxChars <= 0 ? 12000 : maxChars);
+            string json = !string.IsNullOrWhiteSpace(record.JsonContent) ? record.JsonContent : (record.XmlContent ?? string.Empty);
+            if (json.Length > max) json = json.Substring(0, max) + "\n/* daily-star-state truncated for prompt */";
             return new StarDailyStateContext
             {
-                IsAvailable = !string.IsNullOrWhiteSpace(record.XmlContent),
+                IsAvailable = !string.IsNullOrWhiteSpace(record.JsonContent) || !string.IsNullOrWhiteSpace(record.XmlContent),
                 SessionId = record.SessionId,
                 StarId = record.StarId,
                 LocalDate = record.LocalDate,
@@ -297,8 +310,73 @@ namespace Wds.SixStars.Api.DailyState
                 GeneratedAt = record.GeneratedAt,
                 FilePath = record.FilePath,
                 Summary = record.Summary ?? string.Empty,
-                Xml = xml
+                Json = json,
+                Xml = string.Empty
             };
+        }
+
+
+        private static string BuildJson(StarProfile profile, StarState state, StarDailyStateModelResponse model, string sessionId, string localDate, string slotId, DateTimeOffset generatedAt, string reason)
+        {
+            var payload = new
+            {
+                version = 1,
+                sessionId = sessionId ?? string.Empty,
+                starId = profile.StarId ?? string.Empty,
+                starName = profile.DisplayName ?? profile.StarId ?? string.Empty,
+                localDate = localDate ?? string.Empty,
+                slotId = slotId ?? string.Empty,
+                generatedAt = generatedAt.ToString("o"),
+                generationReason = reason ?? string.Empty,
+                identity = new
+                {
+                    element = profile.Element ?? string.Empty,
+                    domain = profile.Domain ?? string.Empty,
+                    coreQuote = profile.CoreQuote ?? string.Empty,
+                    personality = profile.PersonalityShort ?? string.Empty
+                },
+                relationship = new
+                {
+                    heart = state.Heart,
+                    trust = state.Trust,
+                    romance = state.Romance,
+                    benaveilInfluence = state.BenaveilInfluence,
+                    connectionPercent = Math.Round(state.EmotionalConnectionPercent, 1),
+                    isMet = state.IsMet,
+                    isAlly = state.IsAlly,
+                    isGirlfriendReady = state.IsGirlfriendReady,
+                    isGirlfriend = state.IsGirlfriend
+                },
+                currentInnerLife = new
+                {
+                    situationSummary = model.SituationSummary ?? string.Empty,
+                    feelings = model.FeelingsSummary ?? string.Empty,
+                    relationshipPosture = model.RelationshipPosture ?? string.Empty,
+                    desires = model.CurrentDesires ?? string.Empty,
+                    privateSecretsOrHooks = model.PrivateSecretsOrHooks ?? string.Empty
+                },
+                today = new
+                {
+                    whatSheIsDoing = model.WhatSheIsDoingToday ?? string.Empty,
+                    intentions = (model.TodayIntentions ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+                    wantsToTalkAbout = (model.ThingsSheWantsToTalkAbout ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+                    moodTags = (model.MoodTags ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+                    conversationHooks = (model.ConversationHooks ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList()
+                },
+                recentAwareness = new
+                {
+                    peopleSeenSummary = model.RecentPeopleSeenSummary ?? string.Empty,
+                    peopleSeen = (model.RecentPeopleSeen ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+                    eventsSummary = model.RecentEventsSummary ?? string.Empty,
+                    events = (model.RecentEvents ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList()
+                },
+                promptUse = new
+                {
+                    summary = model.PromptUseSummary ?? string.Empty
+                }
+            };
+
+            return System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
         private static string BuildXml(StarProfile profile, StarState state, StarDailyStateModelResponse model, string sessionId, string localDate, string slotId, DateTimeOffset generatedAt, string reason)

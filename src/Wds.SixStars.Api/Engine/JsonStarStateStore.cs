@@ -81,6 +81,8 @@ namespace Wds.SixStars.Api.Engine
                 IsAlly = IsDefaultAlly(starId),
                 EmotionalConnectionSkillLevel = "interested_private_potential_partner",
                 EmotionalConnectionPercent = 0,
+                LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
+                TodayState = new StarDailyStateContext(),
                 GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
             };
         }

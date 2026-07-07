@@ -24,6 +24,8 @@ namespace Wds.SixStars.Api.Models
         public string NegativeEmotionVector { get; set; } = string.Empty;
         public RelationshipDelta AppliedDelta { get; set; } = RelationshipDelta.Zero();
         public string TopAffectedEmotionsText { get; set; } = string.Empty;
+        /// <summary>One concise in-character sentence the destination Star would send back to the source Star.</summary>
+        public string ReplyToSourceStar { get; set; } = string.Empty;
         public string DeterministicSummary { get; set; } = string.Empty;
     }
 

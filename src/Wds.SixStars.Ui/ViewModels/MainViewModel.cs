@@ -76,6 +76,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _lastEmotionVectorsText = "Last emotional vectors: none yet.";
     private string _interstarStatusText = "Interstar state: idle.";
     private string _todayStarStateText = "Today: no daily Star state yet.";
+    private string _latestConversationDebugLogText = "No settled conversation emotion trace has been loaded yet.";
     private string _speechStatus = "Voice input stopped. Click Start Listen to enable amplitude VAD and real Whisper transcription.";
     private string _voiceInputStatus = "Amplitude VAD idle. No audio captured yet.";
     private string _microphoneCaptureStatus = "Microphone not started.";
@@ -111,11 +112,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _selectedStarIsAlly = true;
     private bool _isLoadingSelectedStarState;
     private bool _suppressMobileBridgeSelectedStarBroadcast;
+    private bool _starInitiativeEnabled;
+    private readonly CancellationTokenSource _starInitiativeLoopCts = new CancellationTokenSource();
+    private readonly Random _starInitiativeRandom = new Random();
+    private DateTimeOffset _lastStarInitiativeAt = DateTimeOffset.MinValue;
 
     public MainViewModel()
     {
         _stateChangeTracker = new StateChangeTracker();
         _appConfig = LoadConfiguration();
+        _starInitiativeEnabled = IsTruthyEnvironment("SIX_STARS_STAR_INITIATIVE_ENABLED");
         ConfigureLocalModelEnvironment();
         _selectedStarId = ResolveDefaultStarId(Environment.GetEnvironmentVariable("SIX_STARS_DEFAULT_STAR_ID") ?? _appConfig.Companion.DefaultStarId);
         _playerText = string.Empty;
@@ -240,6 +246,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 response.StateDeltas.EmotionalConnectionPercent);
             TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
             LastEmotionVectorsText = FormatEmotionVectorsForResponse(response);
+            LoadLatestConversationDebugLog();
             Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
             PublishMobileBridgeTopEmotionUpdate(response);
             DebugJson = _llmDebugLog.ToString()
@@ -270,6 +277,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _runtime.InterstarUpdateCycleCompleted += (_, result) => OnUiThread(() =>
         {
             InterstarStatusText = "Interstar state: " + result.Message;
+            LoadLatestConversationDebugLog();
             Status = result.Message;
         });
         _runtime.InterstarUpdateFailed += (_, ex) => OnUiThread(() =>
@@ -301,7 +309,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 DailyStateLocalDate = args.Record.LocalDate,
                 DailyStateGeneratedAt = args.Record.GeneratedAt,
                 DailyStateSummary = args.Record.Summary,
-                DailyStateXml = args.Record.XmlContent
+                DailyStateJson = !string.IsNullOrWhiteSpace(args.Record.JsonContent) ? args.Record.JsonContent : args.Record.XmlContent,
+                DailyStateXml = string.Empty
             });
         });
         _runtime.DailyStateUpdateFailed += (_, ex) => OnUiThread(() =>
@@ -375,7 +384,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         StopScreenAwarenessCommand = new RelayCommand(async _ => await StopScreenAwarenessAsync());
         CaptureScreenNowCommand = new RelayCommand(async _ => await CaptureScreenNowAsync());
         PlayElusiaaCloneWavCommand = new RelayCommand(async _ => await PlayElusiaaCloneWavAsync());
+        LoadLatestConversationDebugLogCommand = new RelayCommand(_ => LoadLatestConversationDebugLog());
+        CopyLatestConversationDebugLogCommand = new RelayCommand(_ => CopyLatestConversationDebugLog());
+        OpenLatestConversationDebugLogCommand = new RelayCommand(_ => OpenLatestConversationDebugLog());
+        AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         InitializeMobileBridgeCommandsAndMaybeStart();
+        _ = RunStarInitiativeLoopAsync(_starInitiativeLoopCts.Token);
 
         if (GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_ALWAYS_LISTENING"), _appConfig.VoiceInput.AlwaysListeningOnStartup))
         {
@@ -405,6 +419,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand StopScreenAwarenessCommand { get; }
     public ICommand CaptureScreenNowCommand { get; }
     public ICommand PlayElusiaaCloneWavCommand { get; }
+    public ICommand LoadLatestConversationDebugLogCommand { get; }
+    public ICommand CopyLatestConversationDebugLogCommand { get; }
+    public ICommand OpenLatestConversationDebugLogCommand { get; }
+    public ICommand AskStarInitiativeNowCommand { get; }
 
     public string SelectedStarId
     {
@@ -462,6 +480,18 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _romanceMode;
         set => SetProperty(ref _romanceMode, value);
+    }
+
+    public bool StarInitiativeEnabled
+    {
+        get => _starInitiativeEnabled;
+        set
+        {
+            if (SetProperty(ref _starInitiativeEnabled, value))
+            {
+                Status = value ? "At-rest Star initiative enabled." : "At-rest Star initiative disabled.";
+            }
+        }
     }
 
     public bool SelectedStarIsMet
@@ -633,6 +663,69 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _todayStarStateText;
         set => SetProperty(ref _todayStarStateText, value);
+    }
+
+    public string LatestConversationDebugLogText
+    {
+        get => _latestConversationDebugLogText;
+        set => SetProperty(ref _latestConversationDebugLogText, value);
+    }
+
+    private void LoadLatestConversationDebugLog()
+    {
+        string text = _runtime.ReadLatestConversationDebugLogText();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            LatestConversationDebugLogText = "No settled conversation emotion trace exists yet. Send a message and wait for the background review/interstar cycle to settle.";
+            Status = "No latest conversation emotion trace file yet. Log folder: " + _runtime.ConversationDebugLogDirectory;
+            return;
+        }
+        LatestConversationDebugLogText = text;
+        DebugJson = text;
+        Status = "Loaded latest conversation emotion trace: " + _runtime.LatestConversationDebugLogPath;
+    }
+
+    private void CopyLatestConversationDebugLog()
+    {
+        string text = _runtime.ReadLatestConversationDebugLogText();
+        if (string.IsNullOrWhiteSpace(text)) text = LatestConversationDebugLogText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Status = "No conversation emotion trace text to copy yet.";
+            return;
+        }
+        Clipboard.SetText(text);
+        Status = "Copied latest conversation emotion trace to clipboard.";
+    }
+
+    private void OpenLatestConversationDebugLog()
+    {
+        string path = _runtime.LatestConversationDebugLogPath;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            LoadLatestConversationDebugLog();
+            path = _runtime.LatestConversationDebugLogPath;
+        }
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            Status = "No latest conversation emotion trace file exists yet. Log folder: " + _runtime.ConversationDebugLogDirectory;
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "notepad.exe",
+                Arguments = "\"" + path + "\"",
+                UseShellExecute = true
+            });
+            Status = "Opened latest conversation emotion trace: " + path;
+        }
+        catch (Exception ex)
+        {
+            Status = "Could not open latest conversation emotion trace: " + ex.Message;
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -1998,13 +2091,46 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _operationController.CancelAllRuntimeOperations(reason);
     }
 
+    private static IEnumerable<string> GetFullResetSessionIds(string? primarySessionId = null)
+    {
+        string[] candidates =
+        {
+            primarySessionId ?? string.Empty,
+            DefaultSessionId,
+            "android-phone-dev",
+            "android-phone-prod",
+            "local-dev"
+        };
+
+        return candidates
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<StarState> ResetStarEverywhereAsync(string starId, string? primarySessionId, CancellationToken cancellationToken)
+    {
+        StarState? primaryState = null;
+        foreach (string sessionId in GetFullResetSessionIds(primarySessionId))
+        {
+            StarState reset = await _runtime.ResetStarMemoryAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            await _runtime.ClearDailyStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (primaryState == null || string.Equals(sessionId, primarySessionId, StringComparison.OrdinalIgnoreCase) || string.Equals(sessionId, DefaultSessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                primaryState = reset;
+            }
+        }
+
+        return primaryState ?? await _runtime.GetStarStateAsync(string.IsNullOrWhiteSpace(primarySessionId) ? DefaultSessionId : primarySessionId, starId, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task ClearSelectedStarHistoryAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
         try
         {
             CancelAllRuntimeOperations("Clearing selected Star history.");
-            StarState state = await _runtime.ResetStarMemoryAsync(DefaultSessionId, starId, CancellationToken.None).ConfigureAwait(false);
+            StarState state = await ResetStarEverywhereAsync(starId, DefaultSessionId, CancellationToken.None).ConfigureAwait(false);
             _stateChangeTracker.Reset(starId);
             PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Elusiaa saw the desktop clear history for " + starId + ".");
             OnUiThread(() =>
@@ -2044,12 +2170,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             List<object> cleared = new List<object>();
             foreach (string star in StarIds.ToList())
             {
-                StarState state = await _runtime.ResetStarMemoryAsync(DefaultSessionId, star, CancellationToken.None).ConfigureAwait(false);
-                // Also clear the Android dev bridge session so both front ends refresh to the same clean local state.
-                await _runtime.ResetStarMemoryAsync("android-phone-dev", star, CancellationToken.None).ConfigureAwait(false);
+                StarState state = await ResetStarEverywhereAsync(star, DefaultSessionId, CancellationToken.None).ConfigureAwait(false);
                 _stateChangeTracker.Reset(star);
-                cleared.Add(new { starId = star, state.IsMet, state.IsAlly });
-                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop clear all local data for " + star + ".");
+                cleared.Add(new { starId = star, state.IsMet, state.IsAlly, state.Heart, state.Trust, state.Romance, state.EmotionalConnectionPercent });
+                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear all local data for " + star + " across desktop, Android dev, and Android prod sessions.");
             }
 
             StarState selectedState = await _runtime.GetStarStateAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
@@ -2069,7 +2193,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 LastTranscript = string.Empty;
                 PlayerText = string.Empty;
                 StorySuggestion = string.Empty;
-                Status = "Cleared all local Star data for desktop and Android dev sessions.";
+                Status = "Cleared all local Star data for desktop, Android dev, Android prod, daily JSON/XML cache, relationship scores, and conversation history.";
                 DebugJson = JsonSerializer.Serialize(new { action = "clear_all_star_data", cleared }, _jsonOptions);
             });
         }
@@ -2351,6 +2475,106 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Diagnostics.Debug.WriteLine("\n=== LLM ERROR ===");
             System.Diagnostics.Debug.WriteLine(ex.ToString());
             System.Diagnostics.Debug.WriteLine("================\n");
+        }
+    }
+
+    private async Task AskStarInitiativeNowAsync()
+    {
+        await TrySpeakStarInitiativeAsync("manual desktop button", force: true).ConfigureAwait(false);
+    }
+
+    private async Task RunStarInitiativeLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                int delaySeconds;
+                lock (_starInitiativeRandom)
+                {
+                    delaySeconds = _starInitiativeRandom.Next(110, 290);
+                }
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken).ConfigureAwait(false);
+                if (StarInitiativeEnabled)
+                {
+                    await TrySpeakStarInitiativeAsync("desktop at-rest timer", force: false).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // App is shutting down.
+        }
+    }
+
+    private async Task TrySpeakStarInitiativeAsync(string reason, bool force)
+    {
+        if (!force && !StarInitiativeEnabled) return;
+        if (!force && DateTimeOffset.Now - _lastStarInitiativeAt < TimeSpan.FromMinutes(2)) return;
+        if (_isProcessingRuntime || _isRecording || _activeStoryAutoContinue)
+        {
+            if (force) Status = "Star initiative waited because the runtime is already busy.";
+            return;
+        }
+
+        try
+        {
+            StarInteractionRequest request = new StarInteractionRequest
+            {
+                SessionId = DefaultSessionId,
+                StarId = SelectedStarId,
+                Speaker = "StarInitiativeSystem",
+                RequestType = RequestType.Chat,
+                PlayerText = "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, interstar feedback, or your relationship posture that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in.",
+                GameContext = CreateGameContext("At-rest Star initiative check: " + reason),
+                StoryOptions = CreateStoryOptions(false)
+            };
+            request.GameContext.Flags["starInitiative"] = "true";
+            request.GameContext.Flags["initiativeReason"] = reason ?? string.Empty;
+            request.GameContext.RecentEvents.Add("The desktop app quietly asked whether the selected Star wants to say something at rest.");
+
+            ResetLlmDebugLog(request);
+            IsProcessingRuntime = true;
+            Status = "Asking " + SelectedStarId + " if she wants to say something at rest...";
+            CancellationToken runtimeToken = _operationController.BeginNewOperation("star initiative to " + request.StarId);
+            StarInteractionResponse response = await _runtime.ProcessAsync(request, runtimeToken).ConfigureAwait(false);
+            _lastStarInitiativeAt = DateTimeOffset.Now;
+
+            _stateChangeTracker.RecordStateChange(
+                response.StarId,
+                response.StateDeltas.Heart,
+                response.StateDeltas.Trust,
+                response.StateDeltas.Romance,
+                response.StateDeltas.BenaveilInfluence,
+                response.StateDeltas.EmotionalConnectionPercent);
+            TrackStoryFromResponse(response);
+            OnUiThread(() =>
+            {
+                StarOutput = FormatStarOutput(response);
+                LastEmotionVectorsText = FormatEmotionVectorsForResponse(response);
+                TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
+                DebugJson = _llmDebugLog.ToString()
+                    + "\n================ STAR INITIATIVE RESPONSE / UNITY PAYLOAD ================\n"
+                    + CreateEnhancedDebugOutput(request, response);
+                Status = response.StarId + " chose to say something at rest. Generating voice...";
+            });
+            await SpeakStarResponseAsync(response, runtimeToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() => Status = "Star initiative cancelled.");
+            IsProcessingRuntime = false;
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                Status = "Star initiative failed.";
+                StarOutput = ex.Message;
+                DebugJson = _llmDebugLog.ToString() + "\n================ STAR INITIATIVE ERROR ================\n" + ex;
+            });
+            IsProcessingRuntime = false;
         }
     }
 
@@ -2850,6 +3074,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
     }
 
+    private static bool IsTruthyEnvironment(string name)
+    {
+        string value = Environment.GetEnvironmentVariable(name) ?? string.Empty;
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+    }
+
+
     private static string ResolveDefaultStarId(string? value)
     {
         string normalized = (value ?? "Elusiaa").Trim();
@@ -3074,7 +3308,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EmotionId))
             .OrderByDescending(x => x.WeightedScore)
             .ThenByDescending(x => x.Score)
-            .Take(3)
             .ToList();
 
         if (list.Count == 0)
@@ -3109,7 +3342,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             .Where(x => x != null && (x.Confidence > 0 || x.Score > 0))
             .OrderByDescending(x => x.WeightedScore)
             .ThenByDescending(x => x.Score)
-            .Take(8)
             .Select(x => "+" + x.Id + " " + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00"))
             .ToList();
 
@@ -3117,7 +3349,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             .Where(x => x != null && (x.Confidence > 0 || x.Score > 0))
             .OrderByDescending(x => x.WeightedScore)
             .ThenByDescending(x => x.Score)
-            .Take(8)
             .Select(x => "-" + x.Id + " " + x.Score.ToString("0") + " @ " + x.Confidence.ToString("0.00"))
             .ToList();
 
@@ -3166,11 +3397,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             try
             {
                 StarDailyStateRecord? record = await _runtime.GetCurrentDailyStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                if (record == null || string.IsNullOrWhiteSpace(record.XmlContent)) continue;
+                if (record == null || (string.IsNullOrWhiteSpace(record.JsonContent) && string.IsNullOrWhiteSpace(record.XmlContent))) continue;
                 string text = FormatTodayStarState(record.SlotId, record.Summary);
                 if (!string.Equals(sessionId, DefaultSessionId, StringComparison.OrdinalIgnoreCase))
                 {
-                    text += " (loaded from " + sessionId + " fallback daily XML)";
+                    text += " (loaded from " + sessionId + " fallback daily JSON)";
                 }
                 return text;
             }
@@ -3208,6 +3439,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
+            _starInitiativeLoopCts.Cancel();
+            _starInitiativeLoopCts.Dispose();
             _microphoneSpeechSource.Dispose();
             _screenAwarenessLoop.Dispose();
             StopMobileBridgeServer("App shutting down.");

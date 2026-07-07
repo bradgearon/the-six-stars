@@ -31,6 +31,7 @@ import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
@@ -77,6 +78,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 public final class MainActivity extends Activity {
     private static final String PREFS_NAME = "SixStarsMobilePrefs";
     private static final String PREF_PROD_MODE = "prodMode";
+    private static final String PREF_STAR_INITIATIVE_ENABLED = "starInitiativeEnabled";
     private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
     private static final int REQUEST_RECORD_AUDIO = 301;
     private static final int REQUEST_CAMERA_PHOTO = 302;
@@ -94,6 +96,10 @@ public final class MainActivity extends Activity {
     private static final String[] NEGATIVE_EMOTION_IDS = new String[]{
             "Irritated", "Disrespected", "Pressured", "CreepedOut", "Bored", "Hurt", "Unsafe"
     };
+
+    private static final int KEEP_AWAKE_REASON_REQUEST = 1;
+    private static final int KEEP_AWAKE_REASON_VOICE_STREAM = 2;
+    private static final int KEEP_AWAKE_REASON_AUDIO_PLAYBACK = 4;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
@@ -137,6 +143,8 @@ public final class MainActivity extends Activity {
     private String prodAnimationState = "idle";
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
+    private boolean starInitiativeEnabled;
+    private long lastStarInitiativeRequestMs;
     private Button recordButton;
     private Button photoButton;
     private Button toggleMetButton;
@@ -183,6 +191,7 @@ public final class MainActivity extends Activity {
     private final TreeMap<Integer, PhoneVoiceClip> pendingDesktopVoiceClips = new TreeMap<>();
     private final HashSet<Integer> acceptedDesktopVoiceSequences = new HashSet<>();
     private int nextExpectedDesktopVoiceSequence = 0;
+    private int keepScreenAwakeReasonMask;
 
     private final Runnable healthLoop = new Runnable() {
         @Override
@@ -207,6 +216,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
         prodMode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_PROD_MODE, true);
+        starInitiativeEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_STAR_INITIATIVE_ENABLED, false);
         buildUi();
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
@@ -222,7 +232,32 @@ public final class MainActivity extends Activity {
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
         requestExecutor.shutdownNow();
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST | KEEP_AWAKE_REASON_VOICE_STREAM | KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Activity destroyed");
         super.onDestroy();
+    }
+
+    private void setKeepScreenAwake(int reason, boolean enabled, String note) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post(() -> setKeepScreenAwake(reason, enabled, note));
+            return;
+        }
+
+        int before = keepScreenAwakeReasonMask;
+        if (enabled) {
+            keepScreenAwakeReasonMask |= reason;
+        } else {
+            keepScreenAwakeReasonMask &= ~reason;
+        }
+
+        if ((before == 0) == (keepScreenAwakeReasonMask == 0)) return;
+
+        if (keepScreenAwakeReasonMask != 0) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            appendVoiceDebug("Auerlis kept the phone awake", note == null || note.length() == 0 ? "Star answer in progress." : note);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            appendVoiceDebug("Auerlis let the phone rest", note == null || note.length() == 0 ? "Star answer finished." : note);
+        }
     }
 
     private void buildUi() {
@@ -371,6 +406,7 @@ public final class MainActivity extends Activity {
 
         root.addView(label("Star response"));
         responseText = output("No response yet.", 6);
+        responseText.setTextIsSelectable(true);
         root.addView(responseText);
 
         root.addView(label("Status / debug"));
@@ -423,6 +459,7 @@ public final class MainActivity extends Activity {
         prodTextToggleButton = findViewById(R.id.prod_text_toggle_button);
         prodTextComposer = findViewById(R.id.prod_text_composer);
         prodConversationText = findViewById(R.id.prod_conversation_text);
+        if (prodConversationText != null) prodConversationText.setTextIsSelectable(true);
         prodConversationScroll = findViewById(R.id.prod_conversation_scroll);
         messageEdit = findViewById(R.id.prod_message_edit);
 
@@ -492,6 +529,7 @@ public final class MainActivity extends Activity {
         connectionStatusText = new TextView(this);
         audioStatusText = new TextView(this);
         responseText = new TextView(this);
+        responseText.setTextIsSelectable(true);
         debugText = new TextView(this);
         voiceDebugText = new TextView(this);
         starStateText = new TextView(this);
@@ -539,6 +577,12 @@ public final class MainActivity extends Activity {
         romance.setChecked(romanceCheck == null || romanceCheck.isChecked());
         controls.addView(romance);
 
+        CheckBox initiative = new CheckBox(this);
+        initiative.setText("Let the selected Star speak at rest");
+        initiative.setTextColor(0xFFEAF7FF);
+        initiative.setChecked(starInitiativeEnabled);
+        controls.addView(initiative);
+
         LinearLayout buttons = row();
         Button save = prodButton("Save Settings");
         Button test = prodButton("Test Bridge");
@@ -571,7 +615,9 @@ public final class MainActivity extends Activity {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
                 if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
                 if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
-                setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()));
+                starInitiativeEnabled = initiative.isChecked();
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled).apply();
+                setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()) + ", starInitiative=" + starInitiativeEnabled);
                 status.setText(buildProdMenuStatusText());
                 testConnection(false);
             });
@@ -733,11 +779,8 @@ public final class MainActivity extends Activity {
             prodConversationByStar.put(star, lines);
         }
         String line = (speaker == null || speaker.length() == 0 ? "System" : speaker) + ": " + text.trim().replace('\n', ' ');
-        if (speaker != null && speaker.equalsIgnoreCase(selectedStarName()) && lines.size() > 0 && lines.get(0).startsWith("You: ")) {
-            lines.add(1, line);
-        } else {
-            lines.add(0, line);
-        }
+        // Newest-first means the Star response should appear above the player line once it arrives.
+        lines.add(0, line);
         while (lines.size() > 12) lines.remove(lines.size() - 1);
         refreshProdConversationWindow();
     }
@@ -1002,6 +1045,51 @@ public final class MainActivity extends Activity {
         dispatchBridgeCommand("BreakupGirlfriend", selectedStarName(), null, null, "Android prod breakup button ended girlfriend mode for this Star.");
     }
 
+    private void maybeRequestStarInitiative(String reason) {
+        if (!prodMode || !starInitiativeEnabled || destroyed) return;
+        long now = System.currentTimeMillis();
+        if (now - lastStarInitiativeRequestMs < 120000L) return;
+        lastStarInitiativeRequestMs = now;
+        final String starName = selectedStarName();
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "At-rest Star initiative request sent; keeping the screen on while she answers.");
+        requestExecutor.execute(() -> {
+            try {
+                JSONObject json = new JSONObject();
+                json.put("commandId", "android-initiative-" + System.currentTimeMillis());
+                json.put("commandType", "MaybeStarInitiative");
+                json.put("sourceClientId", "SixStarsMobileAndroid");
+                json.put("sessionId", currentSessionId());
+                json.put("starId", starName);
+                json.put("requestType", "Chat");
+                json.put("playerText", "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, or interstar feedback that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in.");
+                json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
+                json.put("quest", "AndroidProdStarInitiative");
+                json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
+                json.put("speakOnDesktop", false);
+                json.put("returnAudio", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+                json.put("clientName", "SixStarsMobileAndroid-StarInitiative");
+                json.put("reason", reason == null ? "Android at-rest initiative" : reason);
+                runOnUiThread(() -> {
+                    setDebug("At-rest Star initiative", "Asking " + starName + " if she wants to say something. Reason: " + reason);
+                    appendVoiceDebug("At-rest Star initiative", "Request sent for " + starName + ": " + reason);
+                });
+                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
+                JSONObject response = new JSONObject(body);
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    if (event != null) handleBridgeEvent(event);
+                    else handleConversationResponse("At-rest Star initiative complete", body);
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    setDebug("At-rest Star initiative failed", ex.toString());
+                    appendVoiceDebug("At-rest Star initiative failed", ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative failed.");
+                });
+            }
+        });
+    }
+
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
         httpExecutor.execute(() -> {
             try {
@@ -1054,8 +1142,8 @@ public final class MainActivity extends Activity {
             if (item == null) continue;
             String player = optStringEither(item, "playerText", "PlayerText", "").trim().replace('\n', ' ');
             String star = optStringEither(item, "starResponse", "StarResponse", "").trim().replace('\n', ' ');
-            if (player.length() > 0) lines.add("You: " + clip(player, 360));
-            if (star.length() > 0 && lines.size() < 12) lines.add(starId + ": " + clip(star, 520));
+            if (star.length() > 0) lines.add(starId + ": " + clip(star, 520));
+            if (player.length() > 0 && lines.size() < 12) lines.add("You: " + clip(player, 360));
         }
 
         if (lines.size() > 0) {
@@ -1149,6 +1237,8 @@ public final class MainActivity extends Activity {
             handleGirlfriendBridgeEvent(event, type, seq, starId, message);
         } else if (isStoryBridgeEvent(type)) {
             handleStoryBridgeEvent(event, type, seq, starId, message);
+        } else if (isStarInitiativeBridgeEvent(type)) {
+            handleStarInitiativeBridgeEvent(event, type, seq, starId, message);
         } else if (isTopEmotionBridgeEvent(type)) {
             applyTopAffectedEmotionsObject(event, type);
         } else if (isInterstarBridgeEvent(type)) {
@@ -1230,6 +1320,27 @@ public final class MainActivity extends Activity {
         }
         setDebug("Girlfriend proposal response", "event=#" + seq + " " + type + " — " + message);
     }
+
+    private boolean isStarInitiativeBridgeEvent(String type) {
+        return "StarInitiativeResponseReady".equalsIgnoreCase(type)
+                || "StarInitiativeResponseFailed".equalsIgnoreCase(type);
+    }
+
+    private void handleStarInitiativeBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        if (spoken.length() > 0) {
+            appendProdConversationLine(starId, clip(spoken, 900));
+            responseText.setText(starId + " — at-rest thought\n\n" + clip(spoken, 8000));
+            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + spoken.length() * 18L)));
+            if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " had something to say.");
+        } else if ("StarInitiativeResponseFailed".equalsIgnoreCase(type)) {
+            responseText.setText("At-rest Star initiative failed. " + clip(message, 1200));
+        }
+        setDebug("Star initiative response", "event=#" + seq + " " + type + " — " + message);
+        appendVoiceDebug("Star at-rest initiative", spoken.length() > 0 ? clip(spoken, 220) : message);
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative response returned; screen can rest after voice/playback completes.");
+    }
+
 
     private boolean isTopEmotionBridgeEvent(String type) {
         return "TopAffectedEmotionsChanged".equalsIgnoreCase(type)
@@ -1547,6 +1658,7 @@ public final class MainActivity extends Activity {
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
         requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -1565,7 +1677,10 @@ public final class MainActivity extends Activity {
                 String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
                 handleConversationResponse("Image request complete", body);
             } catch (Exception ex) {
-                runOnUiThread(() -> setDebug("Image request failed", ex.toString()));
+                runOnUiThread(() -> {
+                    setDebug("Image request failed", ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Image request failed.");
+                });
             }
         });
     }
@@ -1583,6 +1698,7 @@ public final class MainActivity extends Activity {
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         pulseProdTalkingThenIdle(3500L);
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -1594,7 +1710,10 @@ public final class MainActivity extends Activity {
                 String body = postJson(baseUrl() + "/api/mobile/message", json.toString(), 180000);
                 handleConversationResponse("Text request complete", body);
             } catch (Exception ex) {
-                runOnUiThread(() -> setDebug("Text request failed", ex.toString()));
+                runOnUiThread(() -> {
+                    setDebug("Text request failed", ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Text request failed.");
+                });
             }
         });
     }
@@ -1666,6 +1785,7 @@ public final class MainActivity extends Activity {
     }
 
     private void sendAudio(byte[] pcm16) {
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
         requestExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
@@ -1683,7 +1803,10 @@ public final class MainActivity extends Activity {
                 String body = postJson(baseUrl() + "/api/mobile/audio", json.toString(), 240000);
                 handleConversationResponse("Voice request complete", body);
             } catch (Exception ex) {
-                runOnUiThread(() -> setDebug("Voice request failed", ex.toString()));
+                runOnUiThread(() -> {
+                    setDebug("Voice request failed", ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Voice request failed.");
+                });
             }
         });
     }
@@ -1765,6 +1888,8 @@ public final class MainActivity extends Activity {
             } catch (Exception ex) {
                 responseText.setText(clip(body, 8000));
                 setDebug(title + " (raw)", clip(body, 900));
+            } finally {
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, title + " finished; screen can rest after any streaming voice/playback completes.");
             }
         });
     }
@@ -1833,6 +1958,7 @@ public final class MainActivity extends Activity {
                 audioStatusText.setText("Phone voice socket connected: " + host + ":" + port);
                 appendVoiceDebug("Elusiaa connected the voice socket", host + ":" + port);
                 appendVoiceDebug("Khavia reset the phone voice stream guard", "Fresh socket connection; accepting the desktop stream counter from the beginning again.");
+                mainHandler.postDelayed(() -> maybeRequestStarInitiative("phone voice socket reconnected"), 3500L);
             });
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (!destroyed && !socket.isClosed()) {
@@ -1862,6 +1988,7 @@ public final class MainActivity extends Activity {
                     audioSocket = null;
                 }
             }
+            setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, "Phone voice socket disconnected.");
         }
     }
 
@@ -1947,7 +2074,10 @@ public final class MainActivity extends Activity {
             wavAudioQueue.clearForNewStream();
             final long ordinal = streamOrdinal;
             final String id = streamId;
-            runOnUiThread(() -> appendVoiceDebug(starId + " opened a fresh voice stream", "stream=" + ordinal + ", id=" + id + ". Cleared stale queued Android audio."));
+            runOnUiThread(() -> {
+                setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, true, starId + " voice stream started.");
+                appendVoiceDebug(starId + " opened a fresh voice stream", "stream=" + ordinal + ", id=" + id + ". Cleared stale queued Android audio.");
+            });
         }
         return true;
     }
@@ -1975,20 +2105,34 @@ public final class MainActivity extends Activity {
                     resetReceivedVoiceAccumulatorLocked();
                     resetOrderedVoiceQueueLocked();
                 }
-            } else if ("cancel".equalsIgnoreCase(action)) {
+            } else if ("cancel".equalsIgnoreCase(action) || "end".equalsIgnoreCase(action)) {
                 if (streamId.equals(activeVoiceStreamId) || streamOrdinal >= activeVoiceStreamOrdinal) {
                     activeVoiceStreamOrdinal = streamOrdinal;
                     activeVoiceStreamId = streamId;
-                    clear = true;
-                    resetReceivedVoiceAccumulatorLocked();
-                    resetOrderedVoiceQueueLocked();
+                    clear = "cancel".equalsIgnoreCase(action);
+                    if (clear) {
+                        resetReceivedVoiceAccumulatorLocked();
+                        resetOrderedVoiceQueueLocked();
+                    }
                 }
             }
         }
 
         if (clear) {
             wavAudioQueue.clearForNewStream();
-            runOnUiThread(() -> appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing."));
+        }
+
+        final boolean clearedForStream = clear;
+        if ("start".equalsIgnoreCase(action)) {
+            runOnUiThread(() -> {
+                setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, true, starId + " voice stream started.");
+                if (clearedForStream) appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing.");
+            });
+        } else if ("end".equalsIgnoreCase(action) || "cancel".equalsIgnoreCase(action)) {
+            runOnUiThread(() -> {
+                if (clearedForStream) appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing.");
+                setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, starId + " voice stream " + action + ".");
+            });
         }
     }
 
@@ -2051,6 +2195,7 @@ public final class MainActivity extends Activity {
             resetOrderedVoiceQueueLocked();
         }
         wavAudioQueue.clearForNewStream();
+        setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, "Voice socket reconnected; old stream state cleared.");
     }
 
     private void closeAudioSocket() {
@@ -2067,6 +2212,7 @@ public final class MainActivity extends Activity {
         audioSocketThread = null;
         connectedAudioHost = "";
         connectedAudioPort = -1;
+        setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, "Phone voice socket closed.");
     }
 
 
@@ -2281,7 +2427,7 @@ public final class MainActivity extends Activity {
         if (array == null || array.length() == 0) return "";
         StringBuilder sb = new StringBuilder("Top emotions: ");
         int count = 0;
-        for (int i = 0; i < array.length() && count < 3; i++) {
+        for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.optJSONObject(i);
             if (item == null) continue;
             String emotion = optStringEither(item, "emotionId", "EmotionId", "");
@@ -2448,6 +2594,7 @@ public final class MainActivity extends Activity {
 
         void clearForNewStream() {
             queue.clear();
+            runOnUiThread(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio queue cleared for a new Star voice stream."));
             AudioTrack track = activeTrack;
             if (track != null) {
                 try { track.pause(); } catch (Exception ignored) { }
@@ -2486,6 +2633,7 @@ public final class MainActivity extends Activity {
             int bufferSize = Math.max(minBuffer, Math.min(parsed.pcm.length, parsed.sampleRate * parsed.channels * 2));
             long durationMs = (long) parsed.pcm.length * 1000L / Math.max(1, parsed.sampleRate * parsed.channels * 2);
             runOnUiThread(() -> {
+                setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, "Playing " + clip.label + ".");
                 audioStatusText.setText("Playing " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
                 appendVoiceDebug("Elusiaa started playing audio", clip.label + ", durationMs=" + durationMs + ", bytes=" + clip.wav.length + ", sha256=" + shortHash(clip.sha256));
             });
@@ -2526,6 +2674,7 @@ public final class MainActivity extends Activity {
             } finally {
                 if (activeTrack == track) activeTrack = null;
                 track.release();
+                runOnUiThread(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio playback finished."));
             }
         }
     }

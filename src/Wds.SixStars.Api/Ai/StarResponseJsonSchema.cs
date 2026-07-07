@@ -91,7 +91,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "situationSummary", "feelingsSummary", "whatSheIsDoingToday", "currentDesires",
                         "relationshipPosture", "recentPeopleSeenSummary", "recentEventsSummary", "privateSecretsOrHooks",
-                        "promptUseSummary", "moodTags", "recentPeopleSeen", "recentEvents", "todayIntentions", "conversationHooks"
+                        "promptUseSummary", "moodTags", "recentPeopleSeen", "recentEvents", "todayIntentions", "thingsSheWantsToTalkAbout", "conversationHooks"
                     }
                 },
                 { "properties", new Dictionary<string, object>
@@ -110,6 +110,7 @@ namespace Wds.SixStars.Api.Ai
                         { "recentPeopleSeen", StringArray(12) },
                         { "recentEvents", StringArray(12) },
                         { "todayIntentions", StringArray(12) },
+                        { "thingsSheWantsToTalkAbout", StringArray(12) },
                         { "conversationHooks", StringArray(12) }
                     }
                 }
@@ -256,6 +257,7 @@ namespace Wds.SixStars.Api.Ai
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(500) },
+                        { "replyToSourceStar", StringProperty(500) },
                         { "memoryNotes", StringArray(5) },
                         { "relationshipEvents", StringArray(5) },
                         { "loreUsed", StringArray(5) },

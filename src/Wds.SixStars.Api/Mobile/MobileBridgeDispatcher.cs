@@ -144,6 +144,7 @@ public sealed class MobileBridgeDispatcher
         if (compact.Equals("ClearHistory", StringComparison.OrdinalIgnoreCase) || compact.Equals("ClearStarHistory", StringComparison.OrdinalIgnoreCase)) return "ClearHistory";
         if (compact.Equals("ClearAllData", StringComparison.OrdinalIgnoreCase) || compact.Equals("ClearAll", StringComparison.OrdinalIgnoreCase) || compact.Equals("ResetAllStars", StringComparison.OrdinalIgnoreCase)) return "ClearAllData";
         if (compact.Equals("SendPhoto", StringComparison.OrdinalIgnoreCase) || compact.Equals("Photo", StringComparison.OrdinalIgnoreCase) || compact.Equals("SharePhoto", StringComparison.OrdinalIgnoreCase) || compact.Equals("PhotoRequest", StringComparison.OrdinalIgnoreCase)) return "SendPhoto";
+        if (compact.Equals("MaybeStarInitiative", StringComparison.OrdinalIgnoreCase) || compact.Equals("StarInitiative", StringComparison.OrdinalIgnoreCase) || compact.Equals("AskStarInitiative", StringComparison.OrdinalIgnoreCase) || compact.Equals("AtRestStarInitiative", StringComparison.OrdinalIgnoreCase)) return "MaybeStarInitiative";
         if (compact.Equals("Refresh", StringComparison.OrdinalIgnoreCase) || compact.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)) return "RefreshState";
         return value.Trim();
     }
@@ -219,6 +220,7 @@ public sealed class MobileBridgeDispatchResult
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
     public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateJson { get; set; } = string.Empty;
     public string DailyStateXml { get; set; } = string.Empty;
     public StarState? State { get; set; }
     public MobileBridgeDispatchEvent? Event { get; set; }
@@ -266,6 +268,7 @@ public sealed class MobileBridgeDispatchEvent
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
     public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateJson { get; set; } = string.Empty;
     public string DailyStateXml { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
 
@@ -274,6 +277,7 @@ public sealed class MobileBridgeDispatchEvent
         if (state?.MemoryLog == null) return new List<MobileConversationHistoryItem>();
         return state.MemoryLog
             .Where(IsUsableConversationTurn)
+            .OrderByDescending(x => x.CreatedAt)
             .Take(10)
             .Select(x => new MobileConversationHistoryItem
             {
@@ -341,7 +345,8 @@ public sealed class MobileBridgeDispatchEvent
             DailyStateLocalDate = !string.IsNullOrWhiteSpace(result.DailyStateLocalDate) ? result.DailyStateLocalDate : (state?.TodayState?.LocalDate ?? string.Empty),
             DailyStateGeneratedAt = result.DailyStateGeneratedAt ?? state?.TodayState?.GeneratedAt,
             DailyStateSummary = !string.IsNullOrWhiteSpace(result.DailyStateSummary) ? result.DailyStateSummary : (state?.TodayState?.Summary ?? string.Empty),
-            DailyStateXml = !string.IsNullOrWhiteSpace(result.DailyStateXml) ? result.DailyStateXml : (state?.TodayState?.Xml ?? string.Empty),
+            DailyStateJson = !string.IsNullOrWhiteSpace(result.DailyStateJson) ? result.DailyStateJson : (state?.TodayState?.Json ?? state?.TodayState?.Xml ?? string.Empty),
+            DailyStateXml = string.Empty,
             TopAffectedEmotions = result.TopAffectedEmotions.Count > 0
                 ? result.TopAffectedEmotions.ToList()
                 : (state?.LastTopAffectedEmotions?.ToList() ?? new List<TopAffectedEmotion>())

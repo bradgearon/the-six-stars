@@ -36,7 +36,7 @@ namespace Wds.SixStars.Api.DailyState
                 string metaPath = BuildCurrentMetaPath(sessionId, starId);
                 if (!File.Exists(metaPath))
                 {
-                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was missing.", cancellationToken).ConfigureAwait(false);
+                    return await TryReadCurrentLegacyXmlOnlyAsync(sessionId, starId, "Daily Star state legacy XML loaded from current.xml. Metadata JSON was missing.", cancellationToken).ConfigureAwait(false);
                 }
 
                 try
@@ -46,20 +46,31 @@ namespace Wds.SixStars.Api.DailyState
                         StarDailyStateRecord? record = await JsonSerializer.DeserializeAsync<StarDailyStateRecord>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
                         if (record == null)
                         {
-                            return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was empty.", cancellationToken).ConfigureAwait(false);
+                            return await TryReadCurrentLegacyXmlOnlyAsync(sessionId, starId, "Daily Star state legacy XML loaded from current.xml. Metadata JSON was empty.", cancellationToken).ConfigureAwait(false);
                         }
 
                         if (!string.IsNullOrWhiteSpace(record.FilePath) && File.Exists(record.FilePath))
                         {
-                            record.XmlContent = await ReadAllTextAsync(record.FilePath, cancellationToken).ConfigureAwait(false);
+                            string content = await ReadAllTextAsync(record.FilePath, cancellationToken).ConfigureAwait(false);
+                            if (string.Equals(Path.GetExtension(record.FilePath), ".xml", StringComparison.OrdinalIgnoreCase)) record.XmlContent = content;
+                            else record.JsonContent = content;
                         }
                         else
                         {
-                            string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
-                            if (File.Exists(currentXmlPath))
+                            string currentJsonPath = BuildCurrentJsonPath(sessionId, starId);
+                            if (File.Exists(currentJsonPath))
                             {
-                                record.FilePath = currentXmlPath;
-                                record.XmlContent = await ReadAllTextAsync(currentXmlPath, cancellationToken).ConfigureAwait(false);
+                                record.FilePath = currentJsonPath;
+                                record.JsonContent = await ReadAllTextAsync(currentJsonPath, cancellationToken).ConfigureAwait(false);
+                            }
+                            else
+                            {
+                                string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
+                                if (File.Exists(currentXmlPath))
+                                {
+                                    record.FilePath = currentXmlPath;
+                                    record.XmlContent = await ReadAllTextAsync(currentXmlPath, cancellationToken).ConfigureAwait(false);
+                                }
                             }
                         }
                         return record;
@@ -67,15 +78,15 @@ namespace Wds.SixStars.Api.DailyState
                 }
                 catch (FileNotFoundException)
                 {
-                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON disappeared during read.", cancellationToken).ConfigureAwait(false);
+                    return await TryReadCurrentLegacyXmlOnlyAsync(sessionId, starId, "Daily Star state legacy XML loaded from current.xml. Metadata JSON disappeared during read.", cancellationToken).ConfigureAwait(false);
                 }
                 catch (DirectoryNotFoundException)
                 {
-                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata directory was missing.", cancellationToken).ConfigureAwait(false);
+                    return await TryReadCurrentLegacyXmlOnlyAsync(sessionId, starId, "Daily Star state legacy XML loaded from current.xml. Metadata directory was missing.", cancellationToken).ConfigureAwait(false);
                 }
                 catch (JsonException)
                 {
-                    return await TryReadCurrentXmlOnlyAsync(sessionId, starId, "Daily Star state XML loaded from current.xml. Metadata JSON was unreadable.", cancellationToken).ConfigureAwait(false);
+                    return await TryReadCurrentLegacyXmlOnlyAsync(sessionId, starId, "Daily Star state legacy XML loaded from current.xml. Metadata JSON was unreadable.", cancellationToken).ConfigureAwait(false);
                 }
             }
             finally
@@ -89,7 +100,7 @@ namespace Wds.SixStars.Api.DailyState
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                return File.Exists(BuildSlotXmlPath(sessionId, starId, localDate, slotId));
+                return File.Exists(BuildSlotJsonPath(sessionId, starId, localDate, slotId));
             }
             finally
             {
@@ -108,17 +119,19 @@ namespace Wds.SixStars.Api.DailyState
                 string dayFolder = Path.Combine(starFolder, SafeName(record.LocalDate));
                 Directory.CreateDirectory(dayFolder);
 
-                string slotXmlPath = BuildSlotXmlPath(record.SessionId, record.StarId, record.LocalDate, record.SlotId);
-                record.FilePath = slotXmlPath;
-                await WriteAllTextAsync(slotXmlPath, record.XmlContent ?? string.Empty, cancellationToken).ConfigureAwait(false);
+                string slotJsonPath = BuildSlotJsonPath(record.SessionId, record.StarId, record.LocalDate, record.SlotId);
+                record.FilePath = slotJsonPath;
+                string jsonContent = !string.IsNullOrWhiteSpace(record.JsonContent) ? record.JsonContent : (record.XmlContent ?? string.Empty);
+                record.JsonContent = jsonContent;
+                await WriteAllTextAsync(slotJsonPath, jsonContent, cancellationToken).ConfigureAwait(false);
 
-                string currentXmlPath = BuildCurrentXmlPath(record.SessionId, record.StarId);
-                await WriteAllTextAsync(currentXmlPath, record.XmlContent ?? string.Empty, cancellationToken).ConfigureAwait(false);
+                string currentJsonPath = BuildCurrentJsonPath(record.SessionId, record.StarId);
+                await WriteAllTextAsync(currentJsonPath, jsonContent, cancellationToken).ConfigureAwait(false);
 
                 string currentMetaPath = BuildCurrentMetaPath(record.SessionId, record.StarId);
                 await WriteAllTextAsync(currentMetaPath, JsonSerializer.Serialize(record, _jsonOptions), cancellationToken).ConfigureAwait(false);
 
-                string slotMetaPath = Path.ChangeExtension(slotXmlPath, ".meta.json");
+                string slotMetaPath = Path.ChangeExtension(slotJsonPath, ".meta.json");
                 await WriteAllTextAsync(slotMetaPath, JsonSerializer.Serialize(record, _jsonOptions), cancellationToken).ConfigureAwait(false);
 
                 return record;
@@ -129,8 +142,26 @@ namespace Wds.SixStars.Api.DailyState
             }
         }
 
+        public async Task ClearStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                string starFolder = BuildStarFolder(sessionId, starId);
+                if (Directory.Exists(starFolder))
+                {
+                    Directory.Delete(starFolder, true);
+                }
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
 
-        private async Task<StarDailyStateRecord?> TryReadCurrentXmlOnlyAsync(string sessionId, string starId, string summary, CancellationToken cancellationToken)
+
+
+        private async Task<StarDailyStateRecord?> TryReadCurrentLegacyXmlOnlyAsync(string sessionId, string starId, string summary, CancellationToken cancellationToken)
         {
             string currentXmlPath = BuildCurrentXmlPath(sessionId, starId);
             if (!File.Exists(currentXmlPath)) return null;
@@ -149,6 +180,11 @@ namespace Wds.SixStars.Api.DailyState
             };
         }
 
+        private string BuildCurrentJsonPath(string sessionId, string starId)
+        {
+            return Path.Combine(BuildStarFolder(sessionId, starId), "current.json");
+        }
+
         private string BuildCurrentXmlPath(string sessionId, string starId)
         {
             return Path.Combine(BuildStarFolder(sessionId, starId), "current.xml");
@@ -157,6 +193,11 @@ namespace Wds.SixStars.Api.DailyState
         private string BuildCurrentMetaPath(string sessionId, string starId)
         {
             return Path.Combine(BuildStarFolder(sessionId, starId), "current.meta.json");
+        }
+
+        private string BuildSlotJsonPath(string sessionId, string starId, string localDate, string slotId)
+        {
+            return Path.Combine(BuildStarFolder(sessionId, starId), SafeName(localDate), SafeName(slotId) + ".json");
         }
 
         private string BuildSlotXmlPath(string sessionId, string starId, string localDate, string slotId)

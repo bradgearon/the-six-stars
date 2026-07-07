@@ -43,6 +43,8 @@ namespace Wds.SixStars.Api.Ai
         public RelationshipDelta SuggestedStateDeltas { get; set; } = RelationshipDelta.Zero();
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar mode only: what this Star would say back to the source Star after hearing the relay.</summary>
+        public string ReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();

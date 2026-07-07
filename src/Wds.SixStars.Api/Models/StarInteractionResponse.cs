@@ -107,6 +107,8 @@ namespace Wds.SixStars.Api.Models
 
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar mode only: one sentence this Star would say back to the source Star.</summary>
+        public string InterstarReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();

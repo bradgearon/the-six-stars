@@ -141,3 +141,7 @@ Old-memory recall is handled on the desktop runtime. Android sends a normal mess
 ## Android voice stream ordinal reset note
 
 The Android client now resets its active voice-stream guard when the phone voice socket reconnects. It also accepts an explicit `streamAction=start` status frame as a new stream even if the stream ordinal is lower than a previous session. This prevents valid desktop voice chunks from being dropped as stale after the desktop bridge restarts its stream counter.
+
+## Android keep screen on while answering
+
+The Android app now keeps the display awake while a Star answer is in progress. This covers long text/photo/voice requests, the desktop-to-phone voice stream, and actual `AudioTrack` playback. The app clears the keep-awake flag after the request, voice stream, and playback are all finished.

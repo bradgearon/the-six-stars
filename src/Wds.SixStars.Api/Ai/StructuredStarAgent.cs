@@ -404,6 +404,7 @@ namespace Wds.SixStars.Api.Ai
                 ChangesSummary = string.IsNullOrWhiteSpace(model.ChangesSummary)
                     ? BuildFallbackChangesSummary(request, model.SpokenText)
                     : model.ChangesSummary,
+                InterstarReplyToSourceStar = CleanOneLine(model.ReplyToSourceStar, 500),
                 Debug = new DebugInfo
                 {
                     DetectedIntent = request.RequestType.ToString(),

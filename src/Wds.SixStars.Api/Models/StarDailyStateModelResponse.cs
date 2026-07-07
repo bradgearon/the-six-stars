@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace Wds.SixStars.Api.Models
 {
     /// <summary>
-    /// LLM-authored content for the per-day Star state XML. The API writes the XML itself
+    /// LLM-authored content for the per-day Star state JSON. The API writes the JSON itself
     /// so the saved file is always valid and easy for Unity/game code to consume.
     /// </summary>
     public sealed class StarDailyStateModelResponse
@@ -22,6 +22,8 @@ namespace Wds.SixStars.Api.Models
         public List<string> RecentPeopleSeen { get; set; } = new List<string>();
         public List<string> RecentEvents { get; set; } = new List<string>();
         public List<string> TodayIntentions { get; set; } = new List<string>();
+        /// <summary>Specific optional topics or questions this Star wants to bring up with the Last Cat during at-rest initiative checks.</summary>
+        public List<string> ThingsSheWantsToTalkAbout { get; set; } = new List<string>();
         public List<string> ConversationHooks { get; set; } = new List<string>();
     }
 }

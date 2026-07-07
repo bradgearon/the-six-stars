@@ -76,6 +76,7 @@ public sealed class MobileBridgeResponse
     public string DailyStateLocalDate { get; set; } = string.Empty;
     public DateTimeOffset? DailyStateGeneratedAt { get; set; }
     public string DailyStateSummary { get; set; } = string.Empty;
+    public string DailyStateJson { get; set; } = string.Empty;
     public string DailyStateXml { get; set; } = string.Empty;
     public List<string> Notes { get; } = new List<string>();
 }
