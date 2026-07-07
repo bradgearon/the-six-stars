@@ -46,6 +46,7 @@ namespace Wds.SixStars.Api.Ai
                 ReadCommentHandling = JsonCommentHandling.Skip
             };
             _jsonOptions.Converters.Add(new FlexibleStringJsonConverter());
+            _jsonOptions.Converters.Add(new RelationshipDeltaJsonConverter());
             _jsonOptions.Converters.Add(new LenientStoryKindJsonConverter());
             _jsonOptions.Converters.Add(new JsonStringEnumConverter());
             _jsonOptions.Converters.Add(new FlexibleListJsonConverterFactory());
@@ -915,6 +916,33 @@ namespace Wds.SixStars.Api.Ai
             model.PetNamesStarUsesForPlayer ??= new List<string>();
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();
+            model.EmotionalEffectVector = NormalizeCompactEmotionVector(model.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds.Length);
+            model.NegativeEmotionVector = NormalizeCompactEmotionVector(model.NegativeEmotionVector, RelationshipDeltaCalculator.NegativeEmotionIds.Length);
+        }
+
+        private static string NormalizeCompactEmotionVector(string? vector, int expectedPairs)
+        {
+            if (string.IsNullOrWhiteSpace(vector)) return string.Empty;
+            string[] rawParts = vector.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            List<string> parts = new List<string>();
+            for (int i = 0; i < Math.Max(0, expectedPairs); i++)
+            {
+                double confidence = 0;
+                double score = 0;
+                if (i < rawParts.Length)
+                {
+                    string[] pair = rawParts[i].Trim().Split(':');
+                    if (pair.Length >= 2)
+                    {
+                        double.TryParse(pair[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out confidence);
+                        double.TryParse(pair[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out score);
+                    }
+                }
+                confidence = Math.Max(0, Math.Min(1, confidence));
+                score = Math.Max(0, Math.Min(100, score));
+                parts.Add(confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + ":" + score.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return string.Join(";", parts);
         }
 
         private static List<string> CleanSpeechParts(IEnumerable<string>? parts)
@@ -988,7 +1016,16 @@ namespace Wds.SixStars.Api.Ai
             catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
             {
                 System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] JSON parsing failed but raw LLM content will be used instead of mock data: {ex.Message}");
-                return BuildSalvagedModelResponse(rawContent, profile, request, state, ex.Message);
+                StarStructuredModelResponse salvaged = BuildSalvagedModelResponse(rawContent, profile, request, state, ex.Message);
+                if (!requireSpokenText)
+                {
+                    // Background review failures should not invent a new spoken reply. The foreground
+                    // speech already exists and AnalyzeTurnAsync will copy it back after parsing.
+                    salvaged.SpokenParts.Clear();
+                }
+                ApplyCommonJsonAliases(json, salvaged);
+                NormalizeModelCollections(salvaged);
+                return salvaged;
             }
         }
 
