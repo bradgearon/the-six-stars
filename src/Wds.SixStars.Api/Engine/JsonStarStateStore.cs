@@ -88,6 +88,7 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
                 GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                OtherStars = new List<InterstarRelationshipState>(),
                 GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
             };
         }
@@ -116,6 +117,19 @@ namespace Wds.SixStars.Api.Engine
             {
                 state.RelationshipEvents = new List<string>();
                 changed = true;
+            }
+            if (state.OtherStars == null)
+            {
+                state.OtherStars = new List<InterstarRelationshipState>();
+                changed = true;
+            }
+            foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
+            {
+                if (relation.History == null)
+                {
+                    relation.History = new List<InterstarRelationshipHistoryEntry>();
+                    changed = true;
+                }
             }
             if (state.GirlfriendHourlyState == null)
             {

@@ -75,13 +75,19 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
                 GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
                 GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
-                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>()
+                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                OtherStars = new List<InterstarRelationshipState>()
             };
         }
 
         private static void NormalizeState(StarState state)
         {
             if (state.RelationshipEvents == null) state.RelationshipEvents = new List<string>();
+            if (state.OtherStars == null) state.OtherStars = new List<InterstarRelationshipState>();
+            foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
+            {
+                if (relation.History == null) relation.History = new List<InterstarRelationshipHistoryEntry>();
+            }
             if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
             if (state.EmotionVectorHistory == null) state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
             if (state.RelationshipScoreAccumulators == null) state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();

@@ -469,6 +469,7 @@ namespace Wds.SixStars.Api.Engine
             await PopulateKnownStarContextAsync(request, cancellationToken).ConfigureAwait(false);
             StarMemorySnapshot snapshot = await _memoryApi.GetStarMemorySnapshotAsync(request.SessionId, request.StarId, _recentHistoryCount, cancellationToken).ConfigureAwait(false);
             StarState state = snapshot.State;
+            await RefreshOtherStarsViewAsync(request.SessionId, state, cancellationToken).ConfigureAwait(false);
             await AttachDailyStateContextForRequestAsync(request, state, cancellationToken).ConfigureAwait(false);
 
             if (isStarInitiativeRequest)
@@ -2760,6 +2761,7 @@ namespace Wds.SixStars.Api.Engine
             string originStarId = originalRequest.StarId;
             StarProfile originProfile = _profileProvider.GetProfile(originStarId);
             StarState originState = await _memoryApi.GetStarStateAsync(sessionId, originStarId, cancellationToken).ConfigureAwait(false);
+            await RefreshOtherStarsViewAsync(sessionId, originState, cancellationToken).ConfigureAwait(false);
             List<StarProfile> targets = new List<StarProfile>();
 
             foreach (StarProfile candidate in _profileProvider.GetAllProfiles())
@@ -2767,6 +2769,7 @@ namespace Wds.SixStars.Api.Engine
                 if (candidate == null || string.IsNullOrWhiteSpace(candidate.StarId)) continue;
                 if (string.Equals(candidate.StarId, originStarId, StringComparison.OrdinalIgnoreCase)) continue;
                 StarState candidateState = await _memoryApi.GetStarStateAsync(sessionId, candidate.StarId, cancellationToken).ConfigureAwait(false);
+                await RefreshOtherStarsViewAsync(sessionId, candidateState, cancellationToken).ConfigureAwait(false);
                 if (IsInterstarTargetEligible(originProfile, originState, candidate, candidateState))
                 {
                     targets.Add(candidate);
@@ -2788,6 +2791,7 @@ namespace Wds.SixStars.Api.Engine
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 StarState targetState = await _memoryApi.GetStarStateAsync(sessionId, targetProfile.StarId, cancellationToken).ConfigureAwait(false);
+                await RefreshOtherStarsViewAsync(sessionId, targetState, cancellationToken).ConfigureAwait(false);
                 NotifyInterstarStatus(sessionId, originStarId, targetProfile.StarId, "RelayStarted", "Asking " + originProfile.DisplayName + " what she would tell " + targetProfile.DisplayName + " about the Last Cat.", targets.Count, completed);
 
                 InterstarRelayMessage relay = await interstarAgent.GenerateInterstarRelayAsync(originProfile, targetProfile, originalRequest, originResponse, originState, targetState, cancellationToken).ConfigureAwait(false);
@@ -2809,7 +2813,17 @@ namespace Wds.SixStars.Api.Engine
                 StarInteractionResponse targetReaction = await interstarAgent.AnalyzeInterstarReactionAsync(targetProfile, relay, originalRequest, originResponse, targetState, cancellationToken).ConfigureAwait(false);
                 StarInteractionRequest targetRequest = CreateInterstarMicroRequest(originalRequest, targetProfile.StarId, "Interstar relay from " + originProfile.DisplayName + ": " + relay.WhatOriginWouldTellTarget);
                 await ApplyAnalysisAndMemoryUpdateAsync(targetRequest, targetReaction, cancellationToken).ConfigureAwait(false);
+                List<InterstarRelationshipDeltaResult> targetInterstarDeltas = await ApplyInterstarRelationshipVectorsAsync(
+                    sessionId,
+                    targetProfile.StarId,
+                    originStarId,
+                    FirstNonEmpty(targetReaction.SourceStarEmotionalEffectVector, FindInterstarPositiveVector(targetReaction.InterstarEmotionVectors, originStarId)),
+                    FirstNonEmpty(targetReaction.SourceStarNegativeEmotionVector, FindInterstarNegativeVector(targetReaction.InterstarEmotionVectors, originStarId)),
+                    "interstar relay from " + originProfile.DisplayName + " to " + targetProfile.DisplayName,
+                    cancellationToken).ConfigureAwait(false);
+                targetReaction.InterstarRelationshipDeltas.AddRange(targetInterstarDeltas);
                 StarState targetStateAfter = await _memoryApi.GetStarStateAsync(sessionId, targetProfile.StarId, cancellationToken).ConfigureAwait(false);
+                await RefreshOtherStarsViewAsync(sessionId, targetStateAfter, cancellationToken).ConfigureAwait(false);
                 _conversationDebugLogRecorder.AppendInterstarReaction(originStarId, targetProfile.StarId, relay, targetReaction, targetState, targetStateAfter);
                 InterstarMicroUpdateCompleted?.Invoke(this, targetReaction);
 
@@ -2822,6 +2836,10 @@ namespace Wds.SixStars.Api.Engine
                     RelaySummary = relay.Summary,
                     EmotionalEffectVector = targetReaction.EmotionalEffectVector ?? string.Empty,
                     NegativeEmotionVector = targetReaction.NegativeEmotionVector ?? string.Empty,
+                    SourceStarEmotionalEffectVector = targetReaction.SourceStarEmotionalEffectVector ?? string.Empty,
+                    SourceStarNegativeEmotionVector = targetReaction.SourceStarNegativeEmotionVector ?? string.Empty,
+                    InterstarEmotionVectors = targetReaction.InterstarEmotionVectors.ToList(),
+                    InterstarRelationshipDeltas = targetReaction.InterstarRelationshipDeltas.ToList(),
                     AppliedDelta = targetReaction.StateDeltas ?? RelationshipDelta.Zero(),
                     TopAffectedEmotionsText = top,
                     ReplyToSourceStar = targetReaction.InterstarReplyToSourceStar ?? string.Empty,
@@ -2838,10 +2856,25 @@ namespace Wds.SixStars.Api.Engine
                 cancellationToken.ThrowIfCancellationRequested();
                 NotifyInterstarStatus(sessionId, originStarId, originStarId, "FeedbackStarted", "Asking " + originProfile.DisplayName + " how the other Stars' reactions affect her feelings about the Last Cat.", targets.Count, completed);
                 StarState latestOriginState = await _memoryApi.GetStarStateAsync(sessionId, originStarId, cancellationToken).ConfigureAwait(false);
+                await RefreshOtherStarsViewAsync(sessionId, latestOriginState, cancellationToken).ConfigureAwait(false);
                 StarInteractionResponse originFeedback = await interstarAgent.AnalyzeInterstarFeedbackAsync(originProfile, originalRequest, originResponse, latestOriginState, cycle.Reactions, cancellationToken).ConfigureAwait(false);
                 StarInteractionRequest feedbackRequest = CreateInterstarMicroRequest(originalRequest, originStarId, "Interstar feedback from affected Stars after " + originProfile.DisplayName + " shared the recent Last Cat conversation.");
                 await ApplyAnalysisAndMemoryUpdateAsync(feedbackRequest, originFeedback, cancellationToken).ConfigureAwait(false);
+                foreach (InterstarEmotionVectorResult vector in (originFeedback.InterstarEmotionVectors ?? new List<InterstarEmotionVectorResult>()).Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)))
+                {
+                    if (string.Equals(vector.StarId, originStarId, StringComparison.OrdinalIgnoreCase)) continue;
+                    List<InterstarRelationshipDeltaResult> feedbackDeltas = await ApplyInterstarRelationshipVectorsAsync(
+                        sessionId,
+                        originStarId,
+                        vector.StarId,
+                        vector.PositiveEmotionVector,
+                        vector.NegativeEmotionVector,
+                        "interstar feedback to " + originProfile.DisplayName + " about " + vector.StarId,
+                        cancellationToken).ConfigureAwait(false);
+                    originFeedback.InterstarRelationshipDeltas.AddRange(feedbackDeltas);
+                }
                 StarState originStateAfterFeedback = await _memoryApi.GetStarStateAsync(sessionId, originStarId, cancellationToken).ConfigureAwait(false);
+                await RefreshOtherStarsViewAsync(sessionId, originStateAfterFeedback, cancellationToken).ConfigureAwait(false);
                 _conversationDebugLogRecorder.AppendInterstarFeedback(originStarId, cycle.Reactions, originFeedback, latestOriginState, originStateAfterFeedback);
                 cycle.OriginFeedbackApplied = true;
                 InterstarMicroUpdateCompleted?.Invoke(this, originFeedback);
@@ -2862,6 +2895,280 @@ namespace Wds.SixStars.Api.Engine
             if (string.IsNullOrWhiteSpace(request.StarId)) return false;
             if (string.IsNullOrWhiteSpace(response.EmotionalEffectVector) && string.IsNullOrWhiteSpace(response.NegativeEmotionVector) && response.TopAffectedEmotions.Count == 0) return false;
             return true;
+        }
+
+        private async Task RefreshOtherStarsViewAsync(string sessionId, StarState ownerState, CancellationToken cancellationToken)
+        {
+            if (ownerState == null || string.IsNullOrWhiteSpace(ownerState.StarId)) return;
+            try
+            {
+                string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+                SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(normalizedSessionId, cancellationToken).ConfigureAwait(false);
+                ApplyOtherStarsView(ownerState, saveData.Stars ?? new List<StarState>());
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch
+            {
+                // Prompt enrichment should never block foreground speech if the optional snapshot cannot be read.
+                if (ownerState.OtherStars == null) ownerState.OtherStars = new List<InterstarRelationshipState>();
+            }
+        }
+
+        private void ApplyOtherStarsView(StarState ownerState, IEnumerable<StarState> allStates)
+        {
+            if (ownerState == null || string.IsNullOrWhiteSpace(ownerState.StarId)) return;
+            Dictionary<string, StarState> stateById = (allStates ?? Enumerable.Empty<StarState>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId))
+                .GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, InterstarRelationshipState> existing = (ownerState.OtherStars ?? new List<InterstarRelationshipState>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId))
+                .GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+
+            List<InterstarRelationshipState> next = new List<InterstarRelationshipState>();
+            foreach (StarProfile profile in _profileProvider.GetAllProfiles().Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)).OrderBy(x => x.DisplayName))
+            {
+                if (string.Equals(profile.StarId, ownerState.StarId, StringComparison.OrdinalIgnoreCase)) continue;
+                existing.TryGetValue(profile.StarId, out InterstarRelationshipState? relation);
+                relation ??= new InterstarRelationshipState();
+                relation.StarId = profile.StarId;
+                relation.StarName = string.IsNullOrWhiteSpace(profile.DisplayName) ? profile.StarId : profile.DisplayName;
+                if (relation.History == null) relation.History = new List<InterstarRelationshipHistoryEntry>();
+
+                if (stateById.TryGetValue(profile.StarId, out StarState? otherState))
+                {
+                    relation.IsMet = otherState.IsMet;
+                    relation.IsAlly = otherState.IsAlly;
+                    relation.IsGirlfriend = otherState.IsGirlfriend;
+                }
+                else
+                {
+                    bool elusiaa = string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+                    relation.IsMet = elusiaa;
+                    relation.IsAlly = elusiaa;
+                    relation.IsGirlfriend = false;
+                }
+                relation.TrustScore = ClampInt(relation.TrustScore, 0, 100);
+                relation.HeartScore = ClampInt(relation.HeartScore, 0, 100);
+                next.Add(relation);
+            }
+
+            ownerState.OtherStars = next;
+        }
+
+        private static string FindInterstarPositiveVector(IEnumerable<InterstarEmotionVectorResult>? vectors, string starId)
+        {
+            return (vectors ?? Enumerable.Empty<InterstarEmotionVectorResult>())
+                .LastOrDefault(x => x != null && string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase))
+                ?.PositiveEmotionVector ?? string.Empty;
+        }
+
+        private static string FindInterstarNegativeVector(IEnumerable<InterstarEmotionVectorResult>? vectors, string starId)
+        {
+            return (vectors ?? Enumerable.Empty<InterstarEmotionVectorResult>())
+                .LastOrDefault(x => x != null && string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase))
+                ?.NegativeEmotionVector ?? string.Empty;
+        }
+
+        private async Task<List<InterstarRelationshipDeltaResult>> ApplyInterstarRelationshipVectorsAsync(
+            string sessionId,
+            string ownerStarId,
+            string affectedStarId,
+            string positiveEmotionVector,
+            string negativeEmotionVector,
+            string reason,
+            CancellationToken cancellationToken)
+        {
+            List<InterstarRelationshipDeltaResult> results = new List<InterstarRelationshipDeltaResult>();
+            if (string.IsNullOrWhiteSpace(ownerStarId) || string.IsNullOrWhiteSpace(affectedStarId)) return results;
+            if (string.Equals(ownerStarId, affectedStarId, StringComparison.OrdinalIgnoreCase)) return results;
+
+            List<EmotionVectorScore> positive = RelationshipDeltaCalculator.ParseVector(positiveEmotionVector, StarEmotionMatrix.StandardEmotionIds);
+            List<EmotionVectorScore> negative = RelationshipDeltaCalculator.ParseVector(negativeEmotionVector, RelationshipDeltaCalculator.NegativeEmotionIds);
+            bool hasEvidence = positive.Any(x => x != null && (x.Confidence > 0 || x.Score > 0))
+                || negative.Any(x => x != null && (x.Confidence > 0 || x.Score > 0));
+            if (!hasEvidence) return results;
+
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            await _memoryApi.GetStarStateAsync(normalizedSessionId, ownerStarId, cancellationToken).ConfigureAwait(false);
+            await _memoryApi.GetStarStateAsync(normalizedSessionId, affectedStarId, cancellationToken).ConfigureAwait(false);
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(normalizedSessionId, cancellationToken).ConfigureAwait(false);
+            if (saveData.Stars == null) saveData.Stars = new List<StarState>();
+
+            StarState owner = saveData.Stars.FirstOrDefault(x => string.Equals(x.StarId, ownerStarId, StringComparison.OrdinalIgnoreCase))
+                ?? new StarState { StarId = ownerStarId };
+            if (!saveData.Stars.Any(x => ReferenceEquals(x, owner))) saveData.Stars.Add(owner);
+
+            ApplyOtherStarsView(owner, saveData.Stars);
+            InterstarRelationshipState relation = owner.OtherStars.FirstOrDefault(x => string.Equals(x.StarId, affectedStarId, StringComparison.OrdinalIgnoreCase))
+                ?? new InterstarRelationshipState { StarId = affectedStarId, StarName = affectedStarId };
+            if (!owner.OtherStars.Contains(relation)) owner.OtherStars.Add(relation);
+            if (relation.History == null) relation.History = new List<InterstarRelationshipHistoryEntry>();
+
+            (int heartDelta, int trustDelta, string summary) = CalculateInterstarRelationshipDelta(positive, negative);
+            if (heartDelta == 0 && trustDelta == 0)
+            {
+                // Keep the last vectors durable even when they are too small to move the meters.
+                summary = "Interstar vectors recorded without a meter delta: " + summary;
+            }
+
+            relation.HeartScore = ClampInt(relation.HeartScore + heartDelta, 0, 100);
+            relation.TrustScore = ClampInt(relation.TrustScore + trustDelta, 0, 100);
+            relation.LastPositiveEmotionVector = positiveEmotionVector ?? string.Empty;
+            relation.LastNegativeEmotionVector = negativeEmotionVector ?? string.Empty;
+            relation.LastUpdatedAt = DateTimeOffset.UtcNow;
+            relation.History.Insert(0, new InterstarRelationshipHistoryEntry
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                SourceStarId = ownerStarId,
+                AffectedStarId = affectedStarId,
+                Reason = reason ?? string.Empty,
+                PositiveEmotionVector = positiveEmotionVector ?? string.Empty,
+                NegativeEmotionVector = negativeEmotionVector ?? string.Empty,
+                HeartDelta = heartDelta,
+                TrustDelta = trustDelta,
+                HeartAfter = relation.HeartScore,
+                TrustAfter = relation.TrustScore,
+                Summary = summary
+            });
+            if (relation.History.Count > 40) relation.History.RemoveRange(40, relation.History.Count - 40);
+
+            // Refresh all visible met/ally/girlfriend flags before saving so every shard carries the prompt-facing view.
+            foreach (StarState state in saveData.Stars.Where(x => x != null)) ApplyOtherStarsView(state, saveData.Stars);
+            await _memoryApi.ImportSaveDataAsync(saveData, cancellationToken).ConfigureAwait(false);
+
+            results.Add(new InterstarRelationshipDeltaResult
+            {
+                OwnerStarId = ownerStarId,
+                AffectedStarId = affectedStarId,
+                HeartDelta = heartDelta,
+                TrustDelta = trustDelta,
+                HeartAfter = relation.HeartScore,
+                TrustAfter = relation.TrustScore,
+                PositiveEmotionVector = positiveEmotionVector ?? string.Empty,
+                NegativeEmotionVector = negativeEmotionVector ?? string.Empty,
+                Summary = summary
+            });
+            return results;
+        }
+
+        private static (int heartDelta, int trustDelta, string summary) CalculateInterstarRelationshipDelta(
+            IReadOnlyList<EmotionVectorScore> positive,
+            IReadOnlyList<EmotionVectorScore> negative)
+        {
+            double heart = 0;
+            double trust = 0;
+            foreach (EmotionVectorScore signal in positive ?? Array.Empty<EmotionVectorScore>())
+            {
+                if (signal == null || (signal.Confidence <= 0 && signal.Score <= 0)) continue;
+                double weighted = Math.Max(0, signal.Confidence) * Math.Max(0, signal.Score);
+                heart += weighted * GetInterstarPositiveHeartWeight(signal.Id);
+                trust += weighted * GetInterstarPositiveTrustWeight(signal.Id);
+            }
+            foreach (EmotionVectorScore signal in negative ?? Array.Empty<EmotionVectorScore>())
+            {
+                if (signal == null || (signal.Confidence <= 0 && signal.Score <= 0)) continue;
+                double weighted = Math.Max(0, signal.Confidence) * Math.Max(0, signal.Score);
+                heart -= weighted * GetInterstarNegativeHeartWeight(signal.Id);
+                trust -= weighted * GetInterstarNegativeTrustWeight(signal.Id);
+            }
+
+            int heartDelta = ScoreToInterstarDelta(heart);
+            int trustDelta = ScoreToInterstarDelta(trust);
+            string summary = "interstar weighted heart=" + heart.ToString("0.0") + ", trust=" + trust.ToString("0.0") + ", delta H/T=" + heartDelta + "/" + trustDelta;
+            return (heartDelta, trustDelta, summary);
+        }
+
+        private static int ScoreToInterstarDelta(double score)
+        {
+            if (score >= 18) return 2;
+            if (score >= 7) return 1;
+            if (score <= -18) return -2;
+            if (score <= -7) return -1;
+            return 0;
+        }
+
+        private static double GetInterstarPositiveHeartWeight(string id)
+        {
+            switch (id ?? string.Empty)
+            {
+                case "Affectionate": return 1.1;
+                case "Tender": return 1.2;
+                case "Happy": return 0.8;
+                case "Comforted": return 0.8;
+                case "Admiring": return 0.8;
+                case "Vulnerable": return 0.7;
+                case "Hopeful": return 0.6;
+                case "Wondrous": return 0.6;
+                case "Protected": return 0.6;
+                case "Amused": return 0.5;
+                case "Playful": return 0.5;
+                case "Safe": return 0.5;
+                case "Trusting": return 0.5;
+                case "Respected": return 0.4;
+                case "Intrigued": return 0.3;
+                default: return 0.15;
+            }
+        }
+
+        private static double GetInterstarPositiveTrustWeight(string id)
+        {
+            switch (id ?? string.Empty)
+            {
+                case "Trusting": return 1.2;
+                case "Respected": return 1.0;
+                case "Safe": return 0.8;
+                case "Protected": return 0.7;
+                case "Admiring": return 0.6;
+                case "Comforted": return 0.5;
+                case "Affectionate": return 0.5;
+                case "Hopeful": return 0.4;
+                case "Wondrous": return 0.4;
+                case "Tender": return 0.4;
+                case "Intrigued": return 0.3;
+                default: return 0.15;
+            }
+        }
+
+        private static double GetInterstarNegativeHeartWeight(string id)
+        {
+            switch (id ?? string.Empty)
+            {
+                case "Hurt": return 1.2;
+                case "Disrespected": return 0.8;
+                case "CreepedOut": return 0.8;
+                case "Unsafe": return 0.8;
+                case "Irritated": return 0.7;
+                case "Pressured": return 0.5;
+                case "Bored": return 0.3;
+                default: return 0.2;
+            }
+        }
+
+        private static double GetInterstarNegativeTrustWeight(string id)
+        {
+            switch (id ?? string.Empty)
+            {
+                case "Unsafe": return 1.5;
+                case "Disrespected": return 1.4;
+                case "CreepedOut": return 1.2;
+                case "Pressured": return 1.0;
+                case "Hurt": return 0.8;
+                case "Irritated": return 0.5;
+                case "Bored": return 0.2;
+                default: return 0.2;
+            }
+        }
+
+        private static int ClampInt(int value, int min, int max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
         }
 
         private bool IsInterstarTargetEligible(StarProfile originProfile, StarState originState, StarProfile targetProfile, StarState targetState)
@@ -3011,8 +3318,12 @@ namespace Wds.SixStars.Api.Engine
                 StateDeltas = source.StateDeltas ?? RelationshipDelta.Zero(),
                 ConversationSummary = source.ConversationSummary,
                 ChangesSummary = source.ChangesSummary,
+                SourceStarEmotionalEffectVector = source.SourceStarEmotionalEffectVector,
+                SourceStarNegativeEmotionVector = source.SourceStarNegativeEmotionVector,
                 InterstarReplyToSourceStar = source.InterstarReplyToSourceStar
             };
+            clone.InterstarEmotionVectors.AddRange(source.InterstarEmotionVectors ?? new List<InterstarEmotionVectorResult>());
+            clone.InterstarRelationshipDeltas.AddRange(source.InterstarRelationshipDeltas ?? new List<InterstarRelationshipDeltaResult>());
             clone.SetSpokenParts(source.SpokenParts);
             clone.TopAffectedEmotions.AddRange(source.TopAffectedEmotions ?? new List<TopAffectedEmotion>());
             clone.AcceptedPositiveEmotionSignals.AddRange(source.AcceptedPositiveEmotionSignals ?? new List<string>());

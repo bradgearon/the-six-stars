@@ -619,6 +619,19 @@ namespace Wds.SixStars.Api.State
                 state.MemoryLog = new List<ConversationLogEntry>();
                 changed = true;
             }
+            if (state.OtherStars == null)
+            {
+                state.OtherStars = new List<InterstarRelationshipState>();
+                changed = true;
+            }
+            foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
+            {
+                if (relation.History == null)
+                {
+                    relation.History = new List<InterstarRelationshipHistoryEntry>();
+                    changed = true;
+                }
+            }
             if (state.ImportantPlayerQuotes == null)
             {
                 state.ImportantPlayerQuotes = new List<string>();

@@ -127,8 +127,10 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("INTERSTAR REACTION VECTOR MODE. Another Star privately told you about her recent conversation with the Last Cat.");
             system.AppendLine("Return compact JSON only. Do not write spokenText. Do not talk to the player. Do not directly award relationship points; suggestedStateDeltas are only hints.");
             system.AppendLine("Compute emotionalEffectVector and negativeEmotionVector for how YOU now feel about the Last Cat after hearing the relay.");
+            system.AppendLine("Also compute sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector for how YOU now feel about the source Star because she chose to tell you this, and because of how she said it. This is Star-to-Star relationship evidence, not Last Cat evidence.");
+            system.AppendLine("Also include interstarEmotionVectors with one item for the source Star using the same source-Star vectors: starId must be the source Star id, positiveEmotionVector, negativeEmotionVector, and a short reason. Conceptually this is SourceStarPositiveEmotionVector/SourceStarNegativeEmotionVector, but return it in the interstarEmotionVectors array.");
             system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
-            system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            system.AppendLine("negativeEmotionVector and sourceStarNegativeEmotionVector use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep the update modest because this is second-hand information. Strong signals require the relay to matter strongly to your personality/domain.");
             system.AppendLine("Also return replyToSourceStar: one concise in-character sentence you would actually say back to the source Star. It may be warm, excited, guarded, teasing, worried, or brief based on your friendship with her, your excitement about the situation, and your own closeness to the Last Cat.");
             system.AppendLine("Do not confess more than your relationship state supports. If you barely know the source Star, reply politely and minimally. If you are close or the news deeply fits your domain, let the line carry more feeling.");
@@ -151,7 +153,7 @@ namespace Wds.SixStars.Api.Ai
             user.AppendLine("Origin Star foreground reply:");
             user.AppendLine(QuoteBlock(originResponse.SpokenText));
             user.AppendLine();
-            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat now, plus replyToSourceStar as the one sentence you would say back to " + relay.OriginStarId + ".");
+            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat, your separate source-Star vectors toward " + relay.OriginStarId + ", one interstarEmotionVectors item for " + relay.OriginStarId + ", and replyToSourceStar as the one sentence you would say back to " + relay.OriginStarId + ".");
 
             return new List<ChatMessage>
             {
@@ -171,8 +173,10 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("You are " + originProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
             system.AppendLine("INTERSTAR FEEDBACK VECTOR MODE. Other Stars reacted emotionally to what you told them about the Last Cat, and some replied back to you in one sentence.");
             system.AppendLine("Return compact JSON only. Do not write spokenText. Compute how their emotional responses and reply lines make YOU feel about the Last Cat now.");
+            system.AppendLine("Also compute interstarEmotionVectors: one item per responding Star, where starId is that responding Star and the positive/negative vectors describe how their response made YOU feel about that Star. These are Star-to-Star relationship vectors, not Last Cat vectors. Conceptually these are KaeliaPositiveEmotionVector/KaeliaNegativeEmotionVector-style pairs, but return them as objects in the interstarEmotionVectors array.");
+            system.AppendLine("For this feedback pass, sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector should be zero vectors unless one specific responding Star is clearly the main source; put the real per-Star values in interstarEmotionVectors.");
             system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
-            system.AppendLine("negativeEmotionVector uses exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            system.AppendLine("negativeEmotionVector and every interstar negative vector use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep this very modest; it is a reflection pass, not a second full conversation.");
             system.AppendLine("Pronoun discipline is mandatory. The Last Cat is the player and should be referred to as 'the Last Cat', 'he', 'him', or 'his' unless the host explicitly says otherwise. Use 'you' only for the origin Star whose feelings you are computing.");
 
@@ -191,13 +195,21 @@ namespace Wds.SixStars.Api.Ai
             foreach (InterstarReactionSummary reaction in reactions ?? Array.Empty<InterstarReactionSummary>())
             {
                 user.AppendLine("- " + reaction.StarId + " heard from " + reaction.SourceStarId + ": " + Truncate(reaction.RelaySummary, 240));
-                user.AppendLine("  vectors good=" + Truncate(reaction.EmotionalEffectVector, 260) + " bad=" + Truncate(reaction.NegativeEmotionVector, 120));
-                user.AppendLine("  applied delta H/T/R/C=" + reaction.AppliedDelta.Heart + "/" + reaction.AppliedDelta.Trust + "/" + reaction.AppliedDelta.Romance + "/" + reaction.AppliedDelta.EmotionalConnectionPercent.ToString("0.00"));
+                user.AppendLine("  Last Cat vectors good=" + Truncate(reaction.EmotionalEffectVector, 260) + " bad=" + Truncate(reaction.NegativeEmotionVector, 120));
+                user.AppendLine("  source-Star vectors toward you good=" + Truncate(reaction.SourceStarEmotionalEffectVector, 260) + " bad=" + Truncate(reaction.SourceStarNegativeEmotionVector, 120));
+                if (reaction.InterstarRelationshipDeltas != null && reaction.InterstarRelationshipDeltas.Count > 0)
+                {
+                    foreach (InterstarRelationshipDeltaResult delta in reaction.InterstarRelationshipDeltas.Take(4))
+                    {
+                        user.AppendLine("  interstar delta " + delta.OwnerStarId + "->" + delta.AffectedStarId + " H/T=" + delta.HeartDelta + "/" + delta.TrustDelta + "; now=" + delta.HeartAfter + "/" + delta.TrustAfter + "; " + Truncate(delta.Summary, 220));
+                    }
+                }
+                user.AppendLine("  applied Last Cat delta H/T/R/C=" + reaction.AppliedDelta.Heart + "/" + reaction.AppliedDelta.Trust + "/" + reaction.AppliedDelta.Romance + "/" + reaction.AppliedDelta.EmotionalConnectionPercent.ToString("0.00"));
                 if (!string.IsNullOrWhiteSpace(reaction.TopAffectedEmotionsText)) user.AppendLine("  top=" + reaction.TopAffectedEmotionsText);
                 if (!string.IsNullOrWhiteSpace(reaction.ReplyToSourceStar)) user.AppendLine("  said back to you: " + QuoteInline(Truncate(reaction.ReplyToSourceStar, 260)));
             }
             user.AppendLine();
-            user.AppendLine("Return your feedback emotional vectors toward the Last Cat now.");
+            user.AppendLine("Return your feedback emotional vectors toward the Last Cat now, plus interstarEmotionVectors for how each responding Star's reaction made you feel toward that Star.");
 
             return new List<ChatMessage>
             {
@@ -276,6 +288,7 @@ namespace Wds.SixStars.Api.Ai
             relationship.AppendLine("Met=" + state.IsMet + "; Ally=" + state.IsAlly + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + "; girlfriendReady=" + state.IsGirlfriendReady + ".");
             relationship.AppendLine("Last deterministic update: " + (string.IsNullOrWhiteSpace(state.LastDeterministicEmotionSummary) ? "none" : Truncate(state.LastDeterministicEmotionSummary, 350)));
             relationship.AppendLine("Last source state update for daily-state awareness: " + (state.LastDailyStateSourceUpdateAt.HasValue ? state.LastDailyStateSourceUpdateAt.Value.ToString("u") : "none"));
+            AppendOtherStarsRelationshipLines(relationship, state);
             AppendAccumulatedEmotionTotals(relationship, state);
             AppendGirlfriendModeInstructionSet(relationship, profile, state);
             AppendGirlfriendHourlyStateContext(relationship, state);
@@ -398,6 +411,7 @@ namespace Wds.SixStars.Api.Ai
             user.AppendLine(BuildRelationshipStatus(state));
             user.AppendLine("IsGirlfriend=" + state.IsGirlfriend + "; GirlfriendSince=" + (state.GirlfriendSince.HasValue ? state.GirlfriendSince.Value.ToString("o") : "none") + "; IsGirlfriendReady=" + state.IsGirlfriendReady + "; Readiness=" + (state.GirlfriendReadinessSummary ?? string.Empty));
             user.AppendLine("Heart=" + state.Heart + "; Trust=" + state.Trust + "; Romance=" + state.Romance + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + "; BenaveilInfluence=" + state.BenaveilInfluence + ".");
+            AppendOtherStarsRelationshipLines(user, state);
             AppendConnectionFlirtGuidance(user, profile, state);
             AppendList(user, "Girlfriend history", state.GirlfriendHistory.Take(18).ToList());
             AppendGirlfriendDurableStateContext(user, state, 10);
@@ -679,6 +693,7 @@ namespace Wds.SixStars.Api.Ai
             relationship.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
             relationship.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
             relationship.AppendLine("Current state stats are part of the request every turn. Use them silently to shape warmth, caution, flirtation, distance, curiosity, secrets, and how personal your answer becomes. Do not speak the numbers unless the player asks about mechanics.");
+            AppendOtherStarsRelationshipLines(relationship, state);
             AppendAccumulatedEmotionTotals(relationship, state);
             AppendConnectionFlirtGuidance(relationship, profile, state);
             AppendGirlfriendModeInstructionSet(relationship, profile, state);
@@ -1108,6 +1123,7 @@ namespace Wds.SixStars.Api.Ai
             if (request.GameContext.Flags.TryGetValue("knownStarsMet", out string? knownStarsMet)) sb.AppendLine("Stars the Last Cat has met: " + (string.IsNullOrWhiteSpace(knownStarsMet) ? "none" : knownStarsMet));
             if (request.GameContext.Flags.TryGetValue("knownStarsAllies", out string? knownStarsAllies)) sb.AppendLine("Stars currently allied with the Last Cat: " + (string.IsNullOrWhiteSpace(knownStarsAllies) ? "none" : knownStarsAllies));
             if (request.GameContext.Flags.TryGetValue("knownStarsDetail", out string? knownStarsDetail)) sb.AppendLine("Known Star relationship detail: " + knownStarsDetail);
+            AppendOtherStarsRelationshipLines(sb, state);
             if (state.ActiveEffectors != null && state.ActiveEffectors.Count > 0)
             {
                 sb.AppendLine("Active deterministic state effectors currently shaping her response/state updates:");
@@ -1197,6 +1213,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("IsMet=" + state.IsMet + ", IsAlly=" + state.IsAlly + ", Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", BenaveilInfluence=" + state.BenaveilInfluence);
             sb.AppendLine("EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ", LastConnectionDelta=" + state.LastEmotionalConnectionPercentDelta.ToString("0.00") + ", IsGirlfriendReady=" + state.IsGirlfriendReady + ", Readiness=" + (state.GirlfriendReadinessSummary ?? string.Empty));
             AppendConnectionFlirtGuidance(sb, profile, state);
+            AppendOtherStarsRelationshipLines(sb, state);
             AppendGirlfriendModeInstructionSet(sb, profile, state);
             AppendGirlfriendHourlyStateContext(sb, state);
             AppendGirlfriendDurableStateContext(sb, state, 8);
@@ -1887,12 +1904,38 @@ namespace Wds.SixStars.Api.Ai
             if (friends.Count > 0) sb.AppendLine("Friends/contacts: " + Truncate(string.Join("; ", friends.Take(6)), 600));
             if (formNotes.Count > 0) sb.AppendLine("Benaveil/form concerns: " + Truncate(string.Join("; ", formNotes.Take(4)), 600));
             sb.AppendLine("Relationship to Last Cat: " + BuildRelationshipStatus(state));
+            AppendOtherStarsRelationshipLines(sb, state);
             List<TopAffectedEmotion> top = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>();
             if (top.Count > 0) sb.AppendLine("Last top emotions toward Last Cat: " + string.Join(", ", top.Take(4).Select(x => x.ToString())));
             List<StarEmotionAccumulatedScore> positiveTotals = state.PositiveEmotionTotals ?? new List<StarEmotionAccumulatedScore>();
             List<StarEmotionAccumulatedScore> negativeTotals = state.NegativeEmotionTotals ?? new List<StarEmotionAccumulatedScore>();
             if (positiveTotals.Count > 0) sb.AppendLine("Good emotion totals: " + string.Join(", ", positiveTotals.Take(5).Select(x => x.EmotionId + "=" + x.TotalScore.ToString("0"))));
             if (negativeTotals.Count > 0) sb.AppendLine("Bad/boundary emotion totals: " + string.Join(", ", negativeTotals.Take(5).Select(x => x.EmotionId + "=" + x.TotalScore.ToString("0"))));
+        }
+
+        private static void AppendOtherStarsRelationshipLines(StringBuilder sb, StarState state)
+        {
+            List<InterstarRelationshipState> otherStars = (state.OtherStars ?? new List<InterstarRelationshipState>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarName))
+                .OrderBy(x => x.StarName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (otherStars.Count == 0)
+            {
+                sb.AppendLine("Other stars: none recorded yet");
+                return;
+            }
+
+            sb.AppendLine("Other stars:");
+            sb.AppendLine("Format: StarName:isMet:isAlly:isGirlfriend:trustScore:heartScore. These are this Star's current Star-to-Star relationship scores toward the named Star, not the Last Cat relationship scores.");
+            foreach (InterstarRelationshipState other in otherStars)
+            {
+                sb.AppendLine(other.StarName + ":"
+                    + other.IsMet.ToString().ToLowerInvariant() + ":"
+                    + other.IsAlly.ToString().ToLowerInvariant() + ":"
+                    + other.IsGirlfriend.ToString().ToLowerInvariant() + ":"
+                    + other.TrustScore + ":"
+                    + other.HeartScore);
+            }
         }
 
         private static string QuoteBlock(string? value)

@@ -137,6 +137,16 @@ namespace Wds.SixStars.Api.Models
 
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar target reaction only: how this Star feels toward the source Star who told her the relay.</summary>
+        public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
+        public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
+
+        /// <summary>Interstar mode only: one or more per-Star vectors used to update durable Star-to-Star Heart/Trust state.</summary>
+        public List<InterstarEmotionVectorResult> InterstarEmotionVectors { get; set; } = new List<InterstarEmotionVectorResult>();
+
+        /// <summary>Interstar mode only: deterministic deltas applied to Star-to-Star relationships.</summary>
+        public List<InterstarRelationshipDeltaResult> InterstarRelationshipDeltas { get; set; } = new List<InterstarRelationshipDeltaResult>();
+
         /// <summary>Interstar mode only: one sentence this Star would say back to the source Star.</summary>
         public string InterstarReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();

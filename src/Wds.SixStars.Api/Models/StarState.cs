@@ -15,6 +15,10 @@ namespace Wds.SixStars.Api.Models
         public int Romance { get; set; }
         public int BenaveilInfluence { get; set; }
 
+        /// <summary>One-way Star-to-Star relationship state from this Star toward every other Star.
+        /// Prompt format: StarName:isMet:isAlly:isGirlfriend:trustScore:heartScore.</summary>
+        public List<InterstarRelationshipState> OtherStars { get; set; } = new List<InterstarRelationshipState>();
+
         /// <summary>True once the game/story has introduced this Star to the player. Elusiaa defaults true; other Stars default false until met in-game.</summary>
         public bool IsMet { get; set; }
 

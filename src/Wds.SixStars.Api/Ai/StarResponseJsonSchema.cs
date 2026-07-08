@@ -310,7 +310,8 @@ namespace Wds.SixStars.Api.Ai
                 { "additionalProperties", false },
                 { "required", new[]
                     {
-                        "starId", "emotionalEffectVector", "negativeEmotionVector", "suggestedStateDeltas",
+                        "starId", "emotionalEffectVector", "negativeEmotionVector", "sourceStarEmotionalEffectVector", "sourceStarNegativeEmotionVector",
+                        "interstarEmotionVectors", "suggestedStateDeltas",
                         "conversationSummary", "changesSummary", "memoryNotes", "relationshipEvents", "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -319,6 +320,9 @@ namespace Wds.SixStars.Api.Ai
                         { "starId", StringProperty(80) },
                         { "emotionalEffectVector", EmotionEffectVectorProperty() },
                         { "negativeEmotionVector", NegativeEmotionVectorProperty() },
+                        { "sourceStarEmotionalEffectVector", EmotionEffectVectorProperty() },
+                        { "sourceStarNegativeEmotionVector", NegativeEmotionVectorProperty() },
+                        { "interstarEmotionVectors", InterstarEmotionVectorArray(8) },
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(500) },
@@ -396,6 +400,31 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
+
+        private static Dictionary<string, object> InterstarEmotionVectorArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", false },
+                        { "required", new[] { "starId", "positiveEmotionVector", "negativeEmotionVector", "reason" } },
+                        { "properties", new Dictionary<string, object>
+                            {
+                                { "starId", StringProperty(80) },
+                                { "positiveEmotionVector", EmotionEffectVectorProperty() },
+                                { "negativeEmotionVector", NegativeEmotionVectorProperty() },
+                                { "reason", StringProperty(420) }
+                            }
+                        }
+                    }
+                }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
+        }
 
         private static Dictionary<string, object> GirlfriendVectorArray(int maxItems = 0)
         {

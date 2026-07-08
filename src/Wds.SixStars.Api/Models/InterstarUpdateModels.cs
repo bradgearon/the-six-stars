@@ -20,8 +20,16 @@ namespace Wds.SixStars.Api.Models
         public string StarId { get; set; } = string.Empty;
         public string SourceStarId { get; set; } = string.Empty;
         public string RelaySummary { get; set; } = string.Empty;
+        /// <summary>How the relay changed this Star's hidden feelings toward the Last Cat.</summary>
         public string EmotionalEffectVector { get; set; } = string.Empty;
         public string NegativeEmotionVector { get; set; } = string.Empty;
+
+        /// <summary>How the relay changed this Star's hidden feelings toward the source Star.</summary>
+        public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
+        public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
+        public List<InterstarEmotionVectorResult> InterstarEmotionVectors { get; set; } = new List<InterstarEmotionVectorResult>();
+        public List<InterstarRelationshipDeltaResult> InterstarRelationshipDeltas { get; set; } = new List<InterstarRelationshipDeltaResult>();
+
         public RelationshipDelta AppliedDelta { get; set; } = RelationshipDelta.Zero();
         public string TopAffectedEmotionsText { get; set; } = string.Empty;
         /// <summary>One concise in-character sentence the destination Star would send back to the source Star.</summary>

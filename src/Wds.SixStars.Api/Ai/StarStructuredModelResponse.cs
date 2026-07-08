@@ -43,6 +43,13 @@ namespace Wds.SixStars.Api.Ai
         public RelationshipDelta SuggestedStateDeltas { get; set; } = RelationshipDelta.Zero();
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar target reaction only: how this Star feels toward the source Star after hearing the relay from her.</summary>
+        public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
+        public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
+
+        /// <summary>Interstar mode only: one or more per-Star vectors for Star-to-Star relationship updates.</summary>
+        public List<InterstarEmotionVectorResult> InterstarEmotionVectors { get; set; } = new List<InterstarEmotionVectorResult>();
+
         /// <summary>Interstar mode only: what this Star would say back to the source Star after hearing the relay.</summary>
         public string ReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
