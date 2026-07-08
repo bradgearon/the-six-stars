@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Last Cat: The Early Years — Six Stars Archive</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="starscape"></div>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/cat-avatar.png" alt="The Last Cat" class="cat-icon" />
+      <div>
+        <div class="brand-title">The Last Cat: The Early Years</div>
+        <div class="brand-subtitle">Six Stars conversation archive</div>
+      </div>
+    </div>
+    <div class="actions">
+      <label class="session-label">Session <input id="sessionInput" value="android-phone-prod" /></label>
+      <button id="refreshButton">Refresh</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="left-rail">
+      <section class="star-strip" id="starStrip" aria-label="Stars"></section>
+      <section class="search-card">
+        <label for="searchBox">Search every Star</label>
+        <input id="searchBox" placeholder="kiss, Racha, tide, morning, holy..." autocomplete="off" />
+        <div class="search-meta" id="searchMeta">Search scans player lines, Star replies, summaries, combos, and relationship events.</div>
+      </section>
+      <section class="world-card">
+        <h3>World pulse</h3>
+        <div id="worldPulse" class="world-pulse">Loading the caves...</div>
+      </section>
+    </aside>
+
+    <section class="main-panel">
+      <div id="loading" class="loading">Gathering stardust from state, daily updates, and emotion traces...</div>
+      <div id="starPage" class="star-page hidden">
+        <section class="stats-top">
+          <div>
+            <div class="eyebrow" id="starElement">Star</div>
+            <h1 id="starName">Elusiaa</h1>
+            <div class="status-row" id="statusRow"></div>
+          </div>
+          <div class="meters" id="meters"></div>
+        </section>
+
+        <section class="portrait-section">
+          <div class="portrait-glow"></div>
+          <img id="starPortrait" class="hero-portrait" alt="Star portrait" />
+          <div class="daily-card">
+            <h2>Today</h2>
+            <p id="dailySummary">No daily state has been generated yet.</p>
+          </div>
+        </section>
+
+        <section class="details-grid">
+          <div class="detail-card">
+            <h3>Top accumulated emotions</h3>
+            <div id="emotionTotals" class="chips"></div>
+          </div>
+          <div class="detail-card">
+            <h3>Relationship evidence</h3>
+            <div id="relationshipEvidence" class="evidence-list"></div>
+          </div>
+          <div class="detail-card wide">
+            <h3>Girlfriend / ally state</h3>
+            <div id="girlfriendState" class="girlfriend-state"></div>
+          </div>
+        </section>
+
+        <section class="conversation-section">
+          <div class="section-title-row">
+            <h2 id="conversationTitle">Conversation</h2>
+            <div id="conversationCount" class="count-pill"></div>
+          </div>
+          <div id="conversationList" class="conversation-list"></div>
+        </section>
+      </div>
+
+      <div id="searchPage" class="search-page hidden">
+        <div class="section-title-row">
+          <h1>Search results</h1>
+          <div id="searchCount" class="count-pill"></div>
+        </div>
+        <div id="searchResults" class="conversation-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <template id="starButtonTemplate">
+    <button class="star-button">
+      <img />
+      <span class="star-button-name"></span>
+      <span class="star-button-status"></span>
+    </button>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
