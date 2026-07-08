@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Wds.SixStars.Api.Audio;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.Speech;
@@ -40,6 +41,7 @@ public sealed partial class MainViewModel
 
     public ICommand StartMobileBridgeCommand { get; private set; } = null!;
     public ICommand StopMobileBridgeCommand { get; private set; } = null!;
+    public ICommand OpenConversationArchiveCommand { get; private set; } = null!;
 
     public string MobileBridgeHostName
     {
@@ -50,6 +52,7 @@ public sealed partial class MainViewModel
             {
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
             }
         }
     }
@@ -63,12 +66,14 @@ public sealed partial class MainViewModel
             {
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
             }
         }
     }
 
     public string MobileBridgeUrl => "http://" + (string.IsNullOrWhiteSpace(MobileBridgeHostName) ? Environment.MachineName : MobileBridgeHostName.Trim()) + ":" + ResolveMobileBridgePort().ToString(System.Globalization.CultureInfo.InvariantCulture);
     public string MobileBridgeAudioUrl => "tcp://" + (string.IsNullOrWhiteSpace(MobileBridgeHostName) ? Environment.MachineName : MobileBridgeHostName.Trim()) + ":" + ResolveMobileBridgeAudioPort().ToString(System.Globalization.CultureInfo.InvariantCulture);
+    public string ConversationArchiveUrl => MobileBridgeUrl + NormalizeArchivePrefix(_appConfig.ConversationArchive.PathPrefix) + "/";
 
     public bool MobileBridgeEnabled
     {
@@ -100,11 +105,13 @@ public sealed partial class MainViewModel
         _mobileBridgePort = (_appConfig.MobileBridge.Port <= 0 ? 8066 : _appConfig.MobileBridge.Port).ToString(System.Globalization.CultureInfo.InvariantCulture);
         StartMobileBridgeCommand = new RelayCommand(_ => StartMobileBridgeServer());
         StopMobileBridgeCommand = new RelayCommand(_ => StopMobileBridgeServer("Stopped by user."));
+        OpenConversationArchiveCommand = new RelayCommand(_ => OpenConversationArchive());
 
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeHostName)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgePort)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
 
         if (_appConfig.MobileBridge.EnabledOnStartup || IsTruthy(Environment.GetEnvironmentVariable("SIX_STARS_MOBILE_BRIDGE_ENABLED")))
         {
@@ -140,7 +147,11 @@ public sealed partial class MainViewModel
             CreateMobileHealthPayload,
             CreateMobileStarsPayload,
             CreateMobileStatePayloadAsync,
-            _mobileBridgeDispatcher);
+            _mobileBridgeDispatcher,
+            CreateConversationArchivePayloadAsync,
+            ResolveConversationArchiveRoot(),
+            _appConfig.ConversationArchive.PathPrefix,
+            _appConfig.ConversationArchive.Enabled);
         _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
         {
             MobileBridgeStatus = message + " HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
@@ -149,7 +160,7 @@ public sealed partial class MainViewModel
         _mobileBridgeServer.Start();
 
         MobileBridgeEnabled = true;
-        MobileBridgeStatus = "Android bridge running. HTTP " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Use the HTTP URL in the Android app.";
+        MobileBridgeStatus = "Android bridge running. HTTP " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP URL in the Android app.";
     }
 
     private void StopMobileBridgeServer(string reason)
@@ -175,6 +186,120 @@ public sealed partial class MainViewModel
     {
         int httpPort = ResolveMobileBridgePort();
         return httpPort >= 65535 ? httpPort - 1 : httpPort + 1;
+    }
+
+
+    private async Task<object> CreateConversationArchivePayloadAsync(string sessionId, int maxLogs, CancellationToken cancellationToken)
+    {
+        string safeSessionId = string.IsNullOrWhiteSpace(sessionId) ? ResolveDefaultArchiveSessionId() : sessionId.Trim();
+        if (maxLogs <= 0) maxLogs = _appConfig.ConversationArchive.MaxLogs <= 0 ? 160 : _appConfig.ConversationArchive.MaxLogs;
+        if (maxLogs > 500) maxLogs = 500;
+
+        SixStarsSaveData saveData = await _runtime.ExportSaveDataAsync(safeSessionId, cancellationToken).ConfigureAwait(false);
+        List<object> dailyStates = new List<object>();
+        foreach (string starId in StarIds)
+        {
+            StarDailyStateRecord? daily = await _runtime.GetCurrentDailyStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
+            dailyStates.Add(new
+            {
+                starId,
+                current = daily
+            });
+        }
+
+        List<object> logs = new List<object>();
+        string logDirectory = _runtime.ConversationDebugLogDirectory;
+        if (Directory.Exists(logDirectory))
+        {
+            foreach (FileInfo file in new DirectoryInfo(logDirectory).GetFiles("*.md", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(x => x.LastWriteTimeUtc)
+                .Take(maxLogs))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string text;
+                try { text = await File.ReadAllTextAsync(file.FullName, cancellationToken).ConfigureAwait(false); }
+                catch { continue; }
+
+                logs.Add(new
+                {
+                    fileName = file.Name,
+                    lastWriteTimeUtc = file.LastWriteTimeUtc,
+                    length = file.Length,
+                    markdown = text
+                });
+            }
+        }
+
+        return new
+        {
+            ok = true,
+            title = "The Last Cat: The Early Years",
+            generatedAt = DateTimeOffset.Now,
+            sessionId = safeSessionId,
+            defaultSessionId = ResolveDefaultArchiveSessionId(),
+            selectedStarId = SelectedStarId,
+            starIds = StarIds.ToArray(),
+            saveData,
+            dailyStates,
+            logs,
+            logDirectory,
+            latestConversationDebugLogPath = _runtime.LatestConversationDebugLogPath,
+            archiveUrl = ConversationArchiveUrl
+        };
+    }
+
+    private string ResolveDefaultArchiveSessionId()
+    {
+        return string.IsNullOrWhiteSpace(_appConfig.ConversationArchive.DefaultSessionId)
+            ? "android-phone-prod"
+            : _appConfig.ConversationArchive.DefaultSessionId.Trim();
+    }
+
+    private string ResolveConversationArchiveRoot()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        string candidate = Path.Combine(baseDir, "Content", "WebArchive");
+        if (Directory.Exists(candidate)) return candidate;
+
+        DirectoryInfo? dir = new DirectoryInfo(baseDir);
+        while (dir != null)
+        {
+            string projectCandidate = Path.Combine(dir.FullName, "src", "Wds.SixStars.Ui", "Content", "WebArchive");
+            if (Directory.Exists(projectCandidate)) return projectCandidate;
+            string directCandidate = Path.Combine(dir.FullName, "Content", "WebArchive");
+            if (Directory.Exists(directCandidate)) return directCandidate;
+            dir = dir.Parent;
+        }
+        return candidate;
+    }
+
+    private void OpenConversationArchive()
+    {
+        if (_mobileBridgeServer == null || !_mobileBridgeServer.IsRunning)
+        {
+            StartMobileBridgeServer();
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ConversationArchiveUrl,
+                UseShellExecute = true
+            });
+            MobileBridgeStatus = "Opened conversation archive: " + ConversationArchiveUrl;
+        }
+        catch (Exception ex)
+        {
+            MobileBridgeStatus = "Could not open conversation archive: " + ex.Message + " URL: " + ConversationArchiveUrl;
+        }
+    }
+
+    private static string NormalizeArchivePrefix(string? prefix)
+    {
+        string value = string.IsNullOrWhiteSpace(prefix) ? "/archive" : prefix.Trim();
+        if (!value.StartsWith("/", StringComparison.Ordinal)) value = "/" + value;
+        return value.TrimEnd('/');
     }
 
     private object CreateMobileHealthPayload()
