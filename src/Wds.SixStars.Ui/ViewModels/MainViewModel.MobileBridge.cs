@@ -403,18 +403,16 @@ public sealed partial class MainViewModel
                 {
                     SessionId = sessionId,
                     StarId = starId,
-                    RequestType = "Chat",
-                    PlayerText = string.IsNullOrWhiteSpace(command.PlayerText)
-                        ? "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, or interstar feedback that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in."
-                        : command.PlayerText,
+                    RequestType = "StarInitiative",
+                    PlayerText = string.Empty,
                     Area = string.IsNullOrWhiteSpace(command.Area) ? Area : command.Area,
                     Quest = string.IsNullOrWhiteSpace(command.Quest) ? "AndroidProdStarInitiative" : command.Quest,
                     RomanceMode = command.RomanceMode,
                     SpeakOnDesktop = command.SpeakOnDesktop,
                     ReturnAudio = command.ReturnAudio,
-                    ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid-StarInitiative" : command.ClientName
+                    ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid-StarInitiative" : command.ClientName,
+                    Reason = string.IsNullOrWhiteSpace(command.Reason) ? "mobile at-rest initiative" : command.Reason
                 };
-
                 MobileBridgeResponse initiativeResponse = await ProcessMobileConversationAsync(initiativeRequest, string.Empty, cancellationToken).ConfigureAwait(false);
                 StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "MaybeStarInitiative", sessionId, starId, state, initiativeResponse);
@@ -434,9 +432,17 @@ public sealed partial class MainViewModel
                     Romance = state.Romance,
                     EmotionalConnectionPercent = state.EmotionalConnectionPercent,
                     IsGirlfriendReady = state.IsGirlfriendReady,
-                    Message = initiativeResponse.Ok ? starId + " chose to say something at rest." : initiativeResponse.VoiceError,
+                    Message = initiativeResponse.Ok
+                        ? (initiativeResponse.InitiativeShouldSpeak ? starId + " chose to say something at rest." : starId + " had nothing state-backed to say right now.")
+                        : initiativeResponse.VoiceError,
                     Error = initiativeResponse.Ok ? string.Empty : initiativeResponse.VoiceError,
-                    SpokenText = initiativeResponse.SpokenText ?? string.Empty,
+                    SpokenText = initiativeResponse.InitiativeShouldSpeak ? (initiativeResponse.SpokenText ?? string.Empty) : string.Empty,
+                    InitiativeShouldSpeak = initiativeResponse.InitiativeShouldSpeak,
+                    InitiativeSkippedBeforeLlm = initiativeResponse.InitiativeSkippedBeforeLlm,
+                    InitiativeStateScore = initiativeResponse.InitiativeStateScore,
+                    InitiativePriority = initiativeResponse.InitiativePriority,
+                    InitiativeTopic = initiativeResponse.InitiativeTopic ?? string.Empty,
+                    InitiativeReason = initiativeResponse.InitiativeReason ?? string.Empty,
                     StoryId = initiativeResponse.StoryId ?? string.Empty,
                     StoryTitle = initiativeResponse.StoryTitle ?? string.Empty,
                     StoryMarkdown = initiativeResponse.StoryMarkdown ?? string.Empty,
@@ -488,6 +494,74 @@ public sealed partial class MainViewModel
         AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%, top=" + FormatTopAffectedEmotions(state.LastTopAffectedEmotions));
     }
 
+    private void PublishMobileConversationFailureEventIfNeeded(MobileBridgeRequest mobileRequest, string starId, RequestType requestType, string error)
+    {
+        if (requestType == RequestType.StarInitiative || requestType == RequestType.Photo) return;
+        try
+        {
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "MobileConversationResponseFailed",
+                CommandId = "direct-mobile-failed-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
+                SessionId = string.IsNullOrWhiteSpace(mobileRequest.SessionId) ? "android-phone-dev" : mobileRequest.SessionId,
+                StarId = starId ?? string.Empty,
+                SelectedStarId = SelectedStarId,
+                Message = "The direct Android conversation request failed inside the desktop runtime.",
+                Error = error ?? string.Empty
+            });
+        }
+        catch
+        {
+        }
+    }
+
+    private void PublishMobileConversationResponseEventIfNeeded(MobileBridgeRequest mobileRequest, StarInteractionRequest request, MobileBridgeResponse response, StarInteractionResponse starResponse)
+    {
+        if (request == null || response == null) return;
+        if (request.RequestType == RequestType.StarInitiative || request.RequestType == RequestType.Photo) return;
+
+        try
+        {
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = response.Ok ? "MobileConversationResponseReady" : "MobileConversationResponseFailed",
+                CommandId = "direct-mobile-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
+                SessionId = request.SessionId ?? string.Empty,
+                StarId = response.StarId ?? request.StarId ?? string.Empty,
+                SelectedStarId = SelectedStarId,
+                Message = response.Ok ? "The Star response is ready for Android. If the direct HTTP request was interrupted, the phone can use this queued event." : response.VoiceError,
+                Error = response.Ok ? string.Empty : response.VoiceError,
+                Transcript = response.Transcript ?? string.Empty,
+                SpokenText = response.SpokenText ?? string.Empty,
+                StoryId = response.StoryId ?? string.Empty,
+                StoryTitle = response.StoryTitle ?? string.Empty,
+                StoryMarkdown = response.StoryMarkdown ?? string.Empty,
+                StorySummary = response.StorySummary ?? string.Empty,
+                StoryPartIndex = response.StoryPartIndex,
+                StoryIsFinished = response.StoryIsFinished,
+                StoryChunkCount = response.StoryChunkCount,
+                TopAffectedEmotions = (response.TopAffectedEmotions ?? new List<TopAffectedEmotion>()).ToList(),
+                RecentConversationHistory = (response.RecentConversationHistory ?? new List<MobileConversationHistoryItem>()).ToList(),
+                EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
+                NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+                LastEmotionVectorsText = response.LastEmotionVectorsText ?? string.Empty,
+                InterstarStatusText = InterstarStatusText,
+                DailyStateSlotId = response.DailyStateSlotId ?? string.Empty,
+                DailyStateLocalDate = response.DailyStateLocalDate ?? string.Empty,
+                DailyStateGeneratedAt = response.DailyStateGeneratedAt,
+                DailyStateSummary = response.DailyStateSummary ?? string.Empty,
+                DailyStateJson = response.DailyStateJson ?? string.Empty,
+                DailyStateXml = string.Empty
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish direct conversation response event: " + ex.Message);
+        }
+    }
+
     private MobileBridgeDispatchResult CreateConversationDispatchResult(MobileBridgeDispatchCommand command, string commandType, string sessionId, string starId, StarState state, MobileBridgeResponse response)
     {
         return new MobileBridgeDispatchResult
@@ -509,6 +583,12 @@ public sealed partial class MainViewModel
             StarOutput = response.StarOutput,
             ConversationSummary = response.ConversationSummary,
             ChangesSummary = response.ChangesSummary,
+            InitiativeShouldSpeak = response.InitiativeShouldSpeak,
+            InitiativeSkippedBeforeLlm = response.InitiativeSkippedBeforeLlm,
+            InitiativeStateScore = response.InitiativeStateScore,
+            InitiativePriority = response.InitiativePriority,
+            InitiativeTopic = response.InitiativeTopic ?? string.Empty,
+            InitiativeReason = response.InitiativeReason ?? string.Empty,
             VoiceRequested = response.VoiceRequested,
             VoiceSocketConnected = response.VoiceSocketConnected,
             VoiceChunksSent = response.VoiceChunksSent,
@@ -1042,14 +1122,62 @@ public sealed partial class MainViewModel
         return response;
     }
 
+    private MobileBridgeResponse CreateMobileBusySkippedInitiativeResponse(MobileBridgeRequest mobileRequest, string starId)
+    {
+        string reason = "At-rest Star initiative skipped because a foreground player request is already using the desktop runtime. The quiet check will try again later.";
+        OnUiThread(() =>
+        {
+            MobileBridgeStatus = reason;
+            AppendMobileBridgeVoiceDebug("At-rest Star initiative skipped", starId + ": " + reason);
+        });
+
+        return new MobileBridgeResponse
+        {
+            Ok = true,
+            StarId = starId,
+            RequestType = RequestType.StarInitiative.ToString(),
+            InitiativeShouldSpeak = false,
+            InitiativeSkippedBeforeLlm = true,
+            InitiativeStateScore = 0,
+            InitiativePriority = 0,
+            InitiativeReason = reason,
+            VoiceRequested = false,
+            VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
+            VoiceMessage = reason
+        };
+    }
+
     private async Task<MobileBridgeResponse> ProcessMobileConversationAsync(MobileBridgeRequest mobileRequest, string transcript, CancellationToken cancellationToken)
     {
-        await _mobileBridgeRuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        string starId = ResolveDefaultStarId(mobileRequest.StarId);
+        RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
+        if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
+        bool isAtRestInitiative = requestType == RequestType.StarInitiative;
+        bool gateTaken = false;
+
+        if (isAtRestInitiative)
+        {
+            // At-rest girlfriend/Star initiative must never get in front of a real player reply.
+            // If the mobile bridge runtime is already busy, skip this quiet check and try later.
+            gateTaken = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            if (!gateTaken)
+            {
+                return CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
+            }
+        }
+        else
+        {
+            // A real text/voice/photo from the player preempts any at-rest/background request that
+            // already reached the desktop runtime. This prevents Android from sitting behind a long
+            // StarInitiative/daily/girlfriend-state LLM call until the HTTP socket aborts.
+            try { _operationController.CancelAllRuntimeOperations("Android foreground request preempted mobile background/at-rest work for " + starId + "."); } catch { }
+            try { _runtime.CancelBackgroundAnalysis("Android foreground request preempted background analysis for " + starId + "."); } catch { }
+            await _mobileBridgeRuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            gateTaken = true;
+        }
+
         try
         {
-            string starId = ResolveDefaultStarId(mobileRequest.StarId);
-            RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
-            if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
             bool wantsPhoneAudio = mobileRequest.ReturnAudio;
             DateTimeOffset started = DateTimeOffset.Now;
 
@@ -1107,8 +1235,13 @@ public sealed partial class MainViewModel
             }
 
             MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse);
+            if (requestType == RequestType.StarInitiative && (!starResponse.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(starResponse.SpokenText)))
+            {
+                wantsPhoneAudio = false;
+                response.VoiceRequested = false;
+            }
 
-            OnUiThread(() => AppendMobileBridgeVoiceDebug("Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio));
+            OnUiThread(() => AppendMobileBridgeVoiceDebug(requestType == RequestType.StarInitiative ? "Star initiative check ready" : "Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio + ", initiativeShouldSpeak=" + starResponse.InitiativeShouldSpeak));
 
             OnUiThread(() =>
             {
@@ -1131,6 +1264,11 @@ public sealed partial class MainViewModel
                         storyMarkdownChars = response.StoryMarkdown?.Length ?? 0,
                         storyChunkCount = response.StoryChunkCount,
                         storyMarkdownReady = response.StoryMarkdownReady,
+                        initiativeShouldSpeak = response.InitiativeShouldSpeak,
+                        initiativeSkippedBeforeLlm = response.InitiativeSkippedBeforeLlm,
+                        initiativeStateScore = response.InitiativeStateScore,
+                        initiativeTopic = response.InitiativeTopic,
+                        initiativeReason = response.InitiativeReason,
                         response.PhotoAttached,
                         photoSummaryChars = response.PhotoSummary?.Length ?? 0,
                         response.PhotoError,
@@ -1195,6 +1333,7 @@ public sealed partial class MainViewModel
             }
 
             response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
+            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse);
             OnUiThread(() =>
             {
                 MobileBridgeStatus = wantsPhoneAudio
@@ -1205,17 +1344,24 @@ public sealed partial class MainViewModel
         }
         catch (OperationCanceledException)
         {
-            return new MobileBridgeResponse { Ok = false, VoiceError = "Android bridge request was cancelled." };
+            MobileBridgeResponse cancelled = new MobileBridgeResponse { Ok = false, StarId = starId, RequestType = requestType.ToString(), VoiceError = "Android bridge request was cancelled." };
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError);
+            return cancelled;
         }
         catch (Exception ex)
         {
             OnUiThread(() => MobileBridgeStatus = "Android bridge error: " + ex.Message);
-            return new MobileBridgeResponse { Ok = false, VoiceError = ex.Message, Notes = { ex.GetType().Name } };
+            MobileBridgeResponse failed = new MobileBridgeResponse { Ok = false, StarId = starId, RequestType = requestType.ToString(), VoiceError = ex.Message, Notes = { ex.GetType().Name } };
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message);
+            return failed;
         }
         finally
         {
             IsProcessingRuntime = false;
-            _mobileBridgeRuntimeGate.Release();
+            if (gateTaken)
+            {
+                _mobileBridgeRuntimeGate.Release();
+            }
         }
     }
 
@@ -1239,8 +1385,13 @@ public sealed partial class MainViewModel
         if (IsMobileStarInitiativeRequest(request))
         {
             context.Flags["starInitiative"] = "true";
-            context.Flags["initiativeReason"] = string.IsNullOrWhiteSpace(request.Quest) ? "mobile at-rest initiative" : request.Quest;
-            context.RecentEvents.Add("At-rest Star initiative check from Android/desktop bridge; the Star may speak naturally if she has something to say.");
+            string initiativeReason = !string.IsNullOrWhiteSpace(request.Reason) ? request.Reason : (string.IsNullOrWhiteSpace(request.Quest) ? "mobile at-rest initiative" : request.Quest);
+            context.Flags["initiativeReason"] = initiativeReason;
+            if (ContainsIgnoreCase(request.ClientName, "Manual") || ContainsIgnoreCase(initiativeReason, "manual") || ContainsIgnoreCase(initiativeReason, "button"))
+            {
+                context.Flags["starInitiativeForce"] = "true";
+            }
+            context.RecentEvents.Add("At-rest Star initiative state check from Android/desktop bridge; this is not a player message and will not change relationship/emotion state.");
         }
         if (HasMobilePhoto(request))
         {
@@ -1256,7 +1407,8 @@ public sealed partial class MainViewModel
     private static bool IsMobileStarInitiativeRequest(MobileBridgeRequest request)
     {
         if (request == null) return false;
-        return ContainsIgnoreCase(request.ClientName, "StarInitiative")
+        return string.Equals(request.RequestType, "StarInitiative", StringComparison.OrdinalIgnoreCase)
+            || ContainsIgnoreCase(request.ClientName, "StarInitiative")
             || ContainsIgnoreCase(request.Quest, "StarInitiative");
     }
 
@@ -1560,6 +1712,12 @@ public sealed partial class MainViewModel
             ConversationSummary = response.ConversationSummary ?? string.Empty,
             ChangesSummary = response.ChangesSummary ?? string.Empty,
             EmotionalPurpose = response.EmotionalPurpose ?? string.Empty,
+            InitiativeShouldSpeak = response.InitiativeShouldSpeak,
+            InitiativeSkippedBeforeLlm = response.InitiativeSkippedBeforeLlm,
+            InitiativeStateScore = response.InitiativeStateScore,
+            InitiativePriority = response.InitiativePriority,
+            InitiativeTopic = response.InitiativeTopic ?? string.Empty,
+            InitiativeReason = response.InitiativeReason ?? string.Empty,
             HeartDelta = response.StateDeltas.Heart,
             TrustDelta = response.StateDeltas.Trust,
             RomanceDelta = response.StateDeltas.Romance,
@@ -1568,7 +1726,7 @@ public sealed partial class MainViewModel
             EmotionalConnectionAfter = response.EmotionalConnectionPercentAfter,
             IsGirlfriendReadyAfter = response.IsGirlfriendReadyAfter,
             IsGirlfriendAfter = false,
-            VoiceRequested = mobileRequest.ReturnAudio,
+            VoiceRequested = mobileRequest.ReturnAudio && response.InitiativeShouldSpeak && !string.IsNullOrWhiteSpace(response.SpokenText),
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
             StoryId = response.StoryId ?? string.Empty,
             StoryTitle = response.StoryTitle ?? string.Empty,
@@ -1594,9 +1752,11 @@ public sealed partial class MainViewModel
             DailyStateSummary = GetFlag(runtimeRequest, "todayStarStateSummary"),
             DailyStateJson = GetFlag(runtimeRequest, "todayStarStateJson"),
             DailyStateXml = string.Empty,
-            VoiceMessage = mobileRequest.ReturnAudio
-                ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
-                : "Phone voice was not requested."
+            VoiceMessage = requestType == RequestType.StarInitiative && !response.InitiativeShouldSpeak
+                ? FirstNonEmptyForMobile(response.InitiativeReason, "The Star had nothing state-backed to say right now.")
+                : mobileRequest.ReturnAudio
+                    ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
+                    : "Phone voice was not requested."
         };
     }
 

@@ -32,11 +32,26 @@ namespace Wds.SixStars.Api.State
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public double WisdomScore { get; set; }
         public string StoryId { get; set; } = string.Empty;
         public string StoryTitle { get; set; } = string.Empty;
         public string StorySummary { get; set; } = string.Empty;
         public bool StoryFinished { get; set; }
         public string StorySeed { get; set; } = string.Empty;
+
+        /// <summary>
+        /// True for hidden background/system updates such as interstar micro-ripples. These may update
+        /// relationship state, but they should not look like direct player conversation turns.
+        /// </summary>
+        public bool IsInternalBackgroundUpdate { get; set; }
+
+        /// <summary>When true, do not replace the prompt-facing ConversationSummary with this update.</summary>
+        public bool SuppressConversationSummaryUpdate { get; set; }
+
+        /// <summary>When true, do not append this update to the direct player-facing MemoryLog.</summary>
+        public bool SuppressConversationLog { get; set; }
     }
 }

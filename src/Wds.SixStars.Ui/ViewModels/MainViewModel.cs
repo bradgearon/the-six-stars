@@ -2525,14 +2525,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 SessionId = DefaultSessionId,
                 StarId = SelectedStarId,
                 Speaker = "StarInitiativeSystem",
-                RequestType = RequestType.Chat,
-                PlayerText = "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, interstar feedback, or your relationship posture that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in.",
+                RequestType = RequestType.StarInitiative,
+                PlayerText = string.Empty,
                 GameContext = CreateGameContext("At-rest Star initiative check: " + reason),
                 StoryOptions = CreateStoryOptions(false)
             };
             request.GameContext.Flags["starInitiative"] = "true";
             request.GameContext.Flags["initiativeReason"] = reason ?? string.Empty;
-            request.GameContext.RecentEvents.Add("The desktop app quietly asked whether the selected Star wants to say something at rest.");
+            if (force) request.GameContext.Flags["starInitiativeForce"] = "true";
+            request.GameContext.RecentEvents.Add("The desktop app quietly asked whether the selected Star has a state-backed thing to say at rest. This is not a player message.");
 
             ResetLlmDebugLog(request);
             IsProcessingRuntime = true;
@@ -2540,6 +2541,21 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             CancellationToken runtimeToken = _operationController.BeginNewOperation("star initiative to " + request.StarId);
             StarInteractionResponse response = await _runtime.ProcessAsync(request, runtimeToken).ConfigureAwait(false);
             _lastStarInitiativeAt = DateTimeOffset.Now;
+            if (!response.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(response.SpokenText))
+            {
+                OnUiThread(() =>
+                {
+                    StarOutput = string.Empty;
+                    LastEmotionVectorsText = FormatEmotionVectorsForResponse(response);
+                    TopAffectedEmotionsText = FormatTopAffectedEmotions(response.TopAffectedEmotions);
+                    DebugJson = _llmDebugLog.ToString()
+                        + "\n================ STAR INITIATIVE STATE CHECK / NO SPEECH ================\n"
+                        + CreateEnhancedDebugOutput(request, response);
+                    Status = response.StarId + " did not have anything state-backed to say right now.";
+                });
+                IsProcessingRuntime = false;
+                return;
+            }
 
             _stateChangeTracker.RecordStateChange(
                 response.StarId,

@@ -60,6 +60,36 @@ namespace Wds.SixStars.Api.Models
         public List<string> CanonSourcesUsed { get; set; } = new List<string>();
         public string EmotionalPurpose { get; set; } = string.Empty;
 
+        /// <summary>At-rest initiative only: true when the Star has a state-backed thing she wants to say now. False means no speech should be displayed or played.</summary>
+        public bool InitiativeShouldSpeak { get; set; } = true;
+
+        /// <summary>At-rest initiative only: 0-1 priority returned by the LLM for the selected state-backed topic.</summary>
+        public double InitiativePriority { get; set; }
+
+        /// <summary>At-rest initiative only: one score/confidence item for the single speak-now option.</summary>
+        public List<GirlfriendVectorItem> InitiativeSpeechDecisionVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>At-rest initiative only: randomized runtime threshold used to accept or suppress the LLM speak-now option.</summary>
+        public double InitiativeSpeechAcceptThreshold { get; set; }
+
+        /// <summary>At-rest initiative only: effective runtime score after confidence and girlfriend-state bias are applied.</summary>
+        public double InitiativeSpeechEffectiveScore { get; set; }
+
+        /// <summary>At-rest initiative only: whether the randomized score/confidence gate accepted the line after the LLM returned it.</summary>
+        public bool InitiativeSpeechScoreAccepted { get; set; }
+
+        /// <summary>At-rest initiative only: short state-backed topic or hook the Star chose.</summary>
+        public string InitiativeTopic { get; set; } = string.Empty;
+
+        /// <summary>At-rest initiative only: why she did or did not choose to speak.</summary>
+        public string InitiativeReason { get; set; } = string.Empty;
+
+        /// <summary>True when the runtime skipped the LLM because daily/emotion/interstar state did not contain enough reason to ask.</summary>
+        public bool InitiativeSkippedBeforeLlm { get; set; }
+
+        /// <summary>Debug score from the deterministic state pre-check that decides whether asking the initiative LLM is worthwhile.</summary>
+        public double InitiativeStateScore { get; set; }
+
         /// <summary>True when the foreground Star says she needs old history, quotes, markers, lore, bestiary, character, or world data.</summary>
         public bool NeedsMoreInformation { get; set; }
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
@@ -119,6 +149,9 @@ namespace Wds.SixStars.Api.Models
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
 
         /// <summary>
         /// Runtime coordination id for the deferred background emotion/memory review.

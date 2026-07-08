@@ -22,5 +22,6 @@ namespace Wds.SixStars.Api.State
         Task<StarState> SetStarDialogueStateAsync(StarDialogueProgressUpdateRequest request, CancellationToken cancellationToken);
         Task<StarState> ClearStarDialogueStateAsync(string sessionId, string starId, CancellationToken cancellationToken);
         Task<StarState> SetStarDailyStateContextAsync(string sessionId, string starId, StarDailyStateContext context, CancellationToken cancellationToken);
+        Task<StarState> SetStarGirlfriendHourlyStateContextAsync(string sessionId, string starId, StarGirlfriendHourlyStateContext context, CancellationToken cancellationToken);
     }
 }

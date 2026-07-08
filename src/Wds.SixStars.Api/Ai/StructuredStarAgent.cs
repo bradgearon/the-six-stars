@@ -7,13 +7,14 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Engine;
+using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IInterstarUpdateAgent
+    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -180,14 +181,56 @@ namespace Wds.SixStars.Api.Ai
                 "daily-star-state-refresh",
                 cancellationToken).ConfigureAwait(false);
 
-            StarDailyStateModelResponse? model = JsonSerializer.Deserialize<StarDailyStateModelResponse>(ExtractJson(json), _jsonOptions);
+            string extractedJson = ExtractJson(json);
+            StarDailyStateModelResponse? model = JsonSerializer.Deserialize<StarDailyStateModelResponse>(extractedJson, _jsonOptions);
             if (model == null) throw new InvalidOperationException("Daily Star state generator returned empty JSON.");
+            ApplyDailyStateJsonAliases(extractedJson, model);
             model.StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId;
+            model.SituationSummary = CleanOneLine(model.SituationSummary, 1100);
+            model.FeelingsSummary = CleanOneLine(model.FeelingsSummary, 900);
+            model.WhatSheIsDoingToday = CleanOneLine(model.WhatSheIsDoingToday, 900);
+            model.CurrentDesires = CleanOneLine(model.CurrentDesires, 700);
+            model.RelationshipPosture = CleanOneLine(model.RelationshipPosture, 700);
+            model.RecentPeopleSeenSummary = CleanOneLine(model.RecentPeopleSeenSummary, 700);
+            model.RecentEventsSummary = CleanOneLine(model.RecentEventsSummary, 900);
+            model.PrivateSecretsOrHooks = CleanOneLine(model.PrivateSecretsOrHooks, 900);
+            model.PromptUseSummary = CleanOneLine(model.PromptUseSummary, 600);
             model.MoodTags = CleanList(model.MoodTags, 10);
             model.RecentPeopleSeen = CleanList(model.RecentPeopleSeen, 12);
             model.RecentEvents = CleanList(model.RecentEvents, 12);
             model.TodayIntentions = CleanList(model.TodayIntentions, 12);
+            model.ThingsSheWantsToTalkAbout = CleanList(model.ThingsSheWantsToTalkAbout, 12);
             model.ConversationHooks = CleanList(model.ConversationHooks, 12);
+            return model;
+        }
+
+
+        public async Task<StarGirlfriendHourlyStateModelResponse> GenerateGirlfriendHourlyStateAsync(StarGirlfriendHourlyStateGenerationRequest request, CancellationToken cancellationToken)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            StarProfile profile = request.Profile ?? throw new ArgumentNullException(nameof(request.Profile));
+
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending GIRLFRIEND hourly state refresh request for " + profile.StarId + " slot " + request.SlotId + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildGirlfriendHourlyStateMessages(request),
+                StarResponseJsonSchema.CreateGirlfriendHourlyStateResponseFormat(),
+                _reviewMaxTokens,
+                "girlfriend-hourly-state-refresh",
+                cancellationToken).ConfigureAwait(false);
+
+            StarGirlfriendHourlyStateModelResponse? model = JsonSerializer.Deserialize<StarGirlfriendHourlyStateModelResponse>(ExtractJson(json), _jsonOptions);
+            if (model == null) throw new InvalidOperationException("Girlfriend hourly state generator returned empty JSON.");
+            model.StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId;
+            model.Summary = CleanOneLine(model.Summary, 900);
+            model.RelationshipPosture = CleanOneLine(model.RelationshipPosture, 700);
+            model.NeedSummary = CleanOneLine(model.NeedSummary, 700);
+            model.WantSummary = CleanOneLine(model.WantSummary, 700);
+            model.NeedVector = NormalizeGirlfriendVector(model.NeedVector, 30);
+            model.WantVector = NormalizeGirlfriendVector(model.WantVector, 30);
+            model.ThingsSheWantsToSay = CleanList(model.ThingsSheWantsToSay, 16);
+            model.CuteThingsSheWantsToSay = CleanList(model.CuteThingsSheWantsToSay, 16);
+            model.OverallConfidence = Clamp01(model.OverallConfidence);
+            model.OverallScore = ClampScore(model.OverallScore);
             return model;
         }
 
@@ -218,6 +261,7 @@ namespace Wds.SixStars.Api.Ai
             relay.WhatOriginWouldTellTarget = CleanOneLine(relay.WhatOriginWouldTellTarget, 900);
             relay.Reason = CleanOneLine(relay.Reason, 360);
             relay.CooldownKey = CleanOneLine(relay.CooldownKey, 120);
+            NormalizeInterstarRelayFields(relay, originProfile, targetProfile, originalRequest, originResponse);
             return relay;
         }
 
@@ -242,9 +286,9 @@ namespace Wds.SixStars.Api.Ai
             response.SetSpokenParts(Array.Empty<string>());
             response.SpokenText = string.Empty;
             response.EmotionalPurpose = "Interstar micro-update: " + targetProfile.DisplayName + " reacted privately to what " + relay.OriginStarId + " told her about the Last Cat.";
-            response.ChangesSummary = string.IsNullOrWhiteSpace(response.ChangesSummary)
-                ? targetProfile.DisplayName + " heard a private interstar relay from " + relay.OriginStarId + " and reacted emotionally toward the Last Cat."
-                : response.ChangesSummary;
+            response.ConversationSummary = BuildInterstarReactionSummary(targetProfile, relay);
+            response.ChangesSummary = targetProfile.DisplayName + " privately heard " + relay.OriginStarId + "'s interstar relay about the Last Cat and updated hidden feelings only.";
+            response.InterstarReplyToSourceStar = NormalizeInterstarReplyToSource(response.InterstarReplyToSourceStar, relay.OriginStarId);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM interstar target reaction vector pass.");
             return response;
         }
@@ -270,9 +314,8 @@ namespace Wds.SixStars.Api.Ai
             response.SetSpokenParts(Array.Empty<string>());
             response.SpokenText = string.Empty;
             response.EmotionalPurpose = "Interstar micro-update: " + originProfile.DisplayName + " reacted privately to the other Stars' emotional responses about the Last Cat.";
-            response.ChangesSummary = string.IsNullOrWhiteSpace(response.ChangesSummary)
-                ? originProfile.DisplayName + " felt the emotional ripple from the other Stars after sharing the recent conversation."
-                : response.ChangesSummary;
+            response.ConversationSummary = BuildInterstarFeedbackSummary(originProfile, reactions);
+            response.ChangesSummary = originProfile.DisplayName + " privately processed interstar feedback about the Last Cat; hidden state only.";
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM interstar origin feedback vector pass.");
             return response;
         }
@@ -283,14 +326,15 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Player text: {request.PlayerText?.Substring(0, Math.Min(60, request.PlayerText?.Length ?? 0))}...");
 
             bool isStory = request.RequestType == RequestType.Story;
+            bool isStarInitiative = request.RequestType == RequestType.StarInitiative;
             bool isStoryContinuation = isStory && request.StoryOptions != null && request.StoryOptions.ContinueActiveStory;
             object responseFormat = isStory
                 ? StarResponseJsonSchema.CreateStorySpeechResponseFormat(isStoryContinuation)
-                : StarResponseJsonSchema.CreateSpeechResponseFormat();
+                : (isStarInitiative ? StarResponseJsonSchema.CreateStarInitiativeResponseFormat() : StarResponseJsonSchema.CreateSpeechResponseFormat());
             int maxTokens = isStory && !isStoryContinuation ? _storyPlanMaxTokens : _speechMaxTokens;
             string purpose = isStory
                 ? (isStoryContinuation ? "story-continuation-spoken-response" : "story-plan-and-first-spoken-response")
-                : "fast-spoken-response";
+                : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response");
 
             string json = await _client.CompleteJsonAsync(
                 _promptBuilder.BuildSpeechMessages(profile, request, state),
@@ -302,10 +346,19 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received fast LLM speech response ({json.Length} chars)");
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
+            List<GirlfriendVectorItem> initiativeSpeechDecisionVector = NormalizeGirlfriendVector(model.SpeechDecisionVector, 1);
+            bool initiativeVectorWantsSpeech = initiativeSpeechDecisionVector.Any(x => x != null && (x.Score > 0 || x.Confidence > 0));
             StarInteractionResponse response = new StarInteractionResponse
             {
                 StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId,
-                EmotionalPurpose = "Foreground spoken reply only; background emotion/vector/memory review pending.",
+                EmotionalPurpose = isStarInitiative
+                    ? "At-rest Star initiative check; no player emotional scoring or relationship update should run."
+                    : "Foreground spoken reply only; background emotion/vector/memory review pending.",
+                InitiativeShouldSpeak = !isStarInitiative || model.HasSomethingToSay || model.ShouldSpeak || initiativeVectorWantsSpeech,
+                InitiativePriority = Clamp01(model.Priority),
+                InitiativeSpeechDecisionVector = initiativeSpeechDecisionVector,
+                InitiativeTopic = model.SelectedTopic ?? string.Empty,
+                InitiativeReason = model.Reason ?? string.Empty,
                 EmotionalEffectVector = string.Empty,
                 NegativeEmotionVector = string.Empty,
                 VoiceDirective = BuildDefaultVoiceDirective(profile, request),
@@ -327,9 +380,19 @@ namespace Wds.SixStars.Api.Ai
                 }
             };
             response.SetSpokenParts(model.SpokenParts);
+            if (isStarInitiative && !response.InitiativeShouldSpeak)
+            {
+                response.SetSpokenParts(Array.Empty<string>());
+            }
             // Do not ask the foreground LLM pass for heavy emotion objects.
             // It returns only the compact emotionalEffectVector; the background review computes impactful emotion scores and deterministic relationship updates.
-            response.Debug.Notes.Add("StructuredStarAgent used REAL LLM fast foreground speech pass.");
+            response.Debug.Notes.Add(isStarInitiative
+                ? "StructuredStarAgent used REAL LLM at-rest Star initiative check pass."
+                : "StructuredStarAgent used REAL LLM fast foreground speech pass.");
+            if (isStarInitiative)
+            {
+                response.Debug.Notes.Add("Star initiative result: shouldSpeak=" + response.InitiativeShouldSpeak + ", priority=" + response.InitiativePriority.ToString("0.00") + ", topic=" + (response.InitiativeTopic ?? string.Empty) + ".");
+            }
             response.Debug.Notes.Add("Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
             response.Debug.Notes.Add(maxTokens > 0
                 ? $"Per-pass max_tokens cap used: {maxTokens}."
@@ -381,6 +444,93 @@ namespace Wds.SixStars.Api.Ai
             return response;
         }
 
+        private static void NormalizeInterstarRelayFields(InterstarRelayMessage relay, StarProfile originProfile, StarProfile targetProfile, StarInteractionRequest originalRequest, StarInteractionResponse originResponse)
+        {
+            if (relay == null) return;
+
+            relay.WhatOriginWouldTellTarget = NormalizeInterstarStarToStarText(relay.WhatOriginWouldTellTarget, targetProfile?.DisplayName, originProfile?.DisplayName);
+            relay.Reason = NormalizeInterstarStarToStarText(relay.Reason, targetProfile?.DisplayName, originProfile?.DisplayName);
+            relay.Summary = NormalizeInterstarStarToStarText(relay.Summary, targetProfile?.DisplayName, originProfile?.DisplayName);
+
+            if (relay.ShouldTell && string.IsNullOrWhiteSpace(relay.Summary))
+            {
+                relay.Summary = CleanOneLine((originProfile?.DisplayName ?? "Origin Star") + " wanted " + (targetProfile?.DisplayName ?? "the target Star") + " to know the recent Last Cat conversation affected her.", 360);
+            }
+            if (relay.ShouldTell && string.IsNullOrWhiteSpace(relay.Reason))
+            {
+                relay.Reason = CleanOneLine("Recent Last Cat conversation had emotional or practical meaning for " + (targetProfile?.DisplayName ?? "the target Star") + ".", 360);
+            }
+            if (relay.ShouldTell && string.IsNullOrWhiteSpace(relay.CooldownKey))
+            {
+                string seed = FirstNonEmpty(relay.Summary, relay.WhatOriginWouldTellTarget, originalRequest?.PlayerText, "interstar");
+                relay.CooldownKey = BuildStableCooldownKey(seed, 96);
+            }
+        }
+
+        private static string NormalizeInterstarReplyToSource(string? text, string? sourceStarId)
+        {
+            return NormalizeInterstarStarToStarText(CleanOneLine(text, 500), sourceStarId, null);
+        }
+
+        private static string NormalizeInterstarStarToStarText(string? text, string? addressedStarName, string? originStarName)
+        {
+            string value = CleanOneLine(text, 900);
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+            string target = string.IsNullOrWhiteSpace(addressedStarName) ? "sister" : addressedStarName.Trim();
+
+            // Player-facing Elusiaa language should not leak into Star-to-Star speech.
+            value = System.Text.RegularExpressions.Regex.Replace(value, "^\\s*little one\\s*,", target + ",", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "\\bwith little one\\b", "with the Last Cat", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "\\babout little one\\b", "about the Last Cat", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "\\bof little one\\b", "of the Last Cat", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "\\blittle one's\\b", "the Last Cat's", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            // Common local-model slip: make the player female after naming the Last Cat as the sentence subject.
+            value = System.Text.RegularExpressions.Regex.Replace(value, "(\\bThe Last Cat\\b[^.!?]*[.!?]\\s*)She\\b", "$1He", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "(\\bthe Last Cat\\b[^.!?]*[.!?]\\s*)she\\b", "$1he", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "(\\bThe Last Cat\\b[^.!?]*[.!?]\\s*)Her\\b", "$1His", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            value = System.Text.RegularExpressions.Regex.Replace(value, "(\\bthe Last Cat\\b[^.!?]*[.!?]\\s*)her\\b", "$1his", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            return CleanOneLine(value, 900);
+        }
+
+        private static string BuildStableCooldownKey(string? seed, int maxLength)
+        {
+            string value = CleanOneLine(seed, maxLength).ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(value)) return "interstar";
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            bool lastDash = false;
+            foreach (char c in value)
+            {
+                if (char.IsLetterOrDigit(c))
+                {
+                    sb.Append(c);
+                    lastDash = false;
+                }
+                else if (!lastDash)
+                {
+                    sb.Append('-');
+                    lastDash = true;
+                }
+                if (sb.Length >= maxLength) break;
+            }
+            return sb.ToString().Trim('-');
+        }
+
+        private static string BuildInterstarReactionSummary(StarProfile targetProfile, InterstarRelayMessage relay)
+        {
+            string relayText = FirstNonEmpty(relay?.Summary, relay?.WhatOriginWouldTellTarget, "a private interstar relay");
+            return CleanOneLine((targetProfile?.DisplayName ?? "The Star") + " privately heard " + (relay?.OriginStarId ?? "another Star") + "'s relay about the Last Cat and considered how it affected her feelings toward him: " + relayText, 900);
+        }
+
+        private static string BuildInterstarFeedbackSummary(StarProfile originProfile, IReadOnlyList<InterstarReactionSummary> reactions)
+        {
+            int count = reactions == null ? 0 : reactions.Count;
+            string names = reactions == null ? string.Empty : string.Join(", ", reactions.Select(x => x.StarId).Where(x => !string.IsNullOrWhiteSpace(x)).Take(6));
+            return CleanOneLine((originProfile?.DisplayName ?? "The Star") + " privately processed " + count + " interstar reaction(s) about the Last Cat" + (string.IsNullOrWhiteSpace(names) ? "." : " from " + names + "."), 900);
+        }
+
         private StarInteractionResponse BuildInteractionResponseFromModel(StarProfile profile, StarInteractionRequest request, StarState state, StarStructuredModelResponse model)
         {
             StarInteractionResponse response = new StarInteractionResponse
@@ -425,6 +575,9 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendHistoryUpdates.AddRange(model.GirlfriendHistoryUpdates);
             response.PetNamesPlayerUsesForStar.AddRange(model.PetNamesPlayerUsesForStar);
             response.PetNamesStarUsesForPlayer.AddRange(model.PetNamesStarUsesForPlayer);
+            response.GirlfriendNeedsMetSummary = CleanOneLine(model.GirlfriendNeedsMetSummary, 420);
+            response.GirlfriendNeedsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12));
+            response.GirlfriendWantsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12));
             response.Debug.LoreUsed.AddRange(model.LoreUsed);
             response.Debug.RiskFlags.AddRange(model.RiskFlags);
             TrimEmotionScoresToImpactfulSet(response, 9);
@@ -554,11 +707,12 @@ namespace Wds.SixStars.Api.Ai
                 if (model == null) throw new InvalidOperationException("Fast speech model response could not be deserialized.");
                 ApplySpeechJsonAliases(json, model);
                 model.SpokenParts = CleanSpeechParts(model.SpokenParts);
-                if (model.SpokenParts.Count == 0)
+                bool allowEmptyStarInitiative = request.RequestType == RequestType.StarInitiative && !model.HasSomethingToSay && !model.ShouldSpeak;
+                if (model.SpokenParts.Count == 0 && !allowEmptyStarInitiative)
                 {
                     model.SpokenParts.AddRange(ExtractLikelySpokenParts(rawContent));
                 }
-                if (model.SpokenParts.Count == 0)
+                if (model.SpokenParts.Count == 0 && !allowEmptyStarInitiative)
                 {
                     model.SpokenParts.Add(profile.DisplayName + " heard you, little one, but my answer came back in a strange shape. Stay with me and try again.");
                 }
@@ -915,6 +1069,8 @@ namespace Wds.SixStars.Api.Ai
             model.GirlfriendHistoryUpdates ??= new List<string>();
             model.PetNamesPlayerUsesForStar ??= new List<string>();
             model.PetNamesStarUsesForPlayer ??= new List<string>();
+            model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
+            model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();
             model.EmotionalEffectVector = NormalizeCompactEmotionVector(model.EmotionalEffectVector, StarEmotionMatrix.StandardEmotionIds.Length);
@@ -1040,6 +1196,27 @@ namespace Wds.SixStars.Api.Ai
                 .ToList();
         }
 
+
+        private static List<GirlfriendVectorItem> NormalizeGirlfriendVector(IEnumerable<GirlfriendVectorItem>? values, int maxItems)
+        {
+            return (values ?? Enumerable.Empty<GirlfriendVectorItem>())
+                .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.ItemId) || !string.IsNullOrWhiteSpace(x.DisplayName)))
+                .Select(x => new GirlfriendVectorItem
+                {
+                    ItemId = string.IsNullOrWhiteSpace(x.ItemId) ? (x.DisplayName ?? string.Empty).Trim() : x.ItemId.Trim(),
+                    DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? (x.ItemId ?? string.Empty).Trim() : x.DisplayName.Trim(),
+                    Confidence = Clamp01(x.Confidence),
+                    Score = ClampScore(x.Score),
+                    Reason = CleanOneLine(x.Reason, 260)
+                })
+                .GroupBy(x => x.ItemId, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.Score).ThenByDescending(x => x.Confidence).First())
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
         private static bool LooksLikeStoryRequest(string? text)
         {
             return StoryIntentLexicon.ContainsStoryIntentTrigger(text);
@@ -1124,6 +1301,151 @@ namespace Wds.SixStars.Api.Ai
             return model;
         }
 
+        private static void ApplyDailyStateJsonAliases(string json, StarDailyStateModelResponse model)
+        {
+            if (string.IsNullOrWhiteSpace(json) || model == null) return;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return;
+
+                if (string.IsNullOrWhiteSpace(model.StarId)) model.StarId = GetString(root, "starId") ?? GetString(root, "star_id") ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(model.SituationSummary))
+                {
+                    model.SituationSummary = FirstJsonString(root,
+                        new[] { "situationSummary" },
+                        new[] { "currentInnerLife", "situationSummary" },
+                        new[] { "current_inner_life", "situation_summary" },
+                        new[] { "currentInnerLife", "summary" });
+                }
+                if (string.IsNullOrWhiteSpace(model.FeelingsSummary))
+                {
+                    model.FeelingsSummary = FirstJsonString(root,
+                        new[] { "feelingsSummary" },
+                        new[] { "feelings" },
+                        new[] { "currentFeelings" },
+                        new[] { "currentInnerLife", "feelingsSummary" },
+                        new[] { "currentInnerLife", "feelings" },
+                        new[] { "current_inner_life", "feelings_summary" },
+                        new[] { "current_inner_life", "feelings" });
+                }
+                if (string.IsNullOrWhiteSpace(model.WhatSheIsDoingToday))
+                {
+                    model.WhatSheIsDoingToday = FirstJsonString(root,
+                        new[] { "whatSheIsDoingToday" },
+                        new[] { "whatSheIsDoing" },
+                        new[] { "today", "whatSheIsDoing" },
+                        new[] { "today", "whatSheIsDoingToday" },
+                        new[] { "today", "activity" });
+                }
+                if (string.IsNullOrWhiteSpace(model.CurrentDesires))
+                {
+                    model.CurrentDesires = FirstJsonString(root,
+                        new[] { "currentDesires" },
+                        new[] { "desires" },
+                        new[] { "currentInnerLife", "currentDesires" },
+                        new[] { "currentInnerLife", "desires" },
+                        new[] { "current_inner_life", "current_desires" },
+                        new[] { "current_inner_life", "desires" });
+                }
+                if (string.IsNullOrWhiteSpace(model.RelationshipPosture))
+                {
+                    model.RelationshipPosture = FirstJsonString(root,
+                        new[] { "relationshipPosture" },
+                        new[] { "posture" },
+                        new[] { "currentInnerLife", "relationshipPosture" },
+                        new[] { "current_inner_life", "relationship_posture" });
+                }
+                if (string.IsNullOrWhiteSpace(model.RecentPeopleSeenSummary))
+                {
+                    model.RecentPeopleSeenSummary = FirstJsonString(root,
+                        new[] { "recentPeopleSeenSummary" },
+                        new[] { "peopleSeenSummary" },
+                        new[] { "recentAwareness", "peopleSeenSummary" },
+                        new[] { "recent_awareness", "people_seen_summary" });
+                }
+                if (string.IsNullOrWhiteSpace(model.RecentEventsSummary))
+                {
+                    model.RecentEventsSummary = FirstJsonString(root,
+                        new[] { "recentEventsSummary" },
+                        new[] { "eventsSummary" },
+                        new[] { "recentAwareness", "eventsSummary" },
+                        new[] { "recent_awareness", "events_summary" });
+                }
+                if (string.IsNullOrWhiteSpace(model.PrivateSecretsOrHooks))
+                {
+                    model.PrivateSecretsOrHooks = FirstJsonString(root,
+                        new[] { "privateSecretsOrHooks" },
+                        new[] { "privateHooks" },
+                        new[] { "currentInnerLife", "privateSecretsOrHooks" },
+                        new[] { "current_inner_life", "private_secrets_or_hooks" });
+                }
+                if (string.IsNullOrWhiteSpace(model.PromptUseSummary))
+                {
+                    model.PromptUseSummary = FirstJsonString(root,
+                        new[] { "promptUseSummary" },
+                        new[] { "promptUse", "summary" },
+                        new[] { "prompt_use", "summary" });
+                }
+
+                if (model.MoodTags == null || model.MoodTags.Count == 0)
+                {
+                    model.MoodTags = FirstJsonStringList(root,
+                        new[] { "moodTags" },
+                        new[] { "today", "moodTags" },
+                        new[] { "today", "mood_tags" });
+                }
+                if (model.RecentPeopleSeen == null || model.RecentPeopleSeen.Count == 0)
+                {
+                    model.RecentPeopleSeen = FirstJsonStringList(root,
+                        new[] { "recentPeopleSeen" },
+                        new[] { "peopleSeen" },
+                        new[] { "recentAwareness", "peopleSeen" },
+                        new[] { "recentAwareness", "recentPeopleSeen" },
+                        new[] { "recent_awareness", "people_seen" });
+                }
+                if (model.RecentEvents == null || model.RecentEvents.Count == 0)
+                {
+                    model.RecentEvents = FirstJsonStringList(root,
+                        new[] { "recentEvents" },
+                        new[] { "events" },
+                        new[] { "recentAwareness", "events" },
+                        new[] { "recentAwareness", "recentEvents" },
+                        new[] { "recent_awareness", "events" });
+                }
+                if (model.TodayIntentions == null || model.TodayIntentions.Count == 0)
+                {
+                    model.TodayIntentions = FirstJsonStringList(root,
+                        new[] { "todayIntentions" },
+                        new[] { "intentions" },
+                        new[] { "today", "intentions" },
+                        new[] { "today", "todayIntentions" },
+                        new[] { "today", "today_intentions" });
+                }
+                if (model.ThingsSheWantsToTalkAbout == null || model.ThingsSheWantsToTalkAbout.Count == 0)
+                {
+                    model.ThingsSheWantsToTalkAbout = FirstJsonStringList(root,
+                        new[] { "thingsSheWantsToTalkAbout" },
+                        new[] { "wantsToTalkAbout" },
+                        new[] { "today", "thingsSheWantsToTalkAbout" },
+                        new[] { "today", "wantsToTalkAbout" },
+                        new[] { "today", "wants_to_talk_about" });
+                }
+                if (model.ConversationHooks == null || model.ConversationHooks.Count == 0)
+                {
+                    model.ConversationHooks = FirstJsonStringList(root,
+                        new[] { "conversationHooks" },
+                        new[] { "today", "conversationHooks" },
+                        new[] { "today", "conversation_hooks" });
+                }
+            }
+            catch
+            {
+            }
+        }
+
         private static void ApplyCommonJsonAliases(string json, StarStructuredModelResponse model)
         {
             if (string.IsNullOrWhiteSpace(json)) return;
@@ -1160,6 +1482,84 @@ namespace Wds.SixStars.Api.Ai
             catch
             {
             }
+        }
+
+        private static string FirstJsonString(JsonElement root, params string[][] paths)
+        {
+            foreach (string[] path in paths ?? Array.Empty<string[]>())
+            {
+                string? value = GetStringPath(root, path);
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return string.Empty;
+        }
+
+        private static List<string> FirstJsonStringList(JsonElement root, params string[][] paths)
+        {
+            foreach (string[] path in paths ?? Array.Empty<string[]>())
+            {
+                List<string> values = GetStringListPath(root, path);
+                if (values.Count > 0) return values;
+            }
+            return new List<string>();
+        }
+
+        private static string? GetStringPath(JsonElement root, params string[] path)
+        {
+            if (path == null || path.Length == 0) return null;
+            JsonElement current = root;
+            foreach (string name in path)
+            {
+                if (current.ValueKind != JsonValueKind.Object) return null;
+                bool found = false;
+                foreach (JsonProperty property in current.EnumerateObject())
+                {
+                    if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    current = property.Value;
+                    found = true;
+                    break;
+                }
+                if (!found) return null;
+            }
+            return current.ValueKind switch
+            {
+                JsonValueKind.String => current.GetString(),
+                JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => current.ToString(),
+                _ => null
+            };
+        }
+
+        private static List<string> GetStringListPath(JsonElement root, params string[] path)
+        {
+            List<string> values = new List<string>();
+            if (path == null || path.Length == 0) return values;
+            JsonElement current = root;
+            foreach (string name in path)
+            {
+                if (current.ValueKind != JsonValueKind.Object) return values;
+                bool found = false;
+                foreach (JsonProperty property in current.EnumerateObject())
+                {
+                    if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                    current = property.Value;
+                    found = true;
+                    break;
+                }
+                if (!found) return values;
+            }
+            if (current.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in current.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String) AddClean(values, item.GetString());
+                    else if (item.ValueKind == JsonValueKind.Number || item.ValueKind == JsonValueKind.True || item.ValueKind == JsonValueKind.False) AddClean(values, item.ToString());
+                }
+            }
+            else if (current.ValueKind == JsonValueKind.String)
+            {
+                AddClean(values, current.GetString());
+            }
+            return values;
         }
 
         private static string? GetString(JsonElement root, string propertyName)

@@ -1,6 +1,7 @@
 BACKGROUND REVIEW INPUT
 Star: {{ StarDisplayName }}
 RequestType: {{ RequestType }}
+{{ CurrentTimeContext }}
 Player latest message:
 {{ PlayerTextBlock }}
 Exact foreground spokenText already sent to voice generation. Use this array only for conversationSummary context; do not copy spokenText into your response unless the schema explicitly asks for it:
@@ -16,6 +17,6 @@ Durable memory / quote / marker context:
 
 {{ StoryFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector and negativeEmotionVector. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
+Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, and girlfriendWantsMetVector. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.
 No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.

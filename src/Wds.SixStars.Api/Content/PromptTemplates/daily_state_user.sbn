@@ -4,6 +4,7 @@ SessionId: {{ SessionId }}
 LocalDate: {{ LocalDate }}
 SlotId: {{ SlotId }}
 LocalNow: {{ LocalNow }}
+{{ CurrentTimeContext }}
 
 STAR ACTING CARD
 {{ StarActingCard }}
@@ -20,8 +21,10 @@ DURABLE MEMORY / MARKERS / STORIES
 PREVIOUS DAILY STATE JSON
 {{ PreviousDailyStateJson }}
 
-Write the new current-day state as compact JSON fields. This is not a spoken reply.
+Write the new current-day state as compact TOP-LEVEL JSON fields. This is not a spoken reply.
+Do not nest the answer under currentInnerLife/today/recentAwareness/promptUse. Those may appear in PREVIOUS DAILY STATE JSON, but this response should use the top-level fields below so the API mapper receives them directly.
 Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. Only moodTags, recentPeopleSeen, recentEvents, todayIntentions, thingsSheWantsToTalkAbout, and conversationHooks should be arrays of strings.
+Required top-level output fields: starId, situationSummary, feelingsSummary, whatSheIsDoingToday, currentDesires, relationshipPosture, recentPeopleSeenSummary, recentPeopleSeen, recentEventsSummary, recentEvents, privateSecretsOrHooks, promptUseSummary, thingsSheWantsToTalkAbout, moodTags, todayIntentions, conversationHooks.
 Guidelines:
 - situationSummary: one compact paragraph about where she is emotionally and narratively right now.
 - feelingsSummary: what she currently feels toward the Last Cat, herself, the other Stars, and the world.

@@ -83,6 +83,11 @@ namespace Wds.SixStars.Api.Engine
                 EmotionalConnectionPercent = 0,
                 LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
                 TodayState = new StarDailyStateContext(),
+                GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
+                GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
+                GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
             };
         }
@@ -105,6 +110,36 @@ namespace Wds.SixStars.Api.Engine
             if (state.EmotionalConnectionPercent > 100)
             {
                 state.EmotionalConnectionPercent = 100;
+                changed = true;
+            }
+            if (state.RelationshipEvents == null)
+            {
+                state.RelationshipEvents = new List<string>();
+                changed = true;
+            }
+            if (state.GirlfriendHourlyState == null)
+            {
+                state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+                changed = true;
+            }
+            if (state.GirlfriendDesiredStateHistory == null)
+            {
+                state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendNeedsMetHistory == null)
+            {
+                state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendNeedsMetPerformanceVector == null)
+            {
+                state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+                changed = true;
+            }
+            if (state.GirlfriendWantsMetPerformanceVector == null)
+            {
+                state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
                 changed = true;
             }
             if (state.ActiveEffectors == null)
@@ -264,7 +299,8 @@ namespace Wds.SixStars.Api.Engine
 
             if (!File.Exists(_filePath))
             {
-                _cache = new SixStarsSaveData { SessionId = sessionId };
+                _cache = new SixStarsSaveData { SessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId };
+                await MergeStarShardFilesAsync(_cache, _cache.SessionId, cancellationToken).ConfigureAwait(false);
                 return _cache;
             }
 
@@ -275,22 +311,27 @@ namespace Wds.SixStars.Api.Engine
                     SixStarsSaveData? loaded = await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
                     _cache = loaded ?? new SixStarsSaveData { SessionId = sessionId };
                     if (string.IsNullOrWhiteSpace(_cache.SessionId)) _cache.SessionId = sessionId;
+                    if (_cache.Stars == null) _cache.Stars = new List<StarState>();
+                    await MergeStarShardFilesAsync(_cache, _cache.SessionId, cancellationToken).ConfigureAwait(false);
                     return _cache;
                 }
             }
             catch (FileNotFoundException)
             {
                 _cache = new SixStarsSaveData { SessionId = sessionId };
+                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
                 return _cache;
             }
             catch (DirectoryNotFoundException)
             {
                 _cache = new SixStarsSaveData { SessionId = sessionId };
+                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
                 return _cache;
             }
             catch (JsonException)
             {
                 _cache = new SixStarsSaveData { SessionId = sessionId };
+                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
                 return _cache;
             }
         }
@@ -308,6 +349,81 @@ namespace Wds.SixStars.Api.Engine
 
             if (File.Exists(_filePath)) File.Delete(_filePath);
             File.Move(tempPath, _filePath);
+            await WriteStarShardFilesAsync(data, cancellationToken).ConfigureAwait(false);
         }
+
+        private async Task MergeStarShardFilesAsync(SixStarsSaveData data, string sessionId, CancellationToken cancellationToken)
+        {
+            string directory = GetStarShardDirectory(sessionId);
+            if (!Directory.Exists(directory)) return;
+
+            foreach (string path in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                    {
+                        StarState? state = await JsonSerializer.DeserializeAsync<StarState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                        if (state == null || string.IsNullOrWhiteSpace(state.StarId)) continue;
+                        NormalizeStateDefaults(state);
+                        int index = data.Stars.FindIndex(x => string.Equals(x.StarId, state.StarId, StringComparison.OrdinalIgnoreCase));
+                        if (index >= 0) data.Stars[index] = state;
+                        else data.Stars.Add(state);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+                catch (JsonException)
+                {
+                }
+            }
+        }
+
+        private async Task WriteStarShardFilesAsync(SixStarsSaveData data, CancellationToken cancellationToken)
+        {
+            if (data == null || data.Stars == null) return;
+            string sessionId = string.IsNullOrWhiteSpace(data.SessionId) ? "local-dev" : data.SessionId;
+            string directory = GetStarShardDirectory(sessionId);
+            Directory.CreateDirectory(directory);
+
+            foreach (StarState state in data.Stars.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                NormalizeStateDefaults(state);
+                string path = GetStarShardPath(sessionId, state.StarId);
+                string tempPath = path + ".tmp";
+                using (FileStream stream = File.Create(tempPath))
+                {
+                    await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                }
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tempPath, path);
+            }
+        }
+
+        private string GetStarShardDirectory(string sessionId)
+        {
+            string? directory = Path.GetDirectoryName(_filePath);
+            if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
+            return Path.Combine(directory, "stars", SafeFileName(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId));
+        }
+
+        private string GetStarShardPath(string sessionId, string starId)
+        {
+            return Path.Combine(GetStarShardDirectory(sessionId), SafeFileName(starId) + ".json");
+        }
+
+        private static string SafeFileName(string value)
+        {
+            string text = string.IsNullOrWhiteSpace(value) ? "unknown" : value.Trim();
+            foreach (char invalid in Path.GetInvalidFileNameChars()) text = text.Replace(invalid, '_');
+            return string.IsNullOrWhiteSpace(text) ? "unknown" : text;
+        }
+
     }
 }

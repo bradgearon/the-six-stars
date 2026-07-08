@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.State;
 
@@ -22,7 +23,9 @@ namespace Wds.SixStars.Api.DailyState
         private readonly IStarDailyStateGenerator _generator;
         private readonly StarDailyStateFileStore _store;
         private readonly DailyStarStateOptions _options;
+        private readonly BackgroundAiRequestDispatcher? _dispatcher;
         private readonly Dictionary<string, SemaphoreSlim> _starGates = new Dictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _pendingBackgroundRefreshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _gate = new object();
         private CancellationTokenSource? _loopCts;
         private Task? _loopTask;
@@ -35,13 +38,15 @@ namespace Wds.SixStars.Api.DailyState
             IStarMemoryApi memoryApi,
             IStarDailyStateGenerator generator,
             StarDailyStateFileStore store,
-            DailyStarStateOptions options)
+            DailyStarStateOptions options,
+            BackgroundAiRequestDispatcher? dispatcher = null)
         {
             _profileProvider = profileProvider ?? throw new ArgumentNullException(nameof(profileProvider));
             _memoryApi = memoryApi ?? throw new ArgumentNullException(nameof(memoryApi));
             _generator = generator ?? throw new ArgumentNullException(nameof(generator));
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _options = options ?? new DailyStarStateOptions();
+            _dispatcher = dispatcher;
             if (_options.RefreshSlots == null || _options.RefreshSlots.Count == 0) _options.RefreshSlots = DailyStarStateOptions.CreateDefaultSlots();
         }
 
@@ -71,6 +76,10 @@ namespace Wds.SixStars.Api.DailyState
                 }
                 _loopCts = null;
                 _loopTask = null;
+                lock (_pendingBackgroundRefreshes)
+                {
+                    _pendingBackgroundRefreshes.Clear();
+                }
             }
         }
 
@@ -158,7 +167,7 @@ namespace Wds.SixStars.Api.DailyState
                     continue;
                 }
 
-                await RefreshAsync(sessionId, profile.StarId, state, slot, "scheduled daily Star state refresh", cancellationToken).ConfigureAwait(false);
+                await QueueBackgroundRefreshAsync(sessionId, profile.StarId, state, slot, "scheduled daily Star state refresh", cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -179,6 +188,47 @@ namespace Wds.SixStars.Api.DailyState
                 return all.Where(x => _options.StarIds.Any(id => string.Equals(id, x.StarId, StringComparison.OrdinalIgnoreCase))).ToList();
             }
             return all;
+        }
+
+
+        private async Task QueueBackgroundRefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken)
+        {
+            if (_dispatcher == null)
+            {
+                await RefreshAsync(sessionId, starId, state, slot, reason, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+            string pendingKey = normalizedSessionId + ":" + normalizedStarId + ":" + (slot.SlotId ?? string.Empty);
+            lock (_pendingBackgroundRefreshes)
+            {
+                if (_pendingBackgroundRefreshes.Contains(pendingKey)) return;
+                _pendingBackgroundRefreshes.Add(pendingKey);
+            }
+
+            _dispatcher.Enqueue(
+                "DailyStarState",
+                "Refresh daily Star state for " + normalizedStarId + " (" + reason + ")",
+                BackgroundAiRequestPriority.Low,
+                async workToken =>
+                {
+                    try
+                    {
+                        DailyStarStateScheduleSlot currentSlot = GetCurrentSlot(DateTimeOffset.Now) ?? slot;
+                        StarState latest = await _memoryApi.GetStarStateAsync(normalizedSessionId, normalizedStarId, workToken).ConfigureAwait(false);
+                        await RefreshAsync(normalizedSessionId, normalizedStarId, latest, currentSlot, reason, workToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_pendingBackgroundRefreshes)
+                        {
+                            _pendingBackgroundRefreshes.Remove(pendingKey);
+                        }
+                    }
+                },
+                cancellationToken);
         }
 
         private async Task<StarDailyStateRecord> RefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken)
@@ -221,6 +271,7 @@ namespace Wds.SixStars.Api.DailyState
 
                 record = await _store.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 await _memoryApi.SetStarDailyStateContextAsync(sessionId, profile.StarId, ToContext(record, (_options.MaxJsonCharsForPrompt > 0 ? _options.MaxJsonCharsForPrompt : _options.MaxXmlCharsForPrompt)), cancellationToken).ConfigureAwait(false);
+                await ClearFreshGirlfriendSpeechHooksAsync(sessionId, profile.StarId, state, cancellationToken).ConfigureAwait(false);
                 DailyStateUpdated?.Invoke(this, new StarDailyStateUpdatedEventArgs { Record = record, Generated = true, Reason = reason });
                 return record;
             }
@@ -228,6 +279,38 @@ namespace Wds.SixStars.Api.DailyState
             {
                 starGate.Release();
             }
+        }
+
+        private async Task ClearFreshGirlfriendSpeechHooksAsync(string sessionId, string starId, StarState state, CancellationToken cancellationToken)
+        {
+            if (state == null || !state.IsGirlfriend || state.GirlfriendHourlyState == null || !state.GirlfriendHourlyState.IsAvailable) return;
+
+            StarGirlfriendHourlyStateContext current = state.GirlfriendHourlyState;
+            bool hasSpeechHooks = (current.ThingsSheWantsToSay != null && current.ThingsSheWantsToSay.Any(x => !string.IsNullOrWhiteSpace(x)))
+                || (current.CuteThingsSheWantsToSay != null && current.CuteThingsSheWantsToSay.Any(x => !string.IsNullOrWhiteSpace(x)));
+            if (!hasSpeechHooks) return;
+
+            // First re-submit the current state so its hooks are durable before this daily refresh clears the live queue.
+            await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(sessionId, starId, current, cancellationToken).ConfigureAwait(false);
+
+            StarGirlfriendHourlyStateContext cleared = new StarGirlfriendHourlyStateContext
+            {
+                StarId = string.IsNullOrWhiteSpace(current.StarId) ? starId : current.StarId,
+                GeneratedAt = current.GeneratedAt,
+                SlotId = current.SlotId,
+                Summary = current.Summary,
+                RelationshipPosture = current.RelationshipPosture,
+                NeedSummary = current.NeedSummary,
+                WantSummary = current.WantSummary,
+                OverallConfidence = current.OverallConfidence,
+                OverallScore = current.OverallScore,
+                NeedVector = current.NeedVector == null ? new List<GirlfriendVectorItem>() : current.NeedVector.ToList(),
+                WantVector = current.WantVector == null ? new List<GirlfriendVectorItem>() : current.WantVector.ToList(),
+                ThingsSheWantsToSay = new List<string>(),
+                CuteThingsSheWantsToSay = new List<string>()
+            };
+
+            await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(sessionId, starId, cleared, cancellationToken).ConfigureAwait(false);
         }
 
         private SemaphoreSlim GetStarGate(string sessionId, string starId)
@@ -350,9 +433,13 @@ namespace Wds.SixStars.Api.DailyState
                 currentInnerLife = new
                 {
                     situationSummary = model.SituationSummary ?? string.Empty,
+                    // Include both canonical runtime names and LLM-friendly aliases so future prompt consumers
+                    // cannot lose the rich daily state if a model says feelingsSummary/currentDesires.
                     feelings = model.FeelingsSummary ?? string.Empty,
+                    feelingsSummary = model.FeelingsSummary ?? string.Empty,
                     relationshipPosture = model.RelationshipPosture ?? string.Empty,
                     desires = model.CurrentDesires ?? string.Empty,
+                    currentDesires = model.CurrentDesires ?? string.Empty,
                     privateSecretsOrHooks = model.PrivateSecretsOrHooks ?? string.Empty
                 },
                 today = new

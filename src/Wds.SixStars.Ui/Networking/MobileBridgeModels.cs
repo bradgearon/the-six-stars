@@ -17,6 +17,7 @@ public sealed class MobileBridgeRequest
     public bool SpeakOnDesktop { get; set; }
     public bool ReturnAudio { get; set; } = true;
     public string ClientName { get; set; } = "SixStarsMobileAndroid";
+    public string Reason { get; set; } = string.Empty;
     public string AudioFormat { get; set; } = "wav";
     public int SampleRate { get; set; } = 16000;
     public int Channels { get; set; } = 1;
@@ -40,6 +41,12 @@ public sealed class MobileBridgeResponse
     public string ConversationSummary { get; set; } = string.Empty;
     public string ChangesSummary { get; set; } = string.Empty;
     public string EmotionalPurpose { get; set; } = string.Empty;
+    public bool InitiativeShouldSpeak { get; set; } = true;
+    public bool InitiativeSkippedBeforeLlm { get; set; }
+    public double InitiativeStateScore { get; set; }
+    public double InitiativePriority { get; set; }
+    public string InitiativeTopic { get; set; } = string.Empty;
+    public string InitiativeReason { get; set; } = string.Empty;
     public int HeartDelta { get; set; }
     public int TrustDelta { get; set; }
     public int RomanceDelta { get; set; }

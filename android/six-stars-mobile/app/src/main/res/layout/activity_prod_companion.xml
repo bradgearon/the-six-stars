@@ -180,6 +180,26 @@
                 </LinearLayout>
 
                 <FrameLayout
+                    android:id="@+id/prod_listen_button"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/prod_text_panel"
+                    android:clickable="true"
+                    android:contentDescription="Ask the selected Star if she has something to say"
+                    android:focusable="true"
+                    android:foreground="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_gravity="center"
+                        android:adjustViewBounds="true"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ui_listen_pixel" />
+                </FrameLayout>
+
+                <FrameLayout
                     android:id="@+id/prod_photo_button"
                     android:layout_width="58dp"
                     android:layout_height="58dp"

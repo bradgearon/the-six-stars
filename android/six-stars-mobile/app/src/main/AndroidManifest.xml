@@ -10,6 +10,10 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
+        <service
+            android:name=".StarInitiativeBackgroundService"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

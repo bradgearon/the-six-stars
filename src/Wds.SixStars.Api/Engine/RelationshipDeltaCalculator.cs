@@ -56,13 +56,14 @@ namespace Wds.SixStars.Api.Engine
                 .ToList();
 
             RelationshipDelta delta = new RelationshipDelta();
+            bool isInterstarMicroUpdate = IsInterstarMicroRequest(request);
             bool romanceGate = IsRomanceGateOpen(profile, request, currentState, positiveSignals);
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
             StarEmotionVectorHistoryEntry vectorHistory = BuildVectorHistoryEntry(profile, request, positiveAll, negativeAll, now);
-            List<string> profileCombos = DetectProfileCombos(profile, currentState, vectorHistory).ToList();
-            List<string> legacySafetyCombos = DetectLegacySafetyCombos(positiveSignals, negativeSignals, currentState).ToList();
-            List<string> filteredModelCombos = FilterModelCombosToConfiguredRules(response.DetectedCombos, profile, legacySafetyCombos).ToList();
+            List<string> profileCombos = isInterstarMicroUpdate ? new List<string>() : DetectProfileCombos(profile, currentState, vectorHistory).ToList();
+            List<string> legacySafetyCombos = isInterstarMicroUpdate ? new List<string>() : DetectLegacySafetyCombos(positiveSignals, negativeSignals, currentState).ToList();
+            List<string> filteredModelCombos = isInterstarMicroUpdate ? new List<string>() : FilterModelCombosToConfiguredRules(response.DetectedCombos, profile, legacySafetyCombos).ToList();
             List<string> acceptedCombos = MergeAndLimitCombos(profileCombos.Concat(legacySafetyCombos).Concat(filteredModelCombos), currentState, maxCombos: 4).ToList();
 
             vectorHistory.ComboHits.Clear();
@@ -75,8 +76,16 @@ namespace Wds.SixStars.Api.Engine
             ApplyBoundedSuggestedDelta(delta, response.SuggestedStateDeltas, positiveSignals, negativeSignals, acceptedCombos, romanceGate);
             ApplyRepeatDamping(delta, positiveSignals, negativeSignals, acceptedCombos, currentState, request.PlayerText);
 
-            ApplyEmotionalConnectionDelta(profile, request, currentState, delta, positiveSignals, negativeSignals, acceptedCombos);
+            if (!isInterstarMicroUpdate || positiveSignals.Count > 0 || negativeSignals.Count > 0 || acceptedCombos.Count > 0)
+            {
+                ApplyEmotionalConnectionDelta(profile, request, currentState, delta, positiveSignals, negativeSignals, acceptedCombos);
+            }
             ApplyActiveEffectors(currentState, delta, response);
+
+            if (isInterstarMicroUpdate && positiveSignals.Count == 0 && negativeSignals.Count == 0 && acceptedCombos.Count == 0)
+            {
+                delta = RelationshipDelta.Zero();
+            }
 
             // Non-allies can warm toward ally status but should not leap into deep romance/connection.
             if (!currentState.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
@@ -789,6 +798,15 @@ namespace Wds.SixStars.Api.Engine
 
                 response.Debug.Notes.Add("Active deterministic effector " + effector.Id + " applied: connection " + beforeConnection.ToString("0.00") + " -> " + delta.EmotionalConnectionPercent.ToString("0.00") + ", H/T/R/B +=" + effector.HeartDeltaPerTurn + "/" + effector.TrustDeltaPerTurn + "/" + effector.RomanceDeltaPerTurn + "/" + effector.BenaveilInfluenceDeltaPerTurn + ".");
             }
+        }
+
+        private static bool IsInterstarMicroRequest(StarInteractionRequest request)
+        {
+            return request != null
+                && request.GameContext != null
+                && request.GameContext.Flags != null
+                && request.GameContext.Flags.TryGetValue("interstarMicroUpdate", out string micro)
+                && string.Equals(micro, "true", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsRomanceGateOpen(StarProfile profile, StarInteractionRequest request, StarState state, List<EmotionVectorScore> positive)

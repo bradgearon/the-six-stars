@@ -17,6 +17,7 @@ namespace Wds.SixStars.Api.Ai
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
+                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -50,6 +51,9 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendHistoryUpdates", StringArray(6) },
                         { "petNamesPlayerUsesForStar", StringArray(5) },
                         { "petNamesStarUsesForPlayer", StringArray(5) },
+                        { "girlfriendNeedsMetSummary", StringProperty(420) },
+                        { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
+                        { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
                         { "loreUsed", StringArray(8) },
                         { "riskFlags", StringArray(5) },
                         { "wisdomScore", NumberProperty(0, 1) }
@@ -119,6 +123,39 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_daily_star_state", schema);
         }
 
+        public static object CreateGirlfriendHourlyStateResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[]
+                    {
+                        "starId", "summary", "relationshipPosture", "needSummary", "wantSummary",
+                        "needVector", "wantVector", "thingsSheWantsToSay", "cuteThingsSheWantsToSay",
+                        "overallConfidence", "overallScore"
+                    }
+                },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "summary", StringProperty(900) },
+                        { "relationshipPosture", StringProperty(700) },
+                        { "needSummary", StringProperty(700) },
+                        { "wantSummary", StringProperty(700) },
+                        { "needVector", GirlfriendVectorArray(30) },
+                        { "wantVector", GirlfriendVectorArray(30) },
+                        { "thingsSheWantsToSay", StringArray(16) },
+                        { "cuteThingsSheWantsToSay", StringArray(16) },
+                        { "overallConfidence", NumberProperty(0, 1) },
+                        { "overallScore", NumberProperty(0, 100) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_girlfriend_hourly_state", schema);
+        }
+
         public static object CreateInformationNeedSelectionResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>
@@ -154,6 +191,7 @@ namespace Wds.SixStars.Api.Ai
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
+                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -182,6 +220,9 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendHistoryUpdates", StringArray(3) },
                         { "petNamesPlayerUsesForStar", StringArray(3) },
                         { "petNamesStarUsesForPlayer", StringArray(3) },
+                        { "girlfriendNeedsMetSummary", StringProperty(420) },
+                        { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
+                        { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
                         { "loreUsed", StringArray(5) },
                         { "riskFlags", StringArray(3) },
                         { "wisdomScore", NumberProperty(0, 1) }
@@ -210,6 +251,30 @@ namespace Wds.SixStars.Api.Ai
             };
 
             return WrapSchema("six_stars_fast_spoken_text_only", schema);
+        }
+
+        public static object CreateStarInitiativeResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "starId", "hasSomethingToSay", "priority", "speechDecisionVector", "selectedTopic", "reason", "spokenText" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty() },
+                        { "hasSomethingToSay", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "shouldSpeak", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "priority", NumberProperty(0, 1) },
+                        { "speechDecisionVector", GirlfriendVectorArray(1) },
+                        { "selectedTopic", StringProperty(240) },
+                        { "reason", StringProperty(420) },
+                        { "spokenText", StarInitiativeSpokenTextArray(4) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_star_initiative_check", schema);
         }
 
 
@@ -332,6 +397,32 @@ namespace Wds.SixStars.Api.Ai
 
 
 
+        private static Dictionary<string, object> GirlfriendVectorArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", false },
+                        { "required", new[] { "itemId", "displayName", "confidence", "score", "reason" } },
+                        { "properties", new Dictionary<string, object>
+                            {
+                                { "itemId", StringProperty(120) },
+                                { "displayName", StringProperty(160) },
+                                { "confidence", NumberProperty(0, 1) },
+                                { "score", NumberProperty(0, 100) },
+                                { "reason", StringProperty(360) }
+                            }
+                        }
+                    }
+                }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
+        }
+
         private static Dictionary<string, object> InformationNeedArray(int maxItems = 0)
         {
             Dictionary<string, object> array = new Dictionary<string, object>
@@ -424,6 +515,17 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "array" },
                 { "minItems", 1 },
+                { "items", StringProperty(420) }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
+        }
+
+        private static Dictionary<string, object> StarInitiativeSpokenTextArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
                 { "items", StringProperty(420) }
             };
             if (maxItems > 0) array["maxItems"] = maxItems;

@@ -3,6 +3,7 @@ You are {{ StarDisplayName }}. You are talking to the Last Cat in a desktop comp
 He just said:
 {{ PlayerTextBlock }}
 RequestType: {{ RequestType }}
+{{ CurrentTimeContext }}
 RomanceMode: {{ RomanceMode }}
 Area: {{ Area }}; Quest: {{ Quest }}
 {{ RelationshipContext }}

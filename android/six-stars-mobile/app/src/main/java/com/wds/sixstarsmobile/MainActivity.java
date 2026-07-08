@@ -5,6 +5,9 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -24,6 +27,7 @@ import android.media.MediaRecorder;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.os.Bundle;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.InputType;
@@ -79,6 +83,16 @@ public final class MainActivity extends Activity {
     private static final String PREFS_NAME = "SixStarsMobilePrefs";
     private static final String PREF_PROD_MODE = "prodMode";
     private static final String PREF_STAR_INITIATIVE_ENABLED = "starInitiativeEnabled";
+    private static final String PREF_STAR_INITIATIVE_BACKGROUND_ENABLED = "starInitiativeBackgroundServiceEnabled";
+    private static final String PREF_BRIDGE_URL = "bridgeUrl";
+    private static final String PREF_SELECTED_STAR_ID = "selectedStarId";
+    private static final String PREF_ROMANCE_MODE = "romanceMode";
+    private static final String PREF_PLAY_ON_PHONE = "playOnPhone";
+    private static final String PREF_AREA = "area";
+    private static final String PREF_QUEST = "quest";
+    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.217:8066";
+    private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
+    private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";
     private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
     private static final int REQUEST_RECORD_AUDIO = 301;
     private static final int REQUEST_CAMERA_PHOTO = 302;
@@ -130,6 +144,7 @@ public final class MainActivity extends Activity {
     private PixelStarAnimationView prodSpriteView;
     private TextView prodTalkButtonText;
     private View prodTalkButton;
+    private View prodListenButton;
     private View prodPhotoButton;
     private Button prodBreakupButton;
     private View prodVoiceActions;
@@ -144,7 +159,10 @@ public final class MainActivity extends Activity {
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
+    private boolean starInitiativeBackgroundEnabled;
     private long lastStarInitiativeRequestMs;
+    private long lastManualListenRequestMs;
+    private boolean starInitiativeServiceReceiverRegistered;
     private Button recordButton;
     private Button photoButton;
     private Button toggleMetButton;
@@ -193,6 +211,13 @@ public final class MainActivity extends Activity {
     private int nextExpectedDesktopVoiceSequence = 0;
     private int keepScreenAwakeReasonMask;
 
+    private final BroadcastReceiver starInitiativeServiceReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            handleStarInitiativeServiceIntent(intent);
+        }
+    };
+
     private final Runnable healthLoop = new Runnable() {
         @Override
         public void run() {
@@ -215,13 +240,25 @@ public final class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         lastVoiceAudioFile = new File(getFilesDir(), "last-six-stars-phone-voice.wav");
-        prodMode = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_PROD_MODE, true);
-        starInitiativeEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_STAR_INITIATIVE_ENABLED, false);
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prodMode = prefs.getBoolean(PREF_PROD_MODE, true);
+        starInitiativeEnabled = prefs.getBoolean(PREF_STAR_INITIATIVE_ENABLED, true);
+        starInitiativeBackgroundEnabled = starInitiativeEnabled;
         buildUi();
+        registerStarInitiativeServiceReceiver();
+        syncStarInitiativeRuntimePrefs();
+        syncStarInitiativeBackgroundService("Android activity started", false);
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
         mainHandler.postDelayed(healthLoop, 600);
         mainHandler.postDelayed(bridgeEventLoop, 1200);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        registerStarInitiativeServiceReceiver();
+        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("Android activity resumed", false), 3500L);
     }
 
     @Override
@@ -232,6 +269,7 @@ public final class MainActivity extends Activity {
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
         requestExecutor.shutdownNow();
+        unregisterStarInitiativeServiceReceiver();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST | KEEP_AWAKE_REASON_VOICE_STREAM | KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Activity destroyed");
         super.onDestroy();
     }
@@ -295,7 +333,7 @@ public final class MainActivity extends Activity {
         root.addView(audioStatusText);
 
         root.addView(label("Desktop bridge URL"));
-        serverUrlEdit = input("http://192.168.1.217:8066", false);
+        serverUrlEdit = input(savedBridgeUrl(), false);
         root.addView(serverUrlEdit);
 
         LinearLayout connectionButtons = row();
@@ -325,6 +363,7 @@ public final class MainActivity extends Activity {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
+                syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
 
@@ -370,13 +409,15 @@ public final class MainActivity extends Activity {
 
         romanceCheck = new CheckBox(this);
         romanceCheck.setText("Romance Mode");
-        romanceCheck.setChecked(true);
+        romanceCheck.setChecked(getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_ROMANCE_MODE, true));
+        romanceCheck.setOnCheckedChangeListener((buttonView, isChecked) -> syncStarInitiativeRuntimePrefs());
         root.addView(romanceCheck);
 
         playOnPhoneCheck = new CheckBox(this);
         playOnPhoneCheck.setText("Play Star voice on this phone");
-        playOnPhoneCheck.setChecked(true);
+        playOnPhoneCheck.setChecked(getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_PLAY_ON_PHONE, true));
         playOnPhoneCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            syncStarInitiativeRuntimePrefs();
             if (isChecked) {
                 testConnection(false);
             } else {
@@ -385,6 +426,20 @@ public final class MainActivity extends Activity {
             }
         });
         root.addView(playOnPhoneCheck);
+
+        CheckBox initiativeCheck = new CheckBox(this);
+        initiativeCheck.setText("Let selected Star speak at rest");
+        initiativeCheck.setChecked(starInitiativeEnabled);
+        initiativeCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            starInitiativeEnabled = isChecked;
+            starInitiativeBackgroundEnabled = isChecked;
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled)
+                    .putBoolean(PREF_STAR_INITIATIVE_BACKGROUND_ENABLED, starInitiativeBackgroundEnabled)
+                    .apply();
+            syncStarInitiativeBackgroundService("Dev at-rest initiative toggle changed", true);
+        });
+        root.addView(initiativeCheck);
 
         root.addView(label("Message to selected Star"));
         messageEdit = input("", true);
@@ -431,6 +486,7 @@ public final class MainActivity extends Activity {
         prodSpriteView = null;
         prodTalkButtonText = null;
         prodTalkButton = null;
+        prodListenButton = null;
         prodPhotoButton = null;
         prodBreakupButton = null;
         prodVoiceActions = null;
@@ -450,6 +506,7 @@ public final class MainActivity extends Activity {
         prodRelationshipText = findViewById(R.id.prod_relationship);
         prodTalkButtonText = findViewById(R.id.prod_talk_text);
         prodTalkButton = findViewById(R.id.prod_talk_button);
+        prodListenButton = findViewById(R.id.prod_listen_button);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
         prodBreakupButton = findViewById(R.id.prod_breakup_button);
         prodVoiceActions = findViewById(R.id.prod_voice_actions);
@@ -482,6 +539,7 @@ public final class MainActivity extends Activity {
         prodSpriteView = findViewById(R.id.prod_sprite_view);
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
+        if (prodListenButton != null) prodListenButton.setOnClickListener(v -> requestStarInitiativeFromListenButton());
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
         if (prodBreakupButton != null) prodBreakupButton.setOnClickListener(v -> dispatchBreakupGirlfriend());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
@@ -501,13 +559,14 @@ public final class MainActivity extends Activity {
     }
 
     private void createProdHiddenControls() {
-        serverUrlEdit = input("http://192.168.1.217:8066", false);
+        serverUrlEdit = input(savedBridgeUrl(), false);
         starSpinner = new Spinner(this);
         starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, STAR_IDS));
         starSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
                 refreshProdStarUi(starSpinner.getSelectedItem().toString());
+                syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
@@ -515,15 +574,18 @@ public final class MainActivity extends Activity {
         requestTypeSpinner = new Spinner(this);
         requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
-        areaEdit = input("VirethornCaves", false);
-        questEdit = input(prodMode ? "AndroidProdCompanion" : "AndroidPhoneBridge", false);
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        areaEdit = input(prefs.getString(PREF_AREA, "VirethornCaves"), false);
+        questEdit = input(prefs.getString(PREF_QUEST, prodMode ? "AndroidProdCompanion" : "AndroidPhoneBridge"), false);
         romanceCheck = new CheckBox(this);
         romanceCheck.setText("Romance Mode");
-        romanceCheck.setChecked(true);
+        romanceCheck.setChecked(prefs.getBoolean(PREF_ROMANCE_MODE, true));
+        romanceCheck.setOnCheckedChangeListener((buttonView, isChecked) -> syncStarInitiativeRuntimePrefs());
         playOnPhoneCheck = new CheckBox(this);
         playOnPhoneCheck.setText("Play Star voice on this phone");
-        playOnPhoneCheck.setChecked(true);
+        playOnPhoneCheck.setChecked(prefs.getBoolean(PREF_PLAY_ON_PHONE, true));
         playOnPhoneCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            syncStarInitiativeRuntimePrefs();
             if (isChecked) testConnection(false); else closeAudioSocket();
         });
         connectionStatusText = new TextView(this);
@@ -616,8 +678,13 @@ public final class MainActivity extends Activity {
                 if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
                 if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
                 starInitiativeEnabled = initiative.isChecked();
-                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled).apply();
-                setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()) + ", starInitiative=" + starInitiativeEnabled);
+                starInitiativeBackgroundEnabled = starInitiativeEnabled;
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled)
+                        .putBoolean(PREF_STAR_INITIATIVE_BACKGROUND_ENABLED, starInitiativeBackgroundEnabled)
+                        .apply();
+                syncStarInitiativeBackgroundService("Prod settings saved", true);
+                setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()) + ", starInitiative=" + starInitiativeEnabled + ", autoSpeak=" + starInitiativeEnabled);
                 status.setText(buildProdMenuStatusText());
                 testConnection(false);
             });
@@ -713,6 +780,7 @@ public final class MainActivity extends Activity {
         card.setOnClickListener(v -> {
             selectStarInSpinner(meta.id);
             refreshProdStarUi(meta.id);
+            syncStarInitiativeBackgroundService("Selected Star changed", true);
             dispatchSelectStar(meta.id);
             if (activeStarSelectionDialog != null) activeStarSelectionDialog.dismiss();
         });
@@ -723,6 +791,7 @@ public final class MainActivity extends Activity {
         prodMode = useProd;
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_PROD_MODE, useProd).apply();
         buildUi();
+        syncStarInitiativeBackgroundService("Android UI mode switched", true);
         testConnection(false);
     }
 
@@ -956,10 +1025,14 @@ public final class MainActivity extends Activity {
         return true;
     }
 
+    private String savedBridgeUrl() {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
+    }
+
     private String baseUrl() {
-        String value = serverUrlEdit.getText().toString().trim();
+        String value = serverUrlEdit == null ? savedBridgeUrl() : serverUrlEdit.getText().toString().trim();
         if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
-        return value.length() == 0 ? "http://192.168.1.217:8066" : value;
+        return value.length() == 0 ? DEFAULT_BRIDGE_URL : value;
     }
 
     private String currentSessionId() {
@@ -981,6 +1054,7 @@ public final class MainActivity extends Activity {
     }
 
     private void testConnection(boolean manual) {
+        syncStarInitiativeRuntimePrefs();
         String url = baseUrl() + "/health";
         httpExecutor.execute(() -> {
             try {
@@ -1025,6 +1099,111 @@ public final class MainActivity extends Activity {
         dispatchBridgeCommand("SelectStar", starId, null, null, "Android Star dropdown changed.");
     }
 
+    private void registerStarInitiativeServiceReceiver() {
+        if (starInitiativeServiceReceiverRegistered) return;
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_STAR_INITIATIVE_SERVICE_RESPONSE);
+        filter.addAction(ACTION_STAR_INITIATIVE_SERVICE_STATUS);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(starInitiativeServiceReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(starInitiativeServiceReceiver, filter);
+        }
+        starInitiativeServiceReceiverRegistered = true;
+    }
+
+    private void unregisterStarInitiativeServiceReceiver() {
+        if (!starInitiativeServiceReceiverRegistered) return;
+        try {
+            unregisterReceiver(starInitiativeServiceReceiver);
+        } catch (Exception ignored) {
+        } finally {
+            starInitiativeServiceReceiverRegistered = false;
+        }
+    }
+
+    private void syncStarInitiativeRuntimePrefs() {
+        starInitiativeBackgroundEnabled = starInitiativeEnabled;
+        SharedPreferences.Editor editor = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putBoolean(PREF_PROD_MODE, prodMode)
+                .putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled)
+                .putBoolean(PREF_STAR_INITIATIVE_BACKGROUND_ENABLED, starInitiativeBackgroundEnabled)
+                .putString(PREF_BRIDGE_URL, baseUrl())
+                .putString(PREF_SELECTED_STAR_ID, selectedStarName())
+                .putBoolean(PREF_ROMANCE_MODE, romanceCheck == null || romanceCheck.isChecked())
+                .putBoolean(PREF_PLAY_ON_PHONE, playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+        if (areaEdit != null) editor.putString(PREF_AREA, areaEdit.getText().toString());
+        if (questEdit != null) editor.putString(PREF_QUEST, questEdit.getText().toString());
+        editor.apply();
+    }
+
+    private void syncStarInitiativeBackgroundService(String reason, boolean checkSoon) {
+        syncStarInitiativeRuntimePrefs();
+        Intent intent = new Intent(this, StarInitiativeBackgroundService.class);
+        if (starInitiativeEnabled) {
+            intent.setAction(checkSoon ? StarInitiativeBackgroundService.ACTION_CHECK_NOW : StarInitiativeBackgroundService.ACTION_START);
+            intent.putExtra("reason", reason == null ? "Android foreground sync" : reason);
+        } else {
+            intent.setAction(StarInitiativeBackgroundService.ACTION_STOP);
+        }
+
+        try {
+            startService(intent);
+        } catch (Exception ex) {
+            appendVoiceDebug("Nyxari could not sync the at-rest service", ex.toString());
+        }
+    }
+
+    private void pauseStarInitiativeBackgroundService(String reason) {
+        Intent intent = new Intent(this, StarInitiativeBackgroundService.class);
+        intent.setAction(StarInitiativeBackgroundService.ACTION_STOP);
+        try {
+            startService(intent);
+            appendVoiceDebug("Background at-rest service", "Paused while a foreground player request is being sent. " + (reason == null ? "" : reason));
+        } catch (Exception ex) {
+            appendVoiceDebug("Nyxari could not pause the at-rest service", ex.toString());
+        }
+    }
+
+    private void handleStarInitiativeServiceIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (ACTION_STAR_INITIATIVE_SERVICE_STATUS.equals(action)) {
+            String status = intent.getStringExtra("status");
+            String message = intent.getStringExtra("message");
+            String starId = intent.getStringExtra("starId");
+            if ("requestStarted".equalsIgnoreCase(status)) {
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Background Star initiative service is asking whether she has something to say.");
+                if (prodMiniStatusText != null) prodMiniStatusText.setText((starId == null || starId.length() == 0 ? selectedStarName() : starId) + " is thinking at rest...");
+            }
+            setDebug("Background at-rest service", clip(message == null ? status : message, 1200));
+            appendVoiceDebug("Background at-rest service", clip(message == null ? status : message, 220));
+            return;
+        }
+
+        if (!ACTION_STAR_INITIATIVE_SERVICE_RESPONSE.equals(action)) return;
+
+        boolean ok = intent.getBooleanExtra("ok", false);
+        String eventJson = intent.getStringExtra("eventJson");
+        String body = intent.getStringExtra("body");
+        String message = intent.getStringExtra("message");
+        try {
+            if (ok && eventJson != null && eventJson.trim().length() > 0) {
+                handleBridgeEvent(new JSONObject(eventJson));
+            } else if (ok && body != null && body.trim().length() > 0) {
+                handleConversationResponse("Background at-rest Star initiative complete", body);
+            } else {
+                setDebug("Background at-rest service", message == null ? "No at-rest response." : message);
+                appendVoiceDebug("Background at-rest service", message == null ? "No at-rest response." : message);
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Background Star initiative service finished without a response.");
+            }
+        } catch (Exception ex) {
+            setDebug("Background at-rest service parse failed", ex.toString());
+            appendVoiceDebug("Background at-rest service parse failed", ex.toString());
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Background Star initiative service response parse failed.");
+        }
+    }
+
     private void dispatchToggleMet() {
         dispatchBridgeCommand("SetMet", selectedStarName(), !selectedStarIsMet, null, "Android toggled met flag.");
     }
@@ -1050,6 +1229,7 @@ public final class MainActivity extends Activity {
         long now = System.currentTimeMillis();
         if (now - lastStarInitiativeRequestMs < 120000L) return;
         lastStarInitiativeRequestMs = now;
+        syncStarInitiativeRuntimePrefs();
         final String starName = selectedStarName();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "At-rest Star initiative request sent; keeping the screen on while she answers.");
         requestExecutor.execute(() -> {
@@ -1060,8 +1240,8 @@ public final class MainActivity extends Activity {
                 json.put("sourceClientId", "SixStarsMobileAndroid");
                 json.put("sessionId", currentSessionId());
                 json.put("starId", starName);
-                json.put("requestType", "Chat");
-                json.put("playerText", "At-rest companion initiative check: The Last Cat is quiet or just reconnected. If there is something from your daily state, recent emotions, or interstar feedback that you want to say to him, say it naturally now. Do not pretend he asked this. If nothing feels important, give a brief gentle check-in.");
+                json.put("requestType", "StarInitiative");
+                json.put("playerText", "");
                 json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
                 json.put("quest", "AndroidProdStarInitiative");
                 json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
@@ -1085,6 +1265,67 @@ public final class MainActivity extends Activity {
                     setDebug("At-rest Star initiative failed", ex.toString());
                     appendVoiceDebug("At-rest Star initiative failed", ex.toString());
                     setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative failed.");
+                });
+            }
+        });
+    }
+
+    private void requestStarInitiativeFromListenButton() {
+        if (!prodMode || destroyed) return;
+        if (recording) {
+            setDebug("Listen button waiting", "Finish or cancel the current voice recording before asking the Star if she has something to say.");
+            appendVoiceDebug("Listen button", "Voice recording is active, so no initiative request was sent.");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastManualListenRequestMs < 2500L) return;
+        lastManualListenRequestMs = now;
+        lastStarInitiativeRequestMs = now;
+
+        syncStarInitiativeRuntimePrefs();
+        pauseStarInitiativeBackgroundService("Manual Listen button has priority over background at-rest checks.");
+        final String starName = selectedStarName();
+        if (prodMiniStatusText != null) prodMiniStatusText.setText("Listening for " + starName + "...");
+        pulseProdTalkingThenIdle(1800L);
+        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Manual Listen request sent; keeping the screen on while the Star answers.");
+
+        requestExecutor.execute(() -> {
+            try {
+                JSONObject json = new JSONObject();
+                json.put("commandId", "android-listen-" + System.currentTimeMillis());
+                json.put("commandType", "MaybeStarInitiative");
+                json.put("sourceClientId", "SixStarsMobileAndroidListenButton");
+                json.put("sessionId", currentSessionId());
+                json.put("starId", starName);
+                json.put("requestType", "StarInitiative");
+                json.put("playerText", "");
+                json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
+                json.put("quest", "AndroidProdListenButton");
+                json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
+                json.put("speakOnDesktop", false);
+                json.put("returnAudio", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+                json.put("clientName", "SixStarsMobileAndroid-ManualListen");
+                json.put("reason", "manual Android Listen button");
+                runOnUiThread(() -> {
+                    setDebug("Listen", "Asking " + starName + " if she has something to say now.");
+                    appendVoiceDebug("Listen button", "Manual Star initiative request sent for " + starName + ".");
+                });
+                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
+                JSONObject response = new JSONObject(body);
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    if (event != null) handleBridgeEvent(event);
+                    else handleConversationResponse("Listen request complete", body);
+                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request finished", false), 30000L);
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    setDebug("Listen request wait interrupted", ex.toString() + "\nThe desktop may still finish the Star's at-rest line. Android will keep polling queued bridge events.");
+                    appendVoiceDebug("Listen request wait interrupted", "Still listening for queued bridge event: " + ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Listen HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted Listen request."), 20000L);
+                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request recovery grace finished", false), 30000L);
                 });
             }
         });
@@ -1231,6 +1472,8 @@ public final class MainActivity extends Activity {
 
         if (isTranscriptBridgeEvent(type)) {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
+        } else if (isConversationBridgeEvent(type)) {
+            handleConversationBridgeEvent(event, type, seq, starId, message);
         } else if (isPhotoBridgeEvent(type)) {
             handlePhotoBridgeEvent(event, type, seq, starId, message);
         } else if (isGirlfriendBridgeEvent(type)) {
@@ -1257,6 +1500,53 @@ public final class MainActivity extends Activity {
             setDebug("History cleared", message);
         }
         appendVoiceDebug("Elusiaa received a queued bridge update", "#" + seq + " " + type + " star=" + starId + ", selected=" + selected + ", " + clip(message, 180));
+    }
+
+    private boolean isConversationBridgeEvent(String type) {
+        return "MobileConversationResponseReady".equalsIgnoreCase(type)
+                || "MobileConversationResponseFailed".equalsIgnoreCase(type)
+                || "TextResponseReady".equalsIgnoreCase(type)
+                || "VoiceResponseReady".equalsIgnoreCase(type);
+    }
+
+    private void handleConversationBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String transcript = optStringEither(event, "transcript", "Transcript", "").trim();
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        String storyMarkdown = optStringEither(event, "storyMarkdown", "StoryMarkdown", "").trim();
+        String storyTitle = optStringEither(event, "storyTitle", "StoryTitle", "").trim();
+        String storySummary = optStringEither(event, "storySummary", "StorySummary", "").trim();
+        String error = optStringEither(event, "error", "Error", "").trim();
+        updateEmotionVectorsFromJson(event);
+        String dailyLine = extractDailyStateLine(event);
+        if (dailyLine.length() > 0) currentDailyStarState = dailyLine;
+
+        if (transcript.length() > 0) {
+            boolean replacedTranscript = replaceLatestProdVoicePlaceholder(transcript);
+            if (!replacedTranscript && !recentProdConversationAlreadyHas("You", transcript)) {
+                appendProdConversationLine("You", transcript);
+            }
+        }
+
+        String visible = storyMarkdown.length() > 0 ? storyMarkdown : spoken;
+        if (visible.length() > 0) {
+            if (!recentProdConversationAlreadyHas(starId, visible)) {
+                appendProdConversationLine(starId, clip(visible, 900));
+            }
+            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visible.length() * 18L)));
+            String header = starId + " — response ready";
+            if (transcript.length() > 0) header += "\nTranscript: " + transcript;
+            if (storyTitle.length() > 0) header += "\nStory: " + storyTitle;
+            if (storySummary.length() > 0) header += "\nSummary: " + storySummary;
+            responseText.setText(header + "\n\n" + clip(visible, storyMarkdown.length() > 0 ? 20000 : 8000));
+            if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " answered.");
+            setDebug("Queued Star response", "event=#" + seq + " " + type + "; recovered from bridge event. responseChars=" + visible.length() + (error.length() > 0 ? "\nerror=" + error : ""));
+            appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct HTTP wait was interrupted.");
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star response arrived; screen can rest after voice/playback completes.");
+        } else if ("MobileConversationResponseFailed".equalsIgnoreCase(type)) {
+            responseText.setText("Star response failed — " + starId + "\n\n" + clip(error.length() > 0 ? error : message, 2000));
+            setDebug("Queued Star response failed", "event=#" + seq + " " + type + " — " + clip(error.length() > 0 ? error : message, 1200));
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star failure arrived.");
+        }
     }
 
     private boolean isTranscriptBridgeEvent(String type) {
@@ -1328,16 +1618,23 @@ public final class MainActivity extends Activity {
 
     private void handleStarInitiativeBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
         String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
-        if (spoken.length() > 0) {
+        boolean initiativeShouldSpeak = optBooleanEither(event, "initiativeShouldSpeak", "InitiativeShouldSpeak", spoken.length() > 0);
+        boolean initiativeSkippedBeforeLlm = optBooleanEither(event, "initiativeSkippedBeforeLlm", "InitiativeSkippedBeforeLlm", false);
+        String initiativeReason = optStringEither(event, "initiativeReason", "InitiativeReason", message).trim();
+        String initiativeTopic = optStringEither(event, "initiativeTopic", "InitiativeTopic", "").trim();
+        double initiativeStateScore = optDoubleEither(event, "initiativeStateScore", "InitiativeStateScore", 0.0);
+        if (spoken.length() > 0 && initiativeShouldSpeak) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — at-rest thought\n\n" + clip(spoken, 8000));
             pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + spoken.length() * 18L)));
             if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " had something to say.");
         } else if ("StarInitiativeResponseFailed".equalsIgnoreCase(type)) {
             responseText.setText("At-rest Star initiative failed. " + clip(message, 1200));
+        } else {
+            if (prodMiniStatusText != null) prodMiniStatusText.setText("No at-rest line right now.");
         }
-        setDebug("Star initiative response", "event=#" + seq + " " + type + " — " + message);
-        appendVoiceDebug("Star at-rest initiative", spoken.length() > 0 ? clip(spoken, 220) : message);
+        setDebug("Star initiative response", "event=#" + seq + " " + type + " — " + message + "\nshouldSpeak=" + initiativeShouldSpeak + " skippedBeforeLlm=" + initiativeSkippedBeforeLlm + " score=" + initiativeStateScore + " topic=" + clip(initiativeTopic, 160) + " reason=" + clip(initiativeReason, 400));
+        appendVoiceDebug("Star at-rest initiative", spoken.length() > 0 ? clip(spoken, 220) : (initiativeReason.length() > 0 ? initiativeReason : message));
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative response returned; screen can rest after voice/playback completes.");
     }
 
@@ -1659,6 +1956,7 @@ public final class MainActivity extends Activity {
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
+        pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
         requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -1678,8 +1976,11 @@ public final class MainActivity extends Activity {
                 handleConversationResponse("Image request complete", body);
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    setDebug("Image request failed", ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Image request failed.");
+                    setDebug("Image request wait interrupted", ex.toString() + "\nThe desktop may still finish the image reply. Android will keep polling queued bridge events.");
+                    appendVoiceDebug("Image request wait interrupted", "Still listening for queued bridge response event: " + ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted image request."), 20000L);
+                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("image request recovery grace finished", false), 30000L);
                 });
             }
         });
@@ -1699,6 +2000,7 @@ public final class MainActivity extends Activity {
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         pulseProdTalkingThenIdle(3500L);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
+        pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
         requestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
@@ -1711,8 +2013,11 @@ public final class MainActivity extends Activity {
                 handleConversationResponse("Text request complete", body);
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    setDebug("Text request failed", ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Text request failed.");
+                    setDebug("Text request wait interrupted", ex.toString() + "\nThe desktop may still finish the reply. Android will keep polling /api/mobile/events and show her queued response if it arrives.");
+                    appendVoiceDebug("Text request wait interrupted", "Still listening for queued bridge response event: " + ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted text request."), 20000L);
+                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("text request recovery grace finished", false), 30000L);
                 });
             }
         });
@@ -1786,6 +2091,7 @@ public final class MainActivity extends Activity {
 
     private void sendAudio(byte[] pcm16) {
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
+        pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");
         requestExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
@@ -1804,8 +2110,11 @@ public final class MainActivity extends Activity {
                 handleConversationResponse("Voice request complete", body);
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    setDebug("Voice request failed", ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Voice request failed.");
+                    setDebug("Voice request wait interrupted", ex.toString() + "\nIf Whisper already produced a transcript or the Star finishes later, Android will show it from queued bridge events.");
+                    appendVoiceDebug("Voice request wait interrupted", "Still listening for transcript/response bridge events: " + ex.toString());
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted voice request."), 20000L);
+                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("voice request recovery grace finished", false), 30000L);
                 });
             }
         });
@@ -1817,6 +2126,11 @@ public final class MainActivity extends Activity {
                 JSONObject json = new JSONObject(body);
                 String transcript = optStringEither(json, "transcript", "Transcript", "");
                 String spoken = optStringEither(json, "spokenText", "SpokenText", "");
+                boolean initiativeShouldSpeak = optBooleanEither(json, "initiativeShouldSpeak", "InitiativeShouldSpeak", true);
+                boolean initiativeSkippedBeforeLlm = optBooleanEither(json, "initiativeSkippedBeforeLlm", "InitiativeSkippedBeforeLlm", false);
+                String initiativeReason = optStringEither(json, "initiativeReason", "InitiativeReason", "");
+                String initiativeTopic = optStringEither(json, "initiativeTopic", "InitiativeTopic", "");
+                double initiativeStateScore = optDoubleEither(json, "initiativeStateScore", "InitiativeStateScore", 0.0);
                 String starOutput = optStringEither(json, "starOutput", "StarOutput", "");
                 String starId = optStringEither(json, "starId", "StarId", "Star");
                 int chunks = optIntEither(json, "voiceChunksSent", "VoiceChunksSent", 0);
@@ -1851,6 +2165,16 @@ public final class MainActivity extends Activity {
                 }
 
                 String visibleResponse = storyMarkdown.length() > 0 ? storyMarkdown : (starOutput.length() > 0 ? starOutput : spoken);
+                boolean isInitiativeResponse = title.toLowerCase(Locale.US).contains("initiative") || "StarInitiative".equalsIgnoreCase(optStringEither(json, "requestType", "RequestType", ""));
+                if (isInitiativeResponse && !initiativeShouldSpeak) {
+                    String noLine = initiativeReason.length() > 0 ? initiativeReason : "The selected Star had nothing state-backed to say right now.";
+                    if (prodMiniStatusText != null) prodMiniStatusText.setText("No at-rest line right now.");
+                    setDebug(title, "No at-rest speech. score=" + initiativeStateScore + " skippedBeforeLlm=" + initiativeSkippedBeforeLlm + " topic=" + initiativeTopic + " reason=" + noLine);
+                    appendVoiceDebug("At-rest Star initiative", "No speech: " + clip(noLine, 220));
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative finished without speech.");
+                    return;
+                }
+
                 if (visibleResponse.length() == 0) {
                     visibleResponse = "No spoken text was returned in the HTTP response. Check the desktop debug output for the Star response.";
                 }
@@ -1861,7 +2185,9 @@ public final class MainActivity extends Activity {
                         appendProdConversationLine("You", transcript);
                     }
                 }
-                appendProdConversationLine(starId, clip(visibleResponse, 900));
+                if (!recentProdConversationAlreadyHas(starId, visibleResponse)) {
+                    appendProdConversationLine(starId, clip(visibleResponse, 900));
+                }
                 pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visibleResponse.length() * 18L)));
 
                 String header = title + " — " + starId;
@@ -1877,6 +2203,13 @@ public final class MainActivity extends Activity {
                         + "\nStory markdown ready: " + storyReady
                         + "\nStory chunks: " + storyChunks
                         + "\nStory markdown chars: " + storyMarkdown.length();
+                if (initiativeTopic.length() > 0 || initiativeReason.length() > 0 || isInitiativeResponse) {
+                    details += "\nInitiative should speak: " + initiativeShouldSpeak
+                            + "\nInitiative skipped before LLM: " + initiativeSkippedBeforeLlm
+                            + "\nInitiative state score: " + initiativeStateScore;
+                    if (initiativeTopic.length() > 0) details += "\nInitiative topic: " + clip(initiativeTopic, 240);
+                    if (initiativeReason.length() > 0) details += "\nInitiative reason: " + clip(initiativeReason, 400);
+                }
                 if (photoAttached) details += "\nPhoto attached: true";
                 if (photoSummary.length() > 0) details += "\nPhoto summary: " + clip(photoSummary, 400);
                 if (photoError.length() > 0) details += "\nPhoto note: " + clip(photoError, 400);
@@ -1890,6 +2223,7 @@ public final class MainActivity extends Activity {
                 setDebug(title + " (raw)", clip(body, 900));
             } finally {
                 setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, title + " finished; screen can rest after any streaming voice/playback completes.");
+                mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("foreground conversation finished", false), 30000L);
             }
         });
     }
@@ -1958,7 +2292,7 @@ public final class MainActivity extends Activity {
                 audioStatusText.setText("Phone voice socket connected: " + host + ":" + port);
                 appendVoiceDebug("Elusiaa connected the voice socket", host + ":" + port);
                 appendVoiceDebug("Khavia reset the phone voice stream guard", "Fresh socket connection; accepting the desktop stream counter from the beginning again.");
-                mainHandler.postDelayed(() -> maybeRequestStarInitiative("phone voice socket reconnected"), 3500L);
+                mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("phone voice socket reconnected", false), 3500L);
             });
             DataInputStream in = new DataInputStream(socket.getInputStream());
             while (!destroyed && !socket.isClosed()) {

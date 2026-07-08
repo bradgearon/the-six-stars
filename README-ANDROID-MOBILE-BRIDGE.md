@@ -145,3 +145,8 @@ The Android client now resets its active voice-stream guard when the phone voice
 ## Android keep screen on while answering
 
 The Android app now keeps the display awake while a Star answer is in progress. This covers long text/photo/voice requests, the desktop-to-phone voice stream, and actual `AudioTrack` playback. The app clears the keep-awake flag after the request, voice stream, and playback are all finished.
+
+
+## Android Listen button
+
+The production Android UI includes a compact icon-only Listen button beside Talk. It sends a manual `MaybeStarInitiative` request through `/api/mobile/dispatch`, like pressing an NPC interact button, so the selected Star can volunteer a fresh state-backed line without the player typing or recording.

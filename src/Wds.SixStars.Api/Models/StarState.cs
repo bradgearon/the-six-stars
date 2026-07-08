@@ -52,6 +52,9 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Current generated daily JSON state pointer used to answer questions like what she is doing today.</summary>
         public StarDailyStateContext TodayState { get; set; } = new StarDailyStateContext();
 
+        /// <summary>Current generated girlfriend-hourly state for the exclusive girlfriend path: needs, wants, cute lines, and spontaneous speech hooks.</summary>
+        public StarGirlfriendHourlyStateContext GirlfriendHourlyState { get; set; } = new StarGirlfriendHourlyStateContext();
+
         /// <summary>When the durable Star relationship/memory state last changed and could influence the next scheduled daily state refresh.</summary>
         public DateTimeOffset? LastDailyStateSourceUpdateAt { get; set; }
 
@@ -85,6 +88,18 @@ namespace Wds.SixStars.Api.Models
         public List<string> GirlfriendHistory { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+
+        /// <summary>Durable girlfriend-mode archive of generated needs/wants and spontaneous things she wanted to say.</summary>
+        public List<GirlfriendVectorHistoryEntry> GirlfriendDesiredStateHistory { get; set; } = new List<GirlfriendVectorHistoryEntry>();
+
+        /// <summary>Durable girlfriend-mode archive of wants/needs the player's turns appear to have met.</summary>
+        public List<GirlfriendNeedFulfillmentHistoryEntry> GirlfriendNeedsMetHistory { get; set; } = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+
+        /// <summary>Accumulated girlfriend need-fulfillment performance vector since she became girlfriend.</summary>
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>Accumulated girlfriend want-fulfillment performance vector since she became girlfriend.</summary>
+        public List<GirlfriendVectorItem> GirlfriendWantsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
 
         public int PositiveSuccessionCount { get; set; }
         public int RomanticSuccessionCount { get; set; }

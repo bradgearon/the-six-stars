@@ -79,9 +79,16 @@ namespace Wds.SixStars.Api.State
             NormalizeWorldDefaults(state);
             PruneExpiredEffectors(state, now);
 
+            bool isInternalBackgroundUpdate = request.IsInternalBackgroundUpdate;
+            bool suppressConversationSummaryUpdate = request.SuppressConversationSummaryUpdate || isInternalBackgroundUpdate;
+            bool suppressConversationLog = request.SuppressConversationLog || isInternalBackgroundUpdate;
+
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? request.StarId : state.StarId;
-            state.InteractionCount += 1;
-            state.LastInteractionAt = now;
+            if (!isInternalBackgroundUpdate)
+            {
+                state.InteractionCount += 1;
+                state.LastInteractionAt = now;
+            }
             state.LastDailyStateSourceUpdateAt = now;
 
             RelationshipDelta applied = new RelationshipDelta
@@ -99,7 +106,7 @@ namespace Wds.SixStars.Api.State
             AutoPromoteAllyIfReady(state, now);
             UpdateGirlfriendReadiness(state, now);
 
-            if (!string.IsNullOrWhiteSpace(request.ConversationSummary))
+            if (!suppressConversationSummaryUpdate && !string.IsNullOrWhiteSpace(request.ConversationSummary))
             {
                 state.ConversationSummary = request.ConversationSummary.Trim();
             }
@@ -115,22 +122,33 @@ namespace Wds.SixStars.Api.State
             AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
             AddUnique(state.PetNamesPlayerUsesForStar, request.PetNamesPlayerUsesForStar, 20);
             AddUnique(state.PetNamesStarUsesForPlayer, request.PetNamesStarUsesForPlayer, 20);
+            UpdateGirlfriendNeedsMetHistory(state, request, now);
             UpsertLearnedFunctions(state, request.LearnedFunctions);
             UpsertSecrets(state, request.SecretsUnlocked, now);
             UpdateCombos(state, request.DetectedCombos, now);
-            UpdateSuccessionCounters(state, applied, request, now);
-            UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
+            if (!isInternalBackgroundUpdate)
+            {
+                UpdateSuccessionCounters(state, applied, request, now);
+                UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
+            }
+            else
+            {
+                AddUnique(state.MemoryNotes, BuildInternalUpdateMemoryNotes(request, applied), _options.MaxMemoryNotes);
+            }
             UpdateStoryHistory(state, request, now);
             PruneExpiredEffectors(state, now);
 
-            string autoQuote = TryCreateAutoQuote(request, applied);
+            string autoQuote = isInternalBackgroundUpdate ? string.Empty : TryCreateAutoQuote(request, applied);
             if (!string.IsNullOrWhiteSpace(autoQuote))
             {
                 AddUnique(state.ImportantPlayerQuotes, new[] { autoQuote }, _options.MaxImportantQuotes);
                 AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, "auto-emotion-marker-quote");
             }
 
-            ConversationLogEntry entry = new ConversationLogEntry
+            ConversationLogEntry entry = new ConversationLogEntry();
+            if (!suppressConversationLog)
+            {
+            entry = new ConversationLogEntry
             {
                 CreatedAt = now,
                 RequestType = request.RequestType,
@@ -162,6 +180,7 @@ namespace Wds.SixStars.Api.State
             state.MemoryLog.Insert(0, entry);
             ArchiveOldConversationTurns(state, now);
             Trim(state.MemoryLog, _options.MaxMemoryLogEntries);
+            }
 
             await _stateStore.SaveAsync(request.SessionId, state, cancellationToken).ConfigureAwait(false);
 
@@ -321,6 +340,170 @@ namespace Wds.SixStars.Api.State
             return state;
         }
 
+        public async Task<StarState> SetStarGirlfriendHourlyStateContextAsync(string sessionId, string starId, StarGirlfriendHourlyStateContext context, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            StarGirlfriendHourlyStateContext normalized = context ?? new StarGirlfriendHourlyStateContext();
+            NormalizeGirlfriendHourlyContextJson(normalized);
+            ArchiveGirlfriendDesiredState(state, sessionId, starId, normalized);
+            state.GirlfriendHourlyState = normalized;
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        private static void ArchiveGirlfriendDesiredState(StarState state, string sessionId, string starId, StarGirlfriendHourlyStateContext context)
+        {
+            if (state == null || context == null || !context.IsAvailable) return;
+            List<GirlfriendVectorItem> needs = CleanGirlfriendVector(context.NeedVector, 30);
+            List<GirlfriendVectorItem> wants = CleanGirlfriendVector(context.WantVector, 30);
+            List<string> things = CleanStringList(context.ThingsSheWantsToSay, 16);
+            List<string> cute = CleanStringList(context.CuteThingsSheWantsToSay, 16);
+            if (needs.Count == 0 && wants.Count == 0 && things.Count == 0 && cute.Count == 0) return;
+
+            string id = "desired-" + (context.GeneratedAt ?? DateTimeOffset.UtcNow).UtcDateTime.ToString("yyyyMMddHHmmss") + "-" + (string.IsNullOrWhiteSpace(context.SlotId) ? "slot" : Slugify(context.SlotId));
+            if (state.GirlfriendDesiredStateHistory.Any(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase))) return;
+
+            state.GirlfriendDesiredStateHistory.Insert(0, new GirlfriendVectorHistoryEntry
+            {
+                Id = id,
+                SessionId = sessionId ?? string.Empty,
+                StarId = string.IsNullOrWhiteSpace(context.StarId) ? starId : context.StarId,
+                SlotId = context.SlotId ?? string.Empty,
+                Source = "girlfriend-hourly-state",
+                CreatedAt = context.GeneratedAt ?? DateTimeOffset.UtcNow,
+                Summary = CleanMarkerText(context.Summary, 900),
+                NeedSummary = CleanMarkerText(context.NeedSummary, 700),
+                WantSummary = CleanMarkerText(context.WantSummary, 700),
+                NeedVector = needs,
+                WantVector = wants,
+                ThingsSheWantsToSay = things,
+                CuteThingsSheWantsToSay = cute,
+                OverallConfidence = Math.Max(0, Math.Min(1, context.OverallConfidence)),
+                OverallScore = Math.Max(0, Math.Min(100, context.OverallScore))
+            });
+            Trim(state.GirlfriendDesiredStateHistory, 240);
+        }
+
+        private static void UpdateGirlfriendNeedsMetHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state == null || request == null || !state.IsGirlfriend) return;
+            List<GirlfriendVectorItem> metNeeds = CleanGirlfriendVector(request.GirlfriendNeedsMetVector, 12);
+            List<GirlfriendVectorItem> metWants = CleanGirlfriendVector(request.GirlfriendWantsMetVector, 12);
+            if (metNeeds.Count == 0 && metWants.Count == 0 && string.IsNullOrWhiteSpace(request.GirlfriendNeedsMetSummary)) return;
+
+            state.GirlfriendNeedsMetHistory.Insert(0, new GirlfriendNeedFulfillmentHistoryEntry
+            {
+                Id = "met-" + now.UtcDateTime.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8),
+                SessionId = request.SessionId ?? string.Empty,
+                StarId = request.StarId ?? string.Empty,
+                CreatedAt = now,
+                PlayerText = CleanMarkerText(request.PlayerText, 1200),
+                StarResponse = CleanMarkerText(request.StarResponse, 1200),
+                Summary = CleanMarkerText(request.GirlfriendNeedsMetSummary, 420),
+                MetNeedVector = metNeeds,
+                MetWantVector = metWants
+            });
+            Trim(state.GirlfriendNeedsMetHistory, 240);
+            AccumulateGirlfriendPerformanceVector(state.GirlfriendNeedsMetPerformanceVector, metNeeds, 30);
+            AccumulateGirlfriendPerformanceVector(state.GirlfriendWantsMetPerformanceVector, metWants, 30);
+            AddUnique(state.GirlfriendHistory, new[] { "Met girlfriend wants/needs: " + (string.IsNullOrWhiteSpace(request.GirlfriendNeedsMetSummary) ? FormatMetVectorSummary(metNeeds, metWants) : request.GirlfriendNeedsMetSummary) }, 120);
+        }
+
+        private static string FormatMetVectorSummary(IReadOnlyList<GirlfriendVectorItem> needs, IReadOnlyList<GirlfriendVectorItem> wants)
+        {
+            List<string> parts = new List<string>();
+            parts.AddRange((needs ?? Array.Empty<GirlfriendVectorItem>()).Select(x => "need:" + FirstNonEmpty(x.DisplayName, x.ItemId)).Where(x => !string.IsNullOrWhiteSpace(x)).Take(4));
+            parts.AddRange((wants ?? Array.Empty<GirlfriendVectorItem>()).Select(x => "want:" + FirstNonEmpty(x.DisplayName, x.ItemId)).Where(x => !string.IsNullOrWhiteSpace(x)).Take(4));
+            return parts.Count == 0 ? "none" : string.Join(", ", parts);
+        }
+
+        private static void AccumulateGirlfriendPerformanceVector(List<GirlfriendVectorItem> accumulator, IReadOnlyList<GirlfriendVectorItem> additions, int maxItems)
+        {
+            if (accumulator == null || additions == null) return;
+            foreach (GirlfriendVectorItem addition in additions.Where(x => x != null && (!string.IsNullOrWhiteSpace(x.ItemId) || !string.IsNullOrWhiteSpace(x.DisplayName))))
+            {
+                string itemId = string.IsNullOrWhiteSpace(addition.ItemId) ? Slugify(addition.DisplayName) : Slugify(addition.ItemId);
+                GirlfriendVectorItem? existing = accumulator.FirstOrDefault(x => string.Equals(Slugify(FirstNonEmpty(x.ItemId, x.DisplayName)), itemId, StringComparison.OrdinalIgnoreCase));
+                double contribution = Math.Max(0, Math.Min(100, addition.Score)) * Math.Max(0, Math.Min(1, addition.Confidence <= 0 ? 0.25 : addition.Confidence));
+                if (existing == null)
+                {
+                    accumulator.Add(new GirlfriendVectorItem
+                    {
+                        ItemId = itemId,
+                        DisplayName = FirstNonEmpty(addition.DisplayName, addition.ItemId),
+                        Confidence = Math.Max(0, Math.Min(1, addition.Confidence)),
+                        Score = Math.Min(100, contribution),
+                        Reason = CleanMarkerText(addition.Reason, 360)
+                    });
+                }
+                else
+                {
+                    existing.DisplayName = FirstNonEmpty(existing.DisplayName, addition.DisplayName, addition.ItemId);
+                    existing.Confidence = Math.Max(existing.Confidence, Math.Max(0, Math.Min(1, addition.Confidence)));
+                    existing.Score = Math.Min(100, existing.Score + Math.Max(1, contribution / 4.0));
+                    if (!string.IsNullOrWhiteSpace(addition.Reason)) existing.Reason = CleanMarkerText(addition.Reason, 360);
+                }
+            }
+            accumulator.Sort((a, b) => b.Score.CompareTo(a.Score));
+            Trim(accumulator, maxItems);
+        }
+
+        private static List<GirlfriendVectorItem> CleanGirlfriendVector(IEnumerable<GirlfriendVectorItem>? source, int maxItems)
+        {
+            return (source ?? Enumerable.Empty<GirlfriendVectorItem>())
+                .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.ItemId) || !string.IsNullOrWhiteSpace(x.DisplayName)))
+                .Select(x => new GirlfriendVectorItem
+                {
+                    ItemId = Slugify(FirstNonEmpty(x.ItemId, x.DisplayName)),
+                    DisplayName = CleanMarkerText(FirstNonEmpty(x.DisplayName, x.ItemId), 160),
+                    Confidence = Math.Max(0, Math.Min(1, x.Confidence)),
+                    Score = Math.Max(0, Math.Min(100, x.Score)),
+                    Reason = CleanMarkerText(x.Reason, 360)
+                })
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
+        private static List<string> CleanStringList(IEnumerable<string>? source, int maxItems)
+        {
+            return (source ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => CleanMarkerText(x, 500))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
+        private static void NormalizeGirlfriendHourlyContextJson(StarGirlfriendHourlyStateContext context)
+        {
+            if (context == null) return;
+            context.NeedVector = CleanGirlfriendVector(context.NeedVector, 30);
+            context.WantVector = CleanGirlfriendVector(context.WantVector, 30);
+            context.ThingsSheWantsToSay = CleanStringList(context.ThingsSheWantsToSay, 16);
+            context.CuteThingsSheWantsToSay = CleanStringList(context.CuteThingsSheWantsToSay, 16);
+            if (!context.IsAvailable) return;
+            context.Json = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                starId = context.StarId ?? string.Empty,
+                generatedAt = context.GeneratedAt?.ToString("o") ?? string.Empty,
+                slotId = context.SlotId ?? string.Empty,
+                summary = context.Summary ?? string.Empty,
+                relationshipPosture = context.RelationshipPosture ?? string.Empty,
+                needSummary = context.NeedSummary ?? string.Empty,
+                wantSummary = context.WantSummary ?? string.Empty,
+                needVector = context.NeedVector,
+                wantVector = context.WantVector,
+                thingsSheWantsToSay = context.ThingsSheWantsToSay,
+                cuteThingsSheWantsToSay = context.CuteThingsSheWantsToSay,
+                overallConfidence = Math.Max(0, Math.Min(1, context.OverallConfidence)),
+                overallScore = Math.Max(0, Math.Min(100, context.OverallScore))
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+
         public async Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
@@ -426,6 +609,41 @@ namespace Wds.SixStars.Api.State
         private static bool NormalizeWorldDefaults(StarState state)
         {
             bool changed = false;
+            if (state.RelationshipEvents == null)
+            {
+                state.RelationshipEvents = new List<string>();
+                changed = true;
+            }
+            if (state.MemoryLog == null)
+            {
+                state.MemoryLog = new List<ConversationLogEntry>();
+                changed = true;
+            }
+            if (state.ImportantPlayerQuotes == null)
+            {
+                state.ImportantPlayerQuotes = new List<string>();
+                changed = true;
+            }
+            if (state.MemoryNotes == null)
+            {
+                state.MemoryNotes = new List<string>();
+                changed = true;
+            }
+            if (state.GirlfriendHistory == null)
+            {
+                state.GirlfriendHistory = new List<string>();
+                changed = true;
+            }
+            if (state.PetNamesPlayerUsesForStar == null)
+            {
+                state.PetNamesPlayerUsesForStar = new List<string>();
+                changed = true;
+            }
+            if (state.PetNamesStarUsesForPlayer == null)
+            {
+                state.PetNamesStarUsesForPlayer = new List<string>();
+                changed = true;
+            }
             if (state.ActiveEffectors == null)
             {
                 state.ActiveEffectors = new List<StarRelationshipEffector>();
@@ -449,6 +667,31 @@ namespace Wds.SixStars.Api.State
             if (state.RelationshipScoreAccumulators == null)
             {
                 state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
+                changed = true;
+            }
+            if (state.GirlfriendHourlyState == null)
+            {
+                state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+                changed = true;
+            }
+            if (state.GirlfriendDesiredStateHistory == null)
+            {
+                state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendNeedsMetHistory == null)
+            {
+                state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendNeedsMetPerformanceVector == null)
+            {
+                state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+                changed = true;
+            }
+            if (state.GirlfriendWantsMetPerformanceVector == null)
+            {
+                state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
                 changed = true;
             }
             if (state.IsAlly && !state.IsMet)
@@ -498,6 +741,15 @@ namespace Wds.SixStars.Api.State
             effector.Tags ??= new List<string>();
             effector.IsActive = true;
             return effector;
+        }
+
+        private static string FirstNonEmpty(params string?[] values)
+        {
+            foreach (string? value in values)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return string.Empty;
         }
 
         private static string BuildReasonSuffix(string reason)
@@ -735,6 +987,16 @@ namespace Wds.SixStars.Api.State
             while (cleaned.Contains("  ", StringComparison.Ordinal)) cleaned = cleaned.Replace("  ", " ");
             if (cleaned.Length <= maxLength) return cleaned;
             return cleaned.Substring(0, maxLength).Trim();
+        }
+
+        private static IEnumerable<string> BuildInternalUpdateMemoryNotes(StarStateUpdateRequest request, RelationshipDelta applied)
+        {
+            if (request == null) yield break;
+            bool changed = applied != null && (applied.Heart != 0 || applied.Trust != 0 || applied.Romance != 0 || applied.BenaveilInfluence != 0 || Math.Abs(applied.EmotionalConnectionPercent) >= 0.001);
+            if (!changed) yield break;
+            string summary = string.IsNullOrWhiteSpace(request.ChangesSummary) ? request.ConversationSummary : request.ChangesSummary;
+            if (string.IsNullOrWhiteSpace(summary)) summary = "Hidden background Star-state update applied.";
+            yield return "Internal background update: " + TruncateLocal(summary, 360);
         }
 
         private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter)

@@ -55,6 +55,9 @@ namespace Wds.SixStars.Api.Ai
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public List<string> LoreUsed { get; set; } = new List<string>();
         public List<string> RiskFlags { get; set; } = new List<string>();
         public double WisdomScore { get; set; }

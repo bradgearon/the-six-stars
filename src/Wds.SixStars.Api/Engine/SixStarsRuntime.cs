@@ -4,9 +4,12 @@ using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Background;
+using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
@@ -34,6 +37,12 @@ namespace Wds.SixStars.Api.Engine
         private readonly SemaphoreSlim _interstarUpdateQueue = new SemaphoreSlim(1, 1);
         private readonly TimeSpan _interstarSettleDelay = ResolveInterstarSettleDelay();
         private readonly Dictionary<string, DateTimeOffset> _interstarCooldowns = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        private readonly BackgroundAiRequestDispatcher _backgroundDispatcher = new BackgroundAiRequestDispatcher();
+        private readonly object _girlfriendHourlyStateGate = new object();
+        private readonly HashSet<string> _pendingGirlfriendHourlyStateRefresh = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private CancellationTokenSource? _girlfriendHourlyStateLoopCts;
+        private Task? _girlfriendHourlyStateLoopTask;
+        private readonly TimeSpan _girlfriendHourlyStateInterval = ResolveGirlfriendHourlyStateInterval();
         private static readonly object StoryRandomGate = new object();
         private static readonly Random StoryRandom = new Random();
         private readonly ConversationDebugLogRecorder _conversationDebugLogRecorder = new ConversationDebugLogRecorder();
@@ -50,6 +59,9 @@ namespace Wds.SixStars.Api.Engine
         public event EventHandler<StarInteractionResponse>? InterstarMicroUpdateCompleted;
         public event EventHandler<InterstarUpdateCycleResult>? InterstarUpdateCycleCompleted;
         public event EventHandler<Exception>? InterstarUpdateFailed;
+        public event EventHandler<BackgroundAiRequestStatusEventArgs>? BackgroundAiRequestStatusChanged;
+        public event EventHandler<StarGirlfriendHourlyStateUpdatedEventArgs>? GirlfriendHourlyStateUpdated;
+        public event EventHandler<Exception>? GirlfriendHourlyStateUpdateFailed;
 
         public string ConversationDebugLogDirectory => _conversationDebugLogRecorder.LogDirectory;
         public string LatestConversationDebugLogPath => _conversationDebugLogRecorder.LatestLogPath;
@@ -111,6 +123,7 @@ namespace Wds.SixStars.Api.Engine
             _screenContextStore = screenContextStore;
             _recentScreenCount = Math.Max(1, recentScreenCount);
             _recentHistoryCount = Math.Max(1, recentHistoryCount);
+            _backgroundDispatcher.StatusChanged += (_, args) => BackgroundAiRequestStatusChanged?.Invoke(this, args);
 
             DailyStarStateOptions dailyOptions = dailyStateOptions ?? new DailyStarStateOptions();
             if (dailyOptions.Enabled && agent is IStarDailyStateGenerator dailyGenerator)
@@ -120,7 +133,8 @@ namespace Wds.SixStars.Api.Engine
                     memoryApi,
                     dailyGenerator,
                     new StarDailyStateFileStore(dailyOptions.StateRoot),
-                    dailyOptions);
+                    dailyOptions,
+                    _backgroundDispatcher);
                 _dailyStateService.DailyStateUpdated += (_, args) => DailyStateUpdated?.Invoke(this, args);
                 _dailyStateService.DailyStateUpdateFailed += (_, ex) => DailyStateUpdateFailed?.Invoke(this, ex);
             }
@@ -137,6 +151,18 @@ namespace Wds.SixStars.Api.Engine
                 return TimeSpan.FromSeconds(seconds);
             }
             return TimeSpan.FromMinutes(1);
+        }
+
+        private static TimeSpan ResolveGirlfriendHourlyStateInterval()
+        {
+            string? value = Environment.GetEnvironmentVariable("SIX_STARS_GIRLFRIEND_STATE_INTERVAL_MINUTES");
+            if (double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double minutes))
+            {
+                if (minutes < 5) minutes = 5;
+                if (minutes > 1440) minutes = 1440;
+                return TimeSpan.FromMinutes(minutes);
+            }
+            return TimeSpan.FromHours(1);
         }
 
         public Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -162,12 +188,83 @@ namespace Wds.SixStars.Api.Engine
 
         public void StartDailyStateBackgroundUpdates(string sessionId)
         {
-            _dailyStateService?.Start(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId);
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            _dailyStateService?.Start(normalizedSessionId);
+            StartGirlfriendHourlyStateBackgroundUpdates(normalizedSessionId);
         }
 
         public void StopDailyStateBackgroundUpdates()
         {
             _dailyStateService?.Stop();
+            StopGirlfriendHourlyStateBackgroundUpdates();
+        }
+
+        public void StartGirlfriendHourlyStateBackgroundUpdates(string sessionId)
+        {
+            if (!(_agent is IStarGirlfriendHourlyStateGenerator)) return;
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            lock (_girlfriendHourlyStateGate)
+            {
+                if (_girlfriendHourlyStateLoopTask != null && !_girlfriendHourlyStateLoopTask.IsCompleted) return;
+                _girlfriendHourlyStateLoopCts?.Cancel();
+                _girlfriendHourlyStateLoopCts?.Dispose();
+                _girlfriendHourlyStateLoopCts = new CancellationTokenSource();
+                CancellationToken token = _girlfriendHourlyStateLoopCts.Token;
+                _girlfriendHourlyStateLoopTask = Task.Run(() => RunGirlfriendHourlyStateLoopAsync(normalizedSessionId, token), CancellationToken.None);
+            }
+        }
+
+        public void StopGirlfriendHourlyStateBackgroundUpdates()
+        {
+            lock (_girlfriendHourlyStateGate)
+            {
+                _girlfriendHourlyStateLoopCts?.Cancel();
+                _girlfriendHourlyStateLoopCts?.Dispose();
+                _girlfriendHourlyStateLoopCts = null;
+                _girlfriendHourlyStateLoopTask = null;
+                _pendingGirlfriendHourlyStateRefresh.Clear();
+            }
+        }
+
+        private async Task RunGirlfriendHourlyStateLoopAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    await QueueCurrentGirlfriendHourlyStateRefreshIfDueAsync(sessionId, false, "scheduled hourly girlfriend state refresh", cancellationToken).ConfigureAwait(false);
+                    TimeSpan delay = _girlfriendHourlyStateInterval < TimeSpan.FromMinutes(5) ? TimeSpan.FromMinutes(5) : _girlfriendHourlyStateInterval;
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    GirlfriendHourlyStateUpdateFailed?.Invoke(this, ex);
+                    try { await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken).ConfigureAwait(false); } catch { return; }
+                }
+            }
+        }
+
+        private async Task QueueCurrentGirlfriendHourlyStateRefreshIfDueAsync(string sessionId, bool force, string reason, CancellationToken cancellationToken)
+        {
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId, cancellationToken).ConfigureAwait(false);
+            StarState? girlfriend = (saveData.Stars ?? new List<StarState>()).FirstOrDefault(x => x != null && x.IsGirlfriend);
+            if (girlfriend == null) return;
+            if (!IsGirlfriendHourlyStateDue(girlfriend, force)) return;
+            QueueGirlfriendHourlyStateRefresh(sessionId, girlfriend.StarId, reason, force, cancellationToken);
+        }
+
+        private static void ResetGirlfriendDurableChunks(StarState state)
+        {
+            if (state == null) return;
+            state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+            state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+            state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+            state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
         }
 
         public Task<StarDailyStateRecord?> GetCurrentDailyStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -234,6 +331,7 @@ namespace Wds.SixStars.Api.Engine
                     else if (state.IsGirlfriend)
                     {
                         state.IsGirlfriend = false;
+                        ResetGirlfriendDurableChunks(state);
                         state.GirlfriendHistory.Insert(0, "Girlfriend path cleared because another Star became the exclusive girlfriend.");
                     }
                 }
@@ -242,6 +340,7 @@ namespace Wds.SixStars.Api.Engine
             {
                 selected.IsGirlfriend = false;
                 selected.GirlfriendSince = null;
+                ResetGirlfriendDurableChunks(selected);
                 selected.GirlfriendHistory.Insert(0, "Girlfriend path ended: " + (string.IsNullOrWhiteSpace(reason) ? "breakup" : reason));
                 selected.RelationshipEvents.Insert(0, "Girlfriend path ended by host/player action.");
                 if (selected.IsAlly && selected.EmotionalConnectionPercent >= 25 && selected.Heart >= 6 && selected.Trust >= 4 && selected.Romance >= 3)
@@ -257,6 +356,10 @@ namespace Wds.SixStars.Api.Engine
             }
 
             await _memoryApi.ImportSaveDataAsync(saveData, cancellationToken).ConfigureAwait(false);
+            if (isGirlfriend)
+            {
+                QueueGirlfriendHourlyStateRefresh(sessionId, starId, "girlfriend path accepted", true, CancellationToken.None);
+            }
             return selected;
         }
 
@@ -339,8 +442,23 @@ namespace Wds.SixStars.Api.Engine
 
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
-            CancelPendingInterstarCycle("New Star conversation request started for " + request.StarId + ".");
-            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ConversationStarted", "Conversation with " + request.StarId + " started; any pending interstar ripple timer was cancelled.", 0, 0);
+            bool isStarInitiativeRequest = request != null && request.RequestType == RequestType.StarInitiative;
+            bool isBackgroundWorkerRequest = isStarInitiativeRequest
+                || (request != null && (IsStoryGenerationWorkerRequest(request) || IsGirlfriendProposalWorkerRequest(request) || IsInterstarMicroRequest(request)));
+            IDisposable? foregroundLease = request != null && request.RequestType != RequestType.Debug && !isBackgroundWorkerRequest
+                ? _backgroundDispatcher.EnterForegroundRequest("Foreground reply request for " + request.StarId + " (" + request.RequestType + ")")
+                : null;
+            try
+            {
+            if (!isStarInitiativeRequest)
+            {
+                CancelPendingInterstarCycle("New Star conversation request started for " + request.StarId + ".");
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ConversationStarted", "Conversation with " + request.StarId + " started; any pending interstar ripple timer was cancelled.", 0, 0);
+            }
+            else
+            {
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeCheckStarted", "Checking state to see whether " + request.StarId + " has something to say at rest. This does not affect relationship/emotion state.", 0, 0);
+            }
 
             if (_screenContextStore != null && request.RecentScreenCaptures.Count == 0)
             {
@@ -352,6 +470,11 @@ namespace Wds.SixStars.Api.Engine
             StarMemorySnapshot snapshot = await _memoryApi.GetStarMemorySnapshotAsync(request.SessionId, request.StarId, _recentHistoryCount, cancellationToken).ConfigureAwait(false);
             StarState state = snapshot.State;
             await AttachDailyStateContextForRequestAsync(request, state, cancellationToken).ConfigureAwait(false);
+
+            if (isStarInitiativeRequest)
+            {
+                return await ProcessStarInitiativeCheckAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+            }
 
             GirlfriendProposalDecision? girlfriendProposal = await TryPrepareGirlfriendProposalAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             if (girlfriendProposal != null && !IsGirlfriendProposalWorkerRequest(request))
@@ -394,6 +517,18 @@ namespace Wds.SixStars.Api.Engine
             });
             NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; waiting for voice-ready background review before interstar updates can queue.", 0, 0);
 
+            if (request.RequestType == RequestType.StarInitiative)
+            {
+                response.StateDeltas = RelationshipDelta.Zero();
+                response.SuggestedStateDeltas = RelationshipDelta.Zero();
+                response.EmotionalConnectionPercentBefore = state.EmotionalConnectionPercent;
+                response.EmotionalConnectionPercentAfter = state.EmotionalConnectionPercent;
+                response.IsGirlfriendReadyAfter = state.IsGirlfriendReady;
+                response.GirlfriendReadinessSummary = state.GirlfriendReadinessSummary ?? string.Empty;
+                response.Debug.Notes.Add("StarInitiative request finished without background emotion/memory review, relationship deltas, or interstar ripple.");
+                return response;
+            }
+
             if (_agent is IStarTurnAnalyzer analyzer)
             {
                 response.StateDeltas = RelationshipDelta.Zero();
@@ -426,12 +561,346 @@ namespace Wds.SixStars.Api.Engine
 
             await ApplyAnalysisAndMemoryUpdateAsync(request, response, cancellationToken).ConfigureAwait(false);
             return response;
+            }
+            finally
+            {
+                foregroundLease?.Dispose();
+            }
         }
 
+
+        private async Task<StarInteractionResponse> ProcessStarInitiativeCheckAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
+        {
+            StarInitiativeStateGate gate = EvaluateStarInitiativeStateGate(request, state);
+            request.GameContext.Flags["starInitiativeStateGateScore"] = gate.Score.ToString("0.00");
+            request.GameContext.Flags["starInitiativeStateGateReason"] = gate.Reason ?? string.Empty;
+            if (gate.Topics.Count > 0) request.GameContext.Flags["starInitiativeStateTopics"] = string.Join(" | ", gate.Topics.Take(8));
+
+            if (!gate.ShouldAskModel)
+            {
+                StarInteractionResponse skipped = CreateSkippedStarInitiativeResponse(profile, request, state, gate);
+                ApplyVoiceDefaults(profile, skipped);
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeSkipped", skipped.InitiativeReason, 0, 0);
+                return skipped;
+            }
+
+            StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+            ApplyVoiceDefaults(profile, response);
+            response.StateDeltas = RelationshipDelta.Zero();
+            response.SuggestedStateDeltas = RelationshipDelta.Zero();
+            response.EmotionalConnectionPercentBefore = state.EmotionalConnectionPercent;
+            response.EmotionalConnectionPercentAfter = state.EmotionalConnectionPercent;
+            response.IsGirlfriendReadyAfter = state.IsGirlfriendReady;
+            response.GirlfriendReadinessSummary = state.GirlfriendReadinessSummary ?? string.Empty;
+            response.InitiativeSkippedBeforeLlm = false;
+            response.InitiativeStateScore = gate.Score;
+            if (string.IsNullOrWhiteSpace(response.InitiativeTopic) && gate.Topics.Count > 0) response.InitiativeTopic = gate.Topics[0];
+            if (string.IsNullOrWhiteSpace(response.InitiativeReason)) response.InitiativeReason = gate.Reason;
+            response.EmotionalEffectVector = string.Empty;
+            response.NegativeEmotionVector = string.Empty;
+            ApplyStarInitiativeSpeechScoreGate(request, state, response);
+            response.TopAffectedEmotions.Clear();
+            response.AcceptedPositiveEmotionSignals.Clear();
+            response.AcceptedNegativeEmotionSignals.Clear();
+            response.AcceptedRelationshipCombos.Clear();
+            response.DeterministicEmotionUpdateSummary = "Star initiative check: no deterministic emotion scoring or relationship delta applied.";
+
+            if (!response.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(response.SpokenText))
+            {
+                response.InitiativeShouldSpeak = false;
+                response.SetSpokenParts(Array.Empty<string>());
+                response.SpokenText = string.Empty;
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeNoSpeech", response.InitiativeReason, 0, 0);
+            }
+            else
+            {
+                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeSpeechReady", profile.DisplayName + " has an at-rest line to say: " + response.InitiativeTopic, 0, 0);
+            }
+
+            response.Debug.Notes.Add("StarInitiative state gate allowed LLM check: score=" + gate.Score.ToString("0.00") + "; " + gate.Reason);
+            response.Debug.Notes.Add("No StarMemoryApi update, emotion vector scoring, relationship update, or interstar ripple is run for RequestType=StarInitiative.");
+            return response;
+        }
+
+        private static void ApplyStarInitiativeSpeechScoreGate(StarInteractionRequest request, StarState state, StarInteractionResponse response)
+        {
+            if (request == null || response == null || request.RequestType != RequestType.StarInitiative) return;
+            bool hasText = response.SpokenParts != null && response.SpokenParts.Any(x => !string.IsNullOrWhiteSpace(x));
+            GirlfriendVectorItem? decision = (response.InitiativeSpeechDecisionVector ?? new List<GirlfriendVectorItem>())
+                .Where(x => x != null)
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .FirstOrDefault();
+            double score = Math.Max(0, Math.Min(100, decision?.Score ?? (response.InitiativePriority * 100.0)));
+            double confidence = Math.Max(0, Math.Min(1, decision?.Confidence ?? response.InitiativePriority));
+
+            double randomThreshold;
+            lock (StoryRandomGate)
+            {
+                // Zero-based threshold: some checks accept very low scores, especially when girlfriend mode
+                // produced any confidence at all. This keeps at-rest speech organic instead of fixed-timer robotic.
+                randomThreshold = (state != null && state.IsGirlfriend ? 5.0 : 10.0) + (StoryRandom.NextDouble() * (state != null && state.IsGirlfriend ? 30.0 : 45.0));
+            }
+
+            double effectiveScore = score + (confidence * (state != null && state.IsGirlfriend ? 35.0 : 25.0));
+            bool force = IsTruthy(GetContextFlag(request, "starInitiativeForce"));
+            bool vectorWantsSpeech = score > 0 || confidence > 0;
+            bool modelWantsSpeech = response.InitiativeShouldSpeak || vectorWantsSpeech;
+            bool accepted = force || (hasText && modelWantsSpeech && (effectiveScore >= randomThreshold || (state != null && state.IsGirlfriend && confidence > 0 && score > 0)));
+
+            response.InitiativeSpeechAcceptThreshold = randomThreshold;
+            response.InitiativeSpeechEffectiveScore = effectiveScore;
+            response.InitiativeSpeechScoreAccepted = accepted;
+            if (!accepted)
+            {
+                response.InitiativeShouldSpeak = false;
+                response.InitiativeReason = (response.InitiativeReason ?? string.Empty) + " Runtime score/confidence gate suppressed this at-rest line: score=" + score.ToString("0.0") + ", confidence=" + confidence.ToString("0.00") + ", effective=" + effectiveScore.ToString("0.0") + ", threshold=" + randomThreshold.ToString("0.0") + ".";
+                response.SetSpokenParts(Array.Empty<string>());
+                response.InitiativePriority = 0;
+            }
+        }
+
+        private static StarInteractionResponse CreateSkippedStarInitiativeResponse(StarProfile profile, StarInteractionRequest request, StarState state, StarInitiativeStateGate gate)
+        {
+            StarInteractionResponse response = new StarInteractionResponse
+            {
+                StarId = profile.StarId,
+                InitiativeShouldSpeak = false,
+                InitiativeSkippedBeforeLlm = true,
+                InitiativeStateScore = gate.Score,
+                InitiativePriority = 0,
+                InitiativeTopic = string.Empty,
+                InitiativeReason = gate.Reason,
+                EmotionalPurpose = "At-rest Star initiative skipped before LLM because state did not contain enough reason to interrupt the Last Cat.",
+                EmotionalConnectionPercentBefore = state.EmotionalConnectionPercent,
+                EmotionalConnectionPercentAfter = state.EmotionalConnectionPercent,
+                IsGirlfriendReadyAfter = state.IsGirlfriendReady,
+                GirlfriendReadinessSummary = state.GirlfriendReadinessSummary ?? string.Empty,
+                SuggestedStateDeltas = RelationshipDelta.Zero(),
+                StateDeltas = RelationshipDelta.Zero(),
+                DeterministicEmotionUpdateSummary = "Star initiative skipped before LLM; no deterministic emotion scoring or relationship delta applied.",
+                ConversationSummary = state.ConversationSummary ?? string.Empty,
+                ChangesSummary = profile.DisplayName + " did not have a state-backed at-rest line to say right now.",
+                Debug = new DebugInfo { DetectedIntent = RequestType.StarInitiative.ToString(), WisdomScore = 0 }
+            };
+            response.SetSpokenParts(Array.Empty<string>());
+            response.Debug.Notes.Add("StarInitiative skipped before LLM: score=" + gate.Score.ToString("0.00") + "; " + gate.Reason);
+            return response;
+        }
+
+        private sealed class StarInitiativeStateGate
+        {
+            public bool ShouldAskModel { get; set; }
+            public double Score { get; set; }
+            public string Reason { get; set; } = string.Empty;
+            public List<string> Topics { get; set; } = new List<string>();
+        }
+
+        private static StarInitiativeStateGate EvaluateStarInitiativeStateGate(StarInteractionRequest request, StarState state)
+        {
+            List<string> topics = ExtractInitiativeTopics(request, state).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
+            string summary = FirstNonEmpty(GetContextFlag(request, "todayStarStateSummary"), state.TodayState?.Summary);
+            bool force = IsTruthy(GetContextFlag(request, "starInitiativeForce"));
+            bool reconnect = ContainsIgnoreCase(GetContextFlag(request, "initiativeReason"), "reconnect") || ContainsIgnoreCase(request.PlayerText, "reconnect");
+            bool hasRecentEmotion = state.LastTopAffectedEmotions != null && state.LastTopAffectedEmotions.Any();
+            bool hasRecentConversation = state.MemoryLog != null && state.MemoryLog.Any(x => x != null && x.CreatedAt > DateTimeOffset.UtcNow.AddHours(-4));
+
+            double score = 0;
+            List<string> reasons = new List<string>();
+            if (topics.Count > 0) { score += 0.45; reasons.Add("daily wants-to-talk topics=" + topics.Count); }
+            if (!string.IsNullOrWhiteSpace(summary)) { score += 0.10; reasons.Add("daily summary available"); }
+            if (hasRecentEmotion) { score += 0.20; reasons.Add("recent settled emotion vector exists"); }
+            if (hasRecentConversation) { score += 0.08; reasons.Add("recent conversation exists"); }
+            if (state.IsGirlfriend) { score += 0.15; reasons.Add("girlfriend closeness"); }
+            else if (state.EmotionalConnectionPercent >= 25) { score += 0.12; reasons.Add("high connection"); }
+            else if (state.IsAlly) { score += 0.05; reasons.Add("ally relationship"); }
+            if (reconnect) { score += 0.05; reasons.Add("phone reconnect/rest nudge"); }
+            if (force) { score += 0.10; reasons.Add("manual/forced check"); }
+
+            bool shouldAsk = force || score >= 0.28;
+            if (!shouldAsk && topics.Count == 0)
+            {
+                reasons.Add("no daily wants-to-talk topics were present in state");
+            }
+
+            return new StarInitiativeStateGate
+            {
+                ShouldAskModel = shouldAsk,
+                Score = Math.Max(0, Math.Min(1, score)),
+                Topics = topics,
+                Reason = (shouldAsk ? "State check allowed Star initiative LLM: " : "State check skipped Star initiative LLM: ") + (reasons.Count == 0 ? "no state-backed reason detected" : string.Join("; ", reasons))
+            };
+        }
+
+        private static List<string> ExtractInitiativeTopics(StarInteractionRequest request, StarState state)
+        {
+            List<string> topics = new List<string>();
+            string json = FirstNonEmpty(GetContextFlag(request, "todayStarStateJson"), state.TodayState?.Json, state.TodayState?.Xml);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                try
+                {
+                    using JsonDocument doc = JsonDocument.Parse(json);
+                    AddStringArrayProperty(doc.RootElement, topics, "wantsToTalkAbout");
+                    AddStringArrayProperty(doc.RootElement, topics, "thingsSheWantsToTalkAbout");
+                    if (doc.RootElement.TryGetProperty("today", out JsonElement today))
+                    {
+                        AddStringArrayProperty(today, topics, "wantsToTalkAbout");
+                        AddStringArrayProperty(today, topics, "thingsSheWantsToTalkAbout");
+                        AddStringArrayProperty(today, topics, "conversationHooks");
+                    }
+                    AddStringArrayProperty(doc.RootElement, topics, "conversationHooks");
+                }
+                catch
+                {
+                    foreach (Match match in Regex.Matches(json, "\\\"(?:wantsToTalkAbout|thingsSheWantsToTalkAbout|conversationHooks)\\\"\\s*:\\s*\\[(?<items>.*?)\\]", RegexOptions.IgnoreCase | RegexOptions.Singleline))
+                    {
+                        foreach (Match item in Regex.Matches(match.Groups["items"].Value, "\\\"(?<value>(?:\\\\.|[^\\\"])*)\\\""))
+                        {
+                            string value = Regex.Unescape(item.Groups["value"].Value).Trim();
+                            if (!string.IsNullOrWhiteSpace(value)) topics.Add(value);
+                        }
+                    }
+                }
+            }
+
+            string girlfriendJson = FirstNonEmpty(GetContextFlag(request, "girlfriendHourlyStateJson"), state.GirlfriendHourlyState?.Json);
+            if (!string.IsNullOrWhiteSpace(girlfriendJson))
+            {
+                AddGirlfriendHourlyTopicsFromJson(girlfriendJson, topics);
+            }
+            if (state.GirlfriendHourlyState != null && state.GirlfriendHourlyState.IsAvailable)
+            {
+                topics.AddRange((state.GirlfriendHourlyState.ThingsSheWantsToSay ?? new List<string>()).Take(8));
+                topics.AddRange((state.GirlfriendHourlyState.CuteThingsSheWantsToSay ?? new List<string>()).Take(8));
+                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.NeedVector, topics, "girlfriend need");
+                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.WantVector, topics, "girlfriend want");
+            }
+
+            return topics;
+        }
+
+        private static void AddGirlfriendHourlyTopicsFromJson(string json, List<string> topics)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(json);
+                AddStringArrayProperty(doc.RootElement, topics, "thingsSheWantsToSay");
+                AddStringArrayProperty(doc.RootElement, topics, "cuteThingsSheWantsToSay");
+                AddStringArrayProperty(doc.RootElement, topics, "conversationHooks");
+                AddVectorTopicsFromJson(doc.RootElement, topics, "needVector", "girlfriend need");
+                AddVectorTopicsFromJson(doc.RootElement, topics, "wantVector", "girlfriend want");
+            }
+            catch
+            {
+                foreach (Match match in Regex.Matches(json, "\\\"(?:thingsSheWantsToSay|cuteThingsSheWantsToSay|conversationHooks)\\\"\\s*:\\s*\\[(?<items>.*?)\\]", RegexOptions.IgnoreCase | RegexOptions.Singleline))
+                {
+                    foreach (Match item in Regex.Matches(match.Groups["items"].Value, "\"(?<value>(?:\\.|[^\"])*)\""))
+                    {
+                        string value = Regex.Unescape(item.Groups["value"].Value).Trim();
+                        if (!string.IsNullOrWhiteSpace(value)) topics.Add(value);
+                    }
+                }
+            }
+        }
+
+        private static void AddVectorTopicsFromJson(JsonElement root, List<string> topics, string propertyName, string prefix)
+        {
+            if (root.ValueKind != JsonValueKind.Object) return;
+            foreach (JsonProperty property in root.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (property.Value.ValueKind != JsonValueKind.Array) continue;
+                foreach (JsonElement item in property.Value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+                    string name = GetJsonString(item, "displayName");
+                    if (string.IsNullOrWhiteSpace(name)) name = GetJsonString(item, "itemId");
+                    double score = GetJsonDouble(item, "score");
+                    if (!string.IsNullOrWhiteSpace(name) && score >= 50) topics.Add(prefix + ": " + name);
+                }
+            }
+        }
+
+        private static void AddGirlfriendVectorTopics(IEnumerable<GirlfriendVectorItem>? vector, List<string> topics, string prefix)
+        {
+            foreach (GirlfriendVectorItem item in (vector ?? Enumerable.Empty<GirlfriendVectorItem>()).Where(x => x != null).OrderByDescending(x => x.Score).Take(6))
+            {
+                if (item.Score < 50) continue;
+                string name = string.IsNullOrWhiteSpace(item.DisplayName) ? item.ItemId : item.DisplayName;
+                if (!string.IsNullOrWhiteSpace(name)) topics.Add(prefix + ": " + name);
+            }
+        }
+
+        private static string GetJsonString(JsonElement element, string name)
+        {
+            if (element.ValueKind != JsonValueKind.Object) return string.Empty;
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
+                {
+                    return property.Value.GetString() ?? string.Empty;
+                }
+            }
+            return string.Empty;
+        }
+
+        private static double GetJsonDouble(JsonElement element, string name)
+        {
+            if (element.ValueKind != JsonValueKind.Object) return 0;
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetDouble(out double value)) return value;
+            }
+            return 0;
+        }
+
+        private static void AddStringArrayProperty(JsonElement element, List<string> output, string propertyName)
+        {
+            if (element.ValueKind != JsonValueKind.Object) return;
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (property.Value.ValueKind != JsonValueKind.Array) continue;
+                foreach (JsonElement item in property.Value.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        string? value = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(value)) output.Add(value.Trim());
+                    }
+                }
+            }
+        }
+
+        private static string GetContextFlag(StarInteractionRequest request, string key)
+        {
+            if (request != null && request.GameContext != null && request.GameContext.Flags != null && request.GameContext.Flags.TryGetValue(key, out string? value)) return value ?? string.Empty;
+            return string.Empty;
+        }
+
+        private static bool IsTruthy(string value)
+        {
+            return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ContainsIgnoreCase(string? value, string fragment)
+        {
+            return !string.IsNullOrWhiteSpace(value) && value.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
 
         private async Task AttachDailyStateContextForRequestAsync(StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
         {
             if (request == null || request.GameContext == null) return;
+            AttachGirlfriendHourlyStateContextForRequest(request, state);
+            if (state != null && state.IsGirlfriend)
+            {
+                QueueGirlfriendHourlyStateRefresh(request.SessionId, request.StarId, "request prompt girlfriend-state check", false, CancellationToken.None);
+            }
             StarDailyStateRecord? record = null;
             if (_dailyStateService != null)
             {
@@ -531,6 +1000,138 @@ namespace Wds.SixStars.Api.Engine
             request.GameContext.Flags["todayStarStateLocalDate"] = record.LocalDate ?? string.Empty;
             request.GameContext.Flags["todayStarStateFilePath"] = record.FilePath ?? string.Empty;
             request.GameContext.RecentEvents.Add("Today's generated Star state JSON is attached for " + request.StarId + " from slot " + record.SlotId + ".");
+        }
+
+        private static void AttachGirlfriendHourlyStateContextForRequest(StarInteractionRequest request, StarState state)
+        {
+            if (request == null || request.GameContext == null || state == null) return;
+            StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
+            if (context == null || !context.IsAvailable) return;
+
+            string json = context.Json ?? string.Empty;
+            if (json.Length > 12000) json = json.Substring(0, 12000) + "\n/* girlfriend-hourly-state truncated for prompt */";
+            request.GameContext.Flags["girlfriendHourlyStateJson"] = json;
+            request.GameContext.Flags["girlfriendHourlyStateSummary"] = context.Summary ?? string.Empty;
+            request.GameContext.Flags["girlfriendHourlyStateGeneratedAt"] = context.GeneratedAt?.ToString("o") ?? string.Empty;
+            request.GameContext.Flags["girlfriendHourlyStateSlotId"] = context.SlotId ?? string.Empty;
+            request.GameContext.RecentEvents.Add("Current girlfriend hourly needs/wants state is attached for " + request.StarId + ".");
+        }
+
+        private bool IsGirlfriendHourlyStateDue(StarState state, bool force)
+        {
+            if (state == null || !state.IsGirlfriend) return false;
+            if (force) return true;
+            StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
+            if (context == null || !context.IsAvailable || !context.GeneratedAt.HasValue) return true;
+            return DateTimeOffset.UtcNow - context.GeneratedAt.Value >= _girlfriendHourlyStateInterval;
+        }
+
+        private void QueueGirlfriendHourlyStateRefresh(string sessionId, string starId, string reason, bool force, CancellationToken cancellationToken)
+        {
+            if (!(_agent is IStarGirlfriendHourlyStateGenerator generator)) return;
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+            string key = normalizedSessionId + "|" + normalizedStarId;
+
+            lock (_girlfriendHourlyStateGate)
+            {
+                if (!force && _pendingGirlfriendHourlyStateRefresh.Contains(key)) return;
+                _pendingGirlfriendHourlyStateRefresh.Add(key);
+            }
+
+            _backgroundDispatcher.Enqueue(
+                "GirlfriendHourlyState",
+                "Refresh girlfriend hourly need/want vectors for " + normalizedStarId + " (" + reason + ")",
+                BackgroundAiRequestPriority.Low,
+                async workToken =>
+                {
+                    try
+                    {
+                        StarState latest = await _memoryApi.GetStarStateAsync(normalizedSessionId, normalizedStarId, workToken).ConfigureAwait(false);
+                        if (!latest.IsGirlfriend) return;
+                        if (!IsGirlfriendHourlyStateDue(latest, force)) return;
+
+                        StarProfile profile = _profileProvider.GetProfile(normalizedStarId);
+                        DateTimeOffset now = DateTimeOffset.UtcNow;
+                        StarGirlfriendHourlyStateModelResponse model = await generator.GenerateGirlfriendHourlyStateAsync(new StarGirlfriendHourlyStateGenerationRequest
+                        {
+                            SessionId = normalizedSessionId,
+                            Profile = profile,
+                            State = latest,
+                            SlotId = now.ToString("yyyyMMddHH"),
+                            LocalNow = now,
+                            Reason = reason ?? string.Empty,
+                            PreviousState = latest.GirlfriendHourlyState
+                        }, workToken).ConfigureAwait(false);
+
+                        StarGirlfriendHourlyStateContext context = BuildGirlfriendHourlyStateContext(normalizedSessionId, normalizedStarId, now, model);
+                        await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(normalizedSessionId, normalizedStarId, context, workToken).ConfigureAwait(false);
+                        GirlfriendHourlyStateUpdated?.Invoke(this, new StarGirlfriendHourlyStateUpdatedEventArgs
+                        {
+                            SessionId = normalizedSessionId,
+                            StarId = normalizedStarId,
+                            Reason = reason ?? string.Empty,
+                            State = context
+                        });
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        GirlfriendHourlyStateUpdateFailed?.Invoke(this, ex);
+                        throw;
+                    }
+                    finally
+                    {
+                        lock (_girlfriendHourlyStateGate)
+                        {
+                            _pendingGirlfriendHourlyStateRefresh.Remove(key);
+                        }
+                    }
+                },
+                cancellationToken);
+        }
+
+        private static StarGirlfriendHourlyStateContext BuildGirlfriendHourlyStateContext(string sessionId, string starId, DateTimeOffset generatedAt, StarGirlfriendHourlyStateModelResponse model)
+        {
+            model ??= new StarGirlfriendHourlyStateModelResponse { StarId = starId };
+            string json = JsonSerializer.Serialize(new
+            {
+                starId = string.IsNullOrWhiteSpace(model.StarId) ? starId : model.StarId,
+                generatedAt,
+                summary = model.Summary ?? string.Empty,
+                relationshipPosture = model.RelationshipPosture ?? string.Empty,
+                needSummary = model.NeedSummary ?? string.Empty,
+                wantSummary = model.WantSummary ?? string.Empty,
+                needVector = model.NeedVector ?? new List<GirlfriendVectorItem>(),
+                wantVector = model.WantVector ?? new List<GirlfriendVectorItem>(),
+                thingsSheWantsToSay = model.ThingsSheWantsToSay ?? new List<string>(),
+                cuteThingsSheWantsToSay = model.CuteThingsSheWantsToSay ?? new List<string>(),
+                overallConfidence = model.OverallConfidence,
+                overallScore = model.OverallScore
+            }, new JsonSerializerOptions { WriteIndented = true });
+
+            return new StarGirlfriendHourlyStateContext
+            {
+                IsAvailable = true,
+                SessionId = sessionId ?? string.Empty,
+                StarId = string.IsNullOrWhiteSpace(model.StarId) ? starId : model.StarId,
+                SlotId = generatedAt.ToString("yyyyMMddHH"),
+                GeneratedAt = generatedAt,
+                Summary = model.Summary ?? string.Empty,
+                RelationshipPosture = model.RelationshipPosture ?? string.Empty,
+                NeedSummary = model.NeedSummary ?? string.Empty,
+                WantSummary = model.WantSummary ?? string.Empty,
+                OverallConfidence = model.OverallConfidence,
+                OverallScore = model.OverallScore,
+                Json = json,
+                NeedVector = model.NeedVector ?? new List<GirlfriendVectorItem>(),
+                WantVector = model.WantVector ?? new List<GirlfriendVectorItem>(),
+                ThingsSheWantsToSay = model.ThingsSheWantsToSay ?? new List<string>(),
+                CuteThingsSheWantsToSay = model.CuteThingsSheWantsToSay ?? new List<string>()
+            };
         }
 
         private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
@@ -1408,16 +2009,20 @@ namespace Wds.SixStars.Api.Engine
                 storyToken = _backgroundStoryGenerationCts.Token;
             }
 
-            _ = Task.Run(async () =>
+            _backgroundDispatcher.Enqueue(
+                "GirlfriendProposalDecision",
+                "Generate full girlfriend proposal response for " + workerRequest.StarId,
+                BackgroundAiRequestPriority.Normal,
+                async workToken =>
             {
                 try
                 {
-                    await PopulateKnownStarContextAsync(workerRequest, storyToken).ConfigureAwait(false);
-                    StarMemorySnapshot latestSnapshot = await _memoryApi.GetStarMemorySnapshotAsync(workerRequest.SessionId, workerRequest.StarId, _recentHistoryCount, storyToken).ConfigureAwait(false);
+                    await PopulateKnownStarContextAsync(workerRequest, workToken).ConfigureAwait(false);
+                    StarMemorySnapshot latestSnapshot = await _memoryApi.GetStarMemorySnapshotAsync(workerRequest.SessionId, workerRequest.StarId, _recentHistoryCount, workToken).ConfigureAwait(false);
                     StarState latestState = latestSnapshot.State;
-                    await AttachDailyStateContextForRequestAsync(workerRequest, latestState, storyToken).ConfigureAwait(false);
+                    await AttachDailyStateContextForRequestAsync(workerRequest, latestState, workToken).ConfigureAwait(false);
 
-                    string currentGirlfriend = await GetCurrentGirlfriendStarIdAsync(workerRequest.SessionId, storyToken).ConfigureAwait(false);
+                    string currentGirlfriend = await GetCurrentGirlfriendStarIdAsync(workerRequest.SessionId, workToken).ConfigureAwait(false);
                     bool blockedByOther = !string.IsNullOrWhiteSpace(currentGirlfriend) && !string.Equals(currentGirlfriend, workerRequest.StarId, StringComparison.OrdinalIgnoreCase);
                     bool alreadyThis = string.Equals(currentGirlfriend, workerRequest.StarId, StringComparison.OrdinalIgnoreCase) || latestState.IsGirlfriend;
                     bool eligible = latestState.IsAlly && (latestState.IsGirlfriendReady || (latestState.EmotionalConnectionPercent >= 25 && latestState.Heart >= 6 && latestState.Trust >= 4 && latestState.Romance >= 3));
@@ -1434,14 +2039,14 @@ namespace Wds.SixStars.Api.Engine
                                 : "The readiness gate is not open yet; she should gently say not yet and describe the path forward.";
                     workerRequest.GameContext.RecentEvents.Add("Current exclusive girlfriend: " + (string.IsNullOrWhiteSpace(currentGirlfriend) ? "none" : currentGirlfriend) + ". Girlfriend proposal decision flag: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + ".");
 
-                    StarInteractionResponse proposalResponse = await _agent.GenerateAsync(profile, workerRequest, latestState, storyToken).ConfigureAwait(false);
+                    StarInteractionResponse proposalResponse = await _agent.GenerateAsync(profile, workerRequest, latestState, workToken).ConfigureAwait(false);
                     ApplyVoiceDefaults(profile, proposalResponse);
                     proposalResponse.Debug.DetectedIntent = "GirlfriendProposal";
                     proposalResponse.Debug.Notes.Add("Girlfriend proposal worker decision: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + "; reason=" + workerRequest.GameContext.Flags["girlfriendProposalReason"]);
 
                     if (shouldAccept)
                     {
-                        latestState = await SetExclusiveGirlfriendAsync(workerRequest.SessionId, workerRequest.StarId, true, "Accepted direct girlfriend proposal from: " + (workerRequest.PlayerText ?? string.Empty), storyToken).ConfigureAwait(false);
+                        latestState = await SetExclusiveGirlfriendAsync(workerRequest.SessionId, workerRequest.StarId, true, "Accepted direct girlfriend proposal from: " + (workerRequest.PlayerText ?? string.Empty), workToken).ConfigureAwait(false);
                         proposalResponse.IsGirlfriendReadyAfter = true;
                         proposalResponse.RelationshipEvents.Add("Accepted girlfriend proposal; exclusive girlfriend state stored.");
                     }
@@ -1494,7 +2099,8 @@ namespace Wds.SixStars.Api.Engine
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Girlfriend proposal generation failed: " + ex);
                     GirlfriendProposalFailed?.Invoke(this, ex);
                 }
-            }, CancellationToken.None);
+            },
+                storyToken);
         }
 
         private sealed class GirlfriendProposalDecision
@@ -1634,12 +2240,16 @@ namespace Wds.SixStars.Api.Engine
                 storyToken = _backgroundStoryGenerationCts.Token;
             }
 
-            _ = Task.Run(async () =>
+            _backgroundDispatcher.Enqueue(
+                "StoryGeneration",
+                "Generate full story response for " + workerRequest.StarId,
+                BackgroundAiRequestPriority.Normal,
+                async workToken =>
             {
                 try
                 {
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ". This is detached from the quick-thinking TTS operation token so the placeholder voice cannot cancel the story LLM call.");
-                    StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, storyToken).ConfigureAwait(false);
+                    StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, workToken).ConfigureAwait(false);
                     if (requestIntent != null)
                     {
                         storyResponse.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
@@ -1708,7 +2318,8 @@ namespace Wds.SixStars.Api.Engine
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation failed: " + ex);
                     StoryGenerationFailed?.Invoke(this, ex);
                 }
-            }, CancellationToken.None);
+            },
+                storyToken);
         }
 
         private async Task<StarRequestIntentResult?> ClassifyAndPrepareRequestModeAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
@@ -1920,42 +2531,48 @@ namespace Wds.SixStars.Api.Engine
                 token = _backgroundAnalysisCts.Token;
             }
 
-            _ = Task.Run(async () =>
-            {
-                try
+            _backgroundDispatcher.Enqueue(
+                "PrimaryBackgroundAnalysis",
+                "Analyze emotion vectors and update durable Star state for " + request.StarId,
+                BackgroundAiRequestPriority.High,
+                async workToken =>
                 {
-                    // Keep background state writes ordered. A later Unity/UI host can choose to wait on this
-                    // semaphore before accepting the next speech turn if it needs fully settled state.
-                    await _backgroundAnalysisQueue.WaitAsync(token).ConfigureAwait(false);
                     try
                     {
-                        StarInteractionResponse analyzed = await analyzer.AnalyzeTurnAsync(profile, request, state, foregroundResponse, token).ConfigureAwait(false);
-                        ApplyVoiceDefaults(profile, analyzed);
-                        await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, token).ConfigureAwait(false);
-                        BackgroundAnalysisCompleted?.Invoke(this, analyzed);
-                        NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
-                        ScheduleInterstarCycleAfterSettlement(request, analyzed);
+                        // Keep background state writes ordered. A later Unity/UI host can choose to wait on this
+                        // semaphore before accepting the next speech turn if it needs fully settled state.
+                        await _backgroundAnalysisQueue.WaitAsync(workToken).ConfigureAwait(false);
+                        try
+                        {
+                            StarInteractionResponse analyzed = await analyzer.AnalyzeTurnAsync(profile, request, state, foregroundResponse, workToken).ConfigureAwait(false);
+                            ApplyVoiceDefaults(profile, analyzed);
+                            await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, workToken).ConfigureAwait(false);
+                            BackgroundAnalysisCompleted?.Invoke(this, analyzed);
+                            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
+                            ScheduleInterstarCycleAfterSettlement(request, analyzed);
+                        }
+                        finally
+                        {
+                            _backgroundAnalysisQueue.Release();
+                        }
                     }
-                    finally
+                    catch (OperationCanceledException)
                     {
-                        _backgroundAnalysisQueue.Release();
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis cancelled.");
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis cancelled.");
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
-                    BackgroundAnalysisFailed?.Invoke(this, ex);
-                }
-            }, CancellationToken.None);
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
+                        BackgroundAnalysisFailed?.Invoke(this, ex);
+                    }
+                },
+                token);
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)
         {
             StarState currentState = await _memoryApi.GetStarStateAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
+            bool isInterstarMicroUpdate = IsInterstarMicroRequest(request);
             response.EmotionalConnectionPercentBefore = currentState.EmotionalConnectionPercent;
             RelationshipDelta delta = _deltaCalculator.Calculate(_profileProvider.GetProfile(request.StarId), request, response, currentState);
             response.StateDeltas = delta;
@@ -1990,19 +2607,28 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendHistoryUpdates = response.GirlfriendHistoryUpdates,
                 PetNamesPlayerUsesForStar = response.PetNamesPlayerUsesForStar,
                 PetNamesStarUsesForPlayer = response.PetNamesStarUsesForPlayer,
+                GirlfriendNeedsMetSummary = response.GirlfriendNeedsMetSummary,
+                GirlfriendNeedsMetVector = response.GirlfriendNeedsMetVector,
+                GirlfriendWantsMetVector = response.GirlfriendWantsMetVector,
                 WisdomScore = response.Debug.WisdomScore,
                 StoryId = isStoryTurn ? (response.StoryId ?? string.Empty) : string.Empty,
                 StoryTitle = isStoryTurn ? (response.StoryTitle ?? string.Empty) : string.Empty,
                 StorySummary = isStoryTurn ? (response.StorySummary ?? string.Empty) : string.Empty,
                 StoryFinished = isStoryTurn && response.StoryIsFinished,
-                StorySeed = isStoryTurn ? (request.StoryOptions?.PlayerSuggestion ?? string.Empty) : string.Empty
+                StorySeed = isStoryTurn ? (request.StoryOptions?.PlayerSuggestion ?? string.Empty) : string.Empty,
+                IsInternalBackgroundUpdate = isInterstarMicroUpdate,
+                SuppressConversationSummaryUpdate = isInterstarMicroUpdate,
+                SuppressConversationLog = isInterstarMicroUpdate
             }, cancellationToken).ConfigureAwait(false);
 
             response.EmotionalConnectionPercentAfter = update.State.EmotionalConnectionPercent;
             response.IsGirlfriendReadyAfter = update.State.IsGirlfriendReady;
             response.GirlfriendReadinessSummary = update.State.GirlfriendReadinessSummary ?? string.Empty;
-            response.TopAffectedEmotions.Clear();
-            response.TopAffectedEmotions.AddRange((update.State.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()));
+            if (!isInterstarMicroUpdate)
+            {
+                response.TopAffectedEmotions.Clear();
+                response.TopAffectedEmotions.AddRange((update.State.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>()));
+            }
 
             response.UnityEvents.Add(new UnityEventEnvelope
             {
@@ -2037,7 +2663,9 @@ namespace Wds.SixStars.Api.Engine
             });
 
             response.UnityEvents.AddRange(update.UnityEvents);
-            response.Debug.Notes.Add("StarMemoryApi updated durable state from background/full analysis. Interaction count: " + update.State.InteractionCount + ".");
+            response.Debug.Notes.Add(isInterstarMicroUpdate
+                ? "StarMemoryApi applied hidden interstar state update without appending a direct conversation turn. Interaction count: " + update.State.InteractionCount + "."
+                : "StarMemoryApi updated durable state from background/full analysis. Interaction count: " + update.State.InteractionCount + ".");
             if (!IsInterstarMicroRequest(request) && request.RequestType != RequestType.Debug)
             {
                 string logPath = _conversationDebugLogRecorder.RecordPrimaryTurn(request, response, currentState, update.State);
@@ -2094,31 +2722,36 @@ namespace Wds.SixStars.Api.Engine
             StarInteractionRequest requestClone = CloneInterstarSourceRequest(request);
             StarInteractionResponse responseClone = CloneInterstarOriginResponse(originResponse);
 
-            _ = Task.Run(async () =>
-            {
-                try
+            _backgroundDispatcher.Enqueue(
+                "InterstarUpdateCycle",
+                "Run settled interstar emotional ripple for " + request.StarId,
+                BackgroundAiRequestPriority.Low,
+                async workToken =>
                 {
-                    await Task.Delay(_interstarSettleDelay, cts.Token).ConfigureAwait(false);
-                    await _interstarUpdateQueue.WaitAsync(cts.Token).ConfigureAwait(false);
                     try
                     {
-                        await RunInterstarCycleAsync(interstarAgent, requestClone, responseClone, cts.Token).ConfigureAwait(false);
+                        await _interstarUpdateQueue.WaitAsync(workToken).ConfigureAwait(false);
+                        try
+                        {
+                            await RunInterstarCycleAsync(interstarAgent, requestClone, responseClone, workToken).ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            _interstarUpdateQueue.Release();
+                        }
                     }
-                    finally
+                    catch (OperationCanceledException)
                     {
-                        _interstarUpdateQueue.Release();
+                        NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Cancelled", "Interstar ripple cancelled before it settled, usually because a newer conversation started.", 0, 0);
                     }
-                }
-                catch (OperationCanceledException)
-                {
-                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Cancelled", "Interstar ripple cancelled before it settled, usually because a newer conversation started.", 0, 0);
-                }
-                catch (Exception ex)
-                {
-                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Failed", "Interstar ripple failed: " + ex.Message, 0, 0);
-                    InterstarUpdateFailed?.Invoke(this, ex);
-                }
-            }, CancellationToken.None);
+                    catch (Exception ex)
+                    {
+                        NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "Failed", "Interstar ripple failed: " + ex.Message, 0, 0);
+                        InterstarUpdateFailed?.Invoke(this, ex);
+                    }
+                },
+                cts.Token,
+                _interstarSettleDelay);
         }
 
         private async Task RunInterstarCycleAsync(IInterstarUpdateAgent interstarAgent, StarInteractionRequest originalRequest, StarInteractionResponse originResponse, CancellationToken cancellationToken)

@@ -70,16 +70,27 @@ namespace Wds.SixStars.Api.Engine
                 IsMet = elusiaa,
                 IsAlly = elusiaa,
                 LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
-                TodayState = new StarDailyStateContext()
+                TodayState = new StarDailyStateContext(),
+                GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
+                GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
+                GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>()
             };
         }
 
         private static void NormalizeState(StarState state)
         {
+            if (state.RelationshipEvents == null) state.RelationshipEvents = new List<string>();
             if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
             if (state.EmotionVectorHistory == null) state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
             if (state.RelationshipScoreAccumulators == null) state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
             if (state.TodayState == null) state.TodayState = new StarDailyStateContext();
+            if (state.GirlfriendHourlyState == null) state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+            if (state.GirlfriendDesiredStateHistory == null) state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+            if (state.GirlfriendNeedsMetHistory == null) state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+            if (state.GirlfriendNeedsMetPerformanceVector == null) state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            if (state.GirlfriendWantsMetPerformanceVector == null) state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
             if (state.IsAlly) state.IsMet = true;
             if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {

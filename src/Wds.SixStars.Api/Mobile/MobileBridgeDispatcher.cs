@@ -192,6 +192,12 @@ public sealed class MobileBridgeDispatchResult
     public string StarOutput { get; set; } = string.Empty;
     public string ConversationSummary { get; set; } = string.Empty;
     public string ChangesSummary { get; set; } = string.Empty;
+    public bool InitiativeShouldSpeak { get; set; } = true;
+    public bool InitiativeSkippedBeforeLlm { get; set; }
+    public double InitiativeStateScore { get; set; }
+    public double InitiativePriority { get; set; }
+    public string InitiativeTopic { get; set; } = string.Empty;
+    public string InitiativeReason { get; set; } = string.Empty;
     public bool VoiceRequested { get; set; }
     public bool VoiceSocketConnected { get; set; }
     public int VoiceChunksSent { get; set; }
@@ -255,6 +261,12 @@ public sealed class MobileBridgeDispatchEvent
     public bool StoryIsFinished { get; set; }
     public int StoryChunkCount { get; set; }
     public string SpokenText { get; set; } = string.Empty;
+    public bool InitiativeShouldSpeak { get; set; } = true;
+    public bool InitiativeSkippedBeforeLlm { get; set; }
+    public double InitiativeStateScore { get; set; }
+    public double InitiativePriority { get; set; }
+    public string InitiativeTopic { get; set; } = string.Empty;
+    public string InitiativeReason { get; set; } = string.Empty;
     public bool PhotoAttached { get; set; }
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;
@@ -331,6 +343,12 @@ public sealed class MobileBridgeDispatchEvent
             StoryIsFinished = result.StoryIsFinished,
             StoryChunkCount = result.StoryChunkCount,
             SpokenText = result.SpokenText,
+            InitiativeShouldSpeak = result.InitiativeShouldSpeak,
+            InitiativeSkippedBeforeLlm = result.InitiativeSkippedBeforeLlm,
+            InitiativeStateScore = result.InitiativeStateScore,
+            InitiativePriority = result.InitiativePriority,
+            InitiativeTopic = result.InitiativeTopic ?? string.Empty,
+            InitiativeReason = result.InitiativeReason ?? string.Empty,
             PhotoAttached = result.PhotoAttached,
             PhotoSummary = result.PhotoSummary,
             PhotoError = result.PhotoError,

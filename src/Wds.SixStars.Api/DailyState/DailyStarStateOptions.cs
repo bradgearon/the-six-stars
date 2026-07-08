@@ -19,9 +19,9 @@ namespace Wds.SixStars.Api.DailyState
         {
             return new List<DailyStarStateScheduleSlot>
             {
-                new DailyStarStateScheduleSlot { SlotId = "morning", StartsAt = "00:00", RefreshBefore = "10:00" },
-                new DailyStarStateScheduleSlot { SlotId = "midday", StartsAt = "10:00", RefreshBefore = "15:00" },
-                new DailyStarStateScheduleSlot { SlotId = "night", StartsAt = "15:00", RefreshBefore = "19:00" }
+                new DailyStarStateScheduleSlot { SlotId = "slot_00_08", StartsAt = "00:00", RefreshBefore = "08:00" },
+                new DailyStarStateScheduleSlot { SlotId = "slot_08_16", StartsAt = "08:00", RefreshBefore = "16:00" },
+                new DailyStarStateScheduleSlot { SlotId = "slot_16_24", StartsAt = "16:00", RefreshBefore = "00:00" }
             };
         }
     }
