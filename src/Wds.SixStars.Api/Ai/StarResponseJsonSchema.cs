@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
@@ -17,7 +19,7 @@ namespace Wds.SixStars.Api.Ai
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector",
+                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -41,7 +43,7 @@ namespace Wds.SixStars.Api.Ai
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(1600) },
                         { "changesSummary", StringProperty(700) },
-                        { "importantPlayerQuotes", StringArray(8) },
+                        { "importantPlayerQuotes", EmptyStringArray() },
                         { "memoryNotes", StringArray(10) },
                         { "rememberedMarkers", RememberedMarkerArray(4) },
                         { "referencedMemoryMarkerIds", StringArray(6) },
@@ -54,6 +56,8 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendNeedsMetSummary", StringProperty(420) },
                         { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
+                        { "girlfriendCoupleActivitySummary", StringProperty(520) },
+                        { "girlfriendCoupleActivityVector", StringProperty(1200) },
                         { "loreUsed", StringArray(8) },
                         { "riskFlags", StringArray(5) },
                         { "wisdomScore", NumberProperty(0, 1) }
@@ -191,7 +195,7 @@ namespace Wds.SixStars.Api.Ai
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector",
+                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -210,7 +214,7 @@ namespace Wds.SixStars.Api.Ai
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(450) },
-                        { "importantPlayerQuotes", StringArray(4) },
+                        { "importantPlayerQuotes", EmptyStringArray() },
                         { "memoryNotes", StringArray(6) },
                         { "rememberedMarkers", RememberedMarkerArray(4) },
                         { "referencedMemoryMarkerIds", StringArray(6) },
@@ -223,6 +227,8 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendNeedsMetSummary", StringProperty(420) },
                         { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
+                        { "girlfriendCoupleActivitySummary", StringProperty(520) },
+                        { "girlfriendCoupleActivityVector", StringProperty(1200) },
                         { "loreUsed", StringArray(5) },
                         { "riskFlags", StringArray(3) },
                         { "wisdomScore", NumberProperty(0, 1) }
@@ -304,36 +310,85 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateInterstarVectorResponseFormat(string schemaName = "six_stars_interstar_vector_update")
         {
+            return CreateInterstarFlatVectorResponseFormat(schemaName, Array.Empty<string>(), includeSourceStarAliases: true);
+        }
+
+        public static object CreateInterstarReactionVectorResponseFormat(string sourceStarId, string targetStarId, string schemaName = "six_stars_interstar_reaction_vector")
+        {
+            List<string> starAliases = new List<string>();
+            if (!string.IsNullOrWhiteSpace(sourceStarId)) starAliases.Add(sourceStarId);
+            return CreateInterstarFlatVectorResponseFormat(schemaName, starAliases, includeSourceStarAliases: true);
+        }
+
+        public static object CreateInterstarFeedbackVectorResponseFormat(IEnumerable<string> respondingStarIds, string schemaName = "six_stars_interstar_origin_feedback_vector")
+        {
+            return CreateInterstarFlatVectorResponseFormat(schemaName, respondingStarIds ?? Array.Empty<string>(), includeSourceStarAliases: false);
+        }
+
+        private static object CreateInterstarFlatVectorResponseFormat(string schemaName, IEnumerable<string> interstarStarIds, bool includeSourceStarAliases)
+        {
+            List<string> required = new List<string>
+            {
+                "starId",
+                "lastCatEmotionalEffectVector",
+                "lastCatNegativeEmotionVector",
+                "suggestedStateDeltas",
+                "conversationSummary",
+                "changesSummary",
+                "memoryNotes",
+                "relationshipEvents",
+                "loreUsed",
+                "riskFlags",
+                "wisdomScore"
+            };
+
+            Dictionary<string, object> properties = new Dictionary<string, object>
+            {
+                { "starId", StringProperty(80) },
+                { "lastCatEmotionalEffectVector", EmotionEffectVectorProperty() },
+                { "lastCatNegativeEmotionVector", NegativeEmotionVectorProperty() },
+                { "emotionalEffectVector", EmotionEffectVectorProperty() },
+                { "negativeEmotionVector", NegativeEmotionVectorProperty() },
+                { "sourceStarEmotionalEffectVector", EmotionEffectVectorProperty() },
+                { "sourceStarNegativeEmotionVector", NegativeEmotionVectorProperty() },
+                { "sourceStarNegativeEmotionalEffectVector", NegativeEmotionVectorProperty() },
+                { "sourceStarPositiveEmotionVector", EmotionEffectVectorProperty() },
+                { "interstarEmotionVectors", InterstarEmotionVectorArray(0) },
+                { "suggestedStateDeltas", DeltaObject() },
+                { "conversationSummary", StringProperty(900) },
+                { "changesSummary", StringProperty(500) },
+                { "replyToSourceStar", StringProperty(500) },
+                { "memoryNotes", StringArray(5) },
+                { "relationshipEvents", StringArray(5) },
+                { "loreUsed", StringArray(5) },
+                { "riskFlags", StringArray(3) },
+                { "wisdomScore", NumberProperty(0, 1) }
+            };
+
+            if (includeSourceStarAliases)
+            {
+                required.Add("sourceStarEmotionalEffectVector");
+                required.Add("sourceStarNegativeEmotionVector");
+            }
+
+            foreach (string starId in (interstarStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8))
+            {
+                string alias = InterstarVectorAlias(starId);
+                if (string.IsNullOrWhiteSpace(alias)) continue;
+                string positiveName = alias + "EmotionalEffectVector";
+                string negativeName = alias + "NegativeEmotionalEffectVector";
+                properties[positiveName] = EmotionEffectVectorProperty();
+                properties[negativeName] = NegativeEmotionVectorProperty();
+                required.Add(positiveName);
+                required.Add(negativeName);
+            }
+
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[]
-                    {
-                        "starId", "emotionalEffectVector", "negativeEmotionVector", "sourceStarEmotionalEffectVector", "sourceStarNegativeEmotionVector",
-                        "interstarEmotionVectors", "suggestedStateDeltas",
-                        "conversationSummary", "changesSummary", "memoryNotes", "relationshipEvents", "loreUsed", "riskFlags", "wisdomScore"
-                    }
-                },
-                { "properties", new Dictionary<string, object>
-                    {
-                        { "starId", StringProperty(80) },
-                        { "emotionalEffectVector", EmotionEffectVectorProperty() },
-                        { "negativeEmotionVector", NegativeEmotionVectorProperty() },
-                        { "sourceStarEmotionalEffectVector", EmotionEffectVectorProperty() },
-                        { "sourceStarNegativeEmotionVector", NegativeEmotionVectorProperty() },
-                        { "interstarEmotionVectors", InterstarEmotionVectorArray(8) },
-                        { "suggestedStateDeltas", DeltaObject() },
-                        { "conversationSummary", StringProperty(900) },
-                        { "changesSummary", StringProperty(500) },
-                        { "replyToSourceStar", StringProperty(500) },
-                        { "memoryNotes", StringArray(5) },
-                        { "relationshipEvents", StringArray(5) },
-                        { "loreUsed", StringArray(5) },
-                        { "riskFlags", StringArray(3) },
-                        { "wisdomScore", NumberProperty(0, 1) }
-                    }
-                }
+                { "required", required.Distinct(StringComparer.OrdinalIgnoreCase).ToArray() },
+                { "properties", properties }
             };
 
             return WrapSchema(schemaName, schema);
@@ -561,6 +616,16 @@ namespace Wds.SixStars.Api.Ai
             return array;
         }
 
+        private static Dictionary<string, object> EmptyStringArray()
+        {
+            return new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", StringProperty(1) },
+                { "maxItems", 0 }
+            };
+        }
+
         private static Dictionary<string, object> StringArray(int maxItems = 0)
         {
             Dictionary<string, object> array = new Dictionary<string, object>
@@ -618,6 +683,14 @@ namespace Wds.SixStars.Api.Ai
                     }
                 }
             };
+        }
+
+        private static string InterstarVectorAlias(string starId)
+        {
+            if (string.IsNullOrWhiteSpace(starId)) return string.Empty;
+            string compact = new string(starId.Where(char.IsLetterOrDigit).ToArray());
+            if (string.IsNullOrWhiteSpace(compact)) return string.Empty;
+            return char.ToLowerInvariant(compact[0]) + (compact.Length > 1 ? compact.Substring(1) : string.Empty);
         }
 
         private static object WrapSchema(string schemaName, Dictionary<string, object> schema)

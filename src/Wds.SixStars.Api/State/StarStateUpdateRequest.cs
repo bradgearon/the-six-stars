@@ -35,6 +35,8 @@ namespace Wds.SixStars.Api.State
         public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
         public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public string GirlfriendCoupleActivitySummary { get; set; } = string.Empty;
+        public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
         public double WisdomScore { get; set; }
         public string StoryId { get; set; } = string.Empty;
         public string StoryTitle { get; set; } = string.Empty;

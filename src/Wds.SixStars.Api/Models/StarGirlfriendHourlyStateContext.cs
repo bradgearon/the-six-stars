@@ -16,6 +16,10 @@ namespace Wds.SixStars.Api.Models
         public string WantSummary { get; set; } = string.Empty;
         public double OverallConfidence { get; set; }
         public double OverallScore { get; set; }
+        public bool CuteModeActive { get; set; }
+        public double CuteModeProbability { get; set; }
+        public string CuteModeReason { get; set; } = string.Empty;
+        public string CuteModeSignature { get; set; } = string.Empty;
         public string Json { get; set; } = string.Empty;
         public List<GirlfriendVectorItem> NeedVector { get; set; } = new List<GirlfriendVectorItem>();
         public List<GirlfriendVectorItem> WantVector { get; set; } = new List<GirlfriendVectorItem>();

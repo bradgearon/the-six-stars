@@ -162,6 +162,9 @@ namespace Wds.SixStars.Api.Models
         public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
         public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public string GirlfriendCoupleActivitySummary { get; set; } = string.Empty;
+        public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendCoupleActivityItems { get; set; } = new List<GirlfriendVectorItem>();
 
         /// <summary>
         /// Runtime coordination id for the deferred background emotion/memory review.

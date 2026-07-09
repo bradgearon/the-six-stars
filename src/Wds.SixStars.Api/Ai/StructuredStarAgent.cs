@@ -276,13 +276,14 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending INTERSTAR reaction vector request for " + targetProfile.StarId + " from " + relay.OriginStarId + "...");
             string json = await _client.CompleteJsonAsync(
                 _promptBuilder.BuildInterstarReactionMessages(targetProfile, relay, originalRequest, originResponse, targetState),
-                StarResponseJsonSchema.CreateInterstarVectorResponseFormat("six_stars_interstar_reaction_vector"),
+                StarResponseJsonSchema.CreateInterstarReactionVectorResponseFormat(relay.OriginStarId, targetProfile.StarId, "six_stars_interstar_reaction_vector"),
                 _reviewMaxTokens,
                 "interstar-target-reaction-vector",
                 cancellationToken).ConfigureAwait(false);
 
             StarStructuredModelResponse model = ParseInterstarVector(json, targetProfile, "interstar reaction vector");
             StarInteractionResponse response = BuildInteractionResponseFromModel(targetProfile, originalRequest, targetState, model);
+            EnsureSourceStarVectorsFromInterstarAliases(response, relay.OriginStarId);
             response.SetSpokenParts(Array.Empty<string>());
             response.SpokenText = string.Empty;
             response.EmotionalPurpose = "Interstar micro-update: " + targetProfile.DisplayName + " reacted privately to what " + relay.OriginStarId + " told her about the Last Cat.";
@@ -304,7 +305,7 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending INTERSTAR feedback vector request for origin " + originProfile.StarId + "...");
             string json = await _client.CompleteJsonAsync(
                 _promptBuilder.BuildInterstarFeedbackMessages(originProfile, originalRequest, originResponse, originState, reactions),
-                StarResponseJsonSchema.CreateInterstarVectorResponseFormat("six_stars_interstar_origin_feedback_vector"),
+                StarResponseJsonSchema.CreateInterstarFeedbackVectorResponseFormat((reactions ?? Array.Empty<InterstarReactionSummary>()).Select(x => x.StarId), "six_stars_interstar_origin_feedback_vector"),
                 _reviewMaxTokens,
                 "interstar-origin-feedback-vector",
                 cancellationToken).ConfigureAwait(false);
@@ -567,7 +568,7 @@ namespace Wds.SixStars.Api.Ai
             response.CanonSourcesUsed.AddRange(model.CanonSourcesUsed);
             response.EmotionScores = model.EmotionScores;
             response.DetectedCombos.AddRange(model.DetectedCombos);
-            response.ImportantPlayerQuotes.AddRange(model.ImportantPlayerQuotes);
+            // Important quote capture is deterministic now. Ignore model-provided quote choices.
             response.MemoryNotes.AddRange(model.MemoryNotes);
             response.RememberedMarkers.AddRange(model.RememberedMarkers);
             response.ReferencedMemoryMarkerIds.AddRange(model.ReferencedMemoryMarkerIds);
@@ -580,6 +581,9 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendNeedsMetSummary = CleanOneLine(model.GirlfriendNeedsMetSummary, 420);
             response.GirlfriendNeedsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12));
             response.GirlfriendWantsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12));
+            response.GirlfriendCoupleActivitySummary = CleanOneLine(model.GirlfriendCoupleActivitySummary, 520);
+            response.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
+            response.GirlfriendCoupleActivityItems.AddRange(ParseGirlfriendCoupleActivityVector(response.GirlfriendCoupleActivityVector, 16));
             response.InterstarEmotionVectors.AddRange(NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors));
             response.Debug.LoreUsed.AddRange(model.LoreUsed);
             response.Debug.RiskFlags.AddRange(model.RiskFlags);
@@ -1094,6 +1098,7 @@ namespace Wds.SixStars.Api.Ai
             model.PetNamesStarUsesForPlayer ??= new List<string>();
             model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
             model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
+            model.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
             model.InterstarEmotionVectors = NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors);
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();
@@ -1223,6 +1228,76 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
+
+        private static string Slugify(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = Regex.Replace(value.Trim(), "[^A-Za-z0-9]+", " ");
+            string[] parts = cleaned.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return string.Empty;
+            string first = parts[0].ToLowerInvariant();
+            return first + string.Concat(parts.Skip(1).Select(x => char.ToUpperInvariant(x[0]) + x.Substring(1).ToLowerInvariant()));
+        }
+
+        private static string NormalizeGirlfriendCoupleActivityVectorText(string raw, int maxItems)
+        {
+            List<GirlfriendVectorItem> parsed = ParseGirlfriendCoupleActivityVector(raw, maxItems);
+            if (parsed.Count == 0) return string.Empty;
+            return string.Join(";", parsed.Select(x => (x.ItemId ?? string.Empty) + ":" + x.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ":" + x.Confidence.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
+        }
+
+
+        private static readonly string[] GirlfriendCoupleActivityIds = new[]
+        {
+            "holdingHands", "hugging", "cuddling", "foreheadTouch", "booping", "petting", "stroking", "purringClose",
+            "cheekKiss", "mouthKiss", "faceKissing", "lapHolding", "verbalDevotion", "possessiveClaim", "heatedRomance", "deepSexting"
+        };
+
+        private static string NormalizeGirlfriendCoupleActivityId(string value)
+        {
+            string compact = new string((value ?? string.Empty).Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+            if (compact.Length == 0) return string.Empty;
+            foreach (string key in GirlfriendCoupleActivityIds)
+            {
+                string keyCompact = new string(key.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+                if (string.Equals(compact, keyCompact, StringComparison.OrdinalIgnoreCase)) return key;
+            }
+            return compact;
+        }
+
+        private static List<GirlfriendVectorItem> ParseGirlfriendCoupleActivityVector(string raw, int maxItems)
+        {
+            List<GirlfriendVectorItem> result = new List<GirlfriendVectorItem>();
+            if (string.IsNullOrWhiteSpace(raw)) return result;
+            string[] entries = raw.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string entry in entries)
+            {
+                string[] parts = entry.Split(':');
+                if (parts.Length < 3) continue;
+                string id = NormalizeGirlfriendCoupleActivityId(parts[0]);
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                if (!double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) score = 0;
+                if (!double.TryParse(parts[2].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) confidence = 0;
+                if (confidence > 1) confidence /= 100.0;
+                score = Math.Max(0, Math.Min(100, score));
+                confidence = Math.Max(0, Math.Min(1, confidence));
+                if (score <= 0 && confidence <= 0) continue;
+                result.Add(new GirlfriendVectorItem
+                {
+                    ItemId = id,
+                    DisplayName = id,
+                    Score = score,
+                    Confidence = confidence,
+                    Reason = parts.Length > 3 ? CleanOneLine(string.Join(":", parts.Skip(3)), 260) : string.Empty
+                });
+            }
+            return result
+                .OrderByDescending(x => x.Score * Math.Max(0.01, x.Confidence))
+                .ThenByDescending(x => x.Score)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
         private static List<GirlfriendVectorItem> NormalizeGirlfriendVector(IEnumerable<GirlfriendVectorItem>? values, int maxItems)
         {
             return (values ?? Enumerable.Empty<GirlfriendVectorItem>())
@@ -1320,7 +1395,7 @@ namespace Wds.SixStars.Api.Ai
                 WisdomScore = 0
             };
             model.SpokenParts.AddRange(CleanSpeechParts(spokenParts));
-            if (!string.IsNullOrWhiteSpace(request.PlayerText)) model.ImportantPlayerQuotes.Add(request.PlayerText.Trim());
+            // Do not salvage player text into importantPlayerQuotes; deterministic high-impact emotion scoring owns quote capture.
             model.RiskFlags.Add("llm_structured_json_parse_failed_salvaged");
             model.RiskFlags.Add("llm_raw_response_used_not_mock");
             model.LoreUsed.Add("local-llm-raw-content");
@@ -1498,25 +1573,109 @@ namespace Wds.SixStars.Api.Ai
                 }
                 if (string.IsNullOrWhiteSpace(model.EmotionalEffectVector))
                 {
-                    model.EmotionalEffectVector = GetString(root, "emotionalEffectVector") ?? GetString(root, "emotional_effect_vector") ?? GetString(root, "positiveEmotionVector") ?? GetString(root, "positive_emotion_vector") ?? string.Empty;
+                    model.EmotionalEffectVector = GetCompactVectorString(root, "lastCatEmotionalEffectVector", "last_cat_emotional_effect_vector", "emotionalEffectVector", "emotional_effect_vector", "positiveEmotionVector", "positive_emotion_vector") ?? string.Empty;
                 }
                 if (string.IsNullOrWhiteSpace(model.NegativeEmotionVector))
                 {
-                    model.NegativeEmotionVector = GetString(root, "negativeEmotionVector") ?? GetString(root, "negative_emotion_vector") ?? GetString(root, "boundaryEmotionVector") ?? GetString(root, "boundary_emotion_vector") ?? string.Empty;
+                    model.NegativeEmotionVector = GetCompactVectorString(root, "lastCatNegativeEmotionVector", "last_cat_negative_emotion_vector", "negativeEmotionVector", "negative_emotion_vector", "boundaryEmotionVector", "boundary_emotion_vector") ?? string.Empty;
                 }
                 if (string.IsNullOrWhiteSpace(model.SourceStarEmotionalEffectVector))
                 {
-                    model.SourceStarEmotionalEffectVector = GetString(root, "sourceStarEmotionalEffectVector") ?? GetString(root, "sourceStarPositiveEmotionVector") ?? GetString(root, "source_star_positive_emotion_vector") ?? string.Empty;
+                    model.SourceStarEmotionalEffectVector = GetCompactVectorString(root, "sourceStarEmotionalEffectVector", "sourceStarPositiveEmotionVector", "source_star_positive_emotion_vector") ?? string.Empty;
                 }
                 if (string.IsNullOrWhiteSpace(model.SourceStarNegativeEmotionVector))
                 {
-                    model.SourceStarNegativeEmotionVector = GetString(root, "sourceStarNegativeEmotionVector") ?? GetString(root, "source_star_negative_emotion_vector") ?? string.Empty;
+                    model.SourceStarNegativeEmotionVector = GetCompactVectorString(root, "sourceStarNegativeEmotionVector", "sourceStarNegativeEmotionalEffectVector", "source_star_negative_emotion_vector", "source_star_negative_emotional_effect_vector") ?? string.Empty;
                 }
                 AddDynamicInterstarEmotionVectorAliases(root, model);
             }
             catch
             {
             }
+        }
+
+        private static void EnsureSourceStarVectorsFromInterstarAliases(StarInteractionResponse response, string sourceStarId)
+        {
+            if (response == null || string.IsNullOrWhiteSpace(sourceStarId)) return;
+            response.InterstarEmotionVectors ??= new List<InterstarEmotionVectorResult>();
+            InterstarEmotionVectorResult? item = (response.InterstarEmotionVectors ?? new List<InterstarEmotionVectorResult>())
+                .LastOrDefault(x => x != null && string.Equals(x.StarId, sourceStarId, StringComparison.OrdinalIgnoreCase));
+            if (item == null && response.InterstarEmotionVectors != null)
+            {
+                // Some local models name the flat vector after the reacting/owning Star (for example
+                // kaeliaEmotionalEffectVector) even though the relationship target is the source Star.
+                // If that is the only usable Star-to-Star vector, treat it as the source-Star vector so
+                // the ripple still becomes durable instead of disappearing.
+                List<InterstarEmotionVectorResult> usable = response.InterstarEmotionVectors
+                    .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.PositiveEmotionVector) || !string.IsNullOrWhiteSpace(x.NegativeEmotionVector)))
+                    .ToList();
+                if (usable.Count == 1) item = usable[0];
+            }
+
+            if ((string.IsNullOrWhiteSpace(response.SourceStarEmotionalEffectVector) || IsZeroCompactVector(response.SourceStarEmotionalEffectVector)) && !string.IsNullOrWhiteSpace(item?.PositiveEmotionVector) && !IsZeroCompactVector(item.PositiveEmotionVector))
+            {
+                response.SourceStarEmotionalEffectVector = item.PositiveEmotionVector;
+            }
+            if ((string.IsNullOrWhiteSpace(response.SourceStarNegativeEmotionVector) || IsZeroCompactVector(response.SourceStarNegativeEmotionVector)) && !string.IsNullOrWhiteSpace(item?.NegativeEmotionVector) && !IsZeroCompactVector(item.NegativeEmotionVector))
+            {
+                response.SourceStarNegativeEmotionVector = item.NegativeEmotionVector;
+            }
+
+            if (!string.IsNullOrWhiteSpace(response.SourceStarEmotionalEffectVector) || !string.IsNullOrWhiteSpace(response.SourceStarNegativeEmotionVector))
+            {
+                if (item == null)
+                {
+                    item = new InterstarEmotionVectorResult { StarId = sourceStarId, Reason = "source Star vector fields normalized into durable interstar vector" };
+                    response.InterstarEmotionVectors.Add(item);
+                }
+                if (string.IsNullOrWhiteSpace(item.PositiveEmotionVector) || IsZeroCompactVector(item.PositiveEmotionVector)) item.PositiveEmotionVector = response.SourceStarEmotionalEffectVector ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(item.NegativeEmotionVector) || IsZeroCompactVector(item.NegativeEmotionVector)) item.NegativeEmotionVector = response.SourceStarNegativeEmotionVector ?? string.Empty;
+            }
+        }
+
+        private static bool IsZeroCompactVector(string? vector)
+        {
+            if (string.IsNullOrWhiteSpace(vector)) return true;
+            string[] parts = vector.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return true;
+            foreach (string raw in parts)
+            {
+                string[] pair = raw.Trim().Split(':');
+                if (pair.Length < 2) continue;
+                double.TryParse(pair[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence);
+                double.TryParse(pair[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score);
+                if (confidence > 0 || score > 0) return false;
+            }
+            return true;
+        }
+
+        private static string? GetCompactVectorString(JsonElement root, params string[] names)
+        {
+            foreach (string name in names ?? Array.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (!root.TryGetProperty(name, out JsonElement value)) continue;
+                string text = ExtractVectorText(value);
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+            return null;
+        }
+
+        private static string ExtractVectorText(JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.String) return value.GetString() ?? string.Empty;
+            if (value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (string name in new[] { "vector", "value", "text", "emotionalEffectVector", "positiveEmotionVector", "negativeEmotionVector" })
+                {
+                    if (value.TryGetProperty(name, out JsonElement nested) && nested.ValueKind == JsonValueKind.String)
+                    {
+                        string text = nested.GetString() ?? string.Empty;
+                        if (!string.IsNullOrWhiteSpace(text)) return text;
+                    }
+                }
+            }
+            return string.Empty;
         }
 
         private static void AddDynamicInterstarEmotionVectorAliases(JsonElement root, StarStructuredModelResponse model)
@@ -1531,30 +1690,53 @@ namespace Wds.SixStars.Api.Ai
             foreach (JsonProperty property in root.EnumerateObject())
             {
                 string name = property.Name ?? string.Empty;
-                string positiveSuffix = "PositiveEmotionVector";
-                string negativeSuffix = "NegativeEmotionVector";
-                bool isPositive = name.EndsWith(positiveSuffix, StringComparison.OrdinalIgnoreCase);
-                bool isNegative = name.EndsWith(negativeSuffix, StringComparison.OrdinalIgnoreCase);
-                if (!isPositive && !isNegative) continue;
-                if (name.Equals("positiveEmotionVector", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("negativeEmotionVector", StringComparison.OrdinalIgnoreCase)
-                    || name.StartsWith("sourceStar", StringComparison.OrdinalIgnoreCase)) continue;
+                if (ShouldIgnoreVectorAliasName(name)) continue;
 
-                string starId = isPositive
-                    ? name.Substring(0, name.Length - positiveSuffix.Length)
-                    : name.Substring(0, name.Length - negativeSuffix.Length);
+                string starId = string.Empty;
+                bool isPositive = false;
+                bool isNegative = false;
+
+                if (TryStripVectorSuffix(name, "PositiveEmotionVector", out starId)) isPositive = true;
+                else if (TryStripVectorSuffix(name, "EmotionalEffectVector", out starId)) isPositive = true;
+                else if (TryStripVectorSuffix(name, "NegativeEmotionalEffectVector", out starId)) isNegative = true;
+                else if (TryStripVectorSuffix(name, "NegativeEmotionVector", out starId)) isNegative = true;
+
+                if (!isPositive && !isNegative) continue;
                 starId = CleanOneLine(starId, 80);
                 if (string.IsNullOrWhiteSpace(starId)) continue;
+
                 if (!byStar.TryGetValue(starId, out InterstarEmotionVectorResult? item))
                 {
-                    item = new InterstarEmotionVectorResult { StarId = starId, Reason = "dynamic per-Star vector alias from JSON property " + name };
+                    item = new InterstarEmotionVectorResult { StarId = starId, Reason = "flat per-Star vector alias from JSON property " + name };
                     byStar[starId] = item;
                     model.InterstarEmotionVectors.Add(item);
                 }
-                string vector = property.Value.ValueKind == JsonValueKind.String ? (property.Value.GetString() ?? string.Empty) : string.Empty;
+
+                string vector = ExtractVectorText(property.Value);
                 if (isPositive) item.PositiveEmotionVector = vector;
                 else item.NegativeEmotionVector = vector;
             }
+        }
+
+        private static bool ShouldIgnoreVectorAliasName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return true;
+            if (name.Equals("positiveEmotionVector", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("negativeEmotionVector", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("emotionalEffectVector", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("negativeEmotionalEffectVector", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.StartsWith("sourceStar", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.StartsWith("lastCat", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        private static bool TryStripVectorSuffix(string name, string suffix, out string prefix)
+        {
+            prefix = string.Empty;
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(suffix)) return false;
+            if (!name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return false;
+            prefix = name.Substring(0, name.Length - suffix.Length);
+            return !string.IsNullOrWhiteSpace(prefix);
         }
 
         private static string FirstJsonString(JsonElement root, params string[][] paths)

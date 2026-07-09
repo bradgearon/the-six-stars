@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json;
@@ -265,6 +266,9 @@ namespace Wds.SixStars.Api.Engine
             state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
             state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
             state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+            state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
+            state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
         }
 
         public Task<StarDailyStateRecord?> GetCurrentDailyStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
@@ -1066,6 +1070,7 @@ namespace Wds.SixStars.Api.Engine
                         }, workToken).ConfigureAwait(false);
 
                         StarGirlfriendHourlyStateContext context = BuildGirlfriendHourlyStateContext(normalizedSessionId, normalizedStarId, now, model);
+                        ApplyGirlfriendCuteModeDecision(context, latest, profile);
                         await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(normalizedSessionId, normalizedStarId, context, workToken).ConfigureAwait(false);
                         GirlfriendHourlyStateUpdated?.Invoke(this, new StarGirlfriendHourlyStateUpdatedEventArgs
                         {
@@ -1095,6 +1100,55 @@ namespace Wds.SixStars.Api.Engine
                 cancellationToken);
         }
 
+
+        private static double ResolveGirlfriendCuteModeBaseProbability()
+        {
+            string? value = Environment.GetEnvironmentVariable("SIX_STARS_GIRLFRIEND_CUTE_MODE_PROBABILITY");
+            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double probability))
+            {
+                if (probability > 1) probability /= 100.0;
+                return Math.Max(0.0, Math.Min(1.0, probability));
+            }
+            return 0.35;
+        }
+
+        private static void ApplyGirlfriendCuteModeDecision(StarGirlfriendHourlyStateContext context, StarState state, StarProfile profile)
+        {
+            if (context == null) return;
+            double probability = ResolveGirlfriendCuteModeBaseProbability();
+            double topNeedWant = 0;
+            if (context.NeedVector != null && context.NeedVector.Count > 0) topNeedWant = Math.Max(topNeedWant, context.NeedVector.Max(x => x?.Score ?? 0));
+            if (context.WantVector != null && context.WantVector.Count > 0) topNeedWant = Math.Max(topNeedWant, context.WantVector.Max(x => x?.Score ?? 0));
+            if (topNeedWant >= 70 || context.OverallScore >= 70) probability += 0.12;
+            else if (topNeedWant >= 45 || context.OverallScore >= 45) probability += 0.06;
+            if ((state?.GirlfriendCoupleActivityScores?.Count ?? 0) > 0) probability += 0.04;
+            probability = Math.Max(0.05, Math.Min(0.70, probability));
+
+            bool active;
+            lock (StoryRandomGate)
+            {
+                active = StoryRandom.NextDouble() <= probability;
+            }
+
+            context.CuteModeProbability = probability;
+            context.CuteModeActive = active;
+            context.CuteModeReason = active
+                ? "deterministic girlfriend cute-mode gate accepted; base probability is 35% with small boosts for unmet/high needs, wants, and existing couple activity history"
+                : "deterministic girlfriend cute-mode gate did not activate this refresh";
+            context.CuteModeSignature = GetGirlfriendCuteModeSignature(profile?.StarId ?? context.StarId);
+        }
+
+        private static string GetGirlfriendCuteModeSignature(string starId)
+        {
+            if (string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return "Light names + halo boops + tender blessings.";
+            if (string.Equals(starId, "Kaelia", StringComparison.OrdinalIgnoreCase)) return "Quiet whispers + void-cloak privacy + reluctant softness.";
+            if (string.Equals(starId, "Khavia", StringComparison.OrdinalIgnoreCase)) return "Ocean sounds + explained touch + flowing pet names.";
+            if (string.Equals(starId, "Maera", StringComparison.OrdinalIgnoreCase)) return "Sparse mine + heartbeat/red-thread affection + learned tenderness.";
+            if (string.Equals(starId, "Auerlis", StringComparison.OrdinalIgnoreCase)) return "Spark teasing + dramatic hugs + tiny fireworks.";
+            if (string.Equals(starId, "Nyxari", StringComparison.OrdinalIgnoreCase)) return "Shadow vanish-kisses + poetic names + fragment compliments.";
+            return "Star-specific cute affection while preserving personality.";
+        }
+
         private static StarGirlfriendHourlyStateContext BuildGirlfriendHourlyStateContext(string sessionId, string starId, DateTimeOffset generatedAt, StarGirlfriendHourlyStateModelResponse model)
         {
             model ??= new StarGirlfriendHourlyStateModelResponse { StarId = starId };
@@ -1111,7 +1165,11 @@ namespace Wds.SixStars.Api.Engine
                 thingsSheWantsToSay = model.ThingsSheWantsToSay ?? new List<string>(),
                 cuteThingsSheWantsToSay = model.CuteThingsSheWantsToSay ?? new List<string>(),
                 overallConfidence = model.OverallConfidence,
-                overallScore = model.OverallScore
+                overallScore = model.OverallScore,
+                cuteModeActive = false,
+                cuteModeProbability = 0.35,
+                cuteModeReason = string.Empty,
+                cuteModeSignature = GetGirlfriendCuteModeSignature(starId)
             }, new JsonSerializerOptions { WriteIndented = true });
 
             return new StarGirlfriendHourlyStateContext
@@ -1127,6 +1185,10 @@ namespace Wds.SixStars.Api.Engine
                 WantSummary = model.WantSummary ?? string.Empty,
                 OverallConfidence = model.OverallConfidence,
                 OverallScore = model.OverallScore,
+                CuteModeActive = false,
+                CuteModeProbability = 0.35,
+                CuteModeReason = string.Empty,
+                CuteModeSignature = GetGirlfriendCuteModeSignature(starId),
                 Json = json,
                 NeedVector = model.NeedVector ?? new List<GirlfriendVectorItem>(),
                 WantVector = model.WantVector ?? new List<GirlfriendVectorItem>(),
@@ -1722,9 +1784,28 @@ namespace Wds.SixStars.Api.Engine
         {
             foreach (string? value in values)
             {
-                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                string trimmed = value.Trim();
+                if (LooksLikeZeroCompactVector(trimmed)) continue;
+                return trimmed;
             }
             return string.Empty;
+        }
+
+        private static bool LooksLikeZeroCompactVector(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.IndexOf(';') < 0 || value.IndexOf(':') < 0) return false;
+            string[] parts = value.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 3) return false;
+            foreach (string raw in parts)
+            {
+                string[] pair = raw.Trim().Split(':');
+                if (pair.Length < 2) continue;
+                double.TryParse(pair[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence);
+                double.TryParse(pair[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score);
+                if (confidence > 0 || score > 0) return false;
+            }
+            return true;
         }
 
         private async Task PopulateKnownStarContextAsync(StarInteractionRequest request, CancellationToken cancellationToken)
@@ -2611,6 +2692,8 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendNeedsMetSummary = response.GirlfriendNeedsMetSummary,
                 GirlfriendNeedsMetVector = response.GirlfriendNeedsMetVector,
                 GirlfriendWantsMetVector = response.GirlfriendWantsMetVector,
+                GirlfriendCoupleActivitySummary = response.GirlfriendCoupleActivitySummary,
+                GirlfriendCoupleActivityVector = response.GirlfriendCoupleActivityVector,
                 WisdomScore = response.Debug.WisdomScore,
                 StoryId = isStoryTurn ? (response.StoryId ?? string.Empty) : string.Empty,
                 StoryTitle = isStoryTurn ? (response.StoryTitle ?? string.Empty) : string.Empty,

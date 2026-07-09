@@ -126,11 +126,17 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("You are " + targetProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
             system.AppendLine("INTERSTAR REACTION VECTOR MODE. Another Star privately told you about her recent conversation with the Last Cat.");
             system.AppendLine("Return compact JSON only. Do not write spokenText. Do not talk to the player. Do not directly award relationship points; suggestedStateDeltas are only hints.");
-            system.AppendLine("Compute emotionalEffectVector and negativeEmotionVector for how YOU now feel about the Last Cat after hearing the relay.");
-            system.AppendLine("Also compute sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector for how YOU now feel about the source Star because she chose to tell you this, and because of how she said it. This is Star-to-Star relationship evidence, not Last Cat evidence.");
-            system.AppendLine("Also include interstarEmotionVectors with one item for the source Star using the same source-Star vectors: starId must be the source Star id, positiveEmotionVector, negativeEmotionVector, and a short reason. Conceptually this is SourceStarPositiveEmotionVector/SourceStarNegativeEmotionVector, but return it in the interstarEmotionVectors array.");
-            system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
-            system.AppendLine("negativeEmotionVector and sourceStarNegativeEmotionVector use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            string sourceAlias = InterstarVectorAlias(relay.OriginStarId);
+            system.AppendLine("Every emotion vector in this response MUST be a single JSON string, never an object and never an array. Format strings exactly like: 0.00:0;0.25:60;0.00:0 ...");
+            system.AppendLine("Return lastCatEmotionalEffectVector and lastCatNegativeEmotionVector for how YOU now feel about the Last Cat after hearing the relay. These are Last Cat relationship evidence.");
+            system.AppendLine("Also return sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector for how YOU now feel about " + relay.OriginStarId + " because she chose to tell you this, and because of how she said it. This is Star-to-Star relationship evidence, not Last Cat evidence.");
+            if (!string.IsNullOrWhiteSpace(sourceAlias))
+            {
+                system.AppendLine("Also duplicate that same Star-to-Star evidence in flat fields named " + sourceAlias + "EmotionalEffectVector and " + sourceAlias + "NegativeEmotionalEffectVector. These replace the slow interstarEmotionVectors object array for this target reaction.");
+            }
+            system.AppendLine("Do not put a JSON object in emotionalEffectVector, lastCatEmotionalEffectVector, sourceStarEmotionalEffectVector, or any Star-specific vector field. The value must be one quoted semicolon string only.");
+            system.AppendLine("Positive vectors use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
+            system.AppendLine("Negative vectors use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep the update modest because this is second-hand information. Strong signals require the relay to matter strongly to your personality/domain.");
             system.AppendLine("Also return replyToSourceStar: one concise in-character sentence you would actually say back to the source Star. It may be warm, excited, guarded, teasing, worried, or brief based on your friendship with her, your excitement about the situation, and your own closeness to the Last Cat.");
             system.AppendLine("Do not confess more than your relationship state supports. If you barely know the source Star, reply politely and minimally. If you are close or the news deeply fits your domain, let the line carry more feeling.");
@@ -153,7 +159,9 @@ namespace Wds.SixStars.Api.Ai
             user.AppendLine("Origin Star foreground reply:");
             user.AppendLine(QuoteBlock(originResponse.SpokenText));
             user.AppendLine();
-            user.AppendLine("Return your private interstar emotional vector response toward the Last Cat, your separate source-Star vectors toward " + relay.OriginStarId + ", one interstarEmotionVectors item for " + relay.OriginStarId + ", and replyToSourceStar as the one sentence you would say back to " + relay.OriginStarId + ".");
+            user.AppendLine("Return lastCatEmotionalEffectVector and lastCatNegativeEmotionVector as compact strings for your hidden feelings toward the Last Cat.");
+            if (!string.IsNullOrWhiteSpace(sourceAlias)) user.AppendLine("Return sourceStarEmotionalEffectVector/sourceStarNegativeEmotionVector and also " + sourceAlias + "EmotionalEffectVector/" + sourceAlias + "NegativeEmotionalEffectVector as compact strings for your hidden feelings toward " + relay.OriginStarId + ".");
+            user.AppendLine("Return replyToSourceStar as the one sentence you would say back to " + relay.OriginStarId + ". Do not use object-shaped vector values.");
 
             return new List<ChatMessage>
             {
@@ -173,10 +181,12 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("You are " + originProfile.DisplayName + " from The Last Cat, but this is NOT a spoken reply.");
             system.AppendLine("INTERSTAR FEEDBACK VECTOR MODE. Other Stars reacted emotionally to what you told them about the Last Cat, and some replied back to you in one sentence.");
             system.AppendLine("Return compact JSON only. Do not write spokenText. Compute how their emotional responses and reply lines make YOU feel about the Last Cat now.");
-            system.AppendLine("Also compute interstarEmotionVectors: one item per responding Star, where starId is that responding Star and the positive/negative vectors describe how their response made YOU feel about that Star. These are Star-to-Star relationship vectors, not Last Cat vectors. Conceptually these are KaeliaPositiveEmotionVector/KaeliaNegativeEmotionVector-style pairs, but return them as objects in the interstarEmotionVectors array.");
-            system.AppendLine("For this feedback pass, sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector should be zero vectors unless one specific responding Star is clearly the main source; put the real per-Star values in interstarEmotionVectors.");
-            system.AppendLine("Use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
-            system.AppendLine("negativeEmotionVector and every interstar negative vector use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
+            system.AppendLine("Every emotion vector in this response MUST be a single JSON string, never an object and never an array. Format strings exactly like: 0.00:0;0.25:60;0.00:0 ...");
+            system.AppendLine("Return lastCatEmotionalEffectVector and lastCatNegativeEmotionVector for how YOU now feel about the Last Cat after all responses. These are Last Cat relationship evidence.");
+            system.AppendLine("For Star-to-Star relationship evidence, do NOT use a big interstarEmotionVectors object array. Instead return flat per-Star fields for each responding Star: starNameEmotionalEffectVector and starNameNegativeEmotionalEffectVector. Example: kaeliaEmotionalEffectVector and kaeliaNegativeEmotionalEffectVector are strings, not objects.");
+            system.AppendLine("sourceStarEmotionalEffectVector and sourceStarNegativeEmotionVector should be zero vectors in this feedback pass unless one specific responding Star is clearly the main source; put real per-Star values in the flat per-Star fields.");
+            system.AppendLine("Positive vectors use the canonical emotion order exactly: " + string.Join(", ", StarEmotionMatrix.StandardEmotionIds) + ". Format exactly confidence:score;confidence:score;... with one pair per emotion.");
+            system.AppendLine("Negative vectors use exactly: " + string.Join(", ", RelationshipDeltaCalculator.NegativeEmotionIds) + ". Use 0.00:0 for emotions not implied.");
             system.AppendLine("Keep this very modest; it is a reflection pass, not a second full conversation.");
             system.AppendLine("Pronoun discipline is mandatory. The Last Cat is the player and should be referred to as 'the Last Cat', 'he', 'him', or 'his' unless the host explicitly says otherwise. Use 'you' only for the origin Star whose feelings you are computing.");
 
@@ -209,7 +219,22 @@ namespace Wds.SixStars.Api.Ai
                 if (!string.IsNullOrWhiteSpace(reaction.ReplyToSourceStar)) user.AppendLine("  said back to you: " + QuoteInline(Truncate(reaction.ReplyToSourceStar, 260)));
             }
             user.AppendLine();
-            user.AppendLine("Return your feedback emotional vectors toward the Last Cat now, plus interstarEmotionVectors for how each responding Star's reaction made you feel toward that Star.");
+            List<string> flatVectorAliases = (reactions ?? Array.Empty<InterstarReactionSummary>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId))
+                .Select(x => InterstarVectorAlias(x.StarId))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
+            if (flatVectorAliases.Count > 0)
+            {
+                user.AppendLine("Required flat Star-to-Star vector fields for this feedback pass:");
+                foreach (string alias in flatVectorAliases)
+                {
+                    user.AppendLine("- " + alias + "EmotionalEffectVector: positive vector string; " + alias + "NegativeEmotionalEffectVector: negative vector string.");
+                }
+            }
+            user.AppendLine("Return lastCatEmotionalEffectVector / lastCatNegativeEmotionVector for the Last Cat, plus the flat per-Star vector fields above. Do not use object-shaped vector values.");
 
             return new List<ChatMessage>
             {
@@ -390,7 +415,8 @@ namespace Wds.SixStars.Api.Ai
             system.AppendLine("Return JSON only. Do not roleplay aloud, do not speak to the player, do not award points, and do not mutate relationship state.");
             system.AppendLine("The state is used later by the API to decide whether she wants to say something while the Last Cat explores at rest.");
             system.AppendLine("Compute needVector and wantVector from the catalogs using confidence 0-1 and score 0-100. Include the most relevant twenty or more items in each vector when possible, but keep it plausible.");
-            system.AppendLine("thingsSheWantsToSay and cuteThingsSheWantsToSay are direct candidate hooks/lines she might naturally say later as his girlfriend. They must match her personality, element, domain, relationship history, and interstar updates.");
+            system.AppendLine("thingsSheWantsToSay and cuteThingsSheWantsToSay are direct candidate hooks/lines she might naturally say later as his girlfriend. They must match her personality, element, domain, relationship history, couple-activity history, and interstar updates.");
+            system.AppendLine("Do not decide cuteModeActive here; the deterministic runtime rolls that after this state is generated. Still provide cuteThingsSheWantsToSay that would work if cute mode activates.");
             system.AppendLine("Do not repeat things she has already said or wanted to say recently. Produce fresh hooks for this new girlfriend state refresh.");
 
             StringBuilder user = new StringBuilder();
@@ -467,6 +493,7 @@ namespace Wds.SixStars.Api.Ai
             user.AppendLine("Return starId, summary, relationshipPosture, needSummary, wantSummary, needVector, wantVector, thingsSheWantsToSay, cuteThingsSheWantsToSay, overallConfidence, overallScore.");
             user.AppendLine("Each vector item must include itemId, displayName, confidence, score, reason. Score high for things she currently needs/wants as this specific girlfriend, not generic romance advice.");
             user.AppendLine("Include physical affection, reassurance, kisses, and tender/cute lines when they fit her girlfriend state. Respect consent and keep it non-explicit.");
+            user.AppendLine("Cute hooks should follow her Star signature, not generic baby-talk. One signature cute action plus one pet name/sound plus one emotional sentence is usually enough.");
             user.AppendLine("Reason for this refresh: " + (request.Reason ?? string.Empty));
 
             return new List<ChatMessage>
@@ -972,6 +999,14 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Length rule: the approximate target exists to guide pacing only. Do not pad. Do not leave the tale unfinished just to chase the target length. Complete story > exact duration.");
         }
 
+        private static string InterstarVectorAlias(string starId)
+        {
+            if (string.IsNullOrWhiteSpace(starId)) return string.Empty;
+            string compact = new string(starId.Where(char.IsLetterOrDigit).ToArray());
+            if (string.IsNullOrWhiteSpace(compact)) return string.Empty;
+            return char.ToLowerInvariant(compact[0]) + (compact.Length > 1 ? compact.Substring(1) : string.Empty);
+        }
+
         private static string BuildEmotionalEffectVectorInstruction()
         {
             return "emotionalEffectVector is a compact machine-readable emotion hint for the player's latest statement. It tells the system whether the player made this Star feel each emotion. Use the canonical emotion order exactly: "
@@ -1089,7 +1124,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("REQUIRED MEMORY OUTPUT EVERY TURN");
             sb.AppendLine("- conversationSummary: always return an updated compact summary of the ongoing shared conversation. Include what the player and Star have been talking about, the emotional direction, and any durable relationship context. This replaces/updates the durable Star state summary.");
             sb.AppendLine("- changesSummary: always return 1-3 sentences about what changed this turn: what the player just said/did, how she reacted, and whether memory/relationship/status shifted.");
-            sb.AppendLine("- importantPlayerQuotes: include exact player quotes only when they are emotionally impactful, romantic, wise, cruel, funny, instructive, secret-unlocking, relationship-changing, or likely useful for future story-building. Preserve the player's wording exactly.");
+            sb.AppendLine("- importantPlayerQuotes: always return [] in model output. The deterministic layer captures the latest player message as an important quote only when compact emotion vectors meet the high-impact threshold, so the LLM should not choose or copy quotes here.");
             sb.AppendLine("- memoryNotes: include durable notes she should remember later: preferences, promises, private shared jokes, story seeds, work context, screen/vision context, and relationship facts.");
             sb.AppendLine("- Use prior conversation history and existing summary; do not behave like this is the first message unless there truly is no memory.");
             sb.AppendLine();
@@ -1329,7 +1364,7 @@ namespace Wds.SixStars.Api.Ai
 
             sb.AppendLine();
             sb.AppendLine("FINAL RESPONSE CONTRACT");
-            sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, and how she reacted. importantPlayerQuotes must preserve exact player quotes that emotionally affected her, taught her something, changed romance, unlocked secrets, or should be remembered for later story-building. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are advisory/debug only; set heart/trust/romance to 0 by default because the deterministic emotion scorer owns actual relationship movement. Do not include emotionScores anywhere in this response.");
+            sb.AppendLine("Return JSON only. Do not wrap it in markdown. spokenText is an array of ordered speech chunks the Star says aloud. Each item should be one or two sentences; do not rely on the runtime to split long paragraphs. For story turns, preserve storyTitle/storyId/storySummary so the engine can remember which stories have been told and avoid repeats. voiceDirective is how Qwen3-TTS should perform the spokenText. conversationSummary must be specific and include what the player said and what the Star said, especially the latest spoken reply, so she knows where she is in a story. changesSummary must say what changed this turn: what the player just said/did, what she said back, and how she reacted. importantPlayerQuotes must be an empty array; deterministic high-impact emotion scoring owns exact quote capture. learnedFunctions is for durable lessons/functions the player taught her. relationshipEvents, girlfriendHistoryUpdates, petNamesPlayerUsesForStar, and petNamesStarUsesForPlayer should be filled only when there is something durable to store. suggestedStateDeltas are advisory/debug only; set heart/trust/romance to 0 by default because the deterministic emotion scorer owns actual relationship movement. Do not include emotionScores anywhere in this response.");
             return sb.ToString();
         }
 
@@ -1454,6 +1489,10 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("- Align affection with current needVector/wantVector and the accumulated girlfriend performance vectors. If a need was recently met, she can show satisfaction, soften, tease, thank him, ask for more, or become cuter instead of repeating the exact same request.");
             sb.AppendLine("- Keep it non-explicit by default. Physical affection/kisses/cuddles can be romantic and cute, but do not become graphic. Respect boundaries and do not pressure the player.");
             sb.AppendLine("- Review recent conversation history before using a thing she wants to say. Do not repeat a line, pet name, confession, or cute hook she already said recently unless she is intentionally callback-teasing it.");
+            sb.AppendLine("- Cute mode does not mean baby-talk. It means one physical/textual cute action + one pet name or sound + one emotionally relevant sentence, usually only when the current girlfriend hourly state says cuteModeActive=true or when the player is explicitly affectionate.");
+            sb.AppendLine("- Use at most one signature cute behavior per normal response. If using a non-word sound such as whoosh, shhhrrr, sploosh, pop-pop-pop, mmm, or drip-drop, immediately explain the action in spoken text.");
+            sb.AppendLine("- Do not use the same pet name twice in a row. Preserve her core personality, wound, element, and current emotional state.");
+            sb.AppendLine("- Star cute signatures: Elusiaa=light names, halo boops, tender blessings. Kaelia=quiet-star names, void pocket privacy, reluctant softness. Khavia=ocean sounds, explained touch, flowing pet names. Maera=sparse 'mine', heartbeat/red-thread affection, tenderness learned through intensity. Auerlis=spark teasing, tackle hugs, tiny fireworks, 'law of Auerlis' jokes. Nyxari=shadow vanish-kisses, poetic names, fragment compliments, private darkness.");
         }
 
         private static void AppendGirlfriendDurableStateContext(StringBuilder sb, StarState state, int maxItems)
@@ -1463,6 +1502,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("DURABLE GIRLFRIEND WANTS/NEEDS HISTORY AND PERFORMANCE");
             AppendGirlfriendVectorList(sb, "Accumulated needs-met performance vector since girlfriend path began", state.GirlfriendNeedsMetPerformanceVector, Math.Min(12, Math.Max(1, maxItems)));
             AppendGirlfriendVectorList(sb, "Accumulated wants-met performance vector since girlfriend path began", state.GirlfriendWantsMetPerformanceVector, Math.Min(12, Math.Max(1, maxItems)));
+            AppendGirlfriendCoupleActivityContext(sb, state, Math.Min(15, Math.Max(4, maxItems + 4)));
 
             List<GirlfriendVectorHistoryEntry> desired = (state.GirlfriendDesiredStateHistory ?? new List<GirlfriendVectorHistoryEntry>()).Take(Math.Max(1, maxItems)).ToList();
             sb.AppendLine("Recent desired girlfriend states generated before this turn:");
@@ -1485,6 +1525,35 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
+
+        private static void AppendGirlfriendCoupleActivityContext(StringBuilder sb, StarState state, int maxItems)
+        {
+            if (sb == null || state == null || !state.IsGirlfriend) return;
+            sb.AppendLine("Girlfriend couple activity scores since becoming girlfriend:");
+            List<GirlfriendCoupleActivityScore> scores = (state.GirlfriendCoupleActivityScores ?? new List<GirlfriendCoupleActivityScore>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.ActivityId))
+                .OrderByDescending(x => x.TotalScore)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+            if (scores.Count == 0) sb.AppendLine("- none yet");
+            foreach (GirlfriendCoupleActivityScore score in scores)
+            {
+                sb.AppendLine("- " + score.ActivityId + " / " + FirstNonEmpty(score.DisplayName, score.ActivityId) + "; total=" + score.TotalScore.ToString("0.0") + "; count=" + score.Count + "; highest=" + score.HighestSingleScore.ToString("0.0") + "@" + score.HighestConfidence.ToString("0.00") + "; last=" + score.LastScoreAdded.ToString("0.0") + "; reason=" + Truncate(score.LastReason ?? string.Empty, 220));
+            }
+
+            List<GirlfriendCoupleActivityBestExample> examples = (state.GirlfriendCoupleActivityBestExamples ?? new List<GirlfriendCoupleActivityBestExample>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.PlayerText))
+                .OrderByDescending(x => x.WeightedScore)
+                .Take(2)
+                .ToList();
+            sb.AppendLine("Top Last Cat wording examples for couple activities:");
+            if (examples.Count == 0) sb.AppendLine("- none yet");
+            foreach (GirlfriendCoupleActivityBestExample example in examples)
+            {
+                sb.AppendLine("- " + example.ActivityId + " weighted=" + example.WeightedScore.ToString("0.0") + "; Last Cat said=\"" + Truncate(example.PlayerText ?? string.Empty, 360) + "\"; summary=" + Truncate(example.Summary ?? string.Empty, 220));
+            }
+        }
+
         private static void AppendGirlfriendHourlyStateContext(StringBuilder sb, StarState state)
         {
             if (sb == null || state == null) return;
@@ -1498,6 +1567,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(context.NeedSummary)) sb.AppendLine("Need summary: " + Truncate(context.NeedSummary, 700));
             if (!string.IsNullOrWhiteSpace(context.WantSummary)) sb.AppendLine("Want summary: " + Truncate(context.WantSummary, 700));
             if (context.OverallConfidence > 0 || context.OverallScore > 0) sb.AppendLine("Overall girlfriend want/need confidence=" + context.OverallConfidence.ToString("0.00") + "; score=" + context.OverallScore.ToString("0.0"));
+            sb.AppendLine("Cute mode: active=" + context.CuteModeActive + "; probability=" + (context.CuteModeProbability <= 0 ? 0.35 : context.CuteModeProbability).ToString("0.00") + "; signature=" + Truncate(context.CuteModeSignature ?? string.Empty, 260) + "; reason=" + Truncate(context.CuteModeReason ?? string.Empty, 420));
             AppendGirlfriendVectorList(sb, "Current needVector", context.NeedVector, 12);
             AppendGirlfriendVectorList(sb, "Current wantVector", context.WantVector, 12);
             AppendList(sb, "Things she wants to say to the Last Cat", (context.ThingsSheWantsToSay ?? new List<string>()).Take(12).ToList());
@@ -1947,6 +2017,15 @@ namespace Wds.SixStars.Api.Ai
         private static string QuoteInline(string value)
         {
             return "\"" + (value ?? string.Empty).Replace("\"", "'") + "\"";
+        }
+
+        private static string FirstNonEmpty(params string[] values)
+        {
+            foreach (string value in values ?? Array.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+            }
+            return string.Empty;
         }
 
         private static string Truncate(string value, int maxLength)

@@ -105,6 +105,15 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Accumulated girlfriend want-fulfillment performance vector since she became girlfriend.</summary>
         public List<GirlfriendVectorItem> GirlfriendWantsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
 
+        /// <summary>Durable girlfriend-mode running scores for couple activities such as hand-holding, kissing, cuddling, petting, and deeper romantic/textual intimacy.</summary>
+        public List<GirlfriendCoupleActivityScore> GirlfriendCoupleActivityScores { get; set; } = new List<GirlfriendCoupleActivityScore>();
+
+        /// <summary>Recent couple-activity detections from player text and Star speech, newest first.</summary>
+        public List<GirlfriendCoupleActivityHistoryEntry> GirlfriendCoupleActivityHistory { get; set; } = new List<GirlfriendCoupleActivityHistoryEntry>();
+
+        /// <summary>Highest-scoring Last Cat wording examples by couple activity so girlfriend mode can initiate from proven affection patterns.</summary>
+        public List<GirlfriendCoupleActivityBestExample> GirlfriendCoupleActivityBestExamples { get; set; } = new List<GirlfriendCoupleActivityBestExample>();
+
         public int PositiveSuccessionCount { get; set; }
         public int RomanticSuccessionCount { get; set; }
         public int HurtSuccessionCount { get; set; }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -111,11 +112,13 @@ namespace Wds.SixStars.Api.State
                 state.ConversationSummary = request.ConversationSummary.Trim();
             }
 
-            AddUnique(state.ImportantPlayerQuotes, request.ImportantPlayerQuotes, _options.MaxImportantQuotes);
+            // Important player quotes are no longer chosen by the LLM. The deterministic layer
+            // captures the exact latest player message only when the accepted compact emotion
+            // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
+            // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
             UpsertRememberedMarkers(state, markersToStore, now);
-            AddImportantQuoteSourceRecords(state, request, request.ImportantPlayerQuotes, markersToStore, applied, now, "model-important-quote");
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
             AddUnique(state.SecretsUnlocked, request.SecretsUnlocked, _options.MaxSecrets);
             AddUnique(state.RelationshipEvents, request.RelationshipEvents, _options.MaxRelationshipEvents);
@@ -123,6 +126,7 @@ namespace Wds.SixStars.Api.State
             AddUnique(state.PetNamesPlayerUsesForStar, request.PetNamesPlayerUsesForStar, 20);
             AddUnique(state.PetNamesStarUsesForPlayer, request.PetNamesStarUsesForPlayer, 20);
             UpdateGirlfriendNeedsMetHistory(state, request, now);
+            UpdateGirlfriendCoupleActivityHistory(state, request, now);
             UpsertLearnedFunctions(state, request.LearnedFunctions);
             UpsertSecrets(state, request.SecretsUnlocked, now);
             UpdateCombos(state, request.DetectedCombos, now);
@@ -138,11 +142,12 @@ namespace Wds.SixStars.Api.State
             UpdateStoryHistory(state, request, now);
             PruneExpiredEffectors(state, now);
 
-            string autoQuote = isInternalBackgroundUpdate ? string.Empty : TryCreateAutoQuote(request, applied);
+            string autoQuoteReason = string.Empty;
+            string autoQuote = isInternalBackgroundUpdate ? string.Empty : TryCreateAutoQuote(request, applied, out autoQuoteReason);
             if (!string.IsNullOrWhiteSpace(autoQuote))
             {
                 AddUnique(state.ImportantPlayerQuotes, new[] { autoQuote }, _options.MaxImportantQuotes);
-                AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, "auto-emotion-marker-quote");
+                AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, string.IsNullOrWhiteSpace(autoQuoteReason) ? "auto-high-emotion-quote" : autoQuoteReason);
             }
 
             ConversationLogEntry entry = new ConversationLogEntry();
@@ -165,7 +170,6 @@ namespace Wds.SixStars.Api.State
                 DeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty,
                 WisdomScore = request.WisdomScore
             };
-            entry.ImportantQuotes.AddRange(request.ImportantPlayerQuotes);
             if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
             entry.RememberedMarkers.AddRange(markersToStore);
             entry.ReferencedMemoryMarkerIds.AddRange(request.ReferencedMemoryMarkerIds);
@@ -410,6 +414,162 @@ namespace Wds.SixStars.Api.State
             AddUnique(state.GirlfriendHistory, new[] { "Met girlfriend wants/needs: " + (string.IsNullOrWhiteSpace(request.GirlfriendNeedsMetSummary) ? FormatMetVectorSummary(metNeeds, metWants) : request.GirlfriendNeedsMetSummary) }, 120);
         }
 
+
+        private static readonly Dictionary<string, string> GirlfriendCoupleActivityNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "holdingHands", "holding hands" },
+            { "hugging", "hugging" },
+            { "cuddling", "cuddling" },
+            { "foreheadTouch", "forehead touch" },
+            { "booping", "booping / playful touch" },
+            { "petting", "petting" },
+            { "stroking", "stroking / brushing" },
+            { "purringClose", "purring close" },
+            { "cheekKiss", "cheek kisses" },
+            { "mouthKiss", "mouth kisses" },
+            { "faceKissing", "face kisses" },
+            { "lapHolding", "lap / being held" },
+            { "verbalDevotion", "verbal devotion" },
+            { "possessiveClaim", "possessive claim" },
+            { "heatedRomance", "heated romance" },
+            { "deepSexting", "deep sexting / raw textual intimacy" }
+        };
+
+
+        private static string NormalizeGirlfriendCoupleActivityId(string value)
+        {
+            string compact = new string((value ?? string.Empty).Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+            if (compact.Length == 0) return string.Empty;
+            foreach (string key in GirlfriendCoupleActivityNames.Keys)
+            {
+                string keyCompact = new string(key.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+                if (string.Equals(compact, keyCompact, StringComparison.OrdinalIgnoreCase)) return key;
+            }
+            return compact;
+        }
+
+        private static void UpdateGirlfriendCoupleActivityHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state == null || request == null || !state.IsGirlfriend) return;
+            List<GirlfriendVectorItem> activities = ParseGirlfriendCoupleActivityVector(request.GirlfriendCoupleActivityVector, 16);
+            if (activities.Count == 0 && string.IsNullOrWhiteSpace(request.GirlfriendCoupleActivitySummary)) return;
+
+            state.GirlfriendCoupleActivityHistory.Insert(0, new GirlfriendCoupleActivityHistoryEntry
+            {
+                Id = "couple-" + now.UtcDateTime.ToString("yyyyMMddHHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8),
+                SessionId = request.SessionId ?? string.Empty,
+                StarId = request.StarId ?? string.Empty,
+                CreatedAt = now,
+                PlayerText = CleanMarkerText(request.PlayerText, 1400),
+                StarResponse = CleanMarkerText(request.StarResponse, 1400),
+                Summary = CleanMarkerText(request.GirlfriendCoupleActivitySummary, 520),
+                RawVector = CleanMarkerText(request.GirlfriendCoupleActivityVector, 1200),
+                ActivityVector = activities
+            });
+            Trim(state.GirlfriendCoupleActivityHistory, 240);
+            AccumulateGirlfriendCoupleActivityScores(state, activities, request, now);
+            if (activities.Count > 0)
+            {
+                AddUnique(state.GirlfriendHistory, new[] { "Couple activity: " + FormatCoupleActivityVectorSummary(activities) }, 120);
+            }
+        }
+
+        private static List<GirlfriendVectorItem> ParseGirlfriendCoupleActivityVector(string raw, int maxItems)
+        {
+            List<GirlfriendVectorItem> result = new List<GirlfriendVectorItem>();
+            if (string.IsNullOrWhiteSpace(raw)) return result;
+            string[] entries = raw.Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string entry in entries)
+            {
+                string[] parts = entry.Split(':');
+                if (parts.Length < 3) continue;
+                string id = NormalizeGirlfriendCoupleActivityId(parts[0]);
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                if (!double.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double score)) score = 0;
+                if (!double.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double confidence)) confidence = 0;
+                if (confidence > 1) confidence /= 100.0;
+                score = Math.Max(0, Math.Min(100, score));
+                confidence = Math.Max(0, Math.Min(1, confidence));
+                if (score <= 0 && confidence <= 0) continue;
+                result.Add(new GirlfriendVectorItem
+                {
+                    ItemId = id,
+                    DisplayName = GirlfriendCoupleActivityNames.TryGetValue(id, out string? name) ? name : id,
+                    Score = score,
+                    Confidence = confidence,
+                    Reason = parts.Length > 3 ? CleanMarkerText(string.Join(":", parts.Skip(3)), 260) : string.Empty
+                });
+            }
+            return result
+                .OrderByDescending(x => x.Score * Math.Max(0.01, x.Confidence))
+                .ThenByDescending(x => x.Score)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
+        private static void AccumulateGirlfriendCoupleActivityScores(StarState state, IReadOnlyList<GirlfriendVectorItem> activities, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state.GirlfriendCoupleActivityScores == null) state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+            if (state.GirlfriendCoupleActivityBestExamples == null) state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
+            foreach (GirlfriendVectorItem item in activities ?? Array.Empty<GirlfriendVectorItem>())
+            {
+                string id = NormalizeGirlfriendCoupleActivityId(FirstNonEmpty(item.ItemId, item.DisplayName));
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                double score = Math.Max(0, Math.Min(100, item.Score));
+                double confidence = Math.Max(0, Math.Min(1, item.Confidence));
+                double contribution = score * confidence;
+                if (contribution <= 0) continue;
+
+                GirlfriendCoupleActivityScore? existing = state.GirlfriendCoupleActivityScores.FirstOrDefault(x => string.Equals(x.ActivityId, id, StringComparison.OrdinalIgnoreCase));
+                if (existing == null)
+                {
+                    existing = new GirlfriendCoupleActivityScore { ActivityId = id, DisplayName = FirstNonEmpty(item.DisplayName, id) };
+                    state.GirlfriendCoupleActivityScores.Add(existing);
+                }
+                existing.DisplayName = FirstNonEmpty(existing.DisplayName, item.DisplayName, id);
+                existing.TotalScore = Math.Max(0, existing.TotalScore + contribution);
+                existing.HighestSingleScore = Math.Max(existing.HighestSingleScore, score);
+                existing.HighestConfidence = Math.Max(existing.HighestConfidence, confidence);
+                existing.LastScoreAdded = contribution;
+                existing.LastReason = CleanMarkerText(item.Reason, 360);
+                existing.LastUpdatedAt = now;
+                existing.Count++;
+
+                GirlfriendCoupleActivityBestExample? best = state.GirlfriendCoupleActivityBestExamples.FirstOrDefault(x => string.Equals(x.ActivityId, id, StringComparison.OrdinalIgnoreCase));
+                if (best == null || contribution >= best.WeightedScore)
+                {
+                    if (best == null)
+                    {
+                        best = new GirlfriendCoupleActivityBestExample { ActivityId = id };
+                        state.GirlfriendCoupleActivityBestExamples.Add(best);
+                    }
+                    best.DisplayName = FirstNonEmpty(item.DisplayName, id);
+                    best.WeightedScore = contribution;
+                    best.Score = score;
+                    best.Confidence = confidence;
+                    best.CreatedAt = now;
+                    best.PlayerText = CleanMarkerText(request.PlayerText, 900);
+                    best.StarResponse = CleanMarkerText(request.StarResponse, 900);
+                    best.Summary = CleanMarkerText(request.GirlfriendCoupleActivitySummary, 420);
+                }
+            }
+            state.GirlfriendCoupleActivityScores.Sort((a, b) => b.TotalScore.CompareTo(a.TotalScore));
+            state.GirlfriendCoupleActivityBestExamples.Sort((a, b) => b.WeightedScore.CompareTo(a.WeightedScore));
+            Trim(state.GirlfriendCoupleActivityScores, 32);
+            Trim(state.GirlfriendCoupleActivityBestExamples, 32);
+        }
+
+        private static string FormatCoupleActivityVectorSummary(IReadOnlyList<GirlfriendVectorItem> activities)
+        {
+            List<string> parts = (activities ?? Array.Empty<GirlfriendVectorItem>())
+                .Where(x => x != null)
+                .Select(x => FirstNonEmpty(x.DisplayName, x.ItemId) + " +" + (x.Score * Math.Max(0, Math.Min(1, x.Confidence))).ToString("0.0", CultureInfo.InvariantCulture))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(5)
+                .ToList();
+            return parts.Count == 0 ? "none" : string.Join(", ", parts);
+        }
+
         private static string FormatMetVectorSummary(IReadOnlyList<GirlfriendVectorItem> needs, IReadOnlyList<GirlfriendVectorItem> wants)
         {
             List<string> parts = new List<string>();
@@ -500,7 +660,11 @@ namespace Wds.SixStars.Api.State
                 thingsSheWantsToSay = context.ThingsSheWantsToSay,
                 cuteThingsSheWantsToSay = context.CuteThingsSheWantsToSay,
                 overallConfidence = Math.Max(0, Math.Min(1, context.OverallConfidence)),
-                overallScore = Math.Max(0, Math.Min(100, context.OverallScore))
+                overallScore = Math.Max(0, Math.Min(100, context.OverallScore)),
+                cuteModeActive = context.CuteModeActive,
+                cuteModeProbability = Math.Max(0, Math.Min(1, context.CuteModeProbability <= 0 ? 0.35 : context.CuteModeProbability)),
+                cuteModeReason = context.CuteModeReason ?? string.Empty,
+                cuteModeSignature = context.CuteModeSignature ?? string.Empty
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
@@ -705,6 +869,21 @@ namespace Wds.SixStars.Api.State
             if (state.GirlfriendWantsMetPerformanceVector == null)
             {
                 state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityScores == null)
+            {
+                state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityHistory == null)
+            {
+                state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityBestExamples == null)
+            {
+                state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
                 changed = true;
             }
             if (state.IsAlly && !state.IsMet)
@@ -1396,20 +1575,46 @@ namespace Wds.SixStars.Api.State
             return cleaned.Substring(0, maxLength).Trim() + "...";
         }
 
-        private string TryCreateAutoQuote(StarStateUpdateRequest request, RelationshipDelta delta)
+        private string TryCreateAutoQuote(StarStateUpdateRequest request, RelationshipDelta delta, out string reason)
         {
+            reason = string.Empty;
             if (!_options.AutoCaptureHighImpactPlayerQuotes) return string.Empty;
             string text = (request.PlayerText ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-            if (text.Length > 500) text = text.Substring(0, 500).Trim() + "...";
 
-            bool strongDelta = Math.Abs(delta.Heart) >= 4 || Math.Abs(delta.Trust) >= 4 || Math.Abs(delta.Romance) >= 3;
-            bool secretUnlocked = request.SecretsUnlocked.Count > 0;
-            bool highEmotion = request.EmotionScores.Any(x => x.Value.Score >= 88 && x.Value.Confidence >= 0.80)
-                || Math.Abs(delta.EmotionalConnectionPercent) >= 1.5;
-            if (!strongDelta && !secretUnlocked && !highEmotion) return string.Empty;
+            List<TopAffectedEmotion> affected = RelationshipDeltaCalculator
+                .BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector)
+                .Where(x => x != null)
+                .OrderByDescending(x => x.WeightedScore)
+                .ThenByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .ToList();
 
-            return text;
+            double minConfidence = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionConfidence);
+            double minScore = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionScore);
+            double minWeighted = Math.Max(0.0, _options.AutoImportantQuoteMinWeightedEmotionScore);
+            TopAffectedEmotion? qualifying = affected.FirstOrDefault(x =>
+                x.Confidence >= minConfidence &&
+                x.Score >= minScore &&
+                x.WeightedScore >= minWeighted);
+
+            if (qualifying == null) return string.Empty;
+
+            int maxLength = Math.Max(80, _options.AutoImportantQuoteMaxLength);
+            string cleaned = CleanMarkerText(text, maxLength);
+            if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
+
+            reason = "auto-high-emotion-quote:"
+                + qualifying.Valence
+                + ":"
+                + qualifying.EmotionId
+                + ":score="
+                + qualifying.Score.ToString("0", CultureInfo.InvariantCulture)
+                + ":confidence="
+                + qualifying.Confidence.ToString("0.00", CultureInfo.InvariantCulture)
+                + ":weighted="
+                + qualifying.WeightedScore.ToString("0.0", CultureInfo.InvariantCulture);
+            return cleaned;
         }
 
         private static UnityEventEnvelope CreateMemoryUpdatedEvent(string starId, StarState state, ConversationLogEntry entry, RelationshipDelta delta, bool acceptedModelDelta)

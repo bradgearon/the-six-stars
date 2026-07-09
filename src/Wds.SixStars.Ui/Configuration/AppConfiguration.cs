@@ -16,7 +16,6 @@ namespace Wds.SixStars.Ui.Configuration
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
         public MobileBridgeConfig MobileBridge { get; set; } = new MobileBridgeConfig();
-        public ConversationArchiveConfig ConversationArchive { get; set; } = new ConversationArchiveConfig();
         public DailyStarStateConfig DailyStarState { get; set; } = new DailyStarStateConfig();
     }
 
@@ -34,22 +33,6 @@ namespace Wds.SixStars.Ui.Configuration
 
         /// <summary>When true, Android requests also play the Star response through the desktop TTS/audio pipeline.</summary>
         public bool SpeakResponsesOnDesktop { get; set; } = false;
-    }
-
-
-    public sealed class ConversationArchiveConfig
-    {
-        /// <summary>When true, the desktop LAN host also serves the local relationship/conversation review website.</summary>
-        public bool Enabled { get; set; } = true;
-
-        /// <summary>URL prefix for the static archive website. Defaults to /archive on the same port as the Android bridge.</summary>
-        public string PathPrefix { get; set; } = "/archive";
-
-        /// <summary>Default session shown when the archive opens. Use android-phone-prod for the phone companion history.</summary>
-        public string DefaultSessionId { get; set; } = "android-phone-prod";
-
-        /// <summary>Maximum markdown trace files returned to the browser in one refresh.</summary>
-        public int MaxLogs { get; set; } = 160;
     }
 
 

@@ -4,6 +4,10 @@ namespace Wds.SixStars.Api.State
     {
         public bool AcceptModelSuggestedDeltas { get; set; }
         public bool AutoCaptureHighImpactPlayerQuotes { get; set; } = true;
+        public double AutoImportantQuoteMinEmotionConfidence { get; set; } = 0.15;
+        public double AutoImportantQuoteMinEmotionScore { get; set; } = 30;
+        public double AutoImportantQuoteMinWeightedEmotionScore { get; set; } = 4.5;
+        public int AutoImportantQuoteMaxLength { get; set; } = 700;
         public int MaxMemoryLogEntries { get; set; } = 80;
         public int MaxImportantQuotes { get; set; } = 128;
         public int MaxMemoryNotes { get; set; } = 160;

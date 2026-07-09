@@ -28,8 +28,5 @@
     <Content Include="..\Wds.SixStars.Api\Content\VoiceClones\*.wav" Link="Content\VoiceClones\%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Content\WebArchive\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
 </Project>

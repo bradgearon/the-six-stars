@@ -76,6 +76,9 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
                 GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
+                GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>(),
+                GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>(),
                 OtherStars = new List<InterstarRelationshipState>()
             };
         }
@@ -97,6 +100,9 @@ namespace Wds.SixStars.Api.Engine
             if (state.GirlfriendNeedsMetHistory == null) state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
             if (state.GirlfriendNeedsMetPerformanceVector == null) state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
             if (state.GirlfriendWantsMetPerformanceVector == null) state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            if (state.GirlfriendCoupleActivityScores == null) state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+            if (state.GirlfriendCoupleActivityHistory == null) state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
+            if (state.GirlfriendCoupleActivityBestExamples == null) state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
             if (state.IsAlly) state.IsMet = true;
             if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {

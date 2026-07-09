@@ -68,7 +68,7 @@ namespace Wds.SixStars.Api.Ai
                     }
                     return string.Join("; ", values);
                 case JsonValueKind.Object:
-                    string preferred = FirstObjectString(element, "text", "summary", "value", "description", "name", "desire", "feeling", "intent");
+                    string preferred = FirstObjectString(element, "vector", "text", "summary", "value", "description", "name", "desire", "feeling", "intent");
                     if (!string.IsNullOrWhiteSpace(preferred)) return preferred;
                     return element.GetRawText();
                 default:
