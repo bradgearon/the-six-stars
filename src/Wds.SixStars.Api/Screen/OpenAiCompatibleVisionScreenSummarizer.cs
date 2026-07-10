@@ -31,6 +31,8 @@ namespace Wds.SixStars.Api.Screen
         private readonly LocalChatModelOptions _options;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsClient;
+        private readonly LlmExchangeFileLogger? _exchangeFileLogger;
+        private long _exchangeSequence;
         private readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -48,6 +50,7 @@ namespace Wds.SixStars.Api.Screen
             _httpClient = httpClient ?? new HttpClient();
             _ownsClient = httpClient == null;
             _httpClient.Timeout = TimeSpan.FromSeconds(Math.Max(5, options.TimeoutSeconds));
+            _exchangeFileLogger = options.LogExchangesToDisk ? new LlmExchangeFileLogger(options) : null;
         }
 
         public async Task<ScreenCaptureSummary> SummarizeAsync(ScreenSummarizationRequest request, CancellationToken cancellationToken)
@@ -246,8 +249,9 @@ namespace Wds.SixStars.Api.Screen
 
         private async Task<string> SendPayloadAsync(Dictionary<string, object> payload, PayloadMode payloadMode, ScreenSummarizationRequest request, CancellationToken cancellationToken)
         {
+            string exchangeId = LlmExchangeFileLogger.CreateExchangeId("screen-llm");
             string json = JsonSerializer.Serialize(payload, _jsonOptions);
-            LogRequestForDebug(payload, payloadMode, request, json.Length);
+            LogRequestForDebug(payload, payloadMode, request, json.Length, exchangeId);
 
             using HttpRequestMessage httpRequest = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl);
             httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
@@ -264,7 +268,7 @@ namespace Wds.SixStars.Api.Screen
             string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
             System.Diagnostics.Debug.WriteLine("[Screen LLM] Response status: " + (int)response.StatusCode + " " + response.StatusCode + "; body chars=" + body.Length);
-            LogResponseForDebug(payloadMode, response, body);
+            LogResponseForDebug(payloadMode, response, body, exchangeId);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -280,7 +284,7 @@ namespace Wds.SixStars.Api.Screen
             return body;
         }
 
-        private void LogRequestForDebug(Dictionary<string, object> payload, PayloadMode payloadMode, ScreenSummarizationRequest request, int jsonLength)
+        private void LogRequestForDebug(Dictionary<string, object> payload, PayloadMode payloadMode, ScreenSummarizationRequest request, int jsonLength, string exchangeId)
         {
             try
             {
@@ -303,8 +307,13 @@ namespace Wds.SixStars.Api.Screen
                 sb.AppendLine("ImageDimensions: " + request.Capture.Width.ToString(System.Globalization.CultureInfo.InvariantCulture) + "x" + request.Capture.Height.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 sb.AppendLine("SerializedPayloadChars: " + jsonLength.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 sb.AppendLine("Payload shape: messages[0].content[0]={type:text,text}, messages[0].content[1]={type:image_url,image_url:{url:data:image/jpeg;base64,...}}");
+                sb.AppendLine();
+                sb.AppendLine("Prompt:");
+                sb.AppendLine(BuildPrompt(request));
                 sb.AppendLine("============== END SCREEN LLM REQUEST ==============");
-                System.Diagnostics.Debug.WriteLine(sb.ToString());
+                string text = sb.ToString();
+                System.Diagnostics.Debug.WriteLine(text);
+                LogScreenExchange("Screen LLM request before send", text, "screen_request", exchangeId, payloadMode);
             }
             catch
             {
@@ -312,7 +321,7 @@ namespace Wds.SixStars.Api.Screen
             }
         }
 
-        private static void LogResponseForDebug(PayloadMode payloadMode, HttpResponseMessage response, string body)
+        private void LogResponseForDebug(PayloadMode payloadMode, HttpResponseMessage response, string body, string exchangeId)
         {
             try
             {
@@ -326,11 +335,34 @@ namespace Wds.SixStars.Api.Screen
                 sb.AppendLine("BodyChars: " + body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 sb.AppendLine(preview);
                 sb.AppendLine("============= END SCREEN LLM RESPONSE =============");
-                System.Diagnostics.Debug.WriteLine(sb.ToString());
+                string text = sb.ToString();
+                System.Diagnostics.Debug.WriteLine(text);
+                LogScreenExchange("Screen LLM raw HTTP response", text, "screen_raw_response", exchangeId, payloadMode);
             }
             catch
             {
                 // Debug logging should never break screen capture.
+            }
+        }
+
+        private void LogScreenExchange(string title, string text, string kind, string exchangeId, PayloadMode payloadMode)
+        {
+            try
+            {
+                long sequence = System.Threading.Interlocked.Increment(ref _exchangeSequence);
+                LocalChatModelExchangeEventArgs args = new LocalChatModelExchangeEventArgs(
+                    title,
+                    text,
+                    kind,
+                    exchangeId,
+                    "screen-summary",
+                    payloadMode.ResponseFormatMode + " / " + payloadMode.ImagePayloadMode,
+                    sequence);
+                _exchangeFileLogger?.Log(args);
+            }
+            catch
+            {
+                // Logging must never break screen capture.
             }
         }
 

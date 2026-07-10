@@ -31,5 +31,14 @@ namespace Wds.SixStars.Api.Ai
         public bool SendReasoningControlFields { get; set; } = true;
 
         public int TimeoutSeconds { get; set; } = 120;
+
+        /// <summary>When true, every local chat-completions request/response exchange is persisted for prompt analysis.</summary>
+        public bool LogExchangesToDisk { get; set; } = true;
+
+        /// <summary>Directory for LLM JSONL/readable logs. Relative paths resolve under the app base directory.</summary>
+        public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
+
+        /// <summary>Safety cap for each logged request or response text block. Increase when auditing very large prompts.</summary>
+        public int ExchangeLogMaxTextChars { get; set; } = 2000000;
     }
 }

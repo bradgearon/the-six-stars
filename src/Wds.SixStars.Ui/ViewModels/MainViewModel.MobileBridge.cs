@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Wds.SixStars.Api.Audio;
+using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.Speech;
@@ -40,6 +41,7 @@ public sealed partial class MainViewModel
 
     public ICommand StartMobileBridgeCommand { get; private set; } = null!;
     public ICommand StopMobileBridgeCommand { get; private set; } = null!;
+    public ICommand OpenConversationArchiveCommand { get; private set; } = null!;
 
     public string MobileBridgeHostName
     {
@@ -50,6 +52,7 @@ public sealed partial class MainViewModel
             {
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
             }
         }
     }
@@ -63,12 +66,14 @@ public sealed partial class MainViewModel
             {
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
                 PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+                PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
             }
         }
     }
 
     public string MobileBridgeUrl => "http://" + (string.IsNullOrWhiteSpace(MobileBridgeHostName) ? Environment.MachineName : MobileBridgeHostName.Trim()) + ":" + ResolveMobileBridgePort().ToString(System.Globalization.CultureInfo.InvariantCulture);
     public string MobileBridgeAudioUrl => "tcp://" + (string.IsNullOrWhiteSpace(MobileBridgeHostName) ? Environment.MachineName : MobileBridgeHostName.Trim()) + ":" + ResolveMobileBridgeAudioPort().ToString(System.Globalization.CultureInfo.InvariantCulture);
+    public string ConversationArchiveUrl => MobileBridgeUrl + NormalizeArchivePrefix(_appConfig.ConversationArchive.PathPrefix) + "/";
 
     public bool MobileBridgeEnabled
     {
@@ -100,11 +105,13 @@ public sealed partial class MainViewModel
         _mobileBridgePort = (_appConfig.MobileBridge.Port <= 0 ? 8066 : _appConfig.MobileBridge.Port).ToString(System.Globalization.CultureInfo.InvariantCulture);
         StartMobileBridgeCommand = new RelayCommand(_ => StartMobileBridgeServer());
         StopMobileBridgeCommand = new RelayCommand(_ => StopMobileBridgeServer("Stopped by user."));
+        OpenConversationArchiveCommand = new RelayCommand(_ => OpenConversationArchive());
 
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeHostName)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgePort)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeUrl)));
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(MobileBridgeAudioUrl)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ConversationArchiveUrl)));
 
         if (_appConfig.MobileBridge.EnabledOnStartup || IsTruthy(Environment.GetEnvironmentVariable("SIX_STARS_MOBILE_BRIDGE_ENABLED")))
         {
@@ -116,7 +123,7 @@ public sealed partial class MainViewModel
     {
         if (_mobileBridgeServer != null && _mobileBridgeServer.IsRunning)
         {
-            MobileBridgeStatus = "Android bridge is already running. HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
+            MobileBridgeStatus = "Android bridge is already running. HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + "; archive " + ConversationArchiveUrl + ".";
             return;
         }
 
@@ -140,7 +147,11 @@ public sealed partial class MainViewModel
             CreateMobileHealthPayload,
             CreateMobileStarsPayload,
             CreateMobileStatePayloadAsync,
-            _mobileBridgeDispatcher);
+            _mobileBridgeDispatcher,
+            CreateConversationArchivePayloadAsync,
+            ResolveConversationArchiveRoot(),
+            _appConfig.ConversationArchive.PathPrefix,
+            _appConfig.ConversationArchive.Enabled);
         _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
         {
             MobileBridgeStatus = message + " HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
@@ -149,7 +160,7 @@ public sealed partial class MainViewModel
         _mobileBridgeServer.Start();
 
         MobileBridgeEnabled = true;
-        MobileBridgeStatus = "Android bridge running. HTTP " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Use the HTTP URL in the Android app.";
+        MobileBridgeStatus = "Android bridge running. HTTP " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP URL in the Android app.";
     }
 
     private void StopMobileBridgeServer(string reason)
@@ -227,6 +238,201 @@ public sealed partial class MainViewModel
         };
     }
 
+    private async Task<object> CreateConversationArchivePayloadAsync(string sessionId, int maxLogs, CancellationToken cancellationToken)
+    {
+        string safeSessionId = string.IsNullOrWhiteSpace(sessionId) ? ResolveDefaultArchiveSessionId() : sessionId.Trim();
+        if (maxLogs <= 0) maxLogs = _appConfig.ConversationArchive.MaxLogs <= 0 ? 160 : _appConfig.ConversationArchive.MaxLogs;
+        if (maxLogs > 500) maxLogs = 500;
+
+        SixStarsSaveData saveData = await _runtime.ExportSaveDataAsync(safeSessionId, cancellationToken).ConfigureAwait(false);
+        List<object> dailyStates = new List<object>();
+        foreach (string starId in StarIds)
+        {
+            StarDailyStateRecord? daily = await _runtime.GetCurrentDailyStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
+            dailyStates.Add(new
+            {
+                starId,
+                current = daily
+            });
+        }
+
+        List<object> conversationTurns = CreateConversationArchiveTurnPayload(saveData);
+
+        List<object> logs = new List<object>();
+        string logDirectory = _runtime.ConversationDebugLogDirectory;
+        if (Directory.Exists(logDirectory))
+        {
+            foreach (FileInfo file in new DirectoryInfo(logDirectory).GetFiles("*.md", SearchOption.AllDirectories)
+                .OrderByDescending(x => x.LastWriteTimeUtc)
+                .Take(maxLogs))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string text;
+                try { text = await File.ReadAllTextAsync(file.FullName, cancellationToken).ConfigureAwait(false); }
+                catch { continue; }
+
+                logs.Add(new
+                {
+                    fileName = file.Name,
+                    relativePath = Path.GetRelativePath(logDirectory, file.FullName),
+                    lastWriteTimeUtc = file.LastWriteTimeUtc,
+                    length = file.Length,
+                    markdown = text
+                });
+            }
+        }
+
+        return new
+        {
+            ok = true,
+            title = "The Last Cat: The Early Years",
+            generatedAt = DateTimeOffset.Now,
+            sessionId = safeSessionId,
+            defaultSessionId = ResolveDefaultArchiveSessionId(),
+            selectedStarId = SelectedStarId,
+            starIds = StarIds.ToArray(),
+            saveData,
+            dailyStates,
+            conversationTurns,
+            conversations = conversationTurns,
+            logs,
+            logDirectory,
+            latestConversationDebugLogPath = _runtime.LatestConversationDebugLogPath,
+            archiveUrl = ConversationArchiveUrl
+        };
+    }
+
+    private static List<object> CreateConversationArchiveTurnPayload(SixStarsSaveData saveData)
+    {
+        List<object> turns = new List<object>();
+        HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (StarState state in (saveData.Stars ?? new List<StarState>()).Where(x => x != null))
+        {
+            string starId = string.IsNullOrWhiteSpace(state.StarId) ? "UnknownStar" : state.StarId.Trim();
+
+            if (state.OldConversationArchives != null)
+            {
+                foreach (StarConversationArchiveEntry archive in state.OldConversationArchives
+                    .Where(x => x != null)
+                    .OrderBy(x => x.StartedAt))
+                {
+                    foreach (ConversationLogEntry entry in (archive.Entries ?? new List<ConversationLogEntry>()).OrderBy(x => x.CreatedAt))
+                    {
+                        AddConversationArchiveTurn(turns, seen, starId, entry, "old-archive", archive);
+                    }
+                }
+            }
+
+            if (state.MemoryLog != null)
+            {
+                foreach (ConversationLogEntry entry in state.MemoryLog.OrderBy(x => x.CreatedAt))
+                {
+                    AddConversationArchiveTurn(turns, seen, starId, entry, "memory-log", null);
+                }
+            }
+        }
+
+        return turns;
+    }
+
+    private static void AddConversationArchiveTurn(List<object> turns, HashSet<string> seen, string starId, ConversationLogEntry entry, string source, StarConversationArchiveEntry? archive)
+    {
+        if (!IsUsableMobileConversationTurn(entry)) return;
+
+        string key = starId + "|"
+            + entry.CreatedAt.ToUniversalTime().ToString("O") + "|"
+            + (entry.PlayerText ?? string.Empty).Trim() + "|"
+            + (entry.StarResponse ?? string.Empty).Trim();
+        if (!seen.Add(key)) return;
+
+        turns.Add(new
+        {
+            kind = "state-conversation-turn",
+            source,
+            archiveId = archive?.Id ?? string.Empty,
+            archiveSummary = archive?.Summary ?? string.Empty,
+            archiveStartedAt = archive?.StartedAt,
+            archiveEndedAt = archive?.EndedAt,
+            archiveTags = archive?.TopicTags ?? new List<string>(),
+            starId,
+            createdAt = entry.CreatedAt,
+            requestType = entry.RequestType ?? string.Empty,
+            playerText = entry.PlayerText ?? string.Empty,
+            starResponse = entry.StarResponse ?? string.Empty,
+            summary = entry.Summary ?? string.Empty,
+            emotionalEffectVector = entry.EmotionalEffectVector ?? string.Empty,
+            negativeEmotionVector = entry.NegativeEmotionVector ?? string.Empty,
+            deterministicEmotionSummary = entry.DeterministicEmotionSummary ?? string.Empty,
+            wisdomScore = entry.WisdomScore,
+            actualDelta = entry.ActualDelta,
+            suggestedDelta = entry.SuggestedDelta,
+            emotionalConnectionPercentBefore = entry.EmotionalConnectionPercentBefore,
+            emotionalConnectionPercentAfter = entry.EmotionalConnectionPercentAfter,
+            isGirlfriendReadyAfter = entry.IsGirlfriendReadyAfter,
+            acceptedPositiveSignals = entry.AcceptedPositiveSignals ?? new List<string>(),
+            acceptedNegativeSignals = entry.AcceptedNegativeSignals ?? new List<string>(),
+            acceptedCombos = entry.AcceptedCombos ?? new List<string>(),
+            importantQuotes = entry.ImportantQuotes ?? new List<string>(),
+            relationshipEvents = entry.RelationshipEvents ?? new List<string>(),
+            tags = entry.Tags ?? new List<string>()
+        });
+    }
+
+    private string ResolveDefaultArchiveSessionId()
+    {
+        return string.IsNullOrWhiteSpace(_appConfig.ConversationArchive.DefaultSessionId)
+            ? "android-phone-prod"
+            : _appConfig.ConversationArchive.DefaultSessionId.Trim();
+    }
+
+    private string ResolveConversationArchiveRoot()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        string candidate = Path.Combine(baseDir, "Content", "WebArchive");
+        if (Directory.Exists(candidate)) return candidate;
+
+        DirectoryInfo? dir = new DirectoryInfo(baseDir);
+        while (dir != null)
+        {
+            string projectCandidate = Path.Combine(dir.FullName, "src", "Wds.SixStars.Ui", "Content", "WebArchive");
+            if (Directory.Exists(projectCandidate)) return projectCandidate;
+            string directCandidate = Path.Combine(dir.FullName, "Content", "WebArchive");
+            if (Directory.Exists(directCandidate)) return directCandidate;
+            dir = dir.Parent;
+        }
+        return candidate;
+    }
+
+    private void OpenConversationArchive()
+    {
+        if (_mobileBridgeServer == null || !_mobileBridgeServer.IsRunning)
+        {
+            StartMobileBridgeServer();
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ConversationArchiveUrl,
+                UseShellExecute = true
+            });
+            MobileBridgeStatus = "Opened conversation archive: " + ConversationArchiveUrl;
+        }
+        catch (Exception ex)
+        {
+            MobileBridgeStatus = "Could not open conversation archive: " + ex.Message + " URL: " + ConversationArchiveUrl;
+        }
+    }
+
+    private static string NormalizeArchivePrefix(string? prefix)
+    {
+        string value = string.IsNullOrWhiteSpace(prefix) ? "/archive" : prefix.Trim();
+        if (!value.StartsWith("/", StringComparison.Ordinal)) value = "/" + value;
+        return value.TrimEnd('/');
+    }
+
     private async Task<MobileBridgeDispatchResult> HandleMobileBridgeCommandAsync(MobileBridgeDispatchCommand command, CancellationToken cancellationToken)
     {
         string commandType = string.IsNullOrWhiteSpace(command.CommandType) ? "RefreshState" : command.CommandType;
@@ -293,6 +499,19 @@ public sealed partial class MainViewModel
                 StarState state = await _runtime.SetGirlfriendCuteModeEnabledAsync(sessionId, starId, enabled, string.IsNullOrWhiteSpace(command.Reason) ? "Android girlfriend settings cute mode toggle" : command.Reason, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " cute mode " + (enabled ? "enabled" : "disabled") + "."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " girlfriend cute mode " + (enabled ? "enabled." : "disabled."));
+            }
+
+            case "ActivateCuteModeNow":
+            {
+                StarState current = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (!current.IsGirlfriend)
+                {
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, current, starId + " is not currently the girlfriend Star, so cute mode could not be activated now.");
+                }
+
+                StarState state = await _runtime.ActivateGirlfriendCuteModeNowAsync(sessionId, starId, string.IsNullOrWhiteSpace(command.Reason) ? "Android Cute Now button" : command.Reason, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " is in cute mode now."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " entered girlfriend cute mode now.");
             }
 
             case "ClearHistory":
@@ -675,7 +894,7 @@ public sealed partial class MainViewModel
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
-            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : commandType == "SetGirlfriendCuteMode" ? "GirlfriendCuteModeChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
+            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow") ? "GirlfriendCuteModeChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
             CommandId = command.CommandId,
             SourceClientId = command.SourceClientId,
             SessionId = sessionId,

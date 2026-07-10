@@ -409,6 +409,52 @@ namespace Wds.SixStars.Api.Engine
             return selected;
         }
 
+        public async Task<StarState> ActivateGirlfriendCuteModeNowAsync(string sessionId, string starId, string reason, CancellationToken cancellationToken)
+        {
+            sessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            starId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (saveData.Stars == null) saveData.Stars = new List<StarState>();
+            StarState? selected = saveData.Stars.FirstOrDefault(x => string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase));
+            if (selected == null)
+            {
+                selected = await _memoryApi.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                saveData.Stars.Add(selected);
+            }
+            if (!selected.IsGirlfriend)
+            {
+                throw new InvalidOperationException(starId + " is not currently the girlfriend Star.");
+            }
+
+            selected.GirlfriendCuteModeEnabled = true;
+            if (selected.GirlfriendHourlyState == null)
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                selected.GirlfriendHourlyState = BuildGirlfriendHourlyStateContext(sessionId, starId, now, new StarGirlfriendHourlyStateModelResponse
+                {
+                    StarId = starId,
+                    Summary = "Cute mode was activated by the player before the next girlfriend hourly state refresh.",
+                    RelationshipPosture = "girlfriend cute mode activated immediately",
+                    NeedSummary = string.Empty,
+                    WantSummary = string.Empty,
+                    OverallConfidence = 1.0,
+                    OverallScore = Math.Max(0.0, Math.Min(100.0, selected.EmotionalConnectionPercent))
+                });
+            }
+            selected.GirlfriendHourlyState.CuteModeActive = true;
+            selected.GirlfriendHourlyState.CuteModeProbability = 1.0;
+            selected.GirlfriendHourlyState.CuteModeSignature = GetGirlfriendCuteModeSignature(starId);
+            selected.GirlfriendHourlyState.CuteModeReason = string.IsNullOrWhiteSpace(reason)
+                ? "player requested cute mode now"
+                : reason;
+            selected.RelationshipEvents.Insert(0, "Girlfriend cute mode activated immediately through host/player action.");
+            if (selected.RelationshipEvents.Count > 120) selected.RelationshipEvents.RemoveRange(120, selected.RelationshipEvents.Count - 120);
+
+            await _memoryApi.ImportSaveDataAsync(saveData, cancellationToken).ConfigureAwait(false);
+            return selected;
+        }
+
         public Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             return _memoryApi.ResetStarMemoryAsync(sessionId, starId, cancellationToken);

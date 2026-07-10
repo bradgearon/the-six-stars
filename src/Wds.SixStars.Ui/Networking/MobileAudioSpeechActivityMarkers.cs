@@ -212,7 +212,7 @@ internal static class MobileAudioSpeechActivityMarkers
             if (id == "fmt " && size >= 16)
             {
                 audioFormat = BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(offset, 2));
-                channels = Math.Max(1, (int) BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(offset + 2, 2)));
+                channels = Math.Max(1, (int)BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(offset + 2, 2)));
                 sampleRate = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset + 4, 4));
                 bitsPerSample = BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(offset + 14, 2));
                 foundFmt = true;

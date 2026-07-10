@@ -387,6 +387,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         LoadLatestConversationDebugLogCommand = new RelayCommand(_ => LoadLatestConversationDebugLog());
         CopyLatestConversationDebugLogCommand = new RelayCommand(_ => CopyLatestConversationDebugLog());
         OpenLatestConversationDebugLogCommand = new RelayCommand(_ => OpenLatestConversationDebugLog());
+        OpenLlmExchangeLogFolderCommand = new RelayCommand(_ => OpenLlmExchangeLogFolder());
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         InitializeMobileBridgeCommandsAndMaybeStart();
         _ = RunStarInitiativeLoopAsync(_starInitiativeLoopCts.Token);
@@ -422,6 +423,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand LoadLatestConversationDebugLogCommand { get; }
     public ICommand CopyLatestConversationDebugLogCommand { get; }
     public ICommand OpenLatestConversationDebugLogCommand { get; }
+    public ICommand OpenLlmExchangeLogFolderCommand { get; }
     public ICommand AskStarInitiativeNowCommand { get; }
 
     public string SelectedStarId
@@ -698,6 +700,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         Status = "Copied latest conversation emotion trace to clipboard.";
     }
 
+
     private void OpenLatestConversationDebugLog()
     {
         string path = _runtime.LatestConversationDebugLogPath;
@@ -726,6 +729,40 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Status = "Could not open latest conversation emotion trace: " + ex.Message;
         }
+    }
+
+
+    private void OpenLlmExchangeLogFolder()
+    {
+        try
+        {
+            string folder = ResolveLlmExchangeLogDirectory();
+            Directory.CreateDirectory(folder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = folder,
+                UseShellExecute = true
+            });
+            Status = "Opened LLM exchange log folder: " + folder;
+        }
+        catch (Exception ex)
+        {
+            Status = "Could not open LLM exchange log folder: " + ex.Message;
+        }
+    }
+
+    private string ResolveLlmExchangeLogDirectory()
+    {
+        string? configured = Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR")
+            ?? _appConfig.LLM.ExchangeLogDirectory;
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            configured = "logs/llm-exchanges";
+        }
+
+        return Path.IsPathRooted(configured)
+            ? Path.GetFullPath(configured)
+            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configured));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -867,7 +904,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 _appConfig.LLM.MaxTokens),
             Temperature = GetDoubleSetting(
                 Environment.GetEnvironmentVariable("SIX_STARS_LLM_TEMPERATURE"),
-                _appConfig.LLM.Temperature)
+                _appConfig.LLM.Temperature),
+            LogExchangesToDisk = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_EXCHANGES"),
+                _appConfig.LLM.LogExchangesToDisk),
+            ExchangeLogDirectory = Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR")
+                ?? _appConfig.LLM.ExchangeLogDirectory,
+            ExchangeLogMaxTextChars = GetIntSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_MAX_TEXT_CHARS"),
+                _appConfig.LLM.ExchangeLogMaxTextChars)
         };
 
         System.Diagnostics.Debug.WriteLine($"[LLM] Configured endpoint: {options.EndpointUrl}");
@@ -1063,7 +1108,19 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             MaxTokens = GetIntSettingAllowZero(
                 Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_MAX_TOKENS"),
                 _appConfig.ScreenLLM.MaxTokens),
-            Temperature = 0.1
+            Temperature = 0.1,
+            LogExchangesToDisk = GetBooleanSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_LOG_EXCHANGES"),
+                GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_EXCHANGES"), _appConfig.ScreenLLM.LogExchangesToDisk)),
+            ExchangeLogDirectory = FirstNonEmpty(
+                    Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_LOG_DIR"),
+                    Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR"),
+                    _appConfig.ScreenLLM.ExchangeLogDirectory,
+                    _appConfig.LLM.ExchangeLogDirectory)
+                ?? "logs/llm-exchanges",
+            ExchangeLogMaxTextChars = GetIntSetting(
+                Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_LLM_LOG_MAX_TEXT_CHARS") ?? Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_MAX_TEXT_CHARS"),
+                _appConfig.ScreenLLM.ExchangeLogMaxTextChars > 0 ? _appConfig.ScreenLLM.ExchangeLogMaxTextChars : _appConfig.LLM.ExchangeLogMaxTextChars)
         };
 
         System.Diagnostics.Debug.WriteLine($"[Screen LLM] Configured endpoint: {options.EndpointUrl}; model={options.Model}; max_tokens={options.MaxTokens}");

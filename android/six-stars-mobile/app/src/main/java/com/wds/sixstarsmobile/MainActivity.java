@@ -653,8 +653,10 @@ public final class MainActivity extends Activity {
 
         LinearLayout buttons = row();
         Button save = prodButton("Save");
+        Button cuteNow = prodButton("Cute Now");
         Button breakup = prodButton("Break up");
         buttons.addView(save, weightParams(1));
+        buttons.addView(cuteNow, weightParams(1));
         buttons.addView(breakup, weightParams(1));
         outer.addView(buttons);
 
@@ -669,6 +671,13 @@ public final class MainActivity extends Activity {
                 selectedStarCuteModeEnabled = cuteMode.isChecked();
                 if (!selectedStarCuteModeEnabled) selectedStarCuteModeActive = false;
                 dispatchGirlfriendCuteMode(selectedStarCuteModeEnabled);
+                status.setText(buildGirlfriendSettingsStatusText());
+            });
+            cuteNow.setOnClickListener(v -> {
+                selectedStarCuteModeEnabled = true;
+                selectedStarCuteModeActive = true;
+                cuteMode.setChecked(true);
+                dispatchCuteModeNow();
                 status.setText(buildGirlfriendSettingsStatusText());
             });
             breakup.setOnClickListener(v -> confirmBreakupFromGirlfriendSettings(dialog, starName));
@@ -1383,6 +1392,10 @@ public final class MainActivity extends Activity {
 
     private void dispatchGirlfriendCuteMode(boolean enabled) {
         dispatchBridgeCommand("SetGirlfriendCuteMode", selectedStarName(), null, null, "Android girlfriend settings cute mode toggle.", Boolean.valueOf(enabled));
+    }
+
+    private void dispatchCuteModeNow() {
+        dispatchBridgeCommand("ActivateCuteModeNow", selectedStarName(), null, null, "Android Cute Now button requested immediate girlfriend cute mode.");
     }
 
     private void maybeRequestStarInitiative(String reason) {

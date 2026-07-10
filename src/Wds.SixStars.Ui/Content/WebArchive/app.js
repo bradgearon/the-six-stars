@@ -61,6 +61,80 @@ function parseJsonBlocks(markdown) {
   return blocks;
 }
 
+function turnKey(turn) {
+  const date = turn.createdAt ? new Date(turn.createdAt) : null;
+  const minute = date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0,16) : safe(turn.fileTime);
+  return [normalizeStarId(turn.starId), minute, safe(turn.playerText).trim(), safe(turn.starText).trim()].join('|');
+}
+
+function mergeTurns(turnCollections) {
+  const merged = [];
+  const seen = new Set();
+  for (const collection of turnCollections || []) {
+    for (const turn of collection || []) {
+      if (!safe(turn.playerText).trim() && !safe(turn.starText).trim()) continue;
+      const key = turnKey(turn);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(turn);
+    }
+  }
+  return merged.sort(byDateAsc);
+}
+
+function conversationTurnFromEntry(entry, starId, source, archiveEntry) {
+  const playerText = valueOf(entry, 'playerText') || '';
+  const starText = valueOf(entry, 'starResponse') || valueOf(entry, 'starText') || '';
+  if (!safe(playerText).trim() && !safe(starText).trim()) return null;
+  return {
+    kind: valueOf(entry, 'kind') || 'saved-conversation-turn',
+    source: source || valueOf(entry, 'source') || '',
+    starId: normalizeStarId(starId || valueOf(entry, 'starId')),
+    archiveId: valueOf(entry, 'archiveId') || valueOf(archiveEntry || {}, 'id') || '',
+    archiveSummary: valueOf(entry, 'archiveSummary') || valueOf(archiveEntry || {}, 'summary') || '',
+    archiveStartedAt: valueOf(entry, 'archiveStartedAt') || valueOf(archiveEntry || {}, 'startedAt'),
+    archiveEndedAt: valueOf(entry, 'archiveEndedAt') || valueOf(archiveEntry || {}, 'endedAt'),
+    createdAt: valueOf(entry, 'createdAt') || valueOf(archiveEntry || {}, 'endedAt'),
+    requestType: valueOf(entry, 'requestType') || '',
+    playerText,
+    starText,
+    emotions: valueOf(entry, 'topAffectedEmotions') || [],
+    combos: valueOf(entry, 'acceptedCombos') || [],
+    positiveSignals: valueOf(entry, 'acceptedPositiveSignals') || [],
+    negativeSignals: valueOf(entry, 'acceptedNegativeSignals') || [],
+    actualDelta: valueOf(entry, 'actualDelta') || {},
+    suggestedDelta: valueOf(entry, 'suggestedDelta') || {},
+    summary: valueOf(entry, 'summary') || valueOf(entry, 'deterministicEmotionSummary') || valueOf(entry, 'archiveSummary') || valueOf(archiveEntry || {}, 'summary') || '',
+    tags: valueOf(entry, 'tags') || valueOf(entry, 'archiveTags') || valueOf(archiveEntry || {}, 'topicTags') || [],
+    relationshipEvents: valueOf(entry, 'relationshipEvents') || []
+  };
+}
+
+function parseArchiveConversationTurns(turns) {
+  return (turns || [])
+    .map(t => conversationTurnFromEntry(t, valueOf(t, 'starId'), valueOf(t, 'source'), null))
+    .filter(Boolean)
+    .sort(byDateAsc);
+}
+
+function parseSaveDataConversationTurns() {
+  const turns = [];
+  for (const state of getStates()) {
+    const starId = normalizeStarId(valueOf(state, 'starId'));
+    for (const archiveEntry of valueOf(state, 'oldConversationArchives') || []) {
+      for (const entry of valueOf(archiveEntry, 'entries') || []) {
+        const turn = conversationTurnFromEntry(entry, starId, 'old-archive', archiveEntry);
+        if (turn) turns.push(turn);
+      }
+    }
+    for (const entry of valueOf(state, 'memoryLog') || []) {
+      const turn = conversationTurnFromEntry(entry, starId, 'memory-log', null);
+      if (turn) turns.push(turn);
+    }
+  }
+  return turns.sort(byDateAsc);
+}
+
 function parseLogs(logs) {
   const turns = [];
   for (const log of logs || []) {
@@ -145,7 +219,10 @@ async function loadArchive() {
   if (!response.ok) throw new Error(`Archive API returned ${response.status}`);
   archive = await response.json();
   if (archive.defaultSessionId && !$('sessionInput').dataset.touched) $('sessionInput').value = archive.sessionId || archive.defaultSessionId;
-  parsedTurns = parseLogs(archive.logs || []);
+  const traceTurns = parseLogs(archive.logs || []);
+  const savedTurns = parseArchiveConversationTurns(archive.conversationTurns || archive.conversations || []);
+  const saveDataTurns = parseSaveDataConversationTurns();
+  parsedTurns = mergeTurns([traceTurns, savedTurns, saveDataTurns]);
   selectedStar = normalizeStarId(archive.selectedStarId || selectedStar);
   renderStarStrip();
   renderWorldPulse();
@@ -198,7 +275,8 @@ function renderWorldPulse() {
   const gf = states.filter(s => valueOf(s,'isGirlfriend')).length;
   const allies = states.filter(s => valueOf(s,'isAlly')).length;
   const met = states.filter(s => valueOf(s,'isMet')).length;
-  $('worldPulse').innerHTML = `${escapeHtml(archive?.sessionId || '')}<br>${logs.length} trace files · ${parsedTurns.length} parsed moments<br>${allies} allies · ${met} met · ${ready} girlfriend-ready · ${gf} girlfriend`;
+  const saved = archive?.conversationTurns || archive?.conversations || [];
+  $('worldPulse').innerHTML = `${escapeHtml(archive?.sessionId || '')}<br>${saved.length} saved turns · ${logs.length} trace files · ${parsedTurns.length} displayed moments<br>${allies} allies · ${met} met · ${ready} girlfriend-ready · ${gf} girlfriend`;
 }
 
 function renderStarPage(starId) {

@@ -16,6 +16,7 @@ namespace Wds.SixStars.Ui.Configuration
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
         public MobileBridgeConfig MobileBridge { get; set; } = new MobileBridgeConfig();
+        public ConversationArchiveConfig ConversationArchive { get; set; } = new ConversationArchiveConfig();
         public DailyStarStateConfig DailyStarState { get; set; } = new DailyStarStateConfig();
     }
 
@@ -35,6 +36,21 @@ namespace Wds.SixStars.Ui.Configuration
         public bool SpeakResponsesOnDesktop { get; set; } = false;
     }
 
+
+    public sealed class ConversationArchiveConfig
+    {
+        /// <summary>When true, the desktop LAN host also serves the local relationship/conversation review website.</summary>
+        public bool Enabled { get; set; } = true;
+
+        /// <summary>URL prefix for the static archive website. Defaults to /archive on the same port as the Android bridge.</summary>
+        public string PathPrefix { get; set; } = "/archive";
+
+        /// <summary>Default session shown when the archive opens. Use android-phone-prod for the phone companion history.</summary>
+        public string DefaultSessionId { get; set; } = "android-phone-prod";
+
+        /// <summary>Maximum markdown trace files returned to the browser in one refresh.</summary>
+        public int MaxLogs { get; set; } = 160;
+    }
 
     public sealed class DailyStarStateConfig
     {
@@ -137,6 +153,11 @@ namespace Wds.SixStars.Ui.Configuration
         /// <summary>Per-pass max_tokens for the fast spoken pass and background review. Override with SIX_STARS_LLM_SPEECH_MAX_TOKENS / SIX_STARS_LLM_REVIEW_MAX_TOKENS. 0 means not sent.</summary>
         public int SpeechMaxTokens { get; set; } = 0;
         public int ReviewMaxTokens { get; set; } = 0;
+
+        /// <summary>When true, every local LLM request and response is written to JSONL/text files for prompt analysis.</summary>
+        public bool LogExchangesToDisk { get; set; } = true;
+        public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
+        public int ExchangeLogMaxTextChars { get; set; } = 2000000;
 
         public double Temperature { get; set; } = 0.65;
     }
@@ -247,6 +268,9 @@ namespace Wds.SixStars.Ui.Configuration
         public bool SendReasoningControlFields { get; set; } = true;
         public int MaxTokens { get; set; } = 0;
         public int TimeoutSeconds { get; set; } = 120;
+        public bool LogExchangesToDisk { get; set; } = true;
+        public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
+        public int ExchangeLogMaxTextChars { get; set; } = 2000000;
         public string PayloadShape { get; set; } = "OpenAiImageUrl";
     }
 }

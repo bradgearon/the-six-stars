@@ -306,3 +306,8 @@ python scripts\start_services.py
 ```
 
 This path also enforces CUDA for Qwen TTS and faster-whisper. If it would run on CPU, it exits with a hosted-service message instead.
+
+
+## LLM exchange logs
+
+The desktop runtime now appends local LLM request/response/debug entries to one plain daily log file: `logs/llm-exchanges/YYYY-MM-DD.log`. Use **Open LLM Exchange Log Folder** in Quick Actions to inspect the day's `.log` file and trim unused prompt/context sections.

@@ -16,7 +16,9 @@ namespace Wds.SixStars.Api.Ai
         private readonly LocalChatModelOptions _options;
         private readonly HttpClient _httpClient;
         private readonly JsonSerializerOptions _jsonOptions;
+        private readonly LlmExchangeFileLogger? _exchangeFileLogger;
         private readonly bool _ownsClient;
+        private long _exchangeSequence;
 
         public event EventHandler<LocalChatModelExchangeEventArgs>? ExchangeLogged;
 
@@ -36,6 +38,7 @@ namespace Wds.SixStars.Api.Ai
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = false
             };
+            _exchangeFileLogger = options.LogExchangesToDisk ? new LlmExchangeFileLogger(options) : null;
         }
 
         public Task<string> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken)
@@ -64,11 +67,12 @@ namespace Wds.SixStars.Api.Ai
 
             foreach (string responseFormatMode in responseFormatModes)
             {
+                string exchangeId = LlmExchangeFileLogger.CreateExchangeId(debugLabel);
                 try
                 {
-                    string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, cancellationToken).ConfigureAwait(false);
+                    string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, exchangeId, cancellationToken).ConfigureAwait(false);
                     string content = ExtractContent(body);
-                    LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content));
+                    LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content), "extracted_content", exchangeId, debugLabel, responseFormatMode);
                     if (string.IsNullOrWhiteSpace(content))
                     {
                         throw new InvalidOperationException("Model returned an empty content field.");
@@ -115,22 +119,22 @@ namespace Wds.SixStars.Api.Ai
             return modes;
         }
 
-        private async Task<string> SendOnceWithOptionalReasoningControlsAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
+        private async Task<string> SendOnceWithOptionalReasoningControlsAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, string exchangeId, CancellationToken cancellationToken)
         {
             bool includeReasoningControls = ShouldSendReasoningControlFields();
             try
             {
-                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, includeReasoningControls, cancellationToken).ConfigureAwait(false);
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, includeReasoningControls, exchangeId, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (includeReasoningControls && LooksLikeReasoningParameterProblem(ex.Message))
             {
                 System.Diagnostics.Debug.WriteLine("[OpenAiCompatibleChatModelClient] Reasoning-control request fields were rejected; retrying same request without reasoning fields: " + ex.Message);
-                LogExchange("LLM reasoning-control fallback", "The local endpoint rejected request-level reasoning fields, so the client retried without them. The launcher still disables reasoning through llama-server CLI args when it starts the server.\n" + ex.Message);
-                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, false, cancellationToken).ConfigureAwait(false);
+                LogExchange("LLM reasoning-control fallback", "The local endpoint rejected request-level reasoning fields, so the client retried without them. The launcher still disables reasoning through llama-server CLI args when it starts the server.\n" + ex.Message, "fallback", exchangeId, debugLabel, responseFormatMode);
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, false, exchangeId, cancellationToken).ConfigureAwait(false);
             }
         }
 
-        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, bool includeReasoningControls, CancellationToken cancellationToken)
+        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, bool includeReasoningControls, string exchangeId, CancellationToken cancellationToken)
         {
             Dictionary<string, object> payload = new Dictionary<string, object>
             {
@@ -164,7 +168,7 @@ namespace Wds.SixStars.Api.Ai
             }
 
             string json = JsonSerializer.Serialize(payload, _jsonOptions);
-            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, maxTokens));
+            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, maxTokens), "request", exchangeId, debugLabel, responseFormatMode);
 
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl))
             {
@@ -184,7 +188,7 @@ namespace Wds.SixStars.Api.Ai
                     string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
                     System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Response status: {(int)response.StatusCode} {response.StatusCode}; body chars={body.Length}");
-                    LogExchange("LLM raw HTTP response before Star parsing", FormatResponseForDebug(responseFormatMode + " / " + debugLabel, response, body));
+                    LogExchange("LLM raw HTTP response before Star parsing", FormatResponseForDebug(responseFormatMode + " / " + debugLabel, response, body), "raw_response", exchangeId, debugLabel, responseFormatMode);
 
                     if (!response.IsSuccessStatusCode)
                     {
@@ -204,11 +208,21 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
-        private void LogExchange(string title, string formattedText)
+        private void LogExchange(string title, string formattedText, string kind = "debug", string? requestId = null, string? debugLabel = null, string? responseFormatMode = null)
         {
             try
             {
-                ExchangeLogged?.Invoke(this, new LocalChatModelExchangeEventArgs(title, formattedText));
+                long sequence = System.Threading.Interlocked.Increment(ref _exchangeSequence);
+                LocalChatModelExchangeEventArgs args = new LocalChatModelExchangeEventArgs(
+                    title,
+                    formattedText,
+                    kind,
+                    string.IsNullOrWhiteSpace(requestId) ? LlmExchangeFileLogger.CreateExchangeId(debugLabel ?? "llm") : requestId!,
+                    debugLabel ?? string.Empty,
+                    responseFormatMode ?? string.Empty,
+                    sequence);
+                _exchangeFileLogger?.Log(args);
+                ExchangeLogged?.Invoke(this, args);
             }
             catch
             {
@@ -255,6 +269,9 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine(PrettyJson(payload));
             }
 
+            sb.AppendLine();
+            sb.AppendLine("Full request payload JSON:");
+            sb.AppendLine(PrettyJson(payload));
             sb.AppendLine("============== END LLM REQUEST ==============");
             return sb.ToString();
         }

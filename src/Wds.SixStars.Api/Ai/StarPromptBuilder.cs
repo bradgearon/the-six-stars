@@ -831,9 +831,6 @@ namespace Wds.SixStars.Api.Ai
                 contract.AppendLine("When the latest message may need older context or data outside this prompt, return the whole informationNeeds vector: one separate entry for each area you considered from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
                 contract.AppendLine("Omit informationNeeds or return [] when the answer is clearly available in the provided prompt. needsMoreInformation is optional legacy hint; set it true only when your spokenText is intentionally a brief 'I am trying to remember/check' bridge line.");
                 contract.AppendLine("If you set needsMoreInformation=true or return a high scoring informationNeeds vector, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a selector and second pass with a local archive/lore slice.");
-                contract.AppendLine("For normal chat, use 1-4 spokenText items. If the player asks direct personal questions such as name/about yourself/friends/what do you do, use 3-5 concise spokenText items and answer completely instead of being evasive.");
-                contract.AppendLine("Every spokenText item should be one or two natural sentences. A direct question deserves a direct answer, plus personality.");
-                contract.AppendLine("Answer warmly and directly as " + profile.DisplayName + ".");
             }
             if (request.RequestType == RequestType.Story)
             {
@@ -1622,7 +1619,7 @@ namespace Wds.SixStars.Api.Ai
             if (state.IsGirlfriend)
             {
                 sb.AppendLine("Committed girlfriend path: she should actively flirt sometimes instead of waiting for the Last Cat to always initiate. She may use affectionate magic-flavored actions, jealous/tender warmth, close pet names, playful claims, and emotionally intimate closeness in her own style. Keep it non-explicit by default.");
-                sb.AppendLine("Girlfriend responses should feel alive and present: she can act things out in words, add small magical special effects, touch the moment with her element/domain, and make the Last Cat feel close to her.");
+                sb.AppendLine("Girlfriend responses should feel alive and present: she can act things out in words, add magical special effects, touch the moment with her element/domain, and make the Last Cat feel close to her and wanted.");
             }
             else if (strongFlirtBand)
             {
@@ -1732,8 +1729,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("GIRLFRIEND MODE INSTRUCTIONS — ACTIVE");
             sb.AppendLine("- " + profile.DisplayName + " is the Last Cat's committed girlfriend in this state. Act like a girlfriend, not just an ally: be responsive, emotionally present, affectionate, and actively flirty when it fits her personality, current trust, recent conversation, and wants/needs.");
             sb.AppendLine("- Align affection with current needVector/wantVector and the accumulated girlfriend performance vectors. If a need was recently met, she can show satisfaction, soften, tease, thank him, ask for more, or become cuter instead of repeating the exact same request.");
-            sb.AppendLine("- Keep it non-explicit by default. Physical affection, kisses, cuddles, magical touches, and flirtatious special effects can be romantic, playful, close, and cute, but do not become graphic.");
-            sb.AppendLine("- Review recent conversation history before using a thing she wants to say. Do not repeat a line, pet name, confession, or cute hook she already said recently unless she is intentionally callback-teasing it.");
+            sb.AppendLine("- Physical affection, kisses, cuddles, magical touches, and flirtatious special effects can be romantic, playful, close, and cute.");
 
             List<string> flirtStyle = (profile.FlirtStyle ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))

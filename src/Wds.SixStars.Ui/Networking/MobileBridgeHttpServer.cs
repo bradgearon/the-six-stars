@@ -21,6 +21,10 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly Func<object> _healthFactory;
     private readonly Func<object> _starsFactory;
     private readonly Func<string, CancellationToken, Task<object>> _stateFactory;
+    private readonly Func<string, int, CancellationToken, Task<object>>? _conversationArchiveFactory;
+    private readonly string _conversationArchiveRoot;
+    private readonly string _conversationArchivePrefix;
+    private readonly bool _conversationArchiveEnabled;
     private readonly MobileBridgeDispatcher _dispatcher;
     private readonly JsonSerializerOptions _jsonOptions;
     private TcpListener? _listener;
@@ -41,7 +45,11 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Func<object> healthFactory,
         Func<object> starsFactory,
         Func<string, CancellationToken, Task<object>> stateFactory,
-        MobileBridgeDispatcher dispatcher)
+        MobileBridgeDispatcher dispatcher,
+        Func<string, int, CancellationToken, Task<object>>? conversationArchiveFactory = null,
+        string? conversationArchiveRoot = null,
+        string? conversationArchivePrefix = null,
+        bool conversationArchiveEnabled = true)
     {
         Port = port;
         _messageHandler = messageHandler;
@@ -50,6 +58,12 @@ public sealed class MobileBridgeHttpServer : IDisposable
         _healthFactory = healthFactory;
         _starsFactory = starsFactory;
         _stateFactory = stateFactory;
+        _conversationArchiveFactory = conversationArchiveFactory;
+        _conversationArchiveRoot = string.IsNullOrWhiteSpace(conversationArchiveRoot)
+            ? Path.Combine(AppContext.BaseDirectory, "Content", "WebArchive")
+            : Path.GetFullPath(conversationArchiveRoot.Trim());
+        _conversationArchivePrefix = NormalizePrefix(conversationArchivePrefix);
+        _conversationArchiveEnabled = conversationArchiveEnabled;
         _dispatcher = dispatcher;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -122,6 +136,31 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 if (request.Method == "GET" && request.Path == "/health")
                 {
                     await WriteJsonAsync(stream, 200, _healthFactory(), serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+
+                if (_conversationArchiveEnabled && request.Method == "GET" && request.Path == "/api/archive/data")
+                {
+                    if (_conversationArchiveFactory == null)
+                    {
+                        await WriteJsonAsync(stream, 500, new { ok = false, error = "Conversation archive data factory is not configured." }, serverToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    string sessionId = request.Query.TryGetValue("sessionId", out string? sessionText) && !string.IsNullOrWhiteSpace(sessionText)
+                        ? sessionText.Trim()
+                        : "android-phone-prod";
+                    int maxLogs = 160;
+                    if (request.Query.TryGetValue("maxLogs", out string? maxLogsText)) int.TryParse(maxLogsText, out maxLogs);
+                    object response = await _conversationArchiveFactory(sessionId, maxLogs, serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, 200, response, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_conversationArchiveEnabled && request.Method == "GET" && IsConversationArchivePath(request.Path))
+                {
+                    await WriteConversationArchiveFileAsync(stream, request.Path, serverToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -297,6 +336,78 @@ public sealed class MobileBridgeHttpServer : IDisposable
         await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken).ConfigureAwait(false);
         await stream.WriteAsync(body, 0, body.Length, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+
+    private bool IsConversationArchivePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (path == "/") return true;
+        return path.Equals(_conversationArchivePrefix, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(_conversationArchivePrefix + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task WriteConversationArchiveFileAsync(NetworkStream stream, string requestPath, CancellationToken cancellationToken)
+    {
+        string relative;
+        if (string.Equals(requestPath, "/", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requestPath, _conversationArchivePrefix, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(requestPath, _conversationArchivePrefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            relative = "index.html";
+        }
+        else
+        {
+            relative = requestPath.Substring(_conversationArchivePrefix.Length).TrimStart('/');
+            if (string.IsNullOrWhiteSpace(relative)) relative = "index.html";
+        }
+
+        relative = relative.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+        string fullPath = Path.GetFullPath(Path.Combine(_conversationArchiveRoot, relative));
+        string rootWithSeparator = _conversationArchiveRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        {
+            await WriteJsonAsync(stream, 404, new { ok = false, error = "Archive asset not found", requestPath }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        byte[] body = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
+        string header = "HTTP/1.1 200 OK\r\n"
+            + "Content-Type: " + GetContentType(fullPath) + "\r\n"
+            + "Access-Control-Allow-Origin: *\r\n"
+            + "Cache-Control: no-store\r\n"
+            + "Connection: close\r\n"
+            + "Content-Length: " + body.Length + "\r\n\r\n";
+        byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+        await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(body, 0, body.Length, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string NormalizePrefix(string? prefix)
+    {
+        string value = string.IsNullOrWhiteSpace(prefix) ? "/archive" : prefix.Trim();
+        if (!value.StartsWith("/", StringComparison.Ordinal)) value = "/" + value;
+        return value.TrimEnd('/');
+    }
+
+    private static string GetContentType(string path)
+    {
+        string ext = Path.GetExtension(path).ToLowerInvariant();
+        switch (ext)
+        {
+            case ".html": return "text/html; charset=utf-8";
+            case ".css": return "text/css; charset=utf-8";
+            case ".js": return "application/javascript; charset=utf-8";
+            case ".json": return "application/json; charset=utf-8";
+            case ".png": return "image/png";
+            case ".jpg":
+            case ".jpeg": return "image/jpeg";
+            case ".gif": return "image/gif";
+            case ".svg": return "image/svg+xml";
+            case ".ico": return "image/x-icon";
+            default: return "application/octet-stream";
+        }
     }
 
     private void PublishStatus(string status) => StatusChanged?.Invoke(this, status);
