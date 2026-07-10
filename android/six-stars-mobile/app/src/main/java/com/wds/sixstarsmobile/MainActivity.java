@@ -122,7 +122,14 @@ public final class MainActivity extends ComponentActivity {
     private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
     // Long conversation/image/voice requests must not block health checks or bridge-event polling.
     // The event poller is how Android can show "transcribed" / "LLM ready" while the main HTTP request is still waiting.
-    private final ExecutorService requestExecutor = Executors.newSingleThreadExecutor();
+    // Foreground messages must never sit behind a slow at-rest initiative request. They use
+    // separate queues so a text/voice/photo request can immediately reach the desktop, whose
+    // runtime then cancels/preempts any initiative generation already in progress.
+    private final ExecutorService foregroundRequestExecutor = Executors.newSingleThreadExecutor();
+    // Two workers let a manual Listen press reach the desktop even if an automatic at-rest
+    // check is still waiting on HTTP. The desktop gives the manual request priority and cancels
+    // the older automatic check.
+    private final ExecutorService initiativeRequestExecutor = Executors.newFixedThreadPool(2);
     private final Object socketLock = new Object();
     private boolean startRecordingAfterAudioPermission;
     private boolean openPhotoPickerAfterCameraPermission;
@@ -306,7 +313,8 @@ public final class MainActivity extends ComponentActivity {
         closeAudioSocket();
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
-        requestExecutor.shutdownNow();
+        foregroundRequestExecutor.shutdownNow();
+        initiativeRequestExecutor.shutdownNow();
         unregisterStarInitiativeServiceReceiver();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST | KEEP_AWAKE_REASON_VOICE_STREAM | KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Activity destroyed");
         super.onDestroy();
@@ -1458,7 +1466,7 @@ public final class MainActivity extends ComponentActivity {
         syncStarInitiativeRuntimePrefs();
         final String starName = selectedStarName();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "At-rest Star initiative request sent; keeping the screen on while she answers.");
-        requestExecutor.execute(() -> {
+        initiativeRequestExecutor.execute(() -> {
             try {
                 JSONObject json = new JSONObject();
                 json.put("commandId", "android-initiative-" + System.currentTimeMillis());
@@ -1515,7 +1523,7 @@ public final class MainActivity extends ComponentActivity {
         if (prodMiniStatusText != null) prodMiniStatusText.setText("Listening for " + starName + "...");
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Manual Listen request sent; keeping the screen on while the Star answers.");
 
-        requestExecutor.execute(() -> {
+        initiativeRequestExecutor.execute(() -> {
             try {
                 JSONObject json = new JSONObject();
                 json.put("commandId", "android-listen-" + System.currentTimeMillis());
@@ -1855,6 +1863,9 @@ public final class MainActivity extends ComponentActivity {
         String initiativeReason = optStringEither(event, "initiativeReason", "InitiativeReason", message).trim();
         String initiativeTopic = optStringEither(event, "initiativeTopic", "InitiativeTopic", "").trim();
         double initiativeStateScore = optDoubleEither(event, "initiativeStateScore", "InitiativeStateScore", 0.0);
+        long serverElapsedMs = optLongEither(event, "serverElapsedMs", "ServerElapsedMs", 0L);
+        long runtimeElapsedMs = optLongEither(event, "runtimeElapsedMs", "RuntimeElapsedMs", 0L);
+        long gateWaitMs = optLongEither(event, "gateWaitMs", "GateWaitMs", 0L);
         if (spoken.length() > 0 && initiativeShouldSpeak) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — at-rest thought\n\n" + clip(spoken, 8000));
@@ -1864,7 +1875,15 @@ public final class MainActivity extends ComponentActivity {
         } else {
             if (prodMiniStatusText != null) prodMiniStatusText.setText("No at-rest line right now.");
         }
-        setDebug("Star initiative response", "event=#" + seq + " " + type + " — " + message + "\nshouldSpeak=" + initiativeShouldSpeak + " skippedBeforeLlm=" + initiativeSkippedBeforeLlm + " score=" + initiativeStateScore + " topic=" + clip(initiativeTopic, 160) + " reason=" + clip(initiativeReason, 400));
+        setDebug("Star initiative response", "event=#" + seq + " " + type + " — " + message
+                + "\nshouldSpeak=" + initiativeShouldSpeak
+                + " skippedBeforeLlm=" + initiativeSkippedBeforeLlm
+                + " score=" + initiativeStateScore
+                + "\nserverTotalMs=" + serverElapsedMs
+                + " runtimeMs=" + runtimeElapsedMs
+                + " gateWaitMs=" + gateWaitMs
+                + "\ntopic=" + clip(initiativeTopic, 160)
+                + " reason=" + clip(initiativeReason, 400));
         appendVoiceDebug("Star at-rest initiative", spoken.length() > 0 ? clip(spoken, 220) : (initiativeReason.length() > 0 ? initiativeReason : message));
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative response returned; screen can rest after voice/playback completes.");
     }
@@ -2191,7 +2210,7 @@ public final class MainActivity extends ComponentActivity {
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
         pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
-        requestExecutor.execute(() -> {
+        foregroundRequestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("commandId", "android-photo-" + System.currentTimeMillis());
@@ -2234,7 +2253,7 @@ public final class MainActivity extends ComponentActivity {
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
-        requestExecutor.execute(() -> {
+        foregroundRequestExecutor.execute(() -> {
             try {
                 JSONObject json = baseRequestJson();
                 json.put("playerText", playerText);
@@ -2355,7 +2374,7 @@ public final class MainActivity extends ComponentActivity {
     private void sendAudio(byte[] pcm16) {
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
         pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");
-        requestExecutor.execute(() -> {
+        foregroundRequestExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
                 JSONObject json = baseRequestJson();
@@ -2400,6 +2419,9 @@ public final class MainActivity extends ComponentActivity {
                 int bytes = optIntEither(json, "voiceBytesSent", "VoiceBytesSent", 0);
                 String voiceMessage = optStringEither(json, "voiceMessage", "VoiceMessage", "");
                 String voiceError = optStringEither(json, "voiceError", "VoiceError", "");
+                long serverElapsedMs = optLongEither(json, "serverElapsedMs", "ServerElapsedMs", 0L);
+                long runtimeElapsedMs = optLongEither(json, "runtimeElapsedMs", "RuntimeElapsedMs", 0L);
+                long gateWaitMs = optLongEither(json, "gateWaitMs", "GateWaitMs", 0L);
                 String storyTitle = optStringEither(json, "storyTitle", "StoryTitle", "");
                 String storyMarkdown = optStringEither(json, "storyMarkdown", "StoryMarkdown", "");
                 String storySummary = optStringEither(json, "storySummary", "StorySummary", "");
@@ -2460,6 +2482,9 @@ public final class MainActivity extends ComponentActivity {
 
                 String details = "Response chars: " + visibleResponse.length()
                         + "\nSpoken chars: " + spoken.length()
+                        + "\nServer total: " + serverElapsedMs + " ms"
+                        + "\nRuntime: " + runtimeElapsedMs + " ms"
+                        + "\nRuntime gate wait: " + gateWaitMs + " ms"
                         + "\nVoice chunks queued: " + chunks
                         + "\nVoice bytes: " + bytes
                         + "\nStory markdown ready: " + storyReady

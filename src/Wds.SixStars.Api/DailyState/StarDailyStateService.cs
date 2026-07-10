@@ -107,6 +107,59 @@ namespace Wds.SixStars.Api.DailyState
             return await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
         }
 
+        /// <summary>
+        /// Foreground conversations must never wait for a daily-state LLM generation. Return the
+        /// newest cached record immediately, even when it is stale, and queue any needed refresh
+        /// behind foreground work. The refreshed record will be used by the next turn.
+        /// </summary>
+        public async Task<StarDailyStateRecord?> ReadCurrentAndQueueRefreshAsync(
+            string sessionId,
+            string starId,
+            StarState state,
+            string reason,
+            CancellationToken cancellationToken)
+        {
+            StarDailyStateRecord? current = await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (!_options.Enabled) return current;
+
+            DailyStarStateScheduleSlot? slot = GetCurrentSlot(DateTimeOffset.Now);
+            if (slot == null) return current;
+
+            string localDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (!IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
+            {
+                string refreshReason = string.IsNullOrWhiteSpace(reason) ? "foreground prompt cache refresh" : reason;
+                if (_dispatcher == null)
+                {
+                    // Test/minimal hosts may not provide the shared dispatcher. Preserve the
+                    // foreground guarantee anyway by scheduling generation rather than awaiting it.
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await RefreshAsync(sessionId, starId, state, slot, refreshReason, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            DailyStateUpdateFailed?.Invoke(this, ex);
+                        }
+                    });
+                }
+                else
+                {
+                    await QueueBackgroundRefreshAsync(
+                        sessionId,
+                        starId,
+                        state,
+                        slot,
+                        refreshReason,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+
+            return current;
+        }
+
         public async Task ClearStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             await _store.ClearStarAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);

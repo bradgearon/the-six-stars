@@ -534,7 +534,9 @@ namespace Wds.SixStars.Api.Engine
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
             bool isStarInitiativeRequest = request != null && request.RequestType == RequestType.StarInitiative;
-            bool isBackgroundWorkerRequest = isStarInitiativeRequest
+            bool isManualStarInitiativeRequest = isStarInitiativeRequest
+                && IsTruthy(GetGameContextFlag(request.GameContext, "starInitiativeForce", "false"));
+            bool isBackgroundWorkerRequest = (isStarInitiativeRequest && !isManualStarInitiativeRequest)
                 || (request != null && (IsStoryGenerationWorkerRequest(request) || IsGirlfriendProposalWorkerRequest(request) || IsInterstarMicroRequest(request)));
             IDisposable? foregroundLease = request != null && request.RequestType != RequestType.Debug && !isBackgroundWorkerRequest
                 ? _backgroundDispatcher.EnterForegroundRequest("Foreground reply request for " + request.StarId + " (" + request.RequestType + ")")
@@ -989,7 +991,7 @@ namespace Wds.SixStars.Api.Engine
         {
             if (request == null || request.GameContext == null) return;
             AttachGirlfriendHourlyStateContextForRequest(request, state);
-            if (state != null && state.IsGirlfriend)
+            if (state != null && state.IsGirlfriend && request.RequestType != RequestType.StarInitiative)
             {
                 QueueGirlfriendHourlyStateRefresh(request.SessionId, request.StarId, "request prompt girlfriend-state check", false, CancellationToken.None);
             }
@@ -998,7 +1000,18 @@ namespace Wds.SixStars.Api.Engine
             {
                 try
                 {
-                    record = await _dailyStateService.EnsureCurrentAsync(request.SessionId, request.StarId, state, "selected Star request prompt injection", cancellationToken).ConfigureAwait(false);
+                    // Initiative is a latency-sensitive yes/no/one-line check. It may consume the
+                    // newest cache, but it must not launch a daily-state LLM generation that can
+                    // contend with the initiative request itself. Normal foreground turns queue the
+                    // refresh behind their foreground dispatcher lease.
+                    record = request.RequestType == RequestType.StarInitiative
+                        ? await _dailyStateService.ReadCurrentAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false)
+                        : await _dailyStateService.ReadCurrentAndQueueRefreshAsync(
+                            request.SessionId,
+                            request.StarId,
+                            state,
+                            "foreground request found daily state missing or stale",
+                            cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1006,21 +1019,14 @@ namespace Wds.SixStars.Api.Engine
                 }
                 catch (Exception ex)
                 {
-                    request.GameContext.RecentEvents.Add("Daily Star state refresh failed before this request: " + ex.Message);
+                    request.GameContext.RecentEvents.Add("Daily Star state cache read/refresh queue failed, so the foreground reply continued without waiting: " + ex.Message);
                     DailyStateUpdateFailed?.Invoke(this, ex);
                 }
             }
 
-            if (record == null)
-            {
-                StarDailyStateRecord? fallbackRecord = await TryReadDailyStateFallbackAsync(request.SessionId, request.StarId, state, cancellationToken).ConfigureAwait(false);
-                if (fallbackRecord != null)
-                {
-                    record = fallbackRecord;
-                    request.GameContext.RecentEvents.Add("No daily Star state existed yet for session " + request.SessionId + "; using current daily Star state from session " + fallbackRecord.SessionId + ".");
-                }
-            }
-
+            // The durable state already carries the latest usable daily context. Prefer it before
+            // searching other sessions, and never synchronously regenerate daily state on the
+            // foreground path. A missing/stale refresh is queued behind the player reply above.
             if (record == null && state.TodayState != null && state.TodayState.IsAvailable)
             {
                 request.GameContext.Flags["todayStarStateJson"] = state.TodayState.Json ?? state.TodayState.Xml ?? string.Empty;
@@ -1030,8 +1036,19 @@ namespace Wds.SixStars.Api.Engine
                 request.GameContext.Flags["todayStarStateSlotId"] = state.TodayState.SlotId ?? string.Empty;
                 request.GameContext.Flags["todayStarStateLocalDate"] = state.TodayState.LocalDate ?? string.Empty;
                 request.GameContext.Flags["todayStarStateFilePath"] = state.TodayState.FilePath ?? string.Empty;
-                request.GameContext.RecentEvents.Add("Today's generated Star state JSON is attached from the selected Star state cache.");
+                request.GameContext.Flags["todayStarStateMayBeStale"] = "true";
+                request.GameContext.RecentEvents.Add("Attached the last cached daily Star state immediately; any refresh is running behind the foreground reply.");
                 return;
+            }
+
+            if (record == null)
+            {
+                StarDailyStateRecord? fallbackRecord = await TryReadDailyStateFallbackAsync(request.SessionId, request.StarId, state, cancellationToken).ConfigureAwait(false);
+                if (fallbackRecord != null)
+                {
+                    record = fallbackRecord;
+                    request.GameContext.RecentEvents.Add("No daily Star state existed yet for session " + request.SessionId + "; using cached daily Star state from session " + fallbackRecord.SessionId + " while a local refresh is queued.");
+                }
             }
 
             if (record != null && (!string.IsNullOrWhiteSpace(record.JsonContent) || !string.IsNullOrWhiteSpace(record.XmlContent)))
@@ -1307,25 +1324,13 @@ namespace Wds.SixStars.Api.Engine
             List<InformationNeedAvailabilityItem> availability = BuildInformationNeedAvailability(profile, state, request);
             response.InformationNeedAvailability = availability;
 
+            // The foreground model already returned a scored information-needs vector and the API
+            // already has deterministic availability/threshold logic. Do not spend a second LLM
+            // request merely selecting one item from that vector. A real deep-data follow-up still
+            // runs only when the deterministic gate decides the need is strong enough.
             InformationNeedSelectionResult? aiSelection = null;
-            if (_agent is IStarInformationNeedAnalyzer selector)
-            {
-                try
-                {
-                    aiSelection = await selector.AnalyzeInformationNeedAsync(profile, request, state, response, foregroundVector, availability, cancellationToken).ConfigureAwait(false);
-                    response.Debug.Notes.Add("Information selector AI result: " + SummarizeSelection(aiSelection));
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    response.Debug.Notes.Add("Information selector AI failed; deterministic fallback will use foreground vector only. " + ex.Message);
-                }
-            }
-
             InformationNeedSelectionResult decision = SelectInformationNeedDeterministically(foregroundVector, availability, aiSelection, response.NeedsMoreInformation, request.PlayerText);
+            response.Debug.Notes.Add("Information need selection used the foreground vector plus deterministic local-data availability; no selector LLM request was made.");
             response.InformationNeedSelection = decision;
             response.NeedsMoreInformation = decision.ShouldRequestMoreInformation;
             response.InformationFollowupContextSummary = SummarizeInformationNeedDecision(decision, foregroundVector, availability, 0);

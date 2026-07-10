@@ -61,6 +61,9 @@ public sealed class MobileBridgeResponse
     public int VoiceBytesSent { get; set; }
     public string VoiceMessage { get; set; } = string.Empty;
     public string VoiceError { get; set; } = string.Empty;
+    public long ServerElapsedMs { get; set; }
+    public long RuntimeElapsedMs { get; set; }
+    public long GateWaitMs { get; set; }
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;

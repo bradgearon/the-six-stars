@@ -211,6 +211,9 @@ public sealed class MobileBridgeDispatchResult
     public int VoiceBytesSent { get; set; }
     public string VoiceMessage { get; set; } = string.Empty;
     public string VoiceError { get; set; } = string.Empty;
+    public long ServerElapsedMs { get; set; }
+    public long RuntimeElapsedMs { get; set; }
+    public long GateWaitMs { get; set; }
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;
@@ -277,6 +280,9 @@ public sealed class MobileBridgeDispatchEvent
     public double InitiativePriority { get; set; }
     public string InitiativeTopic { get; set; } = string.Empty;
     public string InitiativeReason { get; set; } = string.Empty;
+    public long ServerElapsedMs { get; set; }
+    public long RuntimeElapsedMs { get; set; }
+    public long GateWaitMs { get; set; }
     public bool PhotoAttached { get; set; }
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;

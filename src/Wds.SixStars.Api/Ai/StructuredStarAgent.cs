@@ -20,6 +20,7 @@ namespace Wds.SixStars.Api.Ai
         private readonly StarPromptBuilder _promptBuilder;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly int _speechMaxTokens;
+        private readonly int _initiativeMaxTokens;
         private readonly int _storyPlanMaxTokens;
         private readonly int _reviewMaxTokens;
 
@@ -38,6 +39,7 @@ namespace Wds.SixStars.Api.Ai
             _client = client;
             _promptBuilder = new StarPromptBuilder(mainInstructions, promptOptions);
             _speechMaxTokens = ResolveSpeechMaxTokens(speechMaxTokens);
+            _initiativeMaxTokens = ResolveInitiativeMaxTokens();
             _storyPlanMaxTokens = ResolveStoryPlanMaxTokens();
             _reviewMaxTokens = ResolveReviewMaxTokens(reviewMaxTokens);
             _jsonOptions = new JsonSerializerOptions
@@ -332,7 +334,9 @@ namespace Wds.SixStars.Api.Ai
             object responseFormat = isStory
                 ? StarResponseJsonSchema.CreateStorySpeechResponseFormat(isStoryContinuation)
                 : (isStarInitiative ? StarResponseJsonSchema.CreateStarInitiativeResponseFormat() : StarResponseJsonSchema.CreateSpeechResponseFormat());
-            int maxTokens = isStory && !isStoryContinuation ? _storyPlanMaxTokens : _speechMaxTokens;
+            int maxTokens = isStory && !isStoryContinuation
+                ? _storyPlanMaxTokens
+                : (isStarInitiative ? _initiativeMaxTokens : _speechMaxTokens);
             string purpose = isStory
                 ? (isStoryContinuation ? "story-continuation-spoken-response" : "story-plan-and-first-spoken-response")
                 : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response");
@@ -619,6 +623,22 @@ namespace Wds.SixStars.Api.Ai
             // Do not send per-request max_tokens caps. Compact prompts and bounded response schemas
             // are safer for the local backends used by this runtime.
             return 0;
+        }
+
+        private static int ResolveInitiativeMaxTokens()
+        {
+            // Initiative returns at most one short line. A small cap prevents a local model from
+            // spending normal-chat time elaborating on a yes/no at-rest decision. This cap is
+            // isolated from ordinary speech/story requests because some local backends are less
+            // reliable when those larger responses are capped.
+            string? configured = Environment.GetEnvironmentVariable("SIX_STARS_LLM_INITIATIVE_MAX_TOKENS");
+            if (int.TryParse(configured, out int value))
+            {
+                if (value <= 0) return 0;
+                return Math.Max(96, Math.Min(512, value));
+            }
+
+            return 256;
         }
 
         private static int ResolveStoryPlanMaxTokens()

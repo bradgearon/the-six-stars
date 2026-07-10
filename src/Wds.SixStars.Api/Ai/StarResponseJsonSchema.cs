@@ -261,21 +261,23 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateStarInitiativeResponseFormat()
         {
+            // This path runs from the phone's manual Listen button and the at-rest scheduler.
+            // Keep the grammar intentionally tiny: the model only decides whether to speak and,
+            // when it does, returns one brief line. The runtime does not need a full emotion or
+            // girlfriend-vector response for this check.
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "hasSomethingToSay", "priority", "speechDecisionVector", "selectedTopic", "reason", "spokenText" } },
+                { "required", new[] { "starId", "hasSomethingToSay", "priority", "selectedTopic", "reason", "spokenText" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        { "starId", StringProperty() },
+                        { "starId", StringProperty(80) },
                         { "hasSomethingToSay", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "shouldSpeak", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "priority", NumberProperty(0, 1) },
-                        { "speechDecisionVector", GirlfriendVectorArray(1) },
-                        { "selectedTopic", StringProperty(240) },
-                        { "reason", StringProperty(420) },
-                        { "spokenText", StarInitiativeSpokenTextArray(4) }
+                        { "selectedTopic", StringProperty(120) },
+                        { "reason", StringProperty(180) },
+                        { "spokenText", StarInitiativeSpokenTextArray(1) }
                     }
                 }
             };
@@ -610,7 +612,7 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> array = new Dictionary<string, object>
             {
                 { "type", "array" },
-                { "items", StringProperty(420) }
+                { "items", StringProperty(320) }
             };
             if (maxItems > 0) array["maxItems"] = maxItems;
             return array;

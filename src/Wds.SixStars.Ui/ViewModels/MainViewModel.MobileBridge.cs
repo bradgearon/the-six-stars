@@ -679,6 +679,9 @@ public sealed partial class MainViewModel
                     InitiativePriority = initiativeResponse.InitiativePriority,
                     InitiativeTopic = initiativeResponse.InitiativeTopic ?? string.Empty,
                     InitiativeReason = initiativeResponse.InitiativeReason ?? string.Empty,
+                    ServerElapsedMs = initiativeResponse.ServerElapsedMs,
+                    RuntimeElapsedMs = initiativeResponse.RuntimeElapsedMs,
+                    GateWaitMs = initiativeResponse.GateWaitMs,
                     StoryId = initiativeResponse.StoryId ?? string.Empty,
                     StoryTitle = initiativeResponse.StoryTitle ?? string.Empty,
                     StoryMarkdown = initiativeResponse.StoryMarkdown ?? string.Empty,
@@ -834,6 +837,9 @@ public sealed partial class MainViewModel
             VoiceBytesSent = response.VoiceBytesSent,
             VoiceMessage = response.VoiceMessage,
             VoiceError = response.VoiceError,
+            ServerElapsedMs = response.ServerElapsedMs,
+            RuntimeElapsedMs = response.RuntimeElapsedMs,
+            GateWaitMs = response.GateWaitMs,
             StoryId = response.StoryId,
             StoryTitle = response.StoryTitle,
             StoryMarkdown = response.StoryMarkdown,
@@ -1403,31 +1409,46 @@ public sealed partial class MainViewModel
 
     private async Task<MobileBridgeResponse> ProcessMobileConversationAsync(MobileBridgeRequest mobileRequest, string transcript, CancellationToken cancellationToken)
     {
+        System.Diagnostics.Stopwatch totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        long gateWaitMs = 0;
+        long runtimeElapsedMs = 0;
         string starId = ResolveDefaultStarId(mobileRequest.StarId);
         RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
         if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
         bool isAtRestInitiative = requestType == RequestType.StarInitiative;
+        bool isManualInitiative = isAtRestInitiative
+            && (ContainsIgnoreCase(mobileRequest.ClientName, "Manual")
+                || ContainsIgnoreCase(mobileRequest.ClientName, "ListenButton")
+                || ContainsIgnoreCase(mobileRequest.Reason, "manual")
+                || ContainsIgnoreCase(mobileRequest.Reason, "button"));
         bool gateTaken = false;
+        System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        if (isAtRestInitiative)
+        if (isAtRestInitiative && !isManualInitiative)
         {
-            // At-rest girlfriend/Star initiative must never get in front of a real player reply.
-            // If the mobile bridge runtime is already busy, skip this quiet check and try later.
+            // Automatic at-rest initiative must never get in front of a real player action. If the
+            // mobile runtime is busy, skip this quiet check and try later.
             gateTaken = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            gateWaitMs = gateStopwatch.ElapsedMilliseconds;
             if (!gateTaken)
             {
-                return CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
+                MobileBridgeResponse skipped = CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
+                skipped.GateWaitMs = gateWaitMs;
+                skipped.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
+                return skipped;
             }
         }
         else
         {
-            // A real text/voice/photo from the player preempts any at-rest/background request that
-            // already reached the desktop runtime. This prevents Android from sitting behind a long
-            // StarInitiative/daily/girlfriend-state LLM call until the HTTP socket aborts.
-            try { _operationController.CancelAllRuntimeOperations("Android foreground request preempted mobile background/at-rest work for " + starId + "."); } catch { }
-            try { _runtime.CancelBackgroundAnalysis("Android foreground request preempted background analysis for " + starId + "."); } catch { }
+            // Real text/voice/photo and the user-pressed Listen button preempt automatic at-rest or
+            // background work. Android uses separate client queues, so this request reaches the
+            // desktop immediately instead of waiting behind the older initiative HTTP call.
+            string priorityLabel = isManualInitiative ? "Android manual Listen request" : "Android foreground request";
+            try { _operationController.CancelAllRuntimeOperations(priorityLabel + " preempted mobile background/at-rest work for " + starId + "."); } catch { }
+            try { _runtime.CancelBackgroundAnalysis(priorityLabel + " preempted background analysis for " + starId + "."); } catch { }
             await _mobileBridgeRuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             gateTaken = true;
+            gateWaitMs = gateStopwatch.ElapsedMilliseconds;
         }
 
         try
@@ -1460,7 +1481,9 @@ public sealed partial class MainViewModel
             ResetLlmDebugLog(request);
             CancellationToken runtimeToken = _operationController.BeginNewOperation("android bridge request to " + starId);
             using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
+            System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
             StarInteractionResponse starResponse = await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
             if (photoResult.Attached)
             {
                 starResponse.Debug.Notes.Add("Android photo summary: " + photoResult.Summary);
@@ -1489,6 +1512,9 @@ public sealed partial class MainViewModel
             }
 
             MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse);
+            response.GateWaitMs = gateWaitMs;
+            response.RuntimeElapsedMs = runtimeElapsedMs;
+            response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
             if (requestType == RequestType.StarInitiative && (!starResponse.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(starResponse.SpokenText)))
             {
                 wantsPhoneAudio = false;
@@ -1515,6 +1541,9 @@ public sealed partial class MainViewModel
                         response.VoiceChunksSent,
                         response.VoiceBytesSent,
                         response.VoiceError,
+                        response.ServerElapsedMs,
+                        response.RuntimeElapsedMs,
+                        response.GateWaitMs,
                         storyMarkdownChars = response.StoryMarkdown?.Length ?? 0,
                         storyChunkCount = response.StoryChunkCount,
                         storyMarkdownReady = response.StoryMarkdownReady,
@@ -1594,18 +1623,38 @@ public sealed partial class MainViewModel
                     ? "Android text response returned. Phone voice generation continues in the background."
                     : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
             });
+            response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
             return response;
         }
         catch (OperationCanceledException)
         {
-            MobileBridgeResponse cancelled = new MobileBridgeResponse { Ok = false, StarId = starId, RequestType = requestType.ToString(), VoiceError = "Android bridge request was cancelled." };
+            MobileBridgeResponse cancelled = new MobileBridgeResponse
+            {
+                Ok = false,
+                StarId = starId,
+                RequestType = requestType.ToString(),
+                VoiceError = "Android bridge request was cancelled.",
+                GateWaitMs = gateWaitMs,
+                RuntimeElapsedMs = runtimeElapsedMs,
+                ServerElapsedMs = totalStopwatch.ElapsedMilliseconds
+            };
             PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError);
             return cancelled;
         }
         catch (Exception ex)
         {
             OnUiThread(() => MobileBridgeStatus = "Android bridge error: " + ex.Message);
-            MobileBridgeResponse failed = new MobileBridgeResponse { Ok = false, StarId = starId, RequestType = requestType.ToString(), VoiceError = ex.Message, Notes = { ex.GetType().Name } };
+            MobileBridgeResponse failed = new MobileBridgeResponse
+            {
+                Ok = false,
+                StarId = starId,
+                RequestType = requestType.ToString(),
+                VoiceError = ex.Message,
+                GateWaitMs = gateWaitMs,
+                RuntimeElapsedMs = runtimeElapsedMs,
+                ServerElapsedMs = totalStopwatch.ElapsedMilliseconds,
+                Notes = { ex.GetType().Name }
+            };
             PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message);
             return failed;
         }

@@ -43,6 +43,15 @@ namespace Wds.SixStars.Api.Ai
 
         public IReadOnlyList<ChatMessage> BuildSpeechMessages(StarProfile profile, StarInteractionRequest request, StarState state)
         {
+            if (request.RequestType == RequestType.StarInitiative)
+            {
+                return new List<ChatMessage>
+                {
+                    new ChatMessage("system", BuildStarInitiativeSystemMessage(profile)),
+                    new ChatMessage("user", BuildStarInitiativeUserMessage(profile, request, state))
+                };
+            }
+
             return new List<ChatMessage>
             {
                 new ChatMessage("system", BuildSpeechSystemMessage(profile, request)),
@@ -643,6 +652,157 @@ namespace Wds.SixStars.Api.Ai
             };
 
             return _templates.Render("review_user.sbn", data);
+        }
+
+        private string BuildStarInitiativeSystemMessage(StarProfile profile)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("You are " + profile.DisplayName + " from The Last Cat. Stay fully in character.");
+            sb.AppendLine("This is a very fast at-rest initiative check, not a normal conversation turn. Decide whether you have one worthwhile state-backed thing to say to the Last Cat right now.");
+            sb.AppendLine("Return compact JSON only. Do not mention systems, prompts, vectors, mobile, initiative checks, or background work.");
+            sb.AppendLine("Identity: element=" + profile.Element + "; domain=" + profile.Domain + ".");
+            if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 220));
+            if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("Speaking style: " + Truncate(profile.SpeakingStyle, 260));
+            if (profile.SpokenResponseRules != null && profile.SpokenResponseRules.Count > 0)
+            {
+                sb.AppendLine("Key voice rules: " + string.Join("; ", profile.SpokenResponseRules.Take(4).Select(x => Truncate(x, 180))));
+            }
+            sb.AppendLine("If there is a real reason to speak, set hasSomethingToSay=true and return exactly one short spokenText item, usually one or two sentences. If not, set hasSomethingToSay=false, priority=0, selectedTopic='', and spokenText=[].");
+            sb.AppendLine("Do not answer an imaginary player message. Do not thank him for asking. Do not produce memory, emotion, relationship, lore, or information-request fields.");
+            return sb.ToString().TrimEnd();
+        }
+
+        private string BuildStarInitiativeUserMessage(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("FAST STAR INITIATIVE INPUT");
+            AppendCurrentTimeContext(sb);
+            sb.AppendLine("Area=" + (request.GameContext?.Area ?? string.Empty) + "; Quest=" + (request.GameContext?.Quest ?? string.Empty) + ".");
+            sb.AppendLine("Relationship=" + BuildRelationshipStatus(state));
+            sb.AppendLine("IsMet=" + state.IsMet + "; IsAlly=" + state.IsAlly + "; IsGirlfriend=" + state.IsGirlfriend + "; connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%.");
+
+            if (request.GameContext != null && request.GameContext.Flags != null)
+            {
+                if (request.GameContext.Flags.TryGetValue("starInitiativeStateGateScore", out string? gateScore)) sb.AppendLine("StateGateScore=" + gateScore + ".");
+                if (request.GameContext.Flags.TryGetValue("starInitiativeStateGateReason", out string? gateReason) && !string.IsNullOrWhiteSpace(gateReason)) sb.AppendLine("StateGateReason=" + Truncate(gateReason, 280));
+                if (request.GameContext.Flags.TryGetValue("starInitiativeStateTopics", out string? gateTopics) && !string.IsNullOrWhiteSpace(gateTopics)) sb.AppendLine("CandidateTopics=" + Truncate(gateTopics, 500));
+            }
+
+            AppendCompactInitiativeDailyState(sb, request);
+            AppendCompactInitiativeGirlfriendState(sb, profile, state);
+
+            if (state.LastTopAffectedEmotions != null && state.LastTopAffectedEmotions.Count > 0)
+            {
+                sb.AppendLine("Recent emotions=" + string.Join("; ", state.LastTopAffectedEmotions.Take(4).Select(x => x.ToString())));
+            }
+            if (!string.IsNullOrWhiteSpace(state.ConversationSummary)) sb.AppendLine("Ongoing summary=" + Truncate(state.ConversationSummary, 360));
+
+            List<ConversationLogEntry> recent = GetUsableRecentConversationHistory(state, 3);
+            if (recent.Count > 0)
+            {
+                sb.AppendLine("Recent turns, newest first:");
+                foreach (ConversationLogEntry entry in recent)
+                {
+                    sb.AppendLine("- Last Cat: " + QuoteInline(Truncate(entry.PlayerText, 180)) + " | " + profile.DisplayName + ": " + QuoteInline(Truncate(entry.StarResponse, 220)));
+                }
+            }
+
+            bool force = IsTruthyFlag(request, "starInitiativeForce");
+            if (force)
+            {
+                sb.AppendLine("Manual interact mode=true. Prefer a fresh brief line from the strongest candidate unless it would repeat the recent turns or contradict canon.");
+            }
+            else
+            {
+                sb.AppendLine("Manual interact mode=false. Speak only when the supplied state gives a genuine reason to interrupt the quiet.");
+            }
+
+            sb.AppendLine("Return only: starId, hasSomethingToSay, priority, selectedTopic, reason, spokenText. Use an empty reason when none is needed.");
+            sb.AppendLine("priority is 0-1. spokenText is [] for no speech, otherwise exactly one short string.");
+            return sb.ToString().TrimEnd();
+        }
+
+        private static void AppendCompactInitiativeDailyState(StringBuilder sb, StarInteractionRequest request)
+        {
+            string json = string.Empty;
+            string summary = string.Empty;
+            string generatedAt = string.Empty;
+            string slotId = string.Empty;
+            if (request.GameContext != null && request.GameContext.Flags != null)
+            {
+                request.GameContext.Flags.TryGetValue("todayStarStateJson", out json);
+                request.GameContext.Flags.TryGetValue("todayStarStateSummary", out summary);
+                request.GameContext.Flags.TryGetValue("todayStarStateGeneratedAt", out generatedAt);
+                request.GameContext.Flags.TryGetValue("todayStarStateSlotId", out slotId);
+            }
+
+            if (string.IsNullOrWhiteSpace(json) && string.IsNullOrWhiteSpace(summary))
+            {
+                sb.AppendLine("Daily state=none.");
+                return;
+            }
+
+            string situation = string.Empty;
+            string feelings = string.Empty;
+            string desires = string.Empty;
+            string activity = string.Empty;
+            List<string> hooks = new List<string>();
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(json);
+                    JsonElement root = document.RootElement;
+                    situation = FirstJsonString(root, new[] { "currentInnerLife", "situationSummary" }, new[] { "situationSummary" });
+                    feelings = FirstJsonString(root, new[] { "currentInnerLife", "feelings" }, new[] { "currentInnerLife", "feelingsSummary" }, new[] { "feelingsSummary" });
+                    desires = FirstJsonString(root, new[] { "currentInnerLife", "desires" }, new[] { "currentInnerLife", "currentDesires" }, new[] { "currentDesires" });
+                    activity = FirstJsonString(root, new[] { "today", "whatSheIsDoing" }, new[] { "whatSheIsDoingToday" });
+                    hooks = FirstJsonStringList(
+                        root,
+                        new[] { "today", "conversationHooks" },
+                        new[] { "today", "wantsToTalkAbout" },
+                        new[] { "today", "thingsSheWantsToTalkAbout" },
+                        new[] { "conversationHooks" },
+                        new[] { "wantsToTalkAbout" },
+                        new[] { "thingsSheWantsToTalkAbout" });
+                }
+                catch
+                {
+                    // A malformed cached daily JSON blob should not slow or fail the initiative check.
+                }
+            }
+
+            sb.AppendLine("DailyState generated=" + generatedAt + "; slot=" + slotId + "; summary=" + Truncate(summary, 220));
+            if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine("Situation=" + Truncate(situation, 220));
+            if (!string.IsNullOrWhiteSpace(feelings)) sb.AppendLine("Feelings=" + Truncate(feelings, 180));
+            if (!string.IsNullOrWhiteSpace(desires)) sb.AppendLine("Desires=" + Truncate(desires, 180));
+            if (!string.IsNullOrWhiteSpace(activity)) sb.AppendLine("Activity=" + Truncate(activity, 160));
+            if (hooks.Count > 0) sb.AppendLine("Conversation hooks=" + string.Join(" | ", hooks.Take(4).Select(x => Truncate(x, 150))));
+        }
+
+        private static void AppendCompactInitiativeGirlfriendState(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            if (!state.IsGirlfriend) return;
+            StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
+            sb.AppendLine("Girlfriend mode=true.");
+            if (profile.FlirtStyle != null && profile.FlirtStyle.Count > 0)
+            {
+                sb.AppendLine("Flirt style=" + string.Join("; ", profile.FlirtStyle.Take(3).Select(x => Truncate(x, 170))));
+            }
+            if (context == null || !context.IsAvailable) return;
+
+            if (!string.IsNullOrWhiteSpace(context.RelationshipPosture)) sb.AppendLine("Girlfriend posture=" + Truncate(context.RelationshipPosture, 200));
+            if (!string.IsNullOrWhiteSpace(context.Summary)) sb.AppendLine("Girlfriend state=" + Truncate(context.Summary, 200));
+            sb.AppendLine("NeedVector=" + FormatGirlfriendVectorString(context.NeedVector, 4));
+            sb.AppendLine("WantVector=" + FormatGirlfriendVectorString(context.WantVector, 4));
+            if (context.ThingsSheWantsToSay != null && context.ThingsSheWantsToSay.Count > 0)
+            {
+                sb.AppendLine("Things she wants to say=" + string.Join(" | ", context.ThingsSheWantsToSay.Take(3).Select(x => Truncate(x, 150))));
+            }
+            if (state.GirlfriendCuteModeEnabled && context.CuteModeActive && context.CuteThingsSheWantsToSay != null && context.CuteThingsSheWantsToSay.Count > 0)
+            {
+                sb.AppendLine("Cute-mode candidates=" + string.Join(" | ", context.CuteThingsSheWantsToSay.Take(2).Select(x => Truncate(x, 150))));
+            }
         }
 
         private string BuildSpeechSystemMessage(StarProfile profile, StarInteractionRequest request)
