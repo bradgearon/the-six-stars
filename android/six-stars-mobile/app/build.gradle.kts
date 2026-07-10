@@ -18,4 +18,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    lint {
+        abortOnError = true
+        error += "Deprecated"
+    }
+
+}
+
+
+dependencies {
+    implementation("androidx.activity:activity:1.12.4")
+    implementation("androidx.core:core:1.17.0")
 }

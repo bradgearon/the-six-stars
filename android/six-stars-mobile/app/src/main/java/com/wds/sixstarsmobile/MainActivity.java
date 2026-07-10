@@ -1,7 +1,6 @@
 package com.wds.sixstarsmobile;
 
 import android.Manifest;
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.content.Intent;
@@ -13,23 +12,22 @@ import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Movie;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
 import android.media.AudioFormat;
-import android.media.AudioManager;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.provider.MediaStore;
 import android.os.Bundle;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
@@ -48,6 +46,12 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
+
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -79,7 +83,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public final class MainActivity extends Activity {
+public final class MainActivity extends ComponentActivity {
     private static final String PREFS_NAME = "SixStarsMobilePrefs";
     private static final String PREF_PROD_MODE = "prodMode";
     private static final String PREF_STAR_INITIATIVE_ENABLED = "starInitiativeEnabled";
@@ -94,9 +98,6 @@ public final class MainActivity extends Activity {
     private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";
     private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
-    private static final int REQUEST_RECORD_AUDIO = 301;
-    private static final int REQUEST_CAMERA_PHOTO = 302;
-    private static final int REQUEST_IMAGE_SEND = 303;
     private static final int SAMPLE_RATE = 16000;
     private static final int FRAME_STATUS = 1;
     private static final int FRAME_AUDIO_WAV = 2;
@@ -121,6 +122,32 @@ public final class MainActivity extends Activity {
     // The event poller is how Android can show "transcribed" / "LLM ready" while the main HTTP request is still waiting.
     private final ExecutorService requestExecutor = Executors.newSingleThreadExecutor();
     private final Object socketLock = new Object();
+    private boolean startRecordingAfterAudioPermission;
+    private boolean openPhotoPickerAfterCameraPermission;
+
+    private final ActivityResultLauncher<String> recordAudioPermissionLauncher = registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(),
+            granted -> {
+                boolean shouldStart = startRecordingAfterAudioPermission;
+                startRecordingAfterAudioPermission = false;
+                if (granted && shouldStart && !recording) {
+                    startRecording();
+                } else if (!granted && shouldStart) {
+                    setDebug("Microphone permission denied", "RECORD_AUDIO is required to send a voice message.");
+                }
+            });
+
+    private final ActivityResultLauncher<String> cameraPermissionLauncher = registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(),
+            granted -> {
+                boolean shouldOpen = openPhotoPickerAfterCameraPermission;
+                openPhotoPickerAfterCameraPermission = false;
+                if (shouldOpen) launchImageChooser(granted);
+            });
+
+    private final ActivityResultLauncher<Intent> imagePickerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            this::handleImagePickerResult);
 
     private EditText serverUrlEdit;
     private Spinner starSpinner;
@@ -935,7 +962,6 @@ public final class MainActivity extends Activity {
     private void updateProdRecordingUi() {
         if (prodTalkButtonText != null) prodTalkButtonText.setText(recording ? "Send Voice" : "Talk");
         if (prodVoiceActions != null) prodVoiceActions.setVisibility(recording ? View.VISIBLE : View.GONE);
-        setProdAnimationState(recording ? "talking" : "idle");
     }
 
     private void setProdAnimationState(String state) {
@@ -945,33 +971,29 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void pulseProdTalkingThenIdle(long delayMs) {
-        setProdAnimationState("talking");
-        mainHandler.postDelayed(() -> {
-            if (!recording && !starVoicePlaybackActive) setProdAnimationState("idle");
-        }, Math.max(800L, delayMs));
-    }
-
     private void cancelStarVoiceAnimationMarkers(String reason) {
         voiceAnimationGeneration++;
         starVoicePlaybackActive = false;
-        if (!recording) setProdAnimationState("idle");
+        setProdAnimationState("idle");
     }
 
-    private void startStarVoiceAnimationMarkers(PhoneVoiceClip clip, long fallbackDurationMs) {
+    private void startStarVoiceAnimationMarkers(PhoneVoiceClip clip, long fallbackDurationMs, long playbackElapsedMs) {
         if (!prodMode || clip == null || !clip.fromDesktop) return;
         final int generation = ++voiceAnimationGeneration;
         starVoicePlaybackActive = true;
+        long elapsedMs = Math.max(0L, playbackElapsedMs);
         int[] segments = clip.speechActivitySegmentsMs == null ? new int[0] : clip.speechActivitySegmentsMs;
         if (segments.length < 2) {
-            // Missing/old desktop headers: keep the old coarse behavior as a safe fallback.
+            // Older desktop headers do not contain word/syllable timing. In that case,
+            // talk for the remaining audio duration, beginning only after AudioTrack.play().
             setProdAnimationState("talking");
+            long remainingMs = Math.max(80L, fallbackDurationMs - elapsedMs);
             mainHandler.postDelayed(() -> {
                 if (generation == voiceAnimationGeneration) {
                     starVoicePlaybackActive = false;
-                    if (!recording) setProdAnimationState("idle");
+                    setProdAnimationState("idle");
                 }
-            }, Math.max(350L, fallbackDurationMs));
+            }, remainingMs);
             return;
         }
 
@@ -980,26 +1002,37 @@ public final class MainActivity extends Activity {
         for (int i = 0; i + 1 < segments.length && scheduled < 240; i += 2) {
             long startMs = Math.max(0L, segments[i]);
             long durationMs = Math.max(60L, Math.min(4000L, segments[i + 1]));
-            latestEnd = Math.max(latestEnd, startMs + durationMs);
+            long endMs = startMs + durationMs;
+            latestEnd = Math.max(latestEnd, endMs);
+            if (endMs <= elapsedMs) continue;
             scheduled++;
+
+            long startDelayMs = Math.max(0L, startMs - elapsedMs);
+            long endDelayMs = Math.max(1L, endMs - elapsedMs);
+            if (startDelayMs == 0L) {
+                setProdAnimationState("talking");
+            } else {
+                mainHandler.postDelayed(() -> {
+                    if (generation == voiceAnimationGeneration && isCurrentVoiceClip(clip)) {
+                        starVoicePlaybackActive = true;
+                        setProdAnimationState("talking");
+                    }
+                }, startDelayMs);
+            }
             mainHandler.postDelayed(() -> {
                 if (generation == voiceAnimationGeneration && isCurrentVoiceClip(clip)) {
-                    starVoicePlaybackActive = true;
-                    setProdAnimationState("talking");
-                }
-            }, startMs);
-            mainHandler.postDelayed(() -> {
-                if (generation == voiceAnimationGeneration && !recording && isCurrentVoiceClip(clip)) {
                     setProdAnimationState("idle");
                 }
-            }, startMs + durationMs);
+            }, endDelayMs);
         }
 
-        final long releaseAt = Math.max(Math.max(250L, fallbackDurationMs), latestEnd + 80L);
+        final long releaseAt = Math.max(
+                1L,
+                Math.max(Math.max(250L, fallbackDurationMs), latestEnd + 80L) - elapsedMs);
         mainHandler.postDelayed(() -> {
             if (generation == voiceAnimationGeneration) {
                 starVoicePlaybackActive = false;
-                if (!recording) setProdAnimationState("idle");
+                setProdAnimationState("idle");
             }
         }, releaseAt);
     }
@@ -1178,14 +1211,15 @@ public final class MainActivity extends Activity {
     }
 
     private void requestAudioPermissionIfNeeded() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
         }
     }
 
     private boolean requestCameraPermissionIfNeeded() {
-        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PHOTO);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            openPhotoPickerAfterCameraPermission = true;
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
             return false;
         }
         return true;
@@ -1270,11 +1304,11 @@ public final class MainActivity extends Activity {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ACTION_STAR_INITIATIVE_SERVICE_RESPONSE);
         filter.addAction(ACTION_STAR_INITIATIVE_SERVICE_STATUS);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(starInitiativeServiceReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(starInitiativeServiceReceiver, filter);
-        }
+        ContextCompat.registerReceiver(
+                this,
+                starInitiativeServiceReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED);
         starInitiativeServiceReceiverRegistered = true;
     }
 
@@ -1461,7 +1495,6 @@ public final class MainActivity extends Activity {
         pauseStarInitiativeBackgroundService("Manual Listen button has priority over background at-rest checks.");
         final String starName = selectedStarName();
         if (prodMiniStatusText != null) prodMiniStatusText.setText("Listening for " + starName + "...");
-        pulseProdTalkingThenIdle(1800L);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Manual Listen request sent; keeping the screen on while the Star answers.");
 
         requestExecutor.execute(() -> {
@@ -1711,7 +1744,6 @@ public final class MainActivity extends Activity {
             if (!recentProdConversationAlreadyHas(starId, visible)) {
                 appendProdConversationLine(starId, clip(visible, 900));
             }
-            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visible.length() * 18L)));
             String header = starId + " — response ready";
             if (transcript.length() > 0) header += "\nTranscript: " + transcript;
             if (storyTitle.length() > 0) header += "\nStory: " + storyTitle;
@@ -1789,7 +1821,6 @@ public final class MainActivity extends Activity {
         if (spoken.length() > 0) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — girlfriend proposal\n\n" + clip(spoken, 8000));
-            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + spoken.length() * 18L)));
         }
         setDebug("Girlfriend proposal response", "event=#" + seq + " " + type + " — " + message);
     }
@@ -1809,7 +1840,6 @@ public final class MainActivity extends Activity {
         if (spoken.length() > 0 && initiativeShouldSpeak) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — at-rest thought\n\n" + clip(spoken, 8000));
-            pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + spoken.length() * 18L)));
             if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " had something to say.");
         } else if ("StarInitiativeResponseFailed".equalsIgnoreCase(type)) {
             responseText.setText("At-rest Star initiative failed. " + clip(message, 1200));
@@ -2055,35 +2085,35 @@ public final class MainActivity extends Activity {
 
 
     private void startPhotoCapture() {
+        if (!requestCameraPermissionIfNeeded()) return;
+        launchImageChooser(true);
+    }
+
+    private void launchImageChooser(boolean includeCamera) {
         try {
             Intent choosePhoto = new Intent(Intent.ACTION_GET_CONTENT);
             choosePhoto.setType("image/*");
             choosePhoto.addCategory(Intent.CATEGORY_OPENABLE);
 
             Intent chooser = Intent.createChooser(choosePhoto, "Send image to " + selectedStarName());
-
-            if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (includeCamera) {
                 Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
                 if (camera.resolveActivity(getPackageManager()) != null) {
                     chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
                 }
-            } else {
-                requestCameraPermissionIfNeeded();
             }
 
             appendVoiceDebug("The Last Cat opened the image picker", "Choose a gallery image or camera photo to send to " + selectedStarName() + ".");
-            startActivityForResult(chooser, REQUEST_IMAGE_SEND);
+            imagePickerLauncher.launch(chooser);
         } catch (Exception ex) {
             setDebug("Image picker failed", ex.toString());
             appendVoiceDebug("Nyxari could not open the image picker", ex.toString());
         }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_IMAGE_SEND && requestCode != REQUEST_CAMERA_PHOTO) return;
-        if (resultCode != RESULT_OK || data == null) {
+    private void handleImagePickerResult(ActivityResult result) {
+        Intent data = result == null ? null : result.getData();
+        if (result == null || result.getResultCode() != RESULT_OK || data == null) {
             setDebug("Image cancelled", "No image was sent to the Star.");
             return;
         }
@@ -2184,7 +2214,6 @@ public final class MainActivity extends Activity {
         appendProdConversationLine("You", playerText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
-        pulseProdTalkingThenIdle(3500L);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
         requestExecutor.execute(() -> {
@@ -2214,35 +2243,66 @@ public final class MainActivity extends Activity {
     }
 
     private void startRecording() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            startRecordingAfterAudioPermission = true;
             requestAudioPermissionIfNeeded();
-            setDebug("Microphone permission needed", "Grant RECORD_AUDIO and press Record Voice again.");
+            setDebug("Microphone permission needed", "Grant RECORD_AUDIO and voice recording will start.");
             return;
         }
 
-        int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        int bufferSize = Math.max(minBuffer, SAMPLE_RATE * 2);
-        recordedPcm = new ByteArrayOutputStream();
-        audioRecord = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
-        audioRecord.startRecording();
-        recording = true;
-        if (recordButton != null) recordButton.setText("Stop / Send");
-        updateProdRecordingUi();
-        setDebug("Recording", "Speak now. Press Send Voice when finished, or Cancel to discard.");
+        try {
+            int minBuffer = AudioRecord.getMinBufferSize(
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuffer <= 0) minBuffer = SAMPLE_RATE;
+            int bufferSize = Math.max(minBuffer, SAMPLE_RATE * 2);
+            AudioFormat inputFormat = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build();
 
-        recordingThread = new Thread(() -> {
-            byte[] buffer = new byte[2048];
-            while (recording && audioRecord != null) {
-                int read = audioRecord.read(buffer, 0, buffer.length);
-                if (read > 0) {
-                    synchronized (this) {
-                        if (recordedPcm != null) recordedPcm.write(buffer, 0, read);
+            recordedPcm = new ByteArrayOutputStream();
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+                    .setAudioFormat(inputFormat)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build();
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                audioRecord.release();
+                audioRecord = null;
+                throw new IllegalStateException("AudioRecord did not initialize.");
+            }
+
+            audioRecord.startRecording();
+            recording = true;
+            if (recordButton != null) recordButton.setText("Stop / Send");
+            updateProdRecordingUi();
+            setDebug("Recording", "Speak now. Press Send Voice when finished, or Cancel to discard.");
+
+            recordingThread = new Thread(() -> {
+                byte[] buffer = new byte[2048];
+                while (recording && audioRecord != null) {
+                    int read = audioRecord.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+                    if (read > 0) {
+                        synchronized (this) {
+                            if (recordedPcm != null) recordedPcm.write(buffer, 0, read);
+                        }
                     }
                 }
+            }, "six-stars-mobile-recorder");
+            recordingThread.start();
+        } catch (Exception ex) {
+            recording = false;
+            if (audioRecord != null) {
+                try { audioRecord.release(); } catch (Exception ignored) { }
+                audioRecord = null;
             }
-        }, "six-stars-mobile-recorder");
-        recordingThread.start();
+            updateProdRecordingUi();
+            setDebug("Microphone could not start", ex.toString());
+            appendVoiceDebug("The Last Cat could not start recording", ex.toString());
+        }
     }
 
     private void stopRecording(boolean send) {
@@ -2270,7 +2330,6 @@ public final class MainActivity extends Activity {
                 return;
             }
             appendProdConversationLine("You", "[voice message]");
-            pulseProdTalkingThenIdle(3000L);
             sendAudio(pcm);
         }
     }
@@ -2374,7 +2433,6 @@ public final class MainActivity extends Activity {
                 if (!recentProdConversationAlreadyHas(starId, visibleResponse)) {
                     appendProdConversationLine(starId, clip(visibleResponse, 900));
                 }
-                pulseProdTalkingThenIdle(Math.max(2200L, Math.min(9000L, 1200L + visibleResponse.length() * 18L)));
 
                 String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
@@ -3175,39 +3233,94 @@ public final class MainActivity extends Activity {
             ParsedWav parsed = ParsedWav.parse(clip.wav);
             int channelConfig = parsed.channels == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
             int minBuffer = AudioTrack.getMinBufferSize(parsed.sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuffer <= 0) minBuffer = parsed.sampleRate * parsed.channels * 2 / 5;
             int bufferSize = Math.max(minBuffer, Math.min(parsed.pcm.length, parsed.sampleRate * parsed.channels * 2));
             long durationMs = (long) parsed.pcm.length * 1000L / Math.max(1, parsed.sampleRate * parsed.channels * 2);
-            runOnUiThread(() -> {
-                setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, "Playing " + clip.label + ".");
-                audioStatusText.setText("Playing " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
-                appendVoiceDebug("Elusiaa started playing audio", clip.label + ", durationMs=" + durationMs + ", bytes=" + clip.wav.length + ", sha256=" + shortHash(clip.sha256));
-            });
-            AudioTrack track = new AudioTrack(AudioManager.STREAM_MUSIC, parsed.sampleRate, channelConfig,
-                    AudioFormat.ENCODING_PCM_16BIT, bufferSize, AudioTrack.MODE_STREAM);
+
+            AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build();
+            AudioFormat outputFormat = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(parsed.sampleRate)
+                    .setChannelMask(channelConfig)
+                    .build();
+            AudioTrack track = new AudioTrack.Builder()
+                    .setAudioAttributes(audioAttributes)
+                    .setAudioFormat(outputFormat)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build();
+            if (track.getState() != AudioTrack.STATE_INITIALIZED) {
+                track.release();
+                throw new IllegalStateException("AudioTrack did not initialize for " + parsed.sampleRate + " Hz audio.");
+            }
+
             activeTrack = track;
             try {
                 if (!isCurrentVoiceClip(clip)) return;
                 String savedChecksum = clip.fromDesktop ? appendCurrentVoiceClipToSavedAudio(clip) : "";
                 if (clip.fromDesktop) {
-                    runOnUiThread(() -> appendVoiceDebug("Khavia saved the ordered phone voice stream", "afterSeq=" + clip.audioSequence + ", savedSha256=" + shortHash(savedChecksum) + ", savedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks));
+                    runOnUiThread(() -> appendVoiceDebug(
+                            "Khavia saved the ordered phone voice stream",
+                            "afterSeq=" + clip.audioSequence
+                                    + ", savedSha256=" + shortHash(savedChecksum)
+                                    + ", savedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks));
                 }
-                runOnUiThread(() -> startStarVoiceAnimationMarkers(clip, durationMs));
-                track.play();
+
                 int offset = 0;
                 int bytesPerFrame = Math.max(1, parsed.channels * 2);
                 int expectedFrames = parsed.pcm.length / bytesPerFrame;
+
+                // Prime AudioTrack before starting it. The prime write is capped at the
+                // configured stream buffer so a blocking write cannot wait for playback.
+                int primeBytes = Math.max(1, Math.min(bufferSize, parsed.sampleRate * bytesPerFrame / 4));
+                int firstWriteSize = Math.min(parsed.pcm.length, primeBytes);
+                int firstWrite = track.write(parsed.pcm, 0, firstWriteSize, AudioTrack.WRITE_BLOCKING);
+                if (firstWrite <= 0) {
+                    throw new IllegalStateException("AudioTrack rejected the first PCM buffer: " + firstWrite);
+                }
+                offset += firstWrite;
+
+                track.play();
+
+                // AudioTrack.play() requests playback, but the hardware may not have emitted
+                // the first sample yet. Wait for the playback head to move, then align the
+                // response activity array to the samples that have actually played.
+                int playbackHeadFrames = track.getPlaybackHeadPosition();
+                long playbackHeadDeadlineMs = SystemClock.elapsedRealtime() + 750L;
+                while (running && isCurrentVoiceClip(clip) && playbackHeadFrames <= 0
+                        && SystemClock.elapsedRealtime() < playbackHeadDeadlineMs) {
+                    try { Thread.sleep(3L); } catch (InterruptedException ignored) { break; }
+                    playbackHeadFrames = track.getPlaybackHeadPosition();
+                }
+
+                final int startedPlaybackHeadFrames = Math.max(0, playbackHeadFrames);
+                final long playbackElapsedMs = startedPlaybackHeadFrames * 1000L / Math.max(1, parsed.sampleRate);
+                runOnUiThread(() -> {
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, "Playing " + clip.label + ".");
+                    audioStatusText.setText("Playing " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
+                    appendVoiceDebug(
+                            startedPlaybackHeadFrames > 0 ? "Elusiaa started playing audio" : "Elusiaa could not confirm audio output",
+                            clip.label + ", playbackHeadFrames=" + startedPlaybackHeadFrames
+                                    + ", durationMs=" + durationMs + ", bytes=" + clip.wav.length
+                                    + ", sha256=" + shortHash(clip.sha256));
+                    if (startedPlaybackHeadFrames > 0) {
+                        startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
+                    }
+                });
+
                 while (offset < parsed.pcm.length && isCurrentVoiceClip(clip)) {
                     int toWrite = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
-                    int wrote = track.write(parsed.pcm, offset, toWrite);
+                    int wrote = track.write(parsed.pcm, offset, toWrite, AudioTrack.WRITE_BLOCKING);
                     if (wrote <= 0) break;
                     offset += wrote;
                 }
 
                 // MODE_STREAM write() only guarantees the bytes were accepted by AudioTrack, not that
-                // every queued sample has already reached the speaker. The old code slept for the full
-                // clip duration after writing, which could nearly double each chunk and created Android
-                // gaps that the desktop player did not have. Wait only until the playback head reaches
-                // the final frame, then move immediately to the next queued WAV.
+                // every queued sample has already reached the speaker. Wait until the playback head
+                // reaches the final frame, then move immediately to the next queued WAV.
                 long waitStarted = System.currentTimeMillis();
                 long maxWaitMs = Math.max(250L, durationMs + 750L);
                 while (running && isCurrentVoiceClip(clip) && track.getPlaybackHeadPosition() < expectedFrames
@@ -3215,12 +3328,20 @@ public final class MainActivity extends Activity {
                     try { Thread.sleep(12L); } catch (InterruptedException ignored) { break; }
                 }
 
-                track.stop();
-                runOnUiThread(() -> appendVoiceDebug("Elusiaa finished playing audio", clip.label + ", sha256=" + shortHash(clip.sha256) + ", queuedNext=" + queue.size()));
+                if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.stop();
+                runOnUiThread(() -> appendVoiceDebug(
+                        "Elusiaa finished playing audio",
+                        clip.label + ", sha256=" + shortHash(clip.sha256) + ", queuedNext=" + queue.size()));
             } finally {
                 if (activeTrack == track) activeTrack = null;
+                try {
+                    if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.stop();
+                } catch (Exception ignored) { }
                 track.release();
-                runOnUiThread(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio playback finished."));
+                runOnUiThread(() -> setKeepScreenAwake(
+                        KEEP_AWAKE_REASON_AUDIO_PLAYBACK,
+                        false,
+                        "Audio playback finished."));
             }
         }
     }
