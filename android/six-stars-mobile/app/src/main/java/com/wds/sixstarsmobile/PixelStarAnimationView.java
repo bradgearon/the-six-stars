@@ -20,6 +20,11 @@ import android.view.View;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Pixel-art Star renderer used by the Android production companion screen.
@@ -43,9 +48,18 @@ import java.util.Locale;
 public final class PixelStarAnimationView extends View {
     private static final long FRAME_DURATION_MS = 150L;
     private static final float SPRITE_VIEWPORT_FRACTION = 0.70f;
+    private static final ExecutorService GIF_PRELOAD_EXECUTOR =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "six-stars-gif-preload");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Paint paint = new Paint();
+    private final Map<String, Drawable> gifCache = new ConcurrentHashMap<>();
+    private final Set<String> gifPreloadsInFlight = ConcurrentHashMap.newKeySet();
+    private final Set<String> missingGifAssets = ConcurrentHashMap.newKeySet();
     private Bitmap[] frames = new Bitmap[0];
     private int frameIndex;
     private String activeKey = "";
@@ -77,6 +91,7 @@ public final class PixelStarAnimationView extends View {
     }
 
     private void init() {
+        paint.setAntiAlias(false);
         paint.setFilterBitmap(false);
         paint.setDither(false);
         setWillNotDraw(false);
@@ -86,7 +101,10 @@ public final class PixelStarAnimationView extends View {
         String normalizedStar = normalizeAssetPart(starId);
         String normalizedState = normalizeAssetPart(state == null || state.length() == 0 ? "idle" : state);
         String key = normalizedStar + ":" + normalizedState;
-        if (key.equals(activeKey) && (activeDrawable != null || frames.length > 0)) return;
+        if (key.equals(activeKey) && (activeDrawable != null || frames.length > 0)) {
+            preloadStarGifs(normalizedStar);
+            return;
+        }
         activeKey = key;
 
         clearCurrentAnimation();
@@ -95,15 +113,26 @@ public final class PixelStarAnimationView extends View {
                 "star_animations/" + normalizedStar + "/" + normalizedState + ".gif",
                 "star_animations/" + normalizedStar + "/idle.gif"
         };
+        boolean loadedGif = false;
         for (String path : candidates) {
-            if (loadGif(path)) return;
+            if (loadGif(path)) {
+                loadedGif = true;
+                break;
+            }
         }
 
-        int[] conventionFrames = findConventionFrameResources(normalizedStar, normalizedState);
-        if (conventionFrames.length == 0 && !"idle".equals(normalizedState)) {
-            conventionFrames = findConventionFrameResources(normalizedStar, "idle");
+        if (!loadedGif) {
+            int[] conventionFrames = findConventionFrameResources(normalizedStar, normalizedState);
+            if (conventionFrames.length == 0 && !"idle".equals(normalizedState)) {
+                conventionFrames = findConventionFrameResources(normalizedStar, "idle");
+            }
+            setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
         }
-        setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
+
+        // Decode the currently selected Star's idle and talking GIFs while the
+        // user is looking at the screen. Switching to talking then reuses the
+        // same decoded drawable instead of reopening the asset at speech start.
+        preloadStarGifs(normalizedStar);
     }
 
     private boolean loadGif(String assetPath) {
@@ -126,20 +155,71 @@ public final class PixelStarAnimationView extends View {
 
     @TargetApi(Build.VERSION_CODES.P)
     private boolean loadAnimatedGif(String assetPath) {
+        if (missingGifAssets.contains(assetPath)) return false;
+
+        Drawable drawable = gifCache.get(assetPath);
+        if (drawable == null) {
+            drawable = decodeAnimatedGif(assetPath);
+            if (drawable == null) {
+                missingGifAssets.add(assetPath);
+                return false;
+            }
+
+            Drawable cached = gifCache.putIfAbsent(assetPath, drawable);
+            if (cached != null) drawable = cached;
+        }
+
+        setDrawable(drawable);
+        return true;
+    }
+
+    @TargetApi(Build.VERSION_CODES.P)
+    private Drawable decodeAnimatedGif(String assetPath) {
         try {
             ImageDecoder.Source source = ImageDecoder.createSource(getContext().getAssets(), assetPath);
             Drawable drawable = ImageDecoder.decodeDrawable(source);
-            if (drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) return false;
-            setDrawable(drawable);
-            return true;
+            if (drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) return null;
+
+            // AnimatedImageDrawable enables bilinear filtering by default when
+            // scaled. That makes a GIF look softer than the PNG fallback even
+            // when both source canvases have exactly the same dimensions.
+            drawable.setFilterBitmap(false);
+            return drawable;
         } catch (Exception ignored) {
-            return false;
+            return null;
         }
+    }
+
+    private void preloadStarGifs(String normalizedStar) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
+    }
+
+    @TargetApi(Build.VERSION_CODES.P)
+    private void preloadAnimatedGif(String assetPath) {
+        if (gifCache.containsKey(assetPath)
+                || missingGifAssets.contains(assetPath)
+                || !gifPreloadsInFlight.add(assetPath)) return;
+
+        GIF_PRELOAD_EXECUTOR.execute(() -> {
+            try {
+                Drawable drawable = decodeAnimatedGif(assetPath);
+                if (drawable != null) {
+                    gifCache.putIfAbsent(assetPath, drawable);
+                } else {
+                    missingGifAssets.add(assetPath);
+                }
+            } finally {
+                gifPreloadsInFlight.remove(assetPath);
+            }
+        });
     }
 
     private void setDrawable(Drawable drawable) {
         clearCurrentAnimation();
         activeDrawable = drawable;
+        activeDrawable.setFilterBitmap(false);
         activeDrawable.setCallback(this);
         if (activeDrawable instanceof Animatable && isAttachedToWindow()) {
             ((Animatable) activeDrawable).start();
