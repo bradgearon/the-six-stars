@@ -20,6 +20,7 @@ import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
+import android.media.AudioTimestamp;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.net.Uri;
@@ -82,6 +83,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class MainActivity extends ComponentActivity {
     private static final String PREFS_NAME = "SixStarsMobilePrefs";
@@ -189,6 +191,7 @@ public final class MainActivity extends ComponentActivity {
     private String prodAnimationState = "idle";
     private int voiceAnimationGeneration;
     private boolean starVoicePlaybackActive;
+    private PhoneVoiceClip activeAnimatedVoiceClip;
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
@@ -976,6 +979,15 @@ public final class MainActivity extends ComponentActivity {
 
     private void cancelStarVoiceAnimationMarkers(String reason) {
         voiceAnimationGeneration++;
+        activeAnimatedVoiceClip = null;
+        starVoicePlaybackActive = false;
+        setProdAnimationState("idle");
+    }
+
+    private void finishStarVoiceAnimationMarkers(PhoneVoiceClip clip) {
+        if (clip == null || activeAnimatedVoiceClip != clip) return;
+        voiceAnimationGeneration++;
+        activeAnimatedVoiceClip = null;
         starVoicePlaybackActive = false;
         setProdAnimationState("idle");
     }
@@ -983,6 +995,7 @@ public final class MainActivity extends ComponentActivity {
     private void startStarVoiceAnimationMarkers(PhoneVoiceClip clip, long fallbackDurationMs, long playbackElapsedMs) {
         if (!prodMode || clip == null || !clip.fromDesktop) return;
         final int generation = ++voiceAnimationGeneration;
+        activeAnimatedVoiceClip = clip;
         starVoicePlaybackActive = true;
         long elapsedMs = Math.max(0L, playbackElapsedMs);
         int[] segments = clip.speechActivitySegmentsMs == null ? new int[0] : clip.speechActivitySegmentsMs;
@@ -993,6 +1006,7 @@ public final class MainActivity extends ComponentActivity {
             long remainingMs = Math.max(80L, fallbackDurationMs - elapsedMs);
             mainHandler.postDelayed(() -> {
                 if (generation == voiceAnimationGeneration) {
+                    if (activeAnimatedVoiceClip == clip) activeAnimatedVoiceClip = null;
                     starVoicePlaybackActive = false;
                     setProdAnimationState("idle");
                 }
@@ -1034,6 +1048,7 @@ public final class MainActivity extends ComponentActivity {
                 Math.max(Math.max(250L, fallbackDurationMs), latestEnd + 80L) - elapsedMs);
         mainHandler.postDelayed(() -> {
             if (generation == voiceAnimationGeneration) {
+                if (activeAnimatedVoiceClip == clip) activeAnimatedVoiceClip = null;
                 starVoicePlaybackActive = false;
                 setProdAnimationState("idle");
             }
@@ -3260,6 +3275,10 @@ public final class MainActivity extends ComponentActivity {
                 throw new IllegalStateException("AudioTrack did not initialize for " + parsed.sampleRate + " Hz audio.");
             }
 
+            AtomicBoolean playbackFinished = new AtomicBoolean(false);
+            AtomicBoolean animationStarted = new AtomicBoolean(false);
+            Thread playbackStartWatcher = null;
+
             activeTrack = track;
             try {
                 if (!isCurrentVoiceClip(clip)) return;
@@ -3286,33 +3305,33 @@ public final class MainActivity extends ComponentActivity {
                 }
                 offset += firstWrite;
 
-                track.play();
-
-                // AudioTrack.play() requests playback, but the hardware may not have emitted
-                // the first sample yet. Wait for the playback head to move, then align the
-                // response activity array to the samples that have actually played.
-                int playbackHeadFrames = track.getPlaybackHeadPosition();
-                long playbackHeadDeadlineMs = SystemClock.elapsedRealtime() + 750L;
-                while (running && isCurrentVoiceClip(clip) && playbackHeadFrames <= 0
-                        && SystemClock.elapsedRealtime() < playbackHeadDeadlineMs) {
-                    try { Thread.sleep(3L); } catch (InterruptedException ignored) { break; }
-                    playbackHeadFrames = track.getPlaybackHeadPosition();
-                }
-
-                final int startedPlaybackHeadFrames = Math.max(0, playbackHeadFrames);
-                final long playbackElapsedMs = startedPlaybackHeadFrames * 1000L / Math.max(1, parsed.sampleRate);
-                runOnUiThread(() -> {
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, "Playing " + clip.label + ".");
-                    audioStatusText.setText("Playing " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
-                    appendVoiceDebug(
-                            startedPlaybackHeadFrames > 0 ? "Elusiaa started playing audio" : "Elusiaa could not confirm audio output",
-                            clip.label + ", playbackHeadFrames=" + startedPlaybackHeadFrames
-                                    + ", durationMs=" + durationMs + ", bytes=" + clip.wav.length
-                                    + ", sha256=" + shortHash(clip.sha256));
-                    if (startedPlaybackHeadFrames > 0) {
-                        startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
+                AudioTrack.OnPlaybackPositionUpdateListener playbackListener = new AudioTrack.OnPlaybackPositionUpdateListener() {
+                    @Override public void onMarkerReached(AudioTrack audioTrack) {
+                        long framePosition = Math.max(1L, Integer.toUnsignedLong(audioTrack.getPlaybackHeadPosition()));
+                        signalPlaybackStarted(
+                                clip, parsed.sampleRate, durationMs, framePosition,
+                                "marker", animationStarted, playbackFinished);
                     }
+
+                    @Override public void onPeriodicNotification(AudioTrack audioTrack) {
+                        // The one-frame marker is used for startup. Periodic notifications are disabled.
+                    }
+                };
+                track.setPlaybackPositionUpdateListener(playbackListener, mainHandler);
+                int markerResult = track.setNotificationMarkerPosition(1);
+
+                track.play();
+                runOnUiThread(() -> {
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, "Starting " + clip.label + ".");
+                    audioStatusText.setText("Starting " + clip.label + " — " + parsed.sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
                 });
+
+                // Some devices do not dispatch the one-frame marker reliably during route warmup.
+                // Keep writing audio immediately and confirm presentation independently with
+                // AudioTimestamp, falling back to the continuously advancing playback head.
+                playbackStartWatcher = startPlaybackStartWatcher(
+                        track, clip, parsed.sampleRate, durationMs, markerResult,
+                        animationStarted, playbackFinished);
 
                 while (offset < parsed.pcm.length && isCurrentVoiceClip(clip)) {
                     int toWrite = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
@@ -3332,20 +3351,125 @@ public final class MainActivity extends ComponentActivity {
                 }
 
                 if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.stop();
+                playbackFinished.set(true);
+                if (playbackStartWatcher != null) playbackStartWatcher.interrupt();
                 runOnUiThread(() -> appendVoiceDebug(
                         "Elusiaa finished playing audio",
                         clip.label + ", sha256=" + shortHash(clip.sha256) + ", queuedNext=" + queue.size()));
             } finally {
+                playbackFinished.set(true);
+                if (playbackStartWatcher != null) playbackStartWatcher.interrupt();
                 if (activeTrack == track) activeTrack = null;
+                try {
+                    track.setNotificationMarkerPosition(0);
+                    track.setPlaybackPositionUpdateListener(null);
+                } catch (Exception ignored) { }
                 try {
                     if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.stop();
                 } catch (Exception ignored) { }
                 track.release();
-                runOnUiThread(() -> setKeepScreenAwake(
-                        KEEP_AWAKE_REASON_AUDIO_PLAYBACK,
-                        false,
-                        "Audio playback finished."));
+                runOnUiThread(() -> {
+                    finishStarVoiceAnimationMarkers(clip);
+                    setKeepScreenAwake(
+                            KEEP_AWAKE_REASON_AUDIO_PLAYBACK,
+                            false,
+                            "Audio playback finished.");
+                });
             }
+        }
+
+        private Thread startPlaybackStartWatcher(
+                AudioTrack track,
+                PhoneVoiceClip clip,
+                int sampleRate,
+                long durationMs,
+                int markerResult,
+                AtomicBoolean animationStarted,
+                AtomicBoolean playbackFinished) {
+            Thread watcher = new Thread(() -> {
+                AudioTimestamp timestamp = new AudioTimestamp();
+                long deadlineMs = SystemClock.elapsedRealtime()
+                        + Math.max(5000L, Math.min(30000L, durationMs + 5000L));
+
+                while (running
+                        && !playbackFinished.get()
+                        && !animationStarted.get()
+                        && isCurrentVoiceClip(clip)
+                        && SystemClock.elapsedRealtime() < deadlineMs) {
+                    long framePosition = 0L;
+                    String source = "playback-head";
+                    try {
+                        if (track.getTimestamp(timestamp) && timestamp.framePosition > 0L) {
+                            framePosition = timestamp.framePosition;
+                            source = "audio-timestamp";
+                        } else {
+                            framePosition = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+                        }
+                    } catch (IllegalStateException released) {
+                        break;
+                    }
+
+                    if (framePosition > 0L) {
+                        signalPlaybackStarted(
+                                clip, sampleRate, durationMs, framePosition, source,
+                                animationStarted, playbackFinished);
+                        break;
+                    }
+
+                    try {
+                        Thread.sleep(10L);
+                    } catch (InterruptedException interrupted) {
+                        break;
+                    }
+                }
+
+                if (!playbackFinished.get() && !animationStarted.get() && isCurrentVoiceClip(clip)) {
+                    runOnUiThread(() -> appendVoiceDebug(
+                            "Elusiaa could not confirm audio output",
+                            clip.label + ", markerResult=" + markerResult
+                                    + ", durationMs=" + durationMs
+                                    + ", sha256=" + shortHash(clip.sha256)));
+                }
+            }, "six-stars-playback-start-watcher");
+            watcher.start();
+            return watcher;
+        }
+
+        private void signalPlaybackStarted(
+                PhoneVoiceClip clip,
+                int sampleRate,
+                long durationMs,
+                long framePosition,
+                String source,
+                AtomicBoolean animationStarted,
+                AtomicBoolean playbackFinished) {
+            if (playbackFinished.get()
+                    || !running
+                    || !isCurrentVoiceClip(clip)
+                    || !animationStarted.compareAndSet(false, true)) {
+                return;
+            }
+
+            long detectedAtMs = SystemClock.elapsedRealtime();
+            long elapsedAtDetectionMs = Math.max(0L, framePosition) * 1000L / Math.max(1, sampleRate);
+            runOnUiThread(() -> {
+                if (playbackFinished.get() || !running || !isCurrentVoiceClip(clip)) return;
+
+                long callbackDelayMs = Math.max(0L, SystemClock.elapsedRealtime() - detectedAtMs);
+                long playbackElapsedMs = Math.min(
+                        Math.max(0L, durationMs),
+                        elapsedAtDetectionMs + callbackDelayMs);
+                audioStatusText.setText("Playing " + clip.label + " — " + sampleRate + " Hz — sha256 " + shortHash(clip.sha256));
+                appendVoiceDebug(
+                        "Elusiaa started playing audio",
+                        clip.label + ", source=" + source
+                                + ", playbackFrames=" + framePosition
+                                + ", playbackElapsedMs=" + playbackElapsedMs
+                                + ", durationMs=" + durationMs
+                                + ", bytes=" + clip.wav.length
+                                + ", sha256=" + shortHash(clip.sha256));
+                startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
+            });
         }
     }
 
