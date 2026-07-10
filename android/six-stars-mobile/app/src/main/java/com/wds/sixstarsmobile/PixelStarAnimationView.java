@@ -47,7 +47,6 @@ import java.util.concurrent.Executors;
  */
 public final class PixelStarAnimationView extends View {
     private static final long FRAME_DURATION_MS = 150L;
-    private static final float SPRITE_VIEWPORT_FRACTION = 0.70f;
     private static final ExecutorService GIF_PRELOAD_EXECUTOR =
             Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "six-stars-gif-preload");
@@ -326,9 +325,18 @@ public final class PixelStarAnimationView extends View {
     private Rect destinationRect(int sourceWidth, int sourceHeight, int availableWidth, int availableHeight) {
         int safeWidth = Math.max(1, sourceWidth);
         int safeHeight = Math.max(1, sourceHeight);
-        float targetWidth = availableWidth * SPRITE_VIEWPORT_FRACTION;
-        float targetHeight = availableHeight * SPRITE_VIEWPORT_FRACTION;
-        float scale = Math.min(targetWidth / safeWidth, targetHeight / safeHeight);
+        float maxFitScale = Math.min(
+                availableWidth / (float) safeWidth,
+                availableHeight / (float) safeHeight);
+
+        // The production Star GIFs share a 128x128 source canvas. Fill the
+        // largest possible centered square and prefer a whole-number scale so
+        // every source pixel maps to an exact block of screen pixels. This
+        // makes the character substantially larger without reintroducing blur
+        // or a size jump between idle.gif and talking.gif.
+        float scale = maxFitScale >= 1.0f
+                ? Math.max(1.0f, (float) Math.floor(maxFitScale))
+                : maxFitScale;
         int drawWidth = Math.max(1, Math.round(safeWidth * scale));
         int drawHeight = Math.max(1, Math.round(safeHeight * scale));
         int left = getPaddingLeft() + (availableWidth - drawWidth) / 2;
