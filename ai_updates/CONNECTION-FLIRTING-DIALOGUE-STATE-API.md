@@ -4,7 +4,7 @@ This update adds a state-aware romance/flirting layer and authored dialogue memo
 
 ## Connection-based flirt behavior
 
-The prompt now reads the Star's `EmotionalConnectionPercent`, Heart/Trust/Romance, met/ally flags, girlfriend readiness, and active deterministic effectors. As connection rises, the Star is instructed to become more openly flirty in her own style while still respecting ally status, consent, and story timing.
+The prompt now reads the Star's `EmotionalConnectionPercent`, Heart/Trust/Romance, met/ally flags, girlfriend readiness, and active deterministic effectors. As connection rises, the Star is instructed to become more openly flirty in her own style while still respecting ally status, earned closeness, and story timing.
 
 Each default Star profile now has private internal attraction hooks:
 

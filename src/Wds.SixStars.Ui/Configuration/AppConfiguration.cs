@@ -228,6 +228,10 @@ namespace Wds.SixStars.Ui.Configuration
         public int SecretStatesForPrompt { get; set; } = 30;
         public int RelationshipCombosForPrompt { get; set; } = 20;
         public int ScreenCapturesForPrompt { get; set; } = 5;
+        public double ActiveFlirtConnectionPercent { get; set; } = 65;
+        public int ActiveFlirtRomanceScore { get; set; } = 10;
+        public double StrongActiveFlirtConnectionPercent { get; set; } = 85;
+        public int StrongActiveFlirtRomanceScore { get; set; } = 25;
     }
 
     public sealed class ScreenLlmConfig

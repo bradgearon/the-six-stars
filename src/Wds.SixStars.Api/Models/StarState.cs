@@ -89,6 +89,10 @@ namespace Wds.SixStars.Api.Models
 
         public bool IsGirlfriend { get; set; }
         public DateTimeOffset? GirlfriendSince { get; set; }
+
+        /// <summary>Player/UI preference for whether girlfriend cute-mode behavior is allowed. Defaults true; if false, hourly cute-mode rolls are suppressed.</summary>
+        public bool GirlfriendCuteModeEnabled { get; set; } = true;
+
         public List<string> GirlfriendHistory { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
@@ -98,6 +102,18 @@ namespace Wds.SixStars.Api.Models
 
         /// <summary>Durable girlfriend-mode archive of wants/needs the player's turns appear to have met.</summary>
         public List<GirlfriendNeedFulfillmentHistoryEntry> GirlfriendNeedsMetHistory { get; set; } = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+
+        /// <summary>Compact durable history of generated girlfriend need vectors. Format: timestamp|slot|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendDesiredNeedVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of generated girlfriend want vectors. Format: timestamp|slot|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendDesiredWantVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of girlfriend needs met by player turns. Format: timestamp|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendMetNeedVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of girlfriend wants met by player turns. Format: timestamp|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendMetWantVectorHistory { get; set; } = new List<string>();
 
         /// <summary>Accumulated girlfriend need-fulfillment performance vector since she became girlfriend.</summary>
         public List<GirlfriendVectorItem> GirlfriendNeedsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();

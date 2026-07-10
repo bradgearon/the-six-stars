@@ -86,6 +86,10 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
                 GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
                 GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendDesiredNeedVectorHistory = new List<string>(),
+                GirlfriendDesiredWantVectorHistory = new List<string>(),
+                GirlfriendMetNeedVectorHistory = new List<string>(),
+                GirlfriendMetWantVectorHistory = new List<string>(),
                 GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
@@ -149,6 +153,10 @@ namespace Wds.SixStars.Api.Engine
                 state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
                 changed = true;
             }
+            if (state.GirlfriendDesiredNeedVectorHistory == null) { state.GirlfriendDesiredNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendDesiredWantVectorHistory == null) { state.GirlfriendDesiredWantVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetNeedVectorHistory == null) { state.GirlfriendMetNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetWantVectorHistory == null) { state.GirlfriendMetWantVectorHistory = new List<string>(); changed = true; }
             if (state.GirlfriendNeedsMetPerformanceVector == null)
             {
                 state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();

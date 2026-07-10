@@ -74,6 +74,10 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
                 GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
                 GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendDesiredNeedVectorHistory = new List<string>(),
+                GirlfriendDesiredWantVectorHistory = new List<string>(),
+                GirlfriendMetNeedVectorHistory = new List<string>(),
+                GirlfriendMetWantVectorHistory = new List<string>(),
                 GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
                 GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
@@ -98,6 +102,10 @@ namespace Wds.SixStars.Api.Engine
             if (state.GirlfriendHourlyState == null) state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
             if (state.GirlfriendDesiredStateHistory == null) state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
             if (state.GirlfriendNeedsMetHistory == null) state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+            if (state.GirlfriendDesiredNeedVectorHistory == null) state.GirlfriendDesiredNeedVectorHistory = new List<string>();
+            if (state.GirlfriendDesiredWantVectorHistory == null) state.GirlfriendDesiredWantVectorHistory = new List<string>();
+            if (state.GirlfriendMetNeedVectorHistory == null) state.GirlfriendMetNeedVectorHistory = new List<string>();
+            if (state.GirlfriendMetWantVectorHistory == null) state.GirlfriendMetWantVectorHistory = new List<string>();
             if (state.GirlfriendNeedsMetPerformanceVector == null) state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
             if (state.GirlfriendWantsMetPerformanceVector == null) state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
             if (state.GirlfriendCoupleActivityScores == null) state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();

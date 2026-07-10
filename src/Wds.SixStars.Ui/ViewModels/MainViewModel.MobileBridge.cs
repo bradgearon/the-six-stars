@@ -281,6 +281,20 @@ public sealed partial class MainViewModel
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " is no longer marked as girlfriend.");
             }
 
+            case "SetGirlfriendCuteMode":
+            {
+                bool enabled = command.CuteModeEnabled ?? true;
+                StarState current = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (!current.IsGirlfriend)
+                {
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, current, starId + " is not currently the girlfriend Star, so cute mode settings were not changed.");
+                }
+
+                StarState state = await _runtime.SetGirlfriendCuteModeEnabledAsync(sessionId, starId, enabled, string.IsNullOrWhiteSpace(command.Reason) ? "Android girlfriend settings cute mode toggle" : command.Reason, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " cute mode " + (enabled ? "enabled" : "disabled") + "."));
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " girlfriend cute mode " + (enabled ? "enabled." : "disabled."));
+            }
+
             case "ClearHistory":
             {
                 StarState state = await ResetStarEverywhereAsync(starId, sessionId, cancellationToken).ConfigureAwait(false);
@@ -319,6 +333,9 @@ public sealed partial class MainViewModel
                         IsMet = reset.IsMet,
                         IsAlly = reset.IsAlly,
                         IsGirlfriend = reset.IsGirlfriend,
+                        GirlfriendCuteModeEnabled = reset.GirlfriendCuteModeEnabled,
+                        GirlfriendCuteModeActive = reset.GirlfriendCuteModeEnabled && (reset.GirlfriendHourlyState?.CuteModeActive ?? false),
+                        GirlfriendCuteModeSignature = reset.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                         Heart = reset.Heart,
                         Trust = reset.Trust,
                         Romance = reset.Romance,
@@ -574,6 +591,9 @@ public sealed partial class MainViewModel
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
             IsGirlfriend = state.IsGirlfriend,
+            GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+            GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             State = state,
             Message = response.Ok ? "Conversation response ready." : response.VoiceError,
             Error = response.Ok ? string.Empty : response.VoiceError,
@@ -634,6 +654,9 @@ public sealed partial class MainViewModel
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
             IsGirlfriend = state.IsGirlfriend,
+            GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+            GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             State = state,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -652,7 +675,7 @@ public sealed partial class MainViewModel
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
-            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
+            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : commandType == "SetGirlfriendCuteMode" ? "GirlfriendCuteModeChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
             CommandId = command.CommandId,
             SourceClientId = command.SourceClientId,
             SessionId = sessionId,
@@ -661,6 +684,9 @@ public sealed partial class MainViewModel
             IsMet = state.IsMet,
             IsAlly = state.IsAlly,
             IsGirlfriend = state.IsGirlfriend,
+            GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+            GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             Heart = state.Heart,
             Trust = state.Trust,
             Romance = state.Romance,
@@ -699,6 +725,9 @@ public sealed partial class MainViewModel
                 IsMet = state.IsMet,
                 IsAlly = state.IsAlly,
                 IsGirlfriend = state.IsGirlfriend,
+                GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+                GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+                GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -821,6 +850,9 @@ public sealed partial class MainViewModel
             isMet = state.IsMet,
             isAlly = state.IsAlly,
             isGirlfriend = state.IsGirlfriend,
+            girlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+            girlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            girlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             heart = state.Heart,
             trust = state.Trust,
             romance = state.Romance,
@@ -857,6 +889,9 @@ public sealed partial class MainViewModel
                 IsMet = state.IsMet,
                 IsAlly = state.IsAlly,
                 IsGirlfriend = state.IsGirlfriend,
+                GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
+                GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+                GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,

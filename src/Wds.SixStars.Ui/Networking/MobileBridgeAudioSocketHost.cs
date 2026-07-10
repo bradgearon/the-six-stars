@@ -139,6 +139,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
 
         byte[] wavCopy = CopyBytes(result.WavAudio);
         string checksum = Sha256Hex(wavCopy);
+        MobileSpeechActivityResult speechMarkers = MobileAudioSpeechActivityMarkers.AnalyzeWav(wavCopy);
         int audioSequence = streamSession?.NextAudioSequence() ?? chunkIndex;
         string header = JsonSerializer.Serialize(new
         {
@@ -163,6 +164,12 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             storyChunkCount = frameContext?.StoryChunkCount ?? 0,
             ttsPartIndex = frameContext?.TtsPartIndex ?? chunkIndex,
             ttsTotalParts = frameContext?.TtsTotalParts ?? totalChunks,
+            speechActivityVersion = speechMarkers.Count > 0 ? 1 : 0,
+            speechActivitySegmentsMs = speechMarkers.Segments,
+            speechActivitySegmentCount = speechMarkers.Count,
+            speechActivityFrameMs = speechMarkers.FrameMs,
+            speechActivityPeak = Math.Round(speechMarkers.Peak, 4),
+            speechActivityHighThreshold = Math.Round(speechMarkers.HighThreshold, 4),
             streamStartedAtUtc = streamSession?.StartedAtUtc,
             sentAtUtc = DateTimeOffset.UtcNow
         }, _jsonOptions);

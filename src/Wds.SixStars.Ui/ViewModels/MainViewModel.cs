@@ -884,7 +884,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             LearnedFunctionCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_LEARNED_FUNCTIONS_FOR_PROMPT"), _appConfig.Memory.LearnedFunctionsForPrompt),
             SecretStateCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SECRET_STATES_FOR_PROMPT"), _appConfig.Memory.SecretStatesForPrompt),
             RelationshipComboCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RELATIONSHIP_COMBOS_FOR_PROMPT"), _appConfig.Memory.RelationshipCombosForPrompt),
-            ScreenCaptureCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_CAPTURES_FOR_PROMPT"), _appConfig.Memory.ScreenCapturesForPrompt)
+            ScreenCaptureCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_CAPTURES_FOR_PROMPT"), _appConfig.Memory.ScreenCapturesForPrompt),
+            ActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.ActiveFlirtConnectionPercent),
+            ActiveFlirtRomanceScore = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_ROMANCE_SCORE"), _appConfig.Memory.ActiveFlirtRomanceScore),
+            StrongActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_STRONG_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.StrongActiveFlirtConnectionPercent),
+            StrongActiveFlirtRomanceScore = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_STRONG_ACTIVE_FLIRT_ROMANCE_SCORE"), _appConfig.Memory.StrongActiveFlirtRomanceScore)
         };
 
         System.Diagnostics.Debug.WriteLine($"[PromptMemory] RecentHistoryCount: {promptOptions.RecentHistoryCount}, ImportantQuotes: {promptOptions.ImportantQuoteCount}, MemoryNotes: {promptOptions.MemoryNoteCount}");

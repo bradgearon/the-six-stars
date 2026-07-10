@@ -16,7 +16,7 @@ When a Star is marked as the Last Cat's girlfriend, the prompt now includes a de
 - cute, endearing, responsive, emotionally present, and actively flirty when appropriate;
 - aligned with her own personality, element, domain, trust level, and connection;
 - guided by her current `needVector`, `wantVector`, and accumulated needs/wants-met performance vectors;
-- non-explicit and consent-aware by default;
+- non-explicit and active-flirt by default;
 - careful to review recent conversation before using a wanted-to-say hook so she does not repeat lines she already said.
 
 ## Durable girlfriend vectors

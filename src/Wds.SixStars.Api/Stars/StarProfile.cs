@@ -31,11 +31,14 @@ namespace Wds.SixStars.Api.Stars
         /// <summary>Private attraction hook for the prompt. The Star knows this internally but should not confess it cheaply.</summary>
         public string SecretAttractionHook { get; set; } = string.Empty;
 
-        /// <summary>How intense/private her romantic or sensual interest can become when connection is earned. Keep non-explicit and consent-based.</summary>
+        /// <summary>How intense/private her romantic or sensual interest can become when connection is earned. Keep non-explicit and connection-based.</summary>
         public string RomanticSensualDepth { get; set; } = string.Empty;
 
-        /// <summary>How her flirting should sound as connection grows.</summary>
-        public string FlirtStyle { get; set; } = string.Empty;
+        /// <summary>Per-Star flirting instructions loaded from the Star JSON profile.</summary>
+        public List<string> FlirtStyle { get; set; } = new List<string>();
+
+        /// <summary>Per-Star signature behaviors applied only while girlfriend cute mode is active.</summary>
+        public List<string> CuteModeInstructions { get; set; } = new List<string>();
 
         /// <summary>Boundaries that keep romance earned, in-character, and safe.</summary>
         public List<string> RomanceBoundaryRules { get; set; } = new List<string>();

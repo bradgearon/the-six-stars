@@ -156,6 +156,8 @@ public final class MainActivity extends Activity {
     private TextView prodConversationText;
     private ScrollView prodConversationScroll;
     private String prodAnimationState = "idle";
+    private int voiceAnimationGeneration;
+    private boolean starVoicePlaybackActive;
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
@@ -174,6 +176,9 @@ public final class MainActivity extends Activity {
     private boolean selectedStarIsMet;
     private boolean selectedStarIsAlly;
     private boolean selectedStarIsGirlfriend;
+    private boolean selectedStarCuteModeEnabled = true;
+    private boolean selectedStarCuteModeActive;
+    private String selectedStarCuteModeSignature = "";
     private String currentTopAffectedEmotions = "Top emotions: none yet.";
     private String currentLastEmotionVectors = "Last emotional vectors: none yet.";
     private String currentInterstarStatus = "Interstar state: idle.";
@@ -523,13 +528,16 @@ public final class MainActivity extends Activity {
         View titlePanel = findViewById(R.id.prod_star_title_panel);
         View avatarFrame = findViewById(R.id.prod_avatar_frame);
         View catAvatar = findViewById(R.id.prod_cat_avatar);
+        View prodStage = findViewById(R.id.prod_stage);
         View.OnClickListener openStars = v -> showStarSelectionDialog();
         View.OnClickListener openCompanionMenu = v -> showProdCompanionMenu();
+        View.OnClickListener openStarTapPanel = v -> openSelectedStarTapPanel();
         titlePanel.setOnClickListener(openStars);
         prodStarNameText.setOnClickListener(openStars);
         prodStarSubtitleText.setOnClickListener(openStars);
         avatarFrame.setOnClickListener(openCompanionMenu);
         catAvatar.setOnClickListener(openCompanionMenu);
+        if (prodStage != null) prodStage.setOnClickListener(openStarTapPanel);
         titlePanel.setContentDescription("Open Star selector");
         prodStarNameText.setContentDescription("Open Star selector");
         prodStarSubtitleText.setContentDescription("Open Star selector");
@@ -537,6 +545,11 @@ public final class MainActivity extends Activity {
         catAvatar.setContentDescription("Open companion menu and status");
 
         prodSpriteView = findViewById(R.id.prod_sprite_view);
+        if (prodSpriteView != null) {
+            prodSpriteView.setClickable(true);
+            prodSpriteView.setFocusable(true);
+            prodSpriteView.setOnClickListener(openStarTapPanel);
+        }
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
         if (prodListenButton != null) prodListenButton.setOnClickListener(v -> requestStarInitiativeFromListenButton());
@@ -602,6 +615,97 @@ public final class MainActivity extends Activity {
         voiceDebugText.setText("Prod voice journal ready.");
     }
 
+
+    private void openSelectedStarTapPanel() {
+        if (selectedStarIsGirlfriend) {
+            showGirlfriendSettingsDialog();
+        } else {
+            showStarSelectionDialog();
+        }
+    }
+
+    private void showGirlfriendSettingsDialog() {
+        final String starName = selectedStarName();
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setPadding(dp(14), dp(14), dp(14), dp(8));
+
+        TextView title = prodText(starName + " Settings", 22, 0xFFFFF4FA, true);
+        title.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(title);
+
+        TextView sub = prodText("Girlfriend controls for the selected Star. Tap the Star sprite to open this again.", 12, 0xFFFFD6EA, false);
+        sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(sub);
+
+        TextView status = prodOutput(buildGirlfriendSettingsStatusText(), 6);
+        status.setTextIsSelectable(true);
+        outer.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        CheckBox cuteMode = new CheckBox(this);
+        cuteMode.setText("Allow cute mode");
+        cuteMode.setTextColor(0xFFEAF7FF);
+        cuteMode.setChecked(selectedStarCuteModeEnabled);
+        outer.addView(cuteMode);
+
+        TextView hint = prodText("When enabled, the desktop runtime may activate her Star-specific cute mode during girlfriend hourly state updates. When disabled, she stays affectionate but avoids the special cute-mode behavior pattern.", 12, 0xFFB6E6F2, false);
+        outer.addView(hint);
+
+        LinearLayout buttons = row();
+        Button save = prodButton("Save");
+        Button breakup = prodButton("Break up");
+        buttons.addView(save, weightParams(1));
+        buttons.addView(breakup, weightParams(1));
+        outer.addView(buttons);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(outer)
+                .setNegativeButton("Close", null)
+                .create();
+        dialog.setOnShowListener(d -> {
+            dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF0141024, 0xFFFF6DB3, 18));
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            save.setOnClickListener(v -> {
+                selectedStarCuteModeEnabled = cuteMode.isChecked();
+                if (!selectedStarCuteModeEnabled) selectedStarCuteModeActive = false;
+                dispatchGirlfriendCuteMode(selectedStarCuteModeEnabled);
+                status.setText(buildGirlfriendSettingsStatusText());
+            });
+            breakup.setOnClickListener(v -> confirmBreakupFromGirlfriendSettings(dialog, starName));
+        });
+        dialog.show();
+    }
+
+    private String buildGirlfriendSettingsStatusText() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Star: ").append(selectedStarName()).append('\n');
+        sb.append(selectedStarIsGirlfriend ? "Relationship: girlfriend" : "Relationship: not girlfriend").append('\n');
+        sb.append("Cute mode setting: ").append(selectedStarCuteModeEnabled ? "enabled" : "disabled").append('\n');
+        sb.append("Cute mode right now: ").append(selectedStarCuteModeActive ? "active" : "not active").append('\n');
+        if (selectedStarCuteModeSignature != null && selectedStarCuteModeSignature.trim().length() > 0) {
+            sb.append("Signature: ").append(selectedStarCuteModeSignature.trim()).append('\n');
+        }
+        sb.append('\n').append("This only controls the girlfriend cute-mode style layer. It does not turn off normal affection or romance.");
+        return sb.toString();
+    }
+
+    private void confirmBreakupFromGirlfriendSettings(AlertDialog parentDialog, String starName) {
+        AlertDialog confirm = new AlertDialog.Builder(this)
+                .setTitle("Break up with " + starName + "?")
+                .setMessage("This ends the exclusive girlfriend path for this Star and clears girlfriend-path cute/needs/wants history.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Break up", (d, which) -> {
+                    if (parentDialog != null) parentDialog.dismiss();
+                    dispatchBreakupGirlfriend();
+                })
+                .create();
+        confirm.setOnShowListener(d -> {
+            confirm.getWindow().setBackgroundDrawable(makeProdPanel(0xF0141024, 0xFFFF6DB3, 18));
+            confirm.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            confirm.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xFFFFB4D6);
+        });
+        confirm.show();
+    }
 
     private void showProdCompanionMenu() {
         LinearLayout outer = new LinearLayout(this);
@@ -835,8 +939,60 @@ public final class MainActivity extends Activity {
     private void pulseProdTalkingThenIdle(long delayMs) {
         setProdAnimationState("talking");
         mainHandler.postDelayed(() -> {
-            if (!recording) setProdAnimationState("idle");
+            if (!recording && !starVoicePlaybackActive) setProdAnimationState("idle");
         }, Math.max(800L, delayMs));
+    }
+
+    private void cancelStarVoiceAnimationMarkers(String reason) {
+        voiceAnimationGeneration++;
+        starVoicePlaybackActive = false;
+        if (!recording) setProdAnimationState("idle");
+    }
+
+    private void startStarVoiceAnimationMarkers(PhoneVoiceClip clip, long fallbackDurationMs) {
+        if (!prodMode || clip == null || !clip.fromDesktop) return;
+        final int generation = ++voiceAnimationGeneration;
+        starVoicePlaybackActive = true;
+        int[] segments = clip.speechActivitySegmentsMs == null ? new int[0] : clip.speechActivitySegmentsMs;
+        if (segments.length < 2) {
+            // Missing/old desktop headers: keep the old coarse behavior as a safe fallback.
+            setProdAnimationState("talking");
+            mainHandler.postDelayed(() -> {
+                if (generation == voiceAnimationGeneration) {
+                    starVoicePlaybackActive = false;
+                    if (!recording) setProdAnimationState("idle");
+                }
+            }, Math.max(350L, fallbackDurationMs));
+            return;
+        }
+
+        long latestEnd = 0L;
+        int scheduled = 0;
+        for (int i = 0; i + 1 < segments.length && scheduled < 240; i += 2) {
+            long startMs = Math.max(0L, segments[i]);
+            long durationMs = Math.max(60L, Math.min(4000L, segments[i + 1]));
+            latestEnd = Math.max(latestEnd, startMs + durationMs);
+            scheduled++;
+            mainHandler.postDelayed(() -> {
+                if (generation == voiceAnimationGeneration && isCurrentVoiceClip(clip)) {
+                    starVoicePlaybackActive = true;
+                    setProdAnimationState("talking");
+                }
+            }, startMs);
+            mainHandler.postDelayed(() -> {
+                if (generation == voiceAnimationGeneration && !recording && isCurrentVoiceClip(clip)) {
+                    setProdAnimationState("idle");
+                }
+            }, startMs + durationMs);
+        }
+
+        final long releaseAt = Math.max(Math.max(250L, fallbackDurationMs), latestEnd + 80L);
+        mainHandler.postDelayed(() -> {
+            if (generation == voiceAnimationGeneration) {
+                starVoicePlaybackActive = false;
+                if (!recording) setProdAnimationState("idle");
+            }
+        }, releaseAt);
     }
 
     private void appendProdConversationLine(String speaker, String text) {
@@ -899,9 +1055,10 @@ public final class MainActivity extends Activity {
     private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
         refreshProdStarUi(starId);
         if (prodRelationshipText != null) {
-            prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + (girlfriend ? "   Girlfriend" : (ready ? "   Ready" : "")));
+            String gfSuffix = girlfriend ? "   Girlfriend" + (selectedStarCuteModeEnabled ? (selectedStarCuteModeActive ? "   Cute" : "") : "   Cute off") : (ready ? "   Ready" : "");
+            prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + gfSuffix);
         }
-        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
+        if (prodBreakupButton != null) prodBreakupButton.setVisibility(View.GONE);
         if (prodMiniStatusText != null) prodMiniStatusText.setText(status);
     }
 
@@ -1221,7 +1378,11 @@ public final class MainActivity extends Activity {
     }
 
     private void dispatchBreakupGirlfriend() {
-        dispatchBridgeCommand("BreakupGirlfriend", selectedStarName(), null, null, "Android prod breakup button ended girlfriend mode for this Star.");
+        dispatchBridgeCommand("BreakupGirlfriend", selectedStarName(), null, null, "Android girlfriend settings ended girlfriend mode for this Star.");
+    }
+
+    private void dispatchGirlfriendCuteMode(boolean enabled) {
+        dispatchBridgeCommand("SetGirlfriendCuteMode", selectedStarName(), null, null, "Android girlfriend settings cute mode toggle.", Boolean.valueOf(enabled));
     }
 
     private void maybeRequestStarInitiative(String reason) {
@@ -1332,6 +1493,10 @@ public final class MainActivity extends Activity {
     }
 
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
+        dispatchBridgeCommand(commandType, starId, isMet, isAlly, reason, null);
+    }
+
+    private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason, Boolean cuteModeEnabled) {
         httpExecutor.execute(() -> {
             try {
                 JSONObject json = new JSONObject();
@@ -1342,6 +1507,7 @@ public final class MainActivity extends Activity {
                 json.put("starId", starId == null || starId.length() == 0 ? selectedStarName() : starId);
                 if (isMet != null) json.put("isMet", isMet.booleanValue());
                 if (isAlly != null) json.put("isAlly", isAlly.booleanValue());
+                if (cuteModeEnabled != null) json.put("cuteModeEnabled", cuteModeEnabled.booleanValue());
                 json.put("reason", reason == null ? "Android bridge command" : reason);
                 runOnUiThread(() -> appendVoiceDebug("Elusiaa sent a bridge command", commandType + " for " + (starId == null ? selectedStarName() : starId)));
                 String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 30000);
@@ -1588,6 +1754,7 @@ public final class MainActivity extends Activity {
     private boolean isStateBridgeEvent(String type) {
         return "SelectedStarChanged".equalsIgnoreCase(type)
                 || "StarStateChanged".equalsIgnoreCase(type)
+                || "GirlfriendCuteModeChanged".equalsIgnoreCase(type)
                 || "StarHistoryCleared".equalsIgnoreCase(type)
                 || "AllStarsDataCleared".equalsIgnoreCase(type)
                 || "BridgeCommandAccepted".equalsIgnoreCase(type);
@@ -1602,7 +1769,10 @@ public final class MainActivity extends Activity {
         String spoken = optStringEither(event, "spokenText", "SpokenText", "");
         boolean girlfriend = optBooleanEither(event, "isGirlfriend", "IsGirlfriend", selectedStarIsGirlfriend);
         selectedStarIsGirlfriend = girlfriend;
-        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
+        selectedStarCuteModeEnabled = optBooleanEither(event, "girlfriendCuteModeEnabled", "GirlfriendCuteModeEnabled", selectedStarCuteModeEnabled);
+        selectedStarCuteModeActive = optBooleanEither(event, "girlfriendCuteModeActive", "GirlfriendCuteModeActive", selectedStarCuteModeActive);
+        selectedStarCuteModeSignature = optStringEither(event, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
+        if (prodBreakupButton != null) prodBreakupButton.setVisibility(View.GONE);
         if (spoken.length() > 0) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — girlfriend proposal\n\n" + clip(spoken, 8000));
@@ -1738,6 +1908,9 @@ public final class MainActivity extends Activity {
         double connection = optDoubleEither(state, "emotionalConnectionPercent", "EmotionalConnectionPercent", 0.0);
         boolean ready = optBooleanEither(state, "isGirlfriendReady", "IsGirlfriendReady", false);
         boolean girlfriend = optBooleanEither(state, "isGirlfriend", "IsGirlfriend", false);
+        selectedStarCuteModeEnabled = optBooleanEither(state, "girlfriendCuteModeEnabled", "GirlfriendCuteModeEnabled", true);
+        selectedStarCuteModeActive = optBooleanEither(state, "girlfriendCuteModeActive", "GirlfriendCuteModeActive", false);
+        selectedStarCuteModeSignature = optStringEither(state, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;
         updateEmotionVectorsFromJson(state);
@@ -1836,7 +2009,7 @@ public final class MainActivity extends Activity {
         try {
             byte[] localWav = createTestToneWav(24000, 1.0, 440.0);
             String checksum = sha256Hex(localWav);
-            wavAudioQueue.enqueue(new PhoneVoiceClip(localWav, "local 24 kHz test beep", checksum, false, "", 0L, 0));
+            wavAudioQueue.enqueue(new PhoneVoiceClip(localWav, "local 24 kHz test beep", checksum, false, "", 0L, 0, new int[0]));
             setDebug("Local phone audio test", "Queued a local 24 kHz PCM WAV beep. sha256=" + shortHash(checksum) + ". If you hear this, Android AudioTrack playback works.");
             appendVoiceDebug("Auerlis sparked a local test tone", "bytes=" + localWav.length + ", sha256=" + shortHash(checksum));
         } catch (Exception ex) {
@@ -2343,12 +2516,13 @@ public final class MainActivity extends Activity {
             String starId = header.optString("starId", "Star");
             String streamId = header.optString("streamId", "");
             long streamOrdinal = header.optLong("streamOrdinal", 0L);
+            int[] speechActivitySegmentsMs = parseSpeechActivitySegments(header.optString("speechActivitySegmentsMs", ""));
             if (!acceptVoiceStreamFrame(streamId, streamOrdinal, starId)) {
                 droppedStaleVoiceFrames++;
                 runOnUiThread(() -> appendVoiceDebug("Nyxari dropped a stale voice frame", "incomingStream=" + streamOrdinal + ", activeStream=" + activeVoiceStreamOrdinal + ", dropped=" + droppedStaleVoiceFrames));
                 return;
             }
-            PhoneVoiceClip clip = new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks, receivedChecksum, true, streamId, streamOrdinal, audioSequence);
+            PhoneVoiceClip clip = new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks, receivedChecksum, true, streamId, streamOrdinal, audioSequence, speechActivitySegmentsMs);
             OrderedEnqueueResult ordered = enqueueDesktopVoiceClipInOrder(clip);
             runOnUiThread(() -> {
                 audioStatusText.setText((ordered.queuedNow > 0 ? "Queued" : ordered.dropped ? "Dropped" : "Buffered")
@@ -2358,7 +2532,7 @@ public final class MainActivity extends Activity {
                         + " — seq " + audioSequence
                         + " — " + wav.length + " bytes — sha256 " + shortHash(receivedChecksum)
                         + (checksumOk ? " ✓" : " mismatch"));
-                appendVoiceDebug(starId + " voice chunk arrived", "stream=" + streamOrdinal + ", seq=" + audioSequence + ", expected=" + ordered.nextExpected + ", buffered=" + ordered.buffered + ", queuedNow=" + ordered.queuedNow + ", dropped=" + ordered.dropped + ", chunk=" + chunkNumber + "/" + totalChunks + ", bytes=" + wav.length + ", frameSha256=" + shortHash(receivedChecksum) + ", checksum=" + (checksumOk ? "ok" : "mismatch expected " + shortHash(expectedChecksum)));
+                appendVoiceDebug(starId + " voice chunk arrived", "stream=" + streamOrdinal + ", seq=" + audioSequence + ", expected=" + ordered.nextExpected + ", buffered=" + ordered.buffered + ", queuedNow=" + ordered.queuedNow + ", dropped=" + ordered.dropped + ", chunk=" + chunkNumber + "/" + totalChunks + ", speechSegments=" + (speechActivitySegmentsMs.length / 2) + ", bytes=" + wav.length + ", frameSha256=" + shortHash(receivedChecksum) + ", checksum=" + (checksumOk ? "ok" : "mismatch expected " + shortHash(expectedChecksum)));
             });
             return;
         }
@@ -2382,6 +2556,27 @@ public final class MainActivity extends Activity {
                 appendVoiceDebug("Maera felt a voice socket error", displayMessage);
             });
         }
+    }
+
+    private int[] parseSpeechActivitySegments(String compact) {
+        if (compact == null || compact.trim().length() == 0) return new int[0];
+        String[] parts = compact.split(";");
+        ArrayList<Integer> values = new ArrayList<>();
+        for (String part : parts) {
+            if (part == null) continue;
+            String[] pair = part.trim().split(":");
+            if (pair.length != 2) continue;
+            try {
+                int startMs = Math.max(0, Integer.parseInt(pair[0].trim()));
+                int durationMs = Math.max(40, Math.min(4000, Integer.parseInt(pair[1].trim())));
+                values.add(startMs);
+                values.add(durationMs);
+                if (values.size() >= 480) break;
+            } catch (Exception ignored) { }
+        }
+        int[] result = new int[values.size()];
+        for (int i = 0; i < values.size(); i++) result[i] = values.get(i);
+        return result;
     }
 
     private boolean acceptVoiceStreamFrame(String streamId, long streamOrdinal, String starId) {
@@ -2604,7 +2799,7 @@ public final class MainActivity extends Activity {
                 byte[] wav = java.nio.file.Files.readAllBytes(lastVoiceAudioFile.toPath());
                 String checksum = sha256Hex(wav);
                 lastVoiceAudioChecksum = checksum;
-                wavAudioQueue.enqueue(new PhoneVoiceClip(wav, "saved phone voice replay", checksum, false, "", 0L, 0));
+                wavAudioQueue.enqueue(new PhoneVoiceClip(wav, "saved phone voice replay", checksum, false, "", 0L, 0, new int[0]));
                 runOnUiThread(() -> {
                     setDebug("Play Saved Voice", "Queued " + lastVoiceAudioFile.getName() + " for replay. bytes=" + wav.length + ", sha256=" + shortHash(checksum));
                     appendVoiceDebug("Elusiaa replayed the saved voice", "bytes=" + wav.length + ", sha256=" + shortHash(checksum) + ", accumulatedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks);
@@ -2928,7 +3123,10 @@ public final class MainActivity extends Activity {
 
         void clearForNewStream() {
             queue.clear();
-            runOnUiThread(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio queue cleared for a new Star voice stream."));
+            runOnUiThread(() -> {
+                cancelStarVoiceAnimationMarkers("Audio queue cleared for a new Star voice stream.");
+                setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio queue cleared for a new Star voice stream.");
+            });
             AudioTrack track = activeTrack;
             if (track != null) {
                 try { track.pause(); } catch (Exception ignored) { }
@@ -2980,6 +3178,7 @@ public final class MainActivity extends Activity {
                 if (clip.fromDesktop) {
                     runOnUiThread(() -> appendVoiceDebug("Khavia saved the ordered phone voice stream", "afterSeq=" + clip.audioSequence + ", savedSha256=" + shortHash(savedChecksum) + ", savedChunks=" + lastVoiceAccumulatorChunks + "/" + lastVoiceAccumulatorTotalChunks));
                 }
+                runOnUiThread(() -> startStarVoiceAnimationMarkers(clip, durationMs));
                 track.play();
                 int offset = 0;
                 int bytesPerFrame = Math.max(1, parsed.channels * 2);
@@ -3035,8 +3234,9 @@ public final class MainActivity extends Activity {
         final String streamId;
         final long streamOrdinal;
         final int audioSequence;
+        final int[] speechActivitySegmentsMs;
 
-        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop, String streamId, long streamOrdinal, int audioSequence) {
+        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop, String streamId, long streamOrdinal, int audioSequence, int[] speechActivitySegmentsMs) {
             this.wav = wav;
             this.label = label == null ? "phone voice" : label;
             this.sha256 = sha256 == null ? "" : sha256;
@@ -3044,6 +3244,7 @@ public final class MainActivity extends Activity {
             this.streamId = streamId == null ? "" : streamId;
             this.streamOrdinal = streamOrdinal;
             this.audioSequence = audioSequence;
+            this.speechActivitySegmentsMs = speechActivitySegmentsMs == null ? new int[0] : speechActivitySegmentsMs;
         }
     }
 

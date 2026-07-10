@@ -361,8 +361,8 @@ namespace Wds.SixStars.Api.State
             if (state == null || context == null || !context.IsAvailable) return;
             List<GirlfriendVectorItem> needs = CleanGirlfriendVector(context.NeedVector, 30);
             List<GirlfriendVectorItem> wants = CleanGirlfriendVector(context.WantVector, 30);
-            List<string> things = CleanStringList(context.ThingsSheWantsToSay, 16);
-            List<string> cute = CleanStringList(context.CuteThingsSheWantsToSay, 16);
+            List<string> things = CleanStringList(context.ThingsSheWantsToSay, 8);
+            List<string> cute = CleanStringList(context.CuteThingsSheWantsToSay, 8);
             if (needs.Count == 0 && wants.Count == 0 && things.Count == 0 && cute.Count == 0) return;
 
             string id = "desired-" + (context.GeneratedAt ?? DateTimeOffset.UtcNow).UtcDateTime.ToString("yyyyMMddHHmmss") + "-" + (string.IsNullOrWhiteSpace(context.SlotId) ? "slot" : Slugify(context.SlotId));
@@ -376,9 +376,9 @@ namespace Wds.SixStars.Api.State
                 SlotId = context.SlotId ?? string.Empty,
                 Source = "girlfriend-hourly-state",
                 CreatedAt = context.GeneratedAt ?? DateTimeOffset.UtcNow,
-                Summary = CleanMarkerText(context.Summary, 900),
-                NeedSummary = CleanMarkerText(context.NeedSummary, 700),
-                WantSummary = CleanMarkerText(context.WantSummary, 700),
+                Summary = CleanMarkerText(context.Summary, 280),
+                NeedSummary = CleanMarkerText(context.NeedSummary, 180),
+                WantSummary = CleanMarkerText(context.WantSummary, 180),
                 NeedVector = needs,
                 WantVector = wants,
                 ThingsSheWantsToSay = things,
@@ -386,7 +386,11 @@ namespace Wds.SixStars.Api.State
                 OverallConfidence = Math.Max(0, Math.Min(1, context.OverallConfidence)),
                 OverallScore = Math.Max(0, Math.Min(100, context.OverallScore))
             });
-            Trim(state.GirlfriendDesiredStateHistory, 240);
+            state.GirlfriendDesiredNeedVectorHistory.Insert(0, FormatHistoryCompactLine(context.GeneratedAt ?? DateTimeOffset.UtcNow, context.SlotId, needs, 12));
+            state.GirlfriendDesiredWantVectorHistory.Insert(0, FormatHistoryCompactLine(context.GeneratedAt ?? DateTimeOffset.UtcNow, context.SlotId, wants, 12));
+            Trim(state.GirlfriendDesiredNeedVectorHistory, 72);
+            Trim(state.GirlfriendDesiredWantVectorHistory, 72);
+            Trim(state.GirlfriendDesiredStateHistory, 72);
         }
 
         private static void UpdateGirlfriendNeedsMetHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
@@ -402,13 +406,17 @@ namespace Wds.SixStars.Api.State
                 SessionId = request.SessionId ?? string.Empty,
                 StarId = request.StarId ?? string.Empty,
                 CreatedAt = now,
-                PlayerText = CleanMarkerText(request.PlayerText, 1200),
-                StarResponse = CleanMarkerText(request.StarResponse, 1200),
-                Summary = CleanMarkerText(request.GirlfriendNeedsMetSummary, 420),
+                PlayerText = CleanMarkerText(request.PlayerText, 600),
+                StarResponse = CleanMarkerText(request.StarResponse, 600),
+                Summary = CleanMarkerText(request.GirlfriendNeedsMetSummary, 240),
                 MetNeedVector = metNeeds,
                 MetWantVector = metWants
             });
-            Trim(state.GirlfriendNeedsMetHistory, 240);
+            state.GirlfriendMetNeedVectorHistory.Insert(0, FormatHistoryCompactLine(now, string.Empty, metNeeds, 12));
+            state.GirlfriendMetWantVectorHistory.Insert(0, FormatHistoryCompactLine(now, string.Empty, metWants, 12));
+            Trim(state.GirlfriendMetNeedVectorHistory, 72);
+            Trim(state.GirlfriendMetWantVectorHistory, 72);
+            Trim(state.GirlfriendNeedsMetHistory, 72);
             AccumulateGirlfriendPerformanceVector(state.GirlfriendNeedsMetPerformanceVector, metNeeds, 30);
             AccumulateGirlfriendPerformanceVector(state.GirlfriendWantsMetPerformanceVector, metWants, 30);
             AddUnique(state.GirlfriendHistory, new[] { "Met girlfriend wants/needs: " + (string.IsNullOrWhiteSpace(request.GirlfriendNeedsMetSummary) ? FormatMetVectorSummary(metNeeds, metWants) : request.GirlfriendNeedsMetSummary) }, 120);
@@ -594,7 +602,7 @@ namespace Wds.SixStars.Api.State
                         DisplayName = FirstNonEmpty(addition.DisplayName, addition.ItemId),
                         Confidence = Math.Max(0, Math.Min(1, addition.Confidence)),
                         Score = Math.Min(100, contribution),
-                        Reason = CleanMarkerText(addition.Reason, 360)
+                        Reason = string.Empty
                     });
                 }
                 else
@@ -602,7 +610,7 @@ namespace Wds.SixStars.Api.State
                     existing.DisplayName = FirstNonEmpty(existing.DisplayName, addition.DisplayName, addition.ItemId);
                     existing.Confidence = Math.Max(existing.Confidence, Math.Max(0, Math.Min(1, addition.Confidence)));
                     existing.Score = Math.Min(100, existing.Score + Math.Max(1, contribution / 4.0));
-                    if (!string.IsNullOrWhiteSpace(addition.Reason)) existing.Reason = CleanMarkerText(addition.Reason, 360);
+                    existing.Reason = string.Empty;
                 }
             }
             accumulator.Sort((a, b) => b.Score.CompareTo(a.Score));
@@ -619,7 +627,7 @@ namespace Wds.SixStars.Api.State
                     DisplayName = CleanMarkerText(FirstNonEmpty(x.DisplayName, x.ItemId), 160),
                     Confidence = Math.Max(0, Math.Min(1, x.Confidence)),
                     Score = Math.Max(0, Math.Min(100, x.Score)),
-                    Reason = CleanMarkerText(x.Reason, 360)
+                    Reason = string.Empty
                 })
                 .OrderByDescending(x => x.Score)
                 .ThenByDescending(x => x.Confidence)
@@ -638,14 +646,49 @@ namespace Wds.SixStars.Api.State
                 .ToList();
         }
 
+
+        private static string FormatGirlfriendVectorString(IEnumerable<GirlfriendVectorItem>? items, int maxItems)
+        {
+            List<string> parts = (items ?? Enumerable.Empty<GirlfriendVectorItem>())
+                .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.ItemId) || !string.IsNullOrWhiteSpace(x.DisplayName)))
+                .OrderByDescending(x => x.Score)
+                .ThenByDescending(x => x.Confidence)
+                .Take(Math.Max(1, maxItems))
+                .Select(x => SanitizeCompactId(FirstNonEmpty(x.ItemId, x.DisplayName)) + ":" + Math.Max(0, Math.Min(100, x.Score)).ToString("0.0", CultureInfo.InvariantCulture) + ":" + Math.Max(0, Math.Min(1, x.Confidence)).ToString("0.00", CultureInfo.InvariantCulture))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+            return parts.Count == 0 ? "none" : string.Join(";", parts);
+        }
+
+        private static string FormatHistoryCompactLine(DateTimeOffset createdAt, string? slotId, IEnumerable<GirlfriendVectorItem>? items, int maxItems)
+        {
+            string slot = string.IsNullOrWhiteSpace(slotId) ? string.Empty : SanitizeCompactId(slotId);
+            return createdAt.UtcDateTime.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture) + "|" + slot + "|" + FormatGirlfriendVectorString(items, maxItems);
+        }
+
+        private static string SanitizeCompactId(string? value)
+        {
+            string raw = FirstNonEmpty(value ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(raw)) return "unknown";
+            string compact = new string(raw.Where(char.IsLetterOrDigit).ToArray());
+            if (string.IsNullOrWhiteSpace(compact)) return "unknown";
+            return char.ToLowerInvariant(compact[0]) + (compact.Length > 1 ? compact.Substring(1) : string.Empty);
+        }
+
         private static void NormalizeGirlfriendHourlyContextJson(StarGirlfriendHourlyStateContext context)
         {
             if (context == null) return;
             context.NeedVector = CleanGirlfriendVector(context.NeedVector, 30);
             context.WantVector = CleanGirlfriendVector(context.WantVector, 30);
-            context.ThingsSheWantsToSay = CleanStringList(context.ThingsSheWantsToSay, 16);
-            context.CuteThingsSheWantsToSay = CleanStringList(context.CuteThingsSheWantsToSay, 16);
+            context.ThingsSheWantsToSay = CleanStringList(context.ThingsSheWantsToSay, 8);
+            context.CuteThingsSheWantsToSay = CleanStringList(context.CuteThingsSheWantsToSay, 8);
             if (!context.IsAvailable) return;
+            context.Summary = CleanMarkerText(context.Summary, 360);
+            context.RelationshipPosture = CleanMarkerText(context.RelationshipPosture, 300);
+            context.NeedSummary = CleanMarkerText(context.NeedSummary, 240);
+            context.WantSummary = CleanMarkerText(context.WantSummary, 240);
+            context.CuteModeReason = CleanMarkerText(context.CuteModeReason, 180);
+            context.CuteModeSignature = CleanMarkerText(context.CuteModeSignature, 180);
             context.Json = System.Text.Json.JsonSerializer.Serialize(new
             {
                 starId = context.StarId ?? string.Empty,
@@ -655,17 +698,16 @@ namespace Wds.SixStars.Api.State
                 relationshipPosture = context.RelationshipPosture ?? string.Empty,
                 needSummary = context.NeedSummary ?? string.Empty,
                 wantSummary = context.WantSummary ?? string.Empty,
-                needVector = context.NeedVector,
-                wantVector = context.WantVector,
-                thingsSheWantsToSay = context.ThingsSheWantsToSay,
-                cuteThingsSheWantsToSay = context.CuteThingsSheWantsToSay,
+                needVector = FormatGirlfriendVectorString(context.NeedVector, 12),
+                wantVector = FormatGirlfriendVectorString(context.WantVector, 12),
+                thingsSheWantsToSay = context.ThingsSheWantsToSay.Take(6).ToList(),
+                cuteThingsSheWantsToSay = context.CuteThingsSheWantsToSay.Take(6).ToList(),
                 overallConfidence = Math.Max(0, Math.Min(1, context.OverallConfidence)),
                 overallScore = Math.Max(0, Math.Min(100, context.OverallScore)),
                 cuteModeActive = context.CuteModeActive,
                 cuteModeProbability = Math.Max(0, Math.Min(1, context.CuteModeProbability <= 0 ? 0.35 : context.CuteModeProbability)),
-                cuteModeReason = context.CuteModeReason ?? string.Empty,
                 cuteModeSignature = context.CuteModeSignature ?? string.Empty
-            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = false });
         }
 
         public async Task<StarState> ApplyStarEffectorAsync(string sessionId, string starId, StarRelationshipEffector effector, CancellationToken cancellationToken)
@@ -861,6 +903,10 @@ namespace Wds.SixStars.Api.State
                 state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
                 changed = true;
             }
+            if (state.GirlfriendDesiredNeedVectorHistory == null) { state.GirlfriendDesiredNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendDesiredWantVectorHistory == null) { state.GirlfriendDesiredWantVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetNeedVectorHistory == null) { state.GirlfriendMetNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetWantVectorHistory == null) { state.GirlfriendMetWantVectorHistory = new List<string>(); changed = true; }
             if (state.GirlfriendNeedsMetPerformanceVector == null)
             {
                 state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();

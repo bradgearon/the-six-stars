@@ -264,6 +264,10 @@ namespace Wds.SixStars.Api.Engine
             state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
             state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
             state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+            state.GirlfriendDesiredNeedVectorHistory = new List<string>();
+            state.GirlfriendDesiredWantVectorHistory = new List<string>();
+            state.GirlfriendMetNeedVectorHistory = new List<string>();
+            state.GirlfriendMetWantVectorHistory = new List<string>();
             state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
             state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
             state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
@@ -367,6 +371,43 @@ namespace Wds.SixStars.Api.Engine
             return selected;
         }
 
+
+        public async Task<StarState> SetGirlfriendCuteModeEnabledAsync(string sessionId, string starId, bool enabled, string reason, CancellationToken cancellationToken)
+        {
+            sessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            starId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+
+            SixStarsSaveData saveData = await _memoryApi.ExportSaveDataAsync(sessionId, cancellationToken).ConfigureAwait(false);
+            if (saveData.Stars == null) saveData.Stars = new List<StarState>();
+
+            StarState? selected = saveData.Stars.FirstOrDefault(x => string.Equals(x.StarId, starId, StringComparison.OrdinalIgnoreCase));
+            if (selected == null)
+            {
+                selected = await _memoryApi.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                saveData.Stars.Add(selected);
+            }
+
+            selected.GirlfriendCuteModeEnabled = enabled;
+            selected.RelationshipEvents.Insert(0, "Girlfriend cute mode " + (enabled ? "enabled" : "disabled") + " through host/player settings" + (string.IsNullOrWhiteSpace(reason) ? "." : ": " + reason));
+            if (selected.GirlfriendHourlyState != null)
+            {
+                selected.GirlfriendHourlyState.CuteModeSignature = GetGirlfriendCuteModeSignature(starId);
+                if (!enabled)
+                {
+                    selected.GirlfriendHourlyState.CuteModeActive = false;
+                    selected.GirlfriendHourlyState.CuteModeProbability = 0;
+                    selected.GirlfriendHourlyState.CuteModeReason = "cute mode disabled by player settings";
+                }
+                else if (string.IsNullOrWhiteSpace(selected.GirlfriendHourlyState.CuteModeReason))
+                {
+                    selected.GirlfriendHourlyState.CuteModeReason = "cute mode enabled by player settings; next girlfriend hourly refresh may activate it deterministically";
+                }
+            }
+            if (selected.RelationshipEvents.Count > 120) selected.RelationshipEvents.RemoveRange(120, selected.RelationshipEvents.Count - 120);
+
+            await _memoryApi.ImportSaveDataAsync(saveData, cancellationToken).ConfigureAwait(false);
+            return selected;
+        }
 
         public Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
@@ -1115,6 +1156,14 @@ namespace Wds.SixStars.Api.Engine
         private static void ApplyGirlfriendCuteModeDecision(StarGirlfriendHourlyStateContext context, StarState state, StarProfile profile)
         {
             if (context == null) return;
+            if (state != null && !state.GirlfriendCuteModeEnabled)
+            {
+                context.CuteModeProbability = 0;
+                context.CuteModeActive = false;
+                context.CuteModeReason = "cute mode disabled by player settings";
+                context.CuteModeSignature = GetGirlfriendCuteModeSignature(profile?.StarId ?? context.StarId);
+                return;
+            }
             double probability = ResolveGirlfriendCuteModeBaseProbability();
             double topNeedWant = 0;
             if (context.NeedVector != null && context.NeedVector.Count > 0) topNeedWant = Math.Max(topNeedWant, context.NeedVector.Max(x => x?.Score ?? 0));
@@ -2509,20 +2558,25 @@ namespace Wds.SixStars.Api.Engine
 
             if (options.TargetMinutes <= 0)
             {
+                int minMinutes = ResolveStoryRandomMinimumMinutes();
+                int maxMinutes = ResolveStoryRandomMaximumMinutes(minMinutes);
                 lock (StoryRandomGate)
                 {
-                    options.TargetMinutes = StoryRandom.Next(2, 36);
+                    options.TargetMinutes = StoryRandom.Next(minMinutes, maxMinutes + 1);
                 }
             }
 
             if (options.TargetChunkCount <= 0)
             {
-                // The target is intentionally flexible. Earlier builds asked for very large 2-45 minute
-                // exact stories, which could cause local models to ramble, truncate, or never finish.
-                // Aim for roughly 1-2 chunks per requested minute, but cap the first-pass plan so the
-                // model can return a complete episode with a real ending.
-                int flexibleMinuteTarget = Math.Max(2, Math.Min(35, options.TargetMinutes));
-                options.TargetChunkCount = Math.Max(8, Math.Min(24, (int)Math.Ceiling(flexibleMinuteTarget * 0.8)));
+                // Local 4B/8B models with a 16k context need a compact first-pass story plan.
+                // Very large 15-35 minute targets were causing finish_reason=length and the UI
+                // only got Chunk 0. Aim for a vivid complete episode, usually like the good
+                // 8-chunk Elusiaa story, and let explicit seeds / env vars ask for more.
+                int minChunks = ResolveStoryRandomMinimumChunks();
+                int maxChunks = ResolveStoryRandomMaximumChunks(minChunks);
+                int flexibleMinuteTarget = Math.Max(2, Math.Min(12, options.TargetMinutes));
+                int desired = Math.Max(minChunks, Math.Min(maxChunks, (int)Math.Ceiling(flexibleMinuteTarget * 0.8)));
+                options.TargetChunkCount = desired;
             }
 
             options.Length = "flexible_random_" + options.TargetMinutes + "_minute_complete_story_" + options.TargetChunkCount + "_chunks";
@@ -2531,17 +2585,54 @@ namespace Wds.SixStars.Api.Engine
 
             bool autoPromoted = request.GameContext.Flags.TryGetValue("autoPromotedToStory", out string? promoted)
                 && string.Equals(promoted, "true", StringComparison.OrdinalIgnoreCase);
-            if (autoPromoted || string.IsNullOrWhiteSpace(options.PlayerSuggestion))
+            if (autoPromoted)
             {
                 options.PlayerSuggestion = !string.IsNullOrWhiteSpace(intent?.StorySeed)
                     ? intent!.StorySeed
                     : (request.PlayerText ?? string.Empty);
+            }
+            else if (string.IsNullOrWhiteSpace(options.PlayerSuggestion) && !string.IsNullOrWhiteSpace(request.PlayerText))
+            {
+                options.PlayerSuggestion = request.PlayerText;
+            }
+            else if (string.IsNullOrWhiteSpace(options.PlayerSuggestion))
+            {
+                request.GameContext.Flags["storyButtonUnseeded"] = "true";
+                request.GameContext.RecentEvents.Add("The Story button was clicked with no seed; the Star should invent a fresh complete story without asking for a seed.");
             }
 
             request.GameContext.Flags["storyTargetMinutes"] = options.TargetMinutes.ToString();
             request.GameContext.Flags["storyTargetChunkCount"] = options.TargetChunkCount.ToString();
             request.GameContext.Flags["storyMaxSentencesPerChunk"] = options.MaxSentencesPerChunk.ToString();
             request.GameContext.Flags["storyLengthIsFlexible"] = "true";
+        }
+
+        private static int ResolveStoryRandomMinimumMinutes()
+        {
+            string? env = Environment.GetEnvironmentVariable("SIX_STARS_STORY_TARGET_MINUTES_MIN");
+            if (int.TryParse(env, out int value)) return Math.Max(1, Math.Min(20, value));
+            return 3;
+        }
+
+        private static int ResolveStoryRandomMaximumMinutes(int minMinutes)
+        {
+            string? env = Environment.GetEnvironmentVariable("SIX_STARS_STORY_TARGET_MINUTES_MAX");
+            if (int.TryParse(env, out int value)) return Math.Max(minMinutes, Math.Min(35, value));
+            return Math.Max(minMinutes, 12);
+        }
+
+        private static int ResolveStoryRandomMinimumChunks()
+        {
+            string? env = Environment.GetEnvironmentVariable("SIX_STARS_STORY_TARGET_CHUNKS_MIN");
+            if (int.TryParse(env, out int value)) return Math.Max(3, Math.Min(16, value));
+            return 6;
+        }
+
+        private static int ResolveStoryRandomMaximumChunks(int minChunks)
+        {
+            string? env = Environment.GetEnvironmentVariable("SIX_STARS_STORY_TARGET_CHUNKS_MAX");
+            if (int.TryParse(env, out int value)) return Math.Max(minChunks, Math.Min(24, value));
+            return Math.Max(minChunks, 10);
         }
 
         private static string BuildStoryLengthDebugNote(StoryOptions? options)
@@ -2974,6 +3065,7 @@ namespace Wds.SixStars.Api.Engine
         {
             if (request == null || response == null) return false;
             if (request.GameContext != null && request.GameContext.Flags.TryGetValue("interstarMicroUpdate", out string? micro) && string.Equals(micro, "true", StringComparison.OrdinalIgnoreCase)) return false;
+            if (request.RequestType == RequestType.Story) return false;
             if (request.RequestType == RequestType.Debug) return false;
             if (string.IsNullOrWhiteSpace(request.StarId)) return false;
             if (string.IsNullOrWhiteSpace(response.EmotionalEffectVector) && string.IsNullOrWhiteSpace(response.NegativeEmotionVector) && response.TopAffectedEmotions.Count == 0) return false;

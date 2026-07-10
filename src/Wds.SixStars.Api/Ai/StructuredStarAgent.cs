@@ -606,7 +606,7 @@ namespace Wds.SixStars.Api.Ai
                     StarId = CleanOneLine(x.StarId, 80),
                     PositiveEmotionVector = NormalizeCompactEmotionVector(x.PositiveEmotionVector, StarEmotionMatrix.StandardEmotionIds.Length),
                     NegativeEmotionVector = NormalizeCompactEmotionVector(x.NegativeEmotionVector, RelationshipDeltaCalculator.NegativeEmotionIds.Length),
-                    Reason = CleanOneLine(x.Reason, 420)
+                    Reason = string.Empty
                 })
                 .GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.Last())
@@ -616,23 +616,22 @@ namespace Wds.SixStars.Api.Ai
 
         private static int ResolveSpeechMaxTokens(int configuredValue)
         {
-            string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_SPEECH_MAX_TOKENS");
-            if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue >= 0 ? configuredValue : 0;
+            // Do not send per-request max_tokens caps. Compact prompts and bounded response schemas
+            // are safer for the local backends used by this runtime.
+            return 0;
         }
 
         private static int ResolveStoryPlanMaxTokens()
         {
-            string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_STORY_PLAN_MAX_TOKENS");
-            if (int.TryParse(env, out int value) && value >= 0) return value;
+            // Do not send per-request max_tokens for story generation. Some local backends silently
+            // fail or truncate when an output cap is present. The story prompt is kept compact instead.
             return 0;
         }
 
         private static int ResolveReviewMaxTokens(int configuredValue)
         {
-            string? env = Environment.GetEnvironmentVariable("SIX_STARS_LLM_REVIEW_MAX_TOKENS");
-            if (int.TryParse(env, out int value) && value >= 0) return value;
-            return configuredValue >= 0 ? configuredValue : 0;
+            // Do not send per-request max_tokens caps. Review prompts must stay compact instead.
+            return 0;
         }
 
         private static void PreserveForegroundStoryFields(StarInteractionResponse foreground, StarInteractionResponse analysis)
@@ -753,6 +752,11 @@ namespace Wds.SixStars.Api.Ai
                 {
                     StarId = profile.StarId
                 };
+                if (request.RequestType == RequestType.Story)
+                {
+                    MarkStoryJsonParseFailed(request);
+                    SalvageMalformedStoryFields(rawContent, model, profile);
+                }
                 model.SpokenParts.AddRange(ExtractLikelySpokenParts(rawContent));
                 if (model.SpokenParts.Count == 0)
                 {
@@ -761,6 +765,29 @@ namespace Wds.SixStars.Api.Ai
                 ApplyStorySpeechGuards(model, request);
                 return model;
             }
+        }
+
+        private static void MarkStoryJsonParseFailed(StarInteractionRequest request)
+        {
+            try
+            {
+                if (request.GameContext != null && request.GameContext.Flags != null)
+                {
+                    request.GameContext.Flags["storyJsonParseFailed"] = "true";
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static void SalvageMalformedStoryFields(string rawContent, StarSpeechModelResponse model, StarProfile profile)
+        {
+            if (model == null) return;
+            model.StoryTitle = FirstNonEmpty(model.StoryTitle, ExtractJsonStringProperty(rawContent, "storyTitle"), "Interrupted Story");
+            model.StoryId = FirstNonEmpty(model.StoryId, ExtractJsonStringProperty(rawContent, "storyId"), "interrupted_story_" + DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            model.StoryMarkdown = FirstNonEmpty(model.StoryMarkdown, ExtractJsonStringProperty(rawContent, "storyMarkdown"));
+            model.StorySummary = FirstNonEmpty(model.StorySummary, ExtractJsonStringProperty(rawContent, "storySummary"), profile.DisplayName + " began a story, but the local model response was cut off before valid JSON closed.");
         }
 
         private static void ApplyStorySpeechGuards(StarSpeechModelResponse model, StarInteractionRequest request)
@@ -776,15 +803,23 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(model.StoryMarkdown))
             {
                 model.StoryMarkdown = NormalizeStoryMarkdownIntoShortChunks(model.StoryMarkdown, maxSentences);
+                model.StoryMarkdown = RepairStoryMarkdownIfTruncated(model.StoryMarkdown, maxSentences);
             }
 
             bool continuation = options.ContinueActiveStory;
-            if (!continuation && string.IsNullOrWhiteSpace(model.StoryMarkdown) && model.SpokenParts.Count > 0)
+            bool storyJsonParseFailed = request.GameContext != null
+                && request.GameContext.Flags != null
+                && request.GameContext.Flags.TryGetValue("storyJsonParseFailed", out string? parseFailedFlag)
+                && string.Equals(parseFailedFlag, "true", StringComparison.OrdinalIgnoreCase);
+
+            if (!continuation && !storyJsonParseFailed && string.IsNullOrWhiteSpace(model.StoryMarkdown) && model.SpokenParts.Count > 0)
             {
                 // Some local OpenAI-compatible backends may ignore the storyMarkdown field under
                 // response_format pressure. Preserve a valid local-autoplay shape rather than
-                // allowing story mode to collapse into an intro or empty story. The prompt still
-                // asks for a full story, but this salvage prevents a hard failure.
+                // allowing story mode to collapse into an intro or empty story. Do not do this
+                // when JSON parsing failed, because that usually means the model was cut off and
+                // only Chunk 0 survived as spokenText. In that case, retry/fix the prompt rather
+                // than cache a fake one-chunk story.
                 model.StoryMarkdown = NormalizeStoryMarkdownIntoShortChunks(string.Join(" ", model.SpokenParts), maxSentences);
                 model.StoryIsFinished = true;
             }
@@ -826,6 +861,51 @@ namespace Wds.SixStars.Api.Ai
                     model.StoryIsFinished = true;
                 }
             }
+        }
+
+        private static string RepairStoryMarkdownIfTruncated(string markdown, int maxSentencesPerChunk)
+        {
+            if (string.IsNullOrWhiteSpace(markdown)) return string.Empty;
+            string trimmed = markdown.Trim();
+            if (!LooksLikeTruncatedStoryTail(trimmed)) return trimmed;
+
+            List<string> chunks = ExtractAllMarkdownChunks(trimmed);
+            if (chunks.Count == 0) return trimmed;
+
+            // If the last chunk is an obvious half-sentence caused by local context truncation,
+            // remove it and append a deliberate soft-cliffhanger closure so the desktop host
+            // does not autoplay a story that dies mid-thought.
+            if (chunks.Count > 1 && LooksLikeTruncatedStoryTail(chunks[chunks.Count - 1]))
+            {
+                chunks.RemoveAt(chunks.Count - 1);
+            }
+            if (chunks.Count == 0) return trimmed;
+
+            string closure = "The path did not give up all of its secrets at once, but the sign was clear: this was not the old story repeating itself. It was a doorway waiting for the Last Cat and the Star who dared to follow.";
+            chunks.Add(closure);
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                if (i > 0) sb.AppendLine().AppendLine("---").AppendLine();
+                sb.Append("## Chunk ").Append(i).AppendLine();
+                sb.AppendLine(chunks[i].Trim());
+            }
+            return sb.ToString().Trim();
+        }
+
+        private static bool LooksLikeTruncatedStoryTail(string markdownOrChunk)
+        {
+            if (string.IsNullOrWhiteSpace(markdownOrChunk)) return false;
+            string tail = markdownOrChunk.Trim();
+            if (tail.Length > 260) tail = tail.Substring(tail.Length - 260).Trim();
+            if (tail.EndsWith("...", StringComparison.Ordinal)) return true;
+            char last = tail[tail.Length - 1];
+            if (".!?…\"'”’)]}".IndexOf(last) >= 0) return false;
+            if (",;:-–—".IndexOf(last) >= 0) return true;
+            string lowered = tail.ToLowerInvariant();
+            string[] weakEndings = { " and", " as", " when", " while", " because", " but", " then", " toward", " into", " through", " with", " without", " seemed to", " began to" };
+            return weakEndings.Any(x => lowered.EndsWith(x, StringComparison.Ordinal));
         }
 
         private static bool LooksLikeIntentionallyUnfinishedStory(string markdown)
