@@ -124,6 +124,10 @@ public final class MainActivity extends ComponentActivity {
     private final Object socketLock = new Object();
     private boolean startRecordingAfterAudioPermission;
     private boolean openPhotoPickerAfterCameraPermission;
+    // Referenced by the permission result callback below, so this field must be
+    // declared before that callback's field initializer to avoid an illegal
+    // forward reference in Java.
+    private volatile boolean recording;
 
     private final ActivityResultLauncher<String> recordAudioPermissionLauncher = registerForActivityResult(
             new ActivityResultContracts.RequestPermission(),
@@ -221,7 +225,6 @@ public final class MainActivity extends ComponentActivity {
     private int lastVoiceAccumulatorChunks = 0;
 
     private volatile boolean destroyed;
-    private volatile boolean recording;
     private volatile boolean bridgePollInFlight;
     private AudioRecord audioRecord;
     private Thread recordingThread;
