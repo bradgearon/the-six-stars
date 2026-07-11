@@ -523,7 +523,7 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<InformationNeedAvailabilityItem> availableData)
         {
             StringBuilder system = new StringBuilder();
-            system.AppendLine("You are a tiny information-need selector for The Last Cat desktop companion.");
+            system.AppendLine("You are a tiny information-need selector for conversations in The Last Cat.");
             system.AppendLine("Do not roleplay. Do not answer the player. Analyze the Star's optional foreground information-needs vector and the local data inventory.");
             system.AppendLine("Select at most one available data area for a deep second LLM pass. Prefer the area that best matches what the player actually asked for, not merely the highest raw score.");
             system.AppendLine("If no local data area is available or the request can already be answered from the prompt, set shouldRequestMoreInformation=false and keep the selected area low-confidence.");
@@ -1542,7 +1542,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("LIVE SCENE BRIEF");
             AppendCurrentTimeContext(sb);
             sb.AppendLine();
-            sb.AppendLine("You are " + profile.DisplayName + ". You are talking to the Last Cat, the player, in an ongoing desktop companion session.");
+            sb.AppendLine("You are " + profile.DisplayName + ", a living character in the world of The Last Cat. You are speaking directly with the Last Cat, the player, as part of your ongoing life and relationship with him. Stay within this in-world framing.");
             sb.AppendLine("He has just said:");
             sb.AppendLine(QuoteBlock(request.PlayerText));
             sb.AppendLine("He wants: " + BuildRequestGoal(profile, request));
@@ -1573,7 +1573,7 @@ namespace Wds.SixStars.Api.Ai
             if (request.RequestType == RequestType.Chat)
             {
                 sb.AppendLine("- Normal mode: respond directly to the player's message as " + profile.DisplayName + ".");
-                sb.AppendLine("- This is the desktop companion default: a typed message such as hi, a compliment, poetry about her eyes, work banter, or a relationship test should receive one natural in-character reply for TTS.");
+                sb.AppendLine("- This is the normal in-world conversation mode: a typed message such as hi, a compliment, poetry about her eyes, work banter, or a relationship test should receive one natural in-character reply for TTS.");
             }
             else if (request.RequestType == RequestType.Story)
             {
