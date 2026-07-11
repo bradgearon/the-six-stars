@@ -39,23 +39,25 @@ namespace Wds.SixStars.Api.Background
 
         public IDisposable EnterForegroundRequest(string reason)
         {
-            CancellationTokenSource? activeToCancel;
             string activeRequestId;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
                 _foregroundDepth++;
-                activeToCancel = _activeRequestCts;
                 activeRequestId = _activeRequestId;
             }
 
-            if (activeToCancel != null && !activeToCancel.IsCancellationRequested)
+            // Do not cancel an HTTP generation already inside the local LLM server. Some local
+            // OpenAI-compatible servers keep generating after the client disconnects; immediately
+            // sending the foreground request then leaves both calls queued and makes the server look
+            // permanently stuck. New background work is still blocked by _foregroundDepth, and the
+            // chat client serializes the final handoff safely.
+            if (!string.IsNullOrWhiteSpace(activeRequestId))
             {
-                try { activeToCancel.Cancel(); } catch { }
-                Publish("Preempted", "background", activeRequestId, "Foreground work preempted the active background LLM request.", QueuedCount);
+                Publish("ForegroundWaiting", "foreground", activeRequestId, "Foreground work is waiting for the already-running background generation to finish safely.", QueuedCount);
             }
 
-            Publish("ForegroundStarted", "foreground", reason ?? string.Empty, "A foreground reply request is active; background AI stacks will wait.", 0);
+            Publish("ForegroundStarted", "foreground", reason ?? string.Empty, "A foreground reply request is active; queued background AI stacks will wait.", 0);
             SafeReleaseSignal();
             return new ForegroundLease(this, reason ?? string.Empty);
         }

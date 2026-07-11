@@ -18,6 +18,7 @@ namespace Wds.SixStars.Api.Ai
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly LlmExchangeFileLogger? _exchangeFileLogger;
         private readonly bool _ownsClient;
+        private readonly SemaphoreSlim _requestGate = new SemaphoreSlim(1, 1);
         private long _exchangeSequence;
 
         public event EventHandler<LocalChatModelExchangeEventArgs>? ExchangeLogged;
@@ -48,57 +49,77 @@ namespace Wds.SixStars.Api.Ai
 
         public async Task<string> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
         {
-            List<Dictionary<string, string>> wireMessages = messages
-                .Select(x => new Dictionary<string, string>
-                {
-                    { "role", x.Role },
-                    { "content", x.Content }
-                })
-                .ToList();
-
-            int configuredMaxTokens = maxTokens.HasValue ? maxTokens.Value : _options.MaxTokens;
-            int? effectiveMaxTokens = configuredMaxTokens > 0 ? configuredMaxTokens : (int?)null;
-            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Sending POST to {_options.EndpointUrl}");
-            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Model: {_options.Model}, Messages: {wireMessages.Count}, Temp: {_options.Temperature}, MaxTokens: {DescribeMaxTokens(effectiveMaxTokens)}, DebugLabel: {debugLabel}");
-
-            List<string> responseFormatModes = BuildResponseFormatModeFallbacks();
-            Exception? lastException = null;
-            string? lastErrorBody = null;
-
-            foreach (string responseFormatMode in responseFormatModes)
+            // LM Studio/llama.cpp is a single local model service. Letting a cancelled background
+            // request overlap a foreground request can leave the server finishing the abandoned
+            // generation while new calls pile up behind it. Keep one HTTP generation in flight per
+            // client. The background dispatcher already prevents new background work while a
+            // foreground lease is active, so this gate mainly protects the handoff edge.
+            await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                string exchangeId = LlmExchangeFileLogger.CreateExchangeId(debugLabel);
-                try
+                List<Dictionary<string, string>> wireMessages = messages
+                    .Select(x => new Dictionary<string, string>
+                    {
+                        { "role", x.Role },
+                        { "content", x.Content }
+                    })
+                    .ToList();
+
+                int configuredMaxTokens = maxTokens.HasValue ? maxTokens.Value : _options.MaxTokens;
+                int? effectiveMaxTokens = configuredMaxTokens > 0 ? configuredMaxTokens : (int?)null;
+                System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Sending POST to {_options.EndpointUrl}");
+                System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Model: {_options.Model}, Messages: {wireMessages.Count}, Temp: {_options.Temperature}, MaxTokens: {DescribeMaxTokens(effectiveMaxTokens)}, DebugLabel: {debugLabel}");
+
+                List<string> responseFormatModes = BuildResponseFormatModeFallbacks();
+                Exception? lastException = null;
+                string? lastErrorBody = null;
+
+                foreach (string responseFormatMode in responseFormatModes)
                 {
-                    string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, exchangeId, cancellationToken).ConfigureAwait(false);
-                    string content = ExtractContent(body);
-                    LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content), "extracted_content", exchangeId, debugLabel, responseFormatMode);
-                    if (string.IsNullOrWhiteSpace(content))
+                    string exchangeId = LlmExchangeFileLogger.CreateExchangeId(debugLabel);
+                    try
                     {
-                        throw new InvalidOperationException("Model returned an empty content field.");
-                    }
+                        string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, exchangeId, cancellationToken).ConfigureAwait(false);
+                        string content = ExtractContent(body);
+                        LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content), "extracted_content", exchangeId, debugLabel, responseFormatMode);
+                        if (string.IsNullOrWhiteSpace(content))
+                        {
+                            throw new InvalidOperationException("Model returned an empty content field.");
+                        }
 
-                    if (responseFormatMode != responseFormatModes[0])
+                        if (responseFormatMode != responseFormatModes[0])
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Succeeded after response_format fallback mode: {responseFormatMode}");
+                        }
+
+                        return content;
+                    }
+                    catch (OperationCanceledException)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Succeeded after response_format fallback mode: {responseFormatMode}");
+                        // Cancellation and HttpClient timeout are not response-format failures.
+                        // Retrying the same request without response_format used to create a second
+                        // abandoned generation and could wedge the local server.
+                        throw;
                     }
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                        lastErrorBody = ex.Message;
+                        System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Attempt with response_format mode '{responseFormatMode}' failed: {ex.Message}");
 
-                    return content;
+                        if (!LooksLikeResponseFormatProblem(ex.Message))
+                        {
+                            throw;
+                        }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    lastException = ex;
-                    lastErrorBody = ex.Message;
-                    System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Attempt with response_format mode '{responseFormatMode}' failed: {ex.Message}");
 
-                    if (!LooksLikeResponseFormatProblem(ex.Message) && responseFormatMode == responseFormatModes[0])
-                    {
-                        continue;
-                    }
-                }
+                throw new InvalidOperationException("LLM endpoint failed after response_format fallbacks. Last error: " + (lastErrorBody ?? lastException?.Message ?? "unknown"), lastException);
             }
-
-            throw new InvalidOperationException("LLM endpoint failed after response_format fallbacks. Last error: " + (lastErrorBody ?? lastException?.Message ?? "unknown"), lastException);
+            finally
+            {
+                _requestGate.Release();
+            }
         }
 
         private List<string> BuildResponseFormatModeFallbacks()
@@ -385,6 +406,7 @@ namespace Wds.SixStars.Api.Ai
 
         public void Dispose()
         {
+            _requestGate.Dispose();
             if (_ownsClient)
             {
                 _httpClient.Dispose();

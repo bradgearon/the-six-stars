@@ -511,10 +511,10 @@ namespace Wds.SixStars.Api.Engine
 
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
-            // Foreground work may preempt the active background model call, but pending durable
-            // analyses must survive. Clearing this dictionary used to lose state updates whenever
-            // Android replaced/cancelled a voice stream or started the next turn.
-            try { _backgroundDispatcher.CancelActiveRequest(reason); } catch { }
+            // Pending durable analyses must survive. Do not abort an LLM HTTP request already in
+            // flight: several local servers continue generating after a disconnected client, which
+            // can leave the next foreground request waiting behind invisible abandoned work. Queued
+            // background work is already held while a foreground lease is active.
             lock (_backgroundGate)
             {
                 try
@@ -2820,7 +2820,8 @@ namespace Wds.SixStars.Api.Engine
                         System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
                         BackgroundAnalysisFailed?.Invoke(this, ex);
                     }
-                });
+                },
+                delay: TimeSpan.FromSeconds(5));
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)
