@@ -80,10 +80,13 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.TreeMap;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public final class MainActivity extends ComponentActivity {
     private static final String PREFS_NAME = "SixStarsMobilePrefs";
@@ -120,16 +123,9 @@ public final class MainActivity extends ComponentActivity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
-    // Long conversation/image/voice requests must not block health checks or bridge-event polling.
-    // The event poller is how Android can show "transcribed" / "LLM ready" while the main HTTP request is still waiting.
-    // Foreground messages must never sit behind a slow at-rest initiative request. They use
-    // separate queues so a text/voice/photo request can immediately reach the desktop, whose
-    // runtime then cancels/preempts any initiative generation already in progress.
-    private final ExecutorService foregroundRequestExecutor = Executors.newSingleThreadExecutor();
-    // Two workers let a manual Listen press reach the desktop even if an automatic at-rest
-    // check is still waiting on HTTP. The desktop gives the manual request priority and cancels
-    // the older automatic check.
-    private final ExecutorService initiativeRequestExecutor = Executors.newFixedThreadPool(2);
+    // Only media encoding uses these workers. Text, state, command, and initiative messages are
+    // tiny non-blocking WebSocket sends and leave the UI thread immediately without another queue.
+    private final ExecutorService foregroundRequestExecutor = Executors.newFixedThreadPool(2);
     private final Object socketLock = new Object();
     private boolean startRecordingAfterAudioPermission;
     private boolean openPhotoPickerAfterCameraPermission;
@@ -225,6 +221,7 @@ public final class MainActivity extends ComponentActivity {
     private String currentInterstarStatus = "Interstar state: idle.";
     private String currentDailyStarState = "Today: no daily Star state yet.";
     private long lastBridgeEventSequence;
+    private MobileBridgeWebSocketClient bridgeSocketClient;
     private boolean bridgeEventsPrimed;
     private File lastVoiceAudioFile;
     private String lastVoiceAudioChecksum = "";
@@ -235,7 +232,6 @@ public final class MainActivity extends ComponentActivity {
     private int lastVoiceAccumulatorChunks = 0;
 
     private volatile boolean destroyed;
-    private volatile boolean bridgePollInFlight;
     private AudioRecord audioRecord;
     private Thread recordingThread;
     private ByteArrayOutputStream recordedPcm;
@@ -267,17 +263,10 @@ public final class MainActivity extends ComponentActivity {
         @Override
         public void run() {
             if (destroyed) return;
-            testConnection(false);
-            mainHandler.postDelayed(this, 5000);
-        }
-    };
-
-    private final Runnable bridgeEventLoop = new Runnable() {
-        @Override
-        public void run() {
-            if (destroyed) return;
-            pollBridgeEvents();
-            mainHandler.postDelayed(this, 450);
+            // OkHttp pings and reconnect callbacks own liveness. This low-frequency guard only
+            // restarts a missing connection; it does not issue a maintenance request or poll state.
+            ensureBridgeWebSocket();
+            mainHandler.postDelayed(this, 60000L);
         }
     };
 
@@ -290,19 +279,20 @@ public final class MainActivity extends ComponentActivity {
         starInitiativeEnabled = prefs.getBoolean(PREF_STAR_INITIATIVE_ENABLED, true);
         starInitiativeBackgroundEnabled = starInitiativeEnabled;
         buildUi();
+        initializeBridgeWebSocket();
         registerStarInitiativeServiceReceiver();
         syncStarInitiativeRuntimePrefs();
         syncStarInitiativeBackgroundService("Android activity started", false);
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
         mainHandler.postDelayed(healthLoop, 600);
-        mainHandler.postDelayed(bridgeEventLoop, 1200);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         registerStarInitiativeServiceReceiver();
+        ensureBridgeWebSocket();
         mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("Android activity resumed", false), 3500L);
     }
 
@@ -310,11 +300,11 @@ public final class MainActivity extends ComponentActivity {
     protected void onDestroy() {
         destroyed = true;
         stopRecording(false);
+        if (bridgeSocketClient != null) bridgeSocketClient.close();
         closeAudioSocket();
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
         foregroundRequestExecutor.shutdownNow();
-        initiativeRequestExecutor.shutdownNow();
         unregisterStarInitiativeServiceReceiver();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST | KEEP_AWAKE_REASON_VOICE_STREAM | KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Activity destroyed");
         super.onDestroy();
@@ -1279,31 +1269,89 @@ public final class MainActivity extends ComponentActivity {
         return json;
     }
 
+    private void initializeBridgeWebSocket() {
+        bridgeSocketClient = new MobileBridgeWebSocketClient(new MobileBridgeWebSocketClient.Listener() {
+            @Override
+            public void onConnected(long latestSequence) {
+                runOnUiThread(() -> {
+                    if (!bridgeEventsPrimed) {
+                        lastBridgeEventSequence = Math.max(lastBridgeEventSequence, latestSequence);
+                        bridgeEventsPrimed = true;
+                    } else if (bridgeSocketClient != null) {
+                        bridgeSocketClient.subscribeAfter(lastBridgeEventSequence);
+                    }
+                    connectionStatusText.setText("Connected by WebSocket to " + baseUrl());
+                    appendVoiceDebug("Kaelia opened the mobile response pipe", "Persistent WebSocket connected. pending=" + (bridgeSocketClient == null ? 0 : bridgeSocketClient.pendingCount()));
+                    testConnection(false);
+                });
+            }
+
+            @Override
+            public void onDisconnected(String reason) {
+                runOnUiThread(() -> {
+                    connectionStatusText.setText("Reconnecting to " + baseUrl());
+                    appendVoiceDebug("Nyxari felt the mobile pipe reconnect", clip(reason, 500));
+                });
+            }
+
+            @Override
+            public void onEvent(JSONObject event) {
+                runOnUiThread(() -> handleBridgeEvent(event));
+            }
+
+            @Override
+            public void onProtocolDebug(String message) {
+                runOnUiThread(() -> appendVoiceDebug("Mobile WebSocket", clip(message, 900)));
+            }
+        });
+        ensureBridgeWebSocket();
+    }
+
+    private void ensureBridgeWebSocket() {
+        if (destroyed || bridgeSocketClient == null) return;
+        bridgeSocketClient.connect(baseUrl());
+    }
+
+    private void sendSocketRequest(String operation, JSONObject payload, long timeoutMs, Consumer<JSONObject> onSuccess, Consumer<Throwable> onFailure) {
+        ensureBridgeWebSocket();
+        MobileBridgeWebSocketClient socket = bridgeSocketClient;
+        if (socket == null) {
+            onFailure.accept(new IllegalStateException("Mobile bridge WebSocket is not initialized."));
+            return;
+        }
+        CompletableFuture<JSONObject> future = socket.request(operation, payload, timeoutMs);
+        future.whenComplete((response, error) -> {
+            if (error == null) {
+                onSuccess.accept(response == null ? new JSONObject() : response);
+                return;
+            }
+            Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+            onFailure.accept(cause);
+        });
+    }
+
     private void testConnection(boolean manual) {
         syncStarInitiativeRuntimePrefs();
-        String url = baseUrl() + "/health";
-        httpExecutor.execute(() -> {
+        JSONObject request = new JSONObject();
+        sendSocketRequest("health", request, 10000L, json -> {
+            int audioPort = json.optInt("audioPort", defaultAudioPort());
             try {
-                String body = get(url, 8000);
-                JSONObject json = new JSONObject(body);
-                int audioPort = json.optInt("audioPort", defaultAudioPort());
                 String host = new URL(baseUrl()).getHost();
                 runOnUiThread(() -> {
-                    connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop") + " at " + baseUrl());
-                    if (manual) setDebug("Health OK", "HTTP port " + json.optInt("port") + ", audio port " + audioPort + ", audio clients " + json.optInt("audioClientCount"));
-                    if (manual) appendVoiceDebug("Elusiaa checked the bridge", "HTTP is alive. audioPort=" + audioPort + ", audioClients=" + json.optInt("audioClientCount"));
+                    connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop") + " at " + baseUrl() + " (WebSocket)");
+                    if (manual) setDebug("Health OK", "Persistent WebSocket; HTTP port " + json.optInt("port") + ", WebSocket clients " + json.optInt("webSocketClientCount") + ", audio port " + audioPort + ", audio clients " + json.optInt("audioClientCount"));
                 });
-                if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) {
-                    ensureAudioSocket(host, audioPort);
-                }
+                if (playOnPhoneCheck != null && playOnPhoneCheck.isChecked()) ensureAudioSocket(host, audioPort);
                 fetchMobileState(false);
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    connectionStatusText.setText("Not connected to " + baseUrl() + " — " + ex.getMessage());
-                    if (manual) setDebug("Health failed", ex.toString());
+                    if (manual) setDebug("Health parse failed", ex.toString());
                 });
             }
-        });
+        }, error -> runOnUiThread(() -> {
+            connectionStatusText.setText("Connecting to " + baseUrl() + " — " + error.getMessage());
+            if (manual) setDebug("WebSocket health failed", error.toString());
+        }));
     }
 
     private int defaultAudioPort() {
@@ -1464,44 +1512,35 @@ public final class MainActivity extends ComponentActivity {
         if (now - lastStarInitiativeRequestMs < 120000L) return;
         lastStarInitiativeRequestMs = now;
         syncStarInitiativeRuntimePrefs();
-        final String starName = selectedStarName();
+        String starName = selectedStarName();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "At-rest Star initiative request sent; keeping the screen on while she answers.");
-        initiativeRequestExecutor.execute(() -> {
-            try {
-                JSONObject json = new JSONObject();
-                json.put("commandId", "android-initiative-" + System.currentTimeMillis());
-                json.put("commandType", "MaybeStarInitiative");
-                json.put("sourceClientId", "SixStarsMobileAndroid");
-                json.put("sessionId", currentSessionId());
-                json.put("starId", starName);
-                json.put("requestType", "StarInitiative");
-                json.put("playerText", "");
-                json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
-                json.put("quest", "AndroidProdStarInitiative");
-                json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
-                json.put("speakOnDesktop", false);
-                json.put("returnAudio", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
-                json.put("clientName", "SixStarsMobileAndroid-StarInitiative");
-                json.put("reason", reason == null ? "Android at-rest initiative" : reason);
-                runOnUiThread(() -> {
-                    setDebug("At-rest Star initiative", "Asking " + starName + " if she wants to say something. Reason: " + reason);
-                    appendVoiceDebug("At-rest Star initiative", "Request sent for " + starName + ": " + reason);
-                });
-                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
-                JSONObject response = new JSONObject(body);
+
+        try {
+            JSONObject json = createInitiativeRequestJson(
+                    starName,
+                    "android-initiative-" + System.currentTimeMillis(),
+                    "SixStarsMobileAndroid",
+                    "AndroidProdStarInitiative",
+                    "SixStarsMobileAndroid-StarInitiative",
+                    reason == null ? "Android at-rest initiative" : reason);
+            setDebug("At-rest Star initiative", "Asking " + starName + " if she wants to say something. Reason: " + reason);
+            appendVoiceDebug("At-rest Star initiative", "WebSocket request sent immediately for " + starName + ": " + reason);
+            sendSocketRequest("dispatch", json, 240000L, response -> {
                 JSONObject event = response.optJSONObject("event");
                 runOnUiThread(() -> {
                     if (event != null) handleBridgeEvent(event);
-                    else handleConversationResponse("At-rest Star initiative complete", body);
+                    else handleConversationResponse("At-rest Star initiative complete", response.toString());
                 });
-            } catch (Exception ex) {
-                runOnUiThread(() -> {
-                    setDebug("At-rest Star initiative failed", ex.toString());
-                    appendVoiceDebug("At-rest Star initiative failed", ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative failed.");
-                });
-            }
-        });
+            }, error -> runOnUiThread(() -> {
+                setDebug("At-rest Star initiative failed", error.toString());
+                appendVoiceDebug("At-rest Star initiative failed", error.toString());
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative failed.");
+            }));
+        } catch (Exception ex) {
+            setDebug("At-rest Star initiative failed", ex.toString());
+            appendVoiceDebug("At-rest Star initiative failed", ex.toString());
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative failed.");
+        }
     }
 
     private void requestStarInitiativeFromListenButton() {
@@ -1519,49 +1558,66 @@ public final class MainActivity extends ComponentActivity {
 
         syncStarInitiativeRuntimePrefs();
         pauseStarInitiativeBackgroundService("Manual Listen button has priority over background at-rest checks.");
-        final String starName = selectedStarName();
+        String starName = selectedStarName();
         if (prodMiniStatusText != null) prodMiniStatusText.setText("Listening for " + starName + "...");
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Manual Listen request sent; keeping the screen on while the Star answers.");
 
-        initiativeRequestExecutor.execute(() -> {
-            try {
-                JSONObject json = new JSONObject();
-                json.put("commandId", "android-listen-" + System.currentTimeMillis());
-                json.put("commandType", "MaybeStarInitiative");
-                json.put("sourceClientId", "SixStarsMobileAndroidListenButton");
-                json.put("sessionId", currentSessionId());
-                json.put("starId", starName);
-                json.put("requestType", "StarInitiative");
-                json.put("playerText", "");
-                json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
-                json.put("quest", "AndroidProdListenButton");
-                json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
-                json.put("speakOnDesktop", false);
-                json.put("returnAudio", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
-                json.put("clientName", "SixStarsMobileAndroid-ManualListen");
-                json.put("reason", "manual Android Listen button");
-                runOnUiThread(() -> {
-                    setDebug("Listen", "Asking " + starName + " if she has something to say now.");
-                    appendVoiceDebug("Listen button", "Manual Star initiative request sent for " + starName + ".");
-                });
-                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
-                JSONObject response = new JSONObject(body);
+        try {
+            JSONObject json = createInitiativeRequestJson(
+                    starName,
+                    "android-listen-" + System.currentTimeMillis(),
+                    "SixStarsMobileAndroidListenButton",
+                    "AndroidProdListenButton",
+                    "SixStarsMobileAndroid-ManualListen",
+                    "manual Android Listen button");
+            setDebug("Listen", "Asking " + starName + " if she has something to say now.");
+            appendVoiceDebug("Listen button", "Manual WebSocket initiative request sent immediately for " + starName + ".");
+            sendSocketRequest("dispatch", json, 240000L, response -> {
                 JSONObject event = response.optJSONObject("event");
                 runOnUiThread(() -> {
                     if (event != null) handleBridgeEvent(event);
-                    else handleConversationResponse("Listen request complete", body);
+                    else handleConversationResponse("Listen request complete", response.toString());
                     mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request finished", false), 30000L);
                 });
-            } catch (Exception ex) {
-                runOnUiThread(() -> {
-                    setDebug("Listen request wait interrupted", ex.toString() + "\nThe desktop may still finish the Star's at-rest line. Android will keep polling queued bridge events.");
-                    appendVoiceDebug("Listen request wait interrupted", "Still listening for queued bridge event: " + ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Listen HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
-                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted Listen request."), 20000L);
-                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request recovery grace finished", false), 30000L);
-                });
-            }
-        });
+            }, error -> runOnUiThread(() -> {
+                setDebug("Listen request wait interrupted", error.toString() + "\nThe desktop may still finish the Star's at-rest line. Android will keep receiving queued bridge events over the persistent WebSocket.");
+                appendVoiceDebug("Listen request wait interrupted", "Still listening on the WebSocket for a queued bridge event: " + error);
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Listen WebSocket wait failed; keeping the phone awake briefly while queued bridge events arrive.");
+                mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted Listen request."), 20000L);
+                mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request recovery grace finished", false), 30000L);
+            }));
+        } catch (Exception ex) {
+            setDebug("Listen request wait interrupted", ex.toString() + "\nThe desktop may still finish the Star's at-rest line. Android will keep receiving queued bridge events over the persistent WebSocket.");
+            appendVoiceDebug("Listen request wait interrupted", "Still listening on the WebSocket for a queued bridge event: " + ex);
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Listen WebSocket wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+            mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted Listen request."), 20000L);
+            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("listen request recovery grace finished", false), 30000L);
+        }
+    }
+
+    private JSONObject createInitiativeRequestJson(
+            String starName,
+            String commandId,
+            String sourceClientId,
+            String quest,
+            String clientName,
+            String reason) throws Exception {
+        JSONObject json = new JSONObject();
+        json.put("commandId", commandId);
+        json.put("commandType", "MaybeStarInitiative");
+        json.put("sourceClientId", sourceClientId);
+        json.put("sessionId", currentSessionId());
+        json.put("starId", starName);
+        json.put("requestType", "StarInitiative");
+        json.put("playerText", "");
+        json.put("area", areaEdit == null ? "VirethornCaves" : areaEdit.getText().toString());
+        json.put("quest", quest);
+        json.put("romanceMode", romanceCheck == null || romanceCheck.isChecked());
+        json.put("speakOnDesktop", false);
+        json.put("returnAudio", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+        json.put("clientName", clientName);
+        json.put("reason", reason);
+        return json;
     }
 
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
@@ -1569,34 +1625,34 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason, Boolean cuteModeEnabled) {
-        httpExecutor.execute(() -> {
-            try {
-                JSONObject json = new JSONObject();
-                json.put("commandId", "android-" + System.currentTimeMillis());
-                json.put("commandType", commandType);
-                json.put("sourceClientId", "SixStarsMobileAndroid");
-                json.put("sessionId", currentSessionId());
-                json.put("starId", starId == null || starId.length() == 0 ? selectedStarName() : starId);
-                if (isMet != null) json.put("isMet", isMet.booleanValue());
-                if (isAlly != null) json.put("isAlly", isAlly.booleanValue());
-                if (cuteModeEnabled != null) json.put("cuteModeEnabled", cuteModeEnabled.booleanValue());
-                json.put("reason", reason == null ? "Android bridge command" : reason);
-                runOnUiThread(() -> appendVoiceDebug("Elusiaa sent a bridge command", commandType + " for " + (starId == null ? selectedStarName() : starId)));
-                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 30000);
-                JSONObject response = new JSONObject(body);
+        try {
+            String resolvedStarId = starId == null || starId.length() == 0 ? selectedStarName() : starId;
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-" + System.currentTimeMillis());
+            json.put("commandType", commandType);
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", resolvedStarId);
+            if (isMet != null) json.put("isMet", isMet.booleanValue());
+            if (isAlly != null) json.put("isAlly", isAlly.booleanValue());
+            if (cuteModeEnabled != null) json.put("cuteModeEnabled", cuteModeEnabled.booleanValue());
+            json.put("reason", reason == null ? "Android bridge command" : reason);
+            appendVoiceDebug("Elusiaa sent a bridge command", commandType + " for " + resolvedStarId);
+            sendSocketRequest("dispatch", json, 30000L, response -> {
                 JSONObject event = response.optJSONObject("event");
                 runOnUiThread(() -> {
-                    setDebug("Bridge command complete", clip(response.optString("message", body), 1000));
+                    setDebug("Bridge command complete", clip(response.optString("message", response.toString()), 1000));
                     if (event != null) handleBridgeEvent(event);
                     appendVoiceDebug("Khavia received the bridge command reply", commandType + " ok=" + response.optBoolean("ok", false));
                 });
-            } catch (Exception ex) {
-                runOnUiThread(() -> {
-                    setDebug("Bridge command failed", ex.toString());
-                    appendVoiceDebug("Maera felt a bridge command fail", ex.toString());
-                });
-            }
-        });
+            }, error -> runOnUiThread(() -> {
+                setDebug("Bridge command failed", error.toString());
+                appendVoiceDebug("Maera felt a bridge command fail", error.toString());
+            }));
+        } catch (Exception ex) {
+            setDebug("Bridge command failed", ex.toString());
+            appendVoiceDebug("Maera felt a bridge command fail", ex.toString());
+        }
     }
 
     private static String urlEncode(String value) {
@@ -1633,49 +1689,13 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void fetchMobileState(boolean manual) {
-        httpExecutor.execute(() -> {
-            try {
-                String body = get(baseUrl() + "/api/mobile/state?sessionId=" + urlEncode(currentSessionId()), 12000);
-                JSONObject json = new JSONObject(body);
-                runOnUiThread(() -> {
-                    applyMobileStatePayload(json);
-                    if (manual) setDebug("Bridge state refreshed", clip(body, 1200));
-                });
-            } catch (Exception ex) {
-                if (manual) runOnUiThread(() -> setDebug("Bridge state failed", ex.toString()));
-            }
-        });
-    }
-
-    private void pollBridgeEvents() {
-        if (bridgePollInFlight) return;
-        bridgePollInFlight = true;
-        httpExecutor.execute(() -> {
-            try {
-                String body = get(baseUrl() + "/api/mobile/events?after=" + lastBridgeEventSequence + "&max=25", 10000);
-                JSONObject json = new JSONObject(body);
-                JSONArray events = json.optJSONArray("events");
-                long latest = optLongEither(json, "latestSequence", "LatestSequence", lastBridgeEventSequence);
-                runOnUiThread(() -> {
-                    if (!bridgeEventsPrimed) {
-                        if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
-                        bridgeEventsPrimed = true;
-                        appendVoiceDebug("Kaelia primed the bridge event subscription", "Starting after event #" + lastBridgeEventSequence + " so old story/audio events do not replay after reopening the app.");
-                        return;
-                    }
-                    if (events != null) {
-                        for (int i = 0; i < events.length(); i++) {
-                            JSONObject evt = events.optJSONObject(i);
-                            if (evt != null) handleBridgeEvent(evt);
-                        }
-                    }
-                    if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
-                });
-            } catch (Exception ignored) {
-                // Connection status is already shown by the health loop.
-            } finally {
-                bridgePollInFlight = false;
-            }
+        JSONObject request = new JSONObject();
+        try { request.put("sessionId", currentSessionId()); } catch (Exception ignored) { }
+        sendSocketRequest("state", request, 15000L, json -> runOnUiThread(() -> {
+            applyMobileStatePayload(json);
+            if (manual) setDebug("Bridge state refreshed", clip(json.toString(), 1200));
+        }), error -> {
+            if (manual) runOnUiThread(() -> setDebug("Bridge state failed", error.toString()));
         });
     }
 
@@ -1694,13 +1714,16 @@ public final class MainActivity extends ComponentActivity {
                 }
             }
         }
-        long latest = optLongEither(json, "latestEventSequence", "LatestEventSequence", lastBridgeEventSequence);
-        if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
-        bridgeEventsPrimed = true;
+        if (!bridgeEventsPrimed) {
+            long latest = optLongEither(json, "latestEventSequence", "LatestEventSequence", lastBridgeEventSequence);
+            if (latest > lastBridgeEventSequence) lastBridgeEventSequence = latest;
+            bridgeEventsPrimed = true;
+        }
     }
 
     private void handleBridgeEvent(JSONObject event) {
-        long seq = optLongEither(event, "sequence", "Sequence", lastBridgeEventSequence);
+        long seq = optLongEither(event, "sequence", "Sequence", 0L);
+        if (seq > 0L && seq <= lastBridgeEventSequence) return;
         if (seq > lastBridgeEventSequence) lastBridgeEventSequence = seq;
         String type = optStringEither(event, "eventType", "EventType", "BridgeEvent");
         String selected = optStringEither(event, "selectedStarId", "SelectedStarId", "");
@@ -1777,7 +1800,7 @@ public final class MainActivity extends ComponentActivity {
             responseText.setText(header + "\n\n" + clip(visible, storyMarkdown.length() > 0 ? 20000 : 8000));
             if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " answered.");
             setDebug("Queued Star response", "event=#" + seq + " " + type + "; recovered from bridge event. responseChars=" + visible.length() + (error.length() > 0 ? "\nerror=" + error : ""));
-            appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct HTTP wait was interrupted.");
+            appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct WebSocket request promise was interrupted.");
             setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star response arrived; screen can rest after voice/playback completes.");
         } else if ("MobileConversationResponseFailed".equalsIgnoreCase(type)) {
             responseText.setText("Star response failed — " + starId + "\n\n" + clip(error.length() > 0 ? error : message, 2000));
@@ -2205,6 +2228,21 @@ public final class MainActivity extends ComponentActivity {
                 ? "I attached an image. Please look at it and reply directly to what you see."
                 : caption;
         String starName = selectedStarName();
+        JSONObject requestJson;
+        try {
+            requestJson = baseRequestJson();
+            requestJson.put("commandId", "android-photo-" + System.currentTimeMillis());
+            requestJson.put("commandType", "SendPhoto");
+            requestJson.put("requestType", "Photo");
+            requestJson.put("playerText", requestText);
+            requestJson.put("photoMimeType", mimeType == null || mimeType.length() == 0 ? "image/jpeg" : mimeType);
+            requestJson.put("photoCaption", requestText);
+        } catch (Exception ex) {
+            setDebug("Image request could not start", ex.toString());
+            appendVoiceDebug("Maera felt the image request fail", ex.toString());
+            return;
+        }
+
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
@@ -2212,26 +2250,26 @@ public final class MainActivity extends ComponentActivity {
         pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
         foregroundRequestExecutor.execute(() -> {
             try {
-                JSONObject json = baseRequestJson();
-                json.put("commandId", "android-photo-" + System.currentTimeMillis());
-                json.put("commandType", "SendPhoto");
-                json.put("requestType", "Photo");
-                json.put("playerText", requestText);
-                json.put("photoBase64", Base64.encodeToString(imageBytes, Base64.NO_WRAP));
-                json.put("photoMimeType", mimeType == null || mimeType.length() == 0 ? "image/jpeg" : mimeType);
-                json.put("photoCaption", requestText);
+                requestJson.put("photoBase64", Base64.encodeToString(imageBytes, Base64.NO_WRAP));
                 String checksum = sha256Hex(imageBytes);
                 runOnUiThread(() -> {
                     setDebug("Sending image", "Message box cleared. Sending camera photo to " + starName + ". bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
-                    appendVoiceDebug(starName + " received an image request", "HTTP /api/mobile/dispatch SendPhoto sent with image bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug(starName + " received an image request", "WebSocket photo request queued with image bytes=" + imageBytes.length + ", sha256=" + shortHash(checksum));
                 });
-                String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
-                handleConversationResponse("Image request complete", body);
+                sendSocketRequest("dispatch", requestJson, 240000L,
+                        response -> handleConversationResponse("Image request complete", response.toString()),
+                        error -> runOnUiThread(() -> {
+                            setDebug("Image request wait interrupted", error.toString() + "\nThe desktop may still finish the image reply. Android will receive it over the persistent WebSocket if it arrives.");
+                            appendVoiceDebug("Image request wait interrupted", "Still listening on the WebSocket for a queued bridge response event: " + error);
+                            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image WebSocket wait failed; keeping the phone awake briefly for queued events.");
+                            mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted image request."), 20000L);
+                            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("image request recovery grace finished", false), 30000L);
+                        }));
             } catch (Exception ex) {
                 runOnUiThread(() -> {
-                    setDebug("Image request wait interrupted", ex.toString() + "\nThe desktop may still finish the image reply. Android will keep polling queued bridge events.");
-                    appendVoiceDebug("Image request wait interrupted", "Still listening for queued bridge response event: " + ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    setDebug("Image request wait interrupted", ex.toString() + "\nThe desktop may still finish the image reply. Android will keep receiving queued bridge events over the persistent WebSocket.");
+                    appendVoiceDebug("Image request wait interrupted", "Still listening on the WebSocket for a queued bridge response event: " + ex);
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image WebSocket wait failed; keeping the phone awake briefly while queued bridge events are checked.");
                     mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted image request."), 20000L);
                     mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("image request recovery grace finished", false), 30000L);
                 });
@@ -2247,32 +2285,35 @@ public final class MainActivity extends ComponentActivity {
             appendVoiceDebug("Elusiaa tilted her head", "The message box was empty, so nothing was sent.");
             return;
         }
+
         String starName = selectedStarName();
         appendProdConversationLine("You", playerText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
-        foregroundRequestExecutor.execute(() -> {
-            try {
-                JSONObject json = baseRequestJson();
-                json.put("playerText", playerText);
-                runOnUiThread(() -> {
-                    setDebug("Sending text", "Message box cleared. Waiting for Star response. Voice will arrive on phone socket when generated.");
-                    appendVoiceDebug(starName + " received your message", "HTTP /api/mobile/message sent at " + now());
-                });
-                String body = postJson(baseUrl() + "/api/mobile/message", json.toString(), 180000);
-                handleConversationResponse("Text request complete", body);
-            } catch (Exception ex) {
-                runOnUiThread(() -> {
-                    setDebug("Text request wait interrupted", ex.toString() + "\nThe desktop may still finish the reply. Android will keep polling /api/mobile/events and show her queued response if it arrives.");
-                    appendVoiceDebug("Text request wait interrupted", "Still listening for queued bridge response event: " + ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
-                    mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted text request."), 20000L);
-                    mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("text request recovery grace finished", false), 30000L);
-                });
-            }
-        });
+
+        try {
+            JSONObject json = baseRequestJson();
+            json.put("playerText", playerText);
+            setDebug("Sending text", "Message box cleared. The request was placed directly on the persistent WebSocket. Voice will arrive on the phone audio socket when generated.");
+            appendVoiceDebug(starName + " received your message", "WebSocket message request sent immediately at " + now());
+            sendSocketRequest("message", json, 180000L,
+                    response -> handleConversationResponse("Text request complete", response.toString()),
+                    error -> runOnUiThread(() -> {
+                        setDebug("Text request wait interrupted", error.toString() + "\nThe desktop may still finish the reply. Android will receive her queued response over the persistent WebSocket if it arrives.");
+                        appendVoiceDebug("Text request wait interrupted", "Still listening on the WebSocket for a queued bridge response event: " + error);
+                        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text WebSocket wait failed; keeping the phone awake briefly for queued events.");
+                        mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted text request."), 20000L);
+                        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("text request recovery grace finished", false), 30000L);
+                    }));
+        } catch (Exception ex) {
+            setDebug("Text request wait interrupted", ex.toString() + "\nThe desktop may still finish the reply. Android will receive her queued response over the persistent WebSocket if it arrives.");
+            appendVoiceDebug("Text request wait interrupted", "Still listening on the WebSocket for a queued bridge response event: " + ex);
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text WebSocket wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+            mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted text request."), 20000L);
+            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("text request recovery grace finished", false), 30000L);
+        }
     }
 
     private void toggleRecording() {
@@ -2372,29 +2413,44 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void sendAudio(byte[] pcm16) {
+        JSONObject requestJson;
+        try {
+            requestJson = baseRequestJson();
+            requestJson.put("audioFormat", "wav");
+            requestJson.put("sampleRate", SAMPLE_RATE);
+            requestJson.put("channels", 1);
+            requestJson.put("bitsPerSample", 16);
+        } catch (Exception ex) {
+            setDebug("Voice request could not start", ex.toString());
+            appendVoiceDebug("Khavia could not prepare your recorded voice", ex.toString());
+            return;
+        }
+
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
         pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");
         foregroundRequestExecutor.execute(() -> {
             try {
                 byte[] wav = wavFromPcm16(pcm16, SAMPLE_RATE, 1);
-                JSONObject json = baseRequestJson();
-                json.put("audioFormat", "wav");
-                json.put("sampleRate", SAMPLE_RATE);
-                json.put("channels", 1);
-                json.put("bitsPerSample", 16);
-                json.put("audioBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
+                requestJson.put("audioBase64", Base64.encodeToString(wav, Base64.NO_WRAP));
                 String checksum = sha256Hex(wav);
                 runOnUiThread(() -> {
                     setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket. recordedSha256=" + shortHash(checksum));
-                    appendVoiceDebug("Khavia carried your recorded voice", "HTTP /api/mobile/audio sent at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug("Khavia carried your recorded voice", "WebSocket audio request queued at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
                 });
-                String body = postJson(baseUrl() + "/api/mobile/audio", json.toString(), 240000);
-                handleConversationResponse("Voice request complete", body);
+                sendSocketRequest("audio", requestJson, 240000L,
+                        response -> handleConversationResponse("Voice request complete", response.toString()),
+                        error -> runOnUiThread(() -> {
+                            setDebug("Voice request wait interrupted", error.toString() + "\nIf Whisper already produced a transcript or the Star finishes later, Android will show it from WebSocket bridge events.");
+                            appendVoiceDebug("Voice request wait interrupted", "Still listening on the WebSocket for transcript/response bridge events: " + error);
+                            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice WebSocket wait failed; keeping the phone awake briefly for queued events.");
+                            mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted voice request."), 20000L);
+                            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("voice request recovery grace finished", false), 30000L);
+                        }));
             } catch (Exception ex) {
                 runOnUiThread(() -> {
                     setDebug("Voice request wait interrupted", ex.toString() + "\nIf Whisper already produced a transcript or the Star finishes later, Android will show it from queued bridge events.");
-                    appendVoiceDebug("Voice request wait interrupted", "Still listening for transcript/response bridge events: " + ex.toString());
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice HTTP wait failed; keeping the phone awake briefly while queued bridge events are checked.");
+                    appendVoiceDebug("Voice request wait interrupted", "Still listening on the WebSocket for transcript/response bridge events: " + ex);
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice WebSocket wait failed; keeping the phone awake briefly while queued bridge events are checked.");
                     mainHandler.postDelayed(() -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Finished grace period after interrupted voice request."), 20000L);
                     mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("voice request recovery grace finished", false), 30000L);
                 });
@@ -2422,6 +2478,9 @@ public final class MainActivity extends ComponentActivity {
                 long serverElapsedMs = optLongEither(json, "serverElapsedMs", "ServerElapsedMs", 0L);
                 long runtimeElapsedMs = optLongEither(json, "runtimeElapsedMs", "RuntimeElapsedMs", 0L);
                 long gateWaitMs = optLongEither(json, "gateWaitMs", "GateWaitMs", 0L);
+                long clientQueueMs = optLongEither(json, "clientQueueMs", "ClientQueueMs", 0L);
+                long clientSocketRoundTripMs = optLongEither(json, "clientSocketRoundTripMs", "ClientSocketRoundTripMs", 0L);
+                long clientAfterSendMs = optLongEither(json, "clientAfterSendMs", "ClientAfterSendMs", 0L);
                 String storyTitle = optStringEither(json, "storyTitle", "StoryTitle", "");
                 String storyMarkdown = optStringEither(json, "storyMarkdown", "StoryMarkdown", "");
                 String storySummary = optStringEither(json, "storySummary", "StorySummary", "");
@@ -2461,7 +2520,7 @@ public final class MainActivity extends ComponentActivity {
                 }
 
                 if (visibleResponse.length() == 0) {
-                    visibleResponse = "No spoken text was returned in the HTTP response. Check the desktop debug output for the Star response.";
+                    visibleResponse = "No spoken text was returned in the bridge response. Check the desktop debug output for the Star response.";
                 }
 
                 if (transcript.length() > 0 && title.toLowerCase(Locale.US).contains("voice")) {
@@ -2485,6 +2544,10 @@ public final class MainActivity extends ComponentActivity {
                         + "\nServer total: " + serverElapsedMs + " ms"
                         + "\nRuntime: " + runtimeElapsedMs + " ms"
                         + "\nRuntime gate wait: " + gateWaitMs + " ms"
+                        + "\nAndroid request queue: " + clientQueueMs + " ms"
+                        + "\nWebSocket round trip: " + clientSocketRoundTripMs + " ms"
+                        + "\nAfter socket send: " + clientAfterSendMs + " ms"
+                        + "\nEstimated transport/UI overhead: " + Math.max(0L, clientSocketRoundTripMs - serverElapsedMs) + " ms"
                         + "\nVoice chunks queued: " + chunks
                         + "\nVoice bytes: " + bytes
                         + "\nStory markdown ready: " + storyReady
@@ -2504,7 +2567,7 @@ public final class MainActivity extends ComponentActivity {
                 if (voiceMessage.length() > 0) details += "\n" + voiceMessage;
                 if (voiceError.length() > 0) details += "\nVoice note: " + voiceError;
                 setDebug(title, details);
-                appendVoiceDebug(starId + " returned text", "HTTP response at " + now() + ", responseChars=" + visibleResponse.length() + ", spokenChars=" + spoken.length() + ", voiceMessage=" + clip(voiceMessage, 140));
+                appendVoiceDebug(starId + " returned text", "WebSocket response at " + now() + ", responseChars=" + visibleResponse.length() + ", spokenChars=" + spoken.length() + ", voiceMessage=" + clip(voiceMessage, 140));
             } catch (Exception ex) {
                 responseText.setText(clip(body, 8000));
                 setDebug(title + " (raw)", clip(body, 900));

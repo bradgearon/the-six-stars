@@ -123,7 +123,7 @@ public sealed partial class MainViewModel
     {
         if (_mobileBridgeServer != null && _mobileBridgeServer.IsRunning)
         {
-            MobileBridgeStatus = "Android bridge is already running. HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + "; archive " + ConversationArchiveUrl + ".";
+            MobileBridgeStatus = "Android bridge is already running. HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + "; archive " + ConversationArchiveUrl + ".";
             return;
         }
 
@@ -133,7 +133,7 @@ public sealed partial class MainViewModel
         _mobileBridgeAudioHost = new MobileBridgeAudioSocketHost();
         _mobileBridgeAudioHost.StatusChanged += (_, message) => OnUiThread(() =>
         {
-            MobileBridgeStatus = message + " HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
+            MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
             AppendMobileBridgeVoiceDebug("Audio socket status", message);
         });
         _mobileBridgeAudioHost.Start(audioPort);
@@ -154,13 +154,13 @@ public sealed partial class MainViewModel
             _appConfig.ConversationArchive.Enabled);
         _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
         {
-            MobileBridgeStatus = message + " HTTP " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
-            AppendMobileBridgeVoiceDebug("HTTP bridge status", message);
+            MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
+            AppendMobileBridgeVoiceDebug("HTTP/WebSocket bridge status", message);
         });
         _mobileBridgeServer.Start();
 
         MobileBridgeEnabled = true;
-        MobileBridgeStatus = "Android bridge running. HTTP " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP URL in the Android app.";
+        MobileBridgeStatus = "Android bridge running. HTTP/WebSocket " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP base URL in the Android app.";
     }
 
     private void StopMobileBridgeServer(string reason)
@@ -201,6 +201,7 @@ public sealed partial class MainViewModel
             audioPort = ResolveMobileBridgeAudioPort(),
             audioSocketConnected = clients > 0,
             audioClientCount = clients,
+            webSocketClientCount = _mobileBridgeServer?.WebSocketClientCount ?? 0,
             selectedStarId = SelectedStarId,
             streamingTts = _useStreamingTts,
             time = DateTimeOffset.Now

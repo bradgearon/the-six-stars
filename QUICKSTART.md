@@ -284,15 +284,13 @@ Check the documentation files in the `docs/` folder for detailed information on 
 
 ### Android Star state controls
 
-The Android app now has a Star dropdown, met/ally toggles, and Clear History for the selected Star. These go through the API dispatcher:
+The Android app now has a Star dropdown, met/ally toggles, and Clear History for the selected Star. Foreground requests and dispatcher updates use one persistent multiplexed WebSocket:
 
 ```text
-POST /api/mobile/dispatch
-GET  /api/mobile/events?after=<sequence>
-GET  /api/mobile/state
+ws://<desktop-host>:8066/api/mobile/socket
 ```
 
-Use the voice journal/debug panel on Android to verify queued `SelectedStarChanged`, `StarStateChanged`, and `StarHistoryCleared` events.
+Use the voice journal/debug panel on Android to verify pushed `SelectedStarChanged`, `StarStateChanged`, and `StarHistoryCleared` events. The panel also shows Android queue time, WebSocket round-trip time, desktop runtime time, and estimated transport/UI overhead so remaining latency can be located precisely. The legacy HTTP dispatcher/event/state endpoints remain available for compatibility tools.
 
 ## CUDA-only services
 

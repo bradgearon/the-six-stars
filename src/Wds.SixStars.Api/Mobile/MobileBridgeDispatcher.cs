@@ -16,6 +16,7 @@ namespace Wds.SixStars.Api.Mobile;
 public sealed class MobileBridgeDispatcher
 {
     private readonly object _gate = new object();
+    private readonly object _publishGate = new object();
     private readonly List<MobileBridgeDispatchEvent> _events = new List<MobileBridgeDispatchEvent>();
     private Func<MobileBridgeDispatchCommand, CancellationToken, Task<MobileBridgeDispatchResult>>? _handler;
     private long _nextSequence;
@@ -90,21 +91,28 @@ public sealed class MobileBridgeDispatcher
     public MobileBridgeDispatchEvent Publish(MobileBridgeDispatchEvent evt)
     {
         if (evt == null) throw new ArgumentNullException(nameof(evt));
-        evt.Sequence = Interlocked.Increment(ref _nextSequence);
-        evt.CreatedAt = evt.CreatedAt == default ? DateTimeOffset.UtcNow : evt.CreatedAt;
-        evt.EventType = string.IsNullOrWhiteSpace(evt.EventType) ? "BridgeEvent" : evt.EventType;
 
-        lock (_gate)
+        // WebSocket subscribers receive events as they are published rather than sorting a later
+        // polling batch. Serialize sequence assignment and publication so event N can never be
+        // observed after event N+1 on the live pipe.
+        lock (_publishGate)
         {
-            _events.Add(evt);
-            if (_events.Count > MaxEvents)
-            {
-                _events.RemoveRange(0, _events.Count - MaxEvents);
-            }
-        }
+            evt.Sequence = ++_nextSequence;
+            evt.CreatedAt = evt.CreatedAt == default ? DateTimeOffset.UtcNow : evt.CreatedAt;
+            evt.EventType = string.IsNullOrWhiteSpace(evt.EventType) ? "BridgeEvent" : evt.EventType;
 
-        EventPublished?.Invoke(this, evt);
-        return evt;
+            lock (_gate)
+            {
+                _events.Add(evt);
+                if (_events.Count > MaxEvents)
+                {
+                    _events.RemoveRange(0, _events.Count - MaxEvents);
+                }
+            }
+
+            EventPublished?.Invoke(this, evt);
+            return evt;
+        }
     }
 
     public MobileBridgeEventBatch GetEventsAfter(long afterSequence, int maxEvents = 50)

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -30,12 +31,17 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptTask;
+    private readonly object _webSocketGate = new object();
+    private readonly SemaphoreSlim _eventBroadcastLock = new SemaphoreSlim(1, 1);
+    private readonly List<MobileBridgeWebSocketConnection> _webSocketClients = new List<MobileBridgeWebSocketConnection>();
+    private int _lastWebSocketClientId;
     private bool _disposed;
 
     public event EventHandler<string>? StatusChanged;
 
     public int Port { get; private set; }
     public bool IsRunning => _listener != null;
+    public int WebSocketClientCount { get { lock (_webSocketGate) return _webSocketClients.Count; } }
 
     public MobileBridgeHttpServer(
         int port,
@@ -65,6 +71,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         _conversationArchivePrefix = NormalizePrefix(conversationArchivePrefix);
         _conversationArchiveEnabled = conversationArchiveEnabled;
         _dispatcher = dispatcher;
+        _dispatcher.EventPublished += OnDispatcherEventPublished;
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -80,7 +87,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         _listener = new TcpListener(IPAddress.Any, Port);
         _listener.Start();
         _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
-        PublishStatus("Mobile HTTP bridge listening on port " + Port + ".");
+        PublishStatus("Mobile HTTP/WebSocket bridge listening on port " + Port + ".");
     }
 
     public void Stop()
@@ -88,9 +95,21 @@ public sealed class MobileBridgeHttpServer : IDisposable
         try { _cts?.Cancel(); } catch { }
         try { _listener?.Stop(); } catch { }
         _listener = null;
+
+        List<MobileBridgeWebSocketConnection> sockets;
+        lock (_webSocketGate)
+        {
+            sockets = new List<MobileBridgeWebSocketConnection>(_webSocketClients);
+            _webSocketClients.Clear();
+        }
+        foreach (MobileBridgeWebSocketConnection socket in sockets)
+        {
+            try { socket.Dispose(); } catch { }
+        }
+
         _cts?.Dispose();
         _cts = null;
-        PublishStatus("Mobile HTTP bridge stopped.");
+        PublishStatus("Mobile HTTP/WebSocket bridge stopped.");
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)
@@ -132,6 +151,12 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 client.SendTimeout = 180000;
                 NetworkStream stream = client.GetStream();
                 HttpRequest request = await ReadRequestAsync(stream, serverToken).ConfigureAwait(false);
+
+                if (request.Method == "GET" && request.Path == "/api/mobile/socket" && IsWebSocketUpgrade(request))
+                {
+                    await HandleWebSocketClientAsync(client, stream, request, serverToken).ConfigureAwait(false);
+                    return;
+                }
 
                 if (request.Method == "GET" && request.Path == "/health")
                 {
@@ -234,6 +259,326 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 PublishStatus("Mobile bridge request error: " + ex.Message);
             }
         }
+    }
+
+    private static bool IsWebSocketUpgrade(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue("Upgrade", out string? upgrade)
+            || !upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!request.Headers.TryGetValue("Connection", out string? connection)
+            || connection.IndexOf("Upgrade", StringComparison.OrdinalIgnoreCase) < 0) return false;
+        return request.Headers.ContainsKey("Sec-WebSocket-Key");
+    }
+
+    private async Task HandleWebSocketClientAsync(TcpClient client, NetworkStream stream, HttpRequest request, CancellationToken serverToken)
+    {
+        if (!request.Headers.TryGetValue("Sec-WebSocket-Key", out string? key) || string.IsNullOrWhiteSpace(key))
+        {
+            await WriteJsonAsync(stream, 400, new { ok = false, error = "Missing Sec-WebSocket-Key." }, serverToken).ConfigureAwait(false);
+            return;
+        }
+        if (!request.Headers.TryGetValue("Sec-WebSocket-Version", out string? version) || version.Trim() != "13")
+        {
+            await WriteWebSocketVersionRequiredAsync(stream, serverToken).ConfigureAwait(false);
+            return;
+        }
+
+        string acceptSource = key.Trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        byte[] acceptHash;
+        using (SHA1 sha1 = SHA1.Create()) acceptHash = sha1.ComputeHash(Encoding.ASCII.GetBytes(acceptSource));
+        string accept = Convert.ToBase64String(acceptHash);
+        string response = "HTTP/1.1 101 Switching Protocols\r\n"
+            + "Upgrade: websocket\r\n"
+            + "Connection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: " + accept + "\r\n\r\n";
+        byte[] responseBytes = Encoding.ASCII.GetBytes(response);
+        await stream.WriteAsync(responseBytes, 0, responseBytes.Length, serverToken).ConfigureAwait(false);
+        await stream.FlushAsync(serverToken).ConfigureAwait(false);
+
+        client.ReceiveTimeout = 0;
+        client.SendTimeout = 0;
+        MobileBridgeWebSocketConnection connection = new MobileBridgeWebSocketConnection(Interlocked.Increment(ref _lastWebSocketClientId), client);
+        lock (_webSocketGate) _webSocketClients.Add(connection);
+        PublishStatus("Android mobile WebSocket connected. Clients=" + WebSocketClientCount + ".");
+
+        using CancellationTokenSource connectionCts = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
+        try
+        {
+            long latestSequence = _dispatcher.GetEventsAfter(0, 1).LatestSequence;
+            await connection.SendJsonAsync(new
+            {
+                type = "hello",
+                protocolVersion = 1,
+                clientId = connection.Id,
+                latestSequence,
+                connectedAtUtc = DateTimeOffset.UtcNow
+            }, _jsonOptions, connectionCts.Token).ConfigureAwait(false);
+
+            while (!connectionCts.IsCancellationRequested)
+            {
+                string? message = await connection.ReadTextMessageAsync(connectionCts.Token).ConfigureAwait(false);
+                if (message == null) break;
+                JsonDocument document;
+                try
+                {
+                    document = JsonDocument.Parse(message);
+                }
+                catch (JsonException ex)
+                {
+                    await connection.SendJsonAsync(new { type = "protocolError", error = "Invalid JSON: " + ex.Message }, _jsonOptions, connectionCts.Token).ConfigureAwait(false);
+                    continue;
+                }
+
+                using (document)
+                {
+                    JsonElement root = document.RootElement;
+                    string type = GetJsonString(root, "type");
+                    if (type.Equals("ping", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await connection.SendJsonAsync(new { type = "pong", sentAtUtc = DateTimeOffset.UtcNow }, _jsonOptions, connectionCts.Token).ConfigureAwait(false);
+                        continue;
+                    }
+                    if (type.Equals("subscribe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        long afterSequence = GetJsonInt64(root, "afterSequence", 0L);
+                        await SendMissedEventsAsync(connection, afterSequence, connectionCts.Token).ConfigureAwait(false);
+                        continue;
+                    }
+                    if (!type.Equals("request", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await connection.SendJsonAsync(new { type = "protocolError", error = "Unknown message type: " + type }, _jsonOptions, connectionCts.Token).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    int requestId = GetJsonInt32(root, "requestId", 0);
+                    string operation = GetJsonString(root, "operation");
+                    JsonElement payload = root.TryGetProperty("payload", out JsonElement payloadElement)
+                        ? payloadElement.Clone()
+                        : JsonSerializer.SerializeToElement(new { }, _jsonOptions);
+                    _ = Task.Run(() => ProcessWebSocketRequestAsync(connection, requestId, operation, payload, connectionCts.Token), CancellationToken.None);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (EndOfStreamException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("[MobileBridgeSocket] Client error: " + ex);
+        }
+        finally
+        {
+            connectionCts.Cancel();
+            RemoveWebSocketClient(connection);
+        }
+    }
+
+    private async Task ProcessWebSocketRequestAsync(MobileBridgeWebSocketConnection connection, int requestId, string operation, JsonElement payload, CancellationToken cancellationToken)
+    {
+        if (requestId <= 0)
+        {
+            await SafeSendSocketAsync(connection, new { type = "response", requestId, operation, ok = false, error = "requestId must be a positive integer." }, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            SocketOperationResult result = await ExecuteSocketOperationAsync(operation, payload, cancellationToken).ConfigureAwait(false);
+            await SafeSendSocketAsync(connection, new
+            {
+                type = "response",
+                requestId,
+                operation,
+                ok = result.Ok,
+                payload = result.Payload,
+                error = result.Error,
+                completedAtUtc = DateTimeOffset.UtcNow
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            await SafeSendSocketAsync(connection, new
+            {
+                type = "response",
+                requestId,
+                operation,
+                ok = false,
+                error = ex.Message,
+                completedAtUtc = DateTimeOffset.UtcNow
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<SocketOperationResult> ExecuteSocketOperationAsync(string operation, JsonElement payload, CancellationToken cancellationToken)
+    {
+        string normalized = (operation ?? string.Empty).Trim().ToLowerInvariant();
+        switch (normalized)
+        {
+            case "message":
+            {
+                MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                MobileBridgeResponse response = await _messageHandler(request, cancellationToken).ConfigureAwait(false);
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response));
+            }
+            case "audio":
+            {
+                MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                MobileBridgeResponse response = await _audioHandler(request, cancellationToken).ConfigureAwait(false);
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response));
+            }
+            case "dispatch":
+            {
+                MobileBridgeDispatchCommand command = JsonSerializer.Deserialize<MobileBridgeDispatchCommand>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeDispatchCommand();
+                MobileBridgeDispatchResult response = await _dispatcher.DispatchAsync(command, cancellationToken).ConfigureAwait(false);
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : response.Error);
+            }
+            case "state":
+            {
+                string sessionId = GetJsonString(payload, "sessionId");
+                object response = await _stateFactory(string.IsNullOrWhiteSpace(sessionId) ? "android-phone-dev" : sessionId, cancellationToken).ConfigureAwait(false);
+                return new SocketOperationResult(true, response, string.Empty);
+            }
+            case "health":
+                return new SocketOperationResult(true, _healthFactory(), string.Empty);
+            case "stars":
+                return new SocketOperationResult(true, _starsFactory(), string.Empty);
+            default:
+                return new SocketOperationResult(false, new { }, "Unknown mobile WebSocket operation: " + operation);
+        }
+    }
+
+    private async Task SendMissedEventsAsync(MobileBridgeWebSocketConnection connection, long afterSequence, CancellationToken cancellationToken)
+    {
+        await _eventBroadcastLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            MobileBridgeEventBatch batch = _dispatcher.GetEventsAfter(afterSequence, 100);
+            foreach (MobileBridgeDispatchEvent evt in batch.Events)
+            {
+                await connection.SendJsonAsync(new { type = "event", sequence = evt.Sequence, payload = evt }, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            }
+            await connection.SendJsonAsync(new { type = "subscribed", afterSequence, latestSequence = batch.LatestSequence }, _jsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _eventBroadcastLock.Release();
+        }
+    }
+
+    private void OnDispatcherEventPublished(object? sender, MobileBridgeDispatchEvent evt)
+    {
+        _ = BroadcastDispatcherEventAsync(evt);
+    }
+
+    private async Task BroadcastDispatcherEventAsync(MobileBridgeDispatchEvent evt)
+    {
+        await _eventBroadcastLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            List<MobileBridgeWebSocketConnection> clients;
+            lock (_webSocketGate) clients = new List<MobileBridgeWebSocketConnection>(_webSocketClients);
+            foreach (MobileBridgeWebSocketConnection connection in clients)
+            {
+                try
+                {
+                    await connection.SendJsonAsync(new { type = "event", sequence = evt.Sequence, payload = evt }, _jsonOptions, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    RemoveWebSocketClient(connection);
+                }
+            }
+        }
+        finally
+        {
+            _eventBroadcastLock.Release();
+        }
+    }
+
+    private async Task SafeSendSocketAsync(MobileBridgeWebSocketConnection connection, object value, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await connection.SendJsonAsync(value, _jsonOptions, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            RemoveWebSocketClient(connection);
+        }
+    }
+
+    private void RemoveWebSocketClient(MobileBridgeWebSocketConnection connection)
+    {
+        bool removed;
+        lock (_webSocketGate) removed = _webSocketClients.Remove(connection);
+        connection.Dispose();
+        if (removed) PublishStatus("Android mobile WebSocket disconnected. Clients=" + WebSocketClientCount + ".");
+    }
+
+    private static string GetMobileResponseError(MobileBridgeResponse response)
+    {
+        if (!string.IsNullOrWhiteSpace(response.VoiceError)) return response.VoiceError;
+        string note = response.Notes.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)) ?? string.Empty;
+        return string.IsNullOrWhiteSpace(note) ? "Desktop mobile bridge request failed." : note;
+    }
+
+    private static async Task WriteWebSocketVersionRequiredAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        const string bodyText = "WebSocket version 13 is required.";
+        byte[] body = Encoding.UTF8.GetBytes(bodyText);
+        string header = "HTTP/1.1 426 Upgrade Required\r\n"
+            + "Sec-WebSocket-Version: 13\r\n"
+            + "Content-Type: text/plain; charset=utf-8\r\n"
+            + "Connection: close\r\n"
+            + "Content-Length: " + body.Length + "\r\n\r\n";
+        byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+        await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(body, 0, body.Length, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string GetJsonString(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return string.Empty;
+        if (element.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String) return value.GetString() ?? string.Empty;
+        string alternate = char.ToUpperInvariant(propertyName[0]) + propertyName.Substring(1);
+        if (element.TryGetProperty(alternate, out value) && value.ValueKind == JsonValueKind.String) return value.GetString() ?? string.Empty;
+        return string.Empty;
+    }
+
+    private static int GetJsonInt32(JsonElement element, string propertyName, int fallback)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out JsonElement value) && value.TryGetInt32(out int result)) return result;
+        return fallback;
+    }
+
+    private static long GetJsonInt64(JsonElement element, string propertyName, long fallback)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(propertyName, out JsonElement value) && value.TryGetInt64(out long result)) return result;
+        return fallback;
+    }
+
+    private sealed class SocketOperationResult
+    {
+        public SocketOperationResult(bool ok, object payload, string error)
+        {
+            Ok = ok;
+            Payload = payload;
+            Error = error ?? string.Empty;
+        }
+
+        public bool Ok { get; }
+        public object Payload { get; }
+        public string Error { get; }
     }
 
     private async Task<HttpRequest> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)
@@ -416,7 +761,10 @@ public sealed class MobileBridgeHttpServer : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _dispatcher.EventPublished -= OnDispatcherEventPublished;
         Stop();
+        // In-flight event broadcasts may still be unwinding after their sockets are closed. Leave
+        // the lightweight semaphore for GC rather than racing a pending Release().
     }
 
     private sealed class HttpRequest

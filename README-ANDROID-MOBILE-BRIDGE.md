@@ -48,12 +48,12 @@ The Android checkbox now says **Play Star voice on this phone**. When checked, t
 
 ## Phone voice queue update
 
-The Android app now uses two connections:
+The Android app now uses two long-lived connections:
 
-- HTTP control/API: `http://grasshoppah:8066`
-- Phone voice socket: reported by `/health` as `audioPort`, usually `8067`
+- Multiplexed control/API WebSocket: `ws://grasshoppah:8066/api/mobile/socket`
+- Phone voice socket: reported by the WebSocket `health` operation as `audioPort`, usually `8067`
 
-The desktop receives Qwen/WebSocket TTS chunks, orders them through the streaming voice pipeline with desktop autoplay disabled, and forwards each WAV chunk to Android. Android plays the queued PCM16 WAV chunks locally using `AudioTrack`. The Android debug window is intentionally compact and no longer stores full bridge request/response JSON.
+The desktop receives Qwen/WebSocket TTS chunks, orders them through the streaming voice pipeline with desktop autoplay disabled, and forwards each WAV chunk over the dedicated binary audio socket to Android. Android plays the queued PCM16 WAV chunks locally using `AudioTrack`. The Android debug window is intentionally compact and no longer stores full bridge request/response JSON.
 
 Open both TCP ports in Windows Firewall when testing from a real phone.
 
@@ -81,7 +81,7 @@ It does two tests:
 For Android phone voice you need both firewall rules:
 
 ```powershell
-New-NetFirewallRule -DisplayName "Six Stars Mobile Bridge HTTP 8066" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8066 -Profile Any
+New-NetFirewallRule -DisplayName "Six Stars Mobile Bridge HTTP-WebSocket 8066" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8066 -Profile Any
 New-NetFirewallRule -DisplayName "Six Stars Mobile Bridge Audio 8067" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8067 -Profile Any
 ```
 
@@ -104,15 +104,15 @@ New-NetFirewallRule -DisplayName "Six Stars Mobile Bridge Audio 8067" -Direction
 
 ## Android Star selector and dispatcher controls
 
-The Android bridge now includes a Star dropdown plus met/ally/history controls. These do not directly mutate desktop UI objects. The phone sends commands to the API-layer dispatcher through `POST /api/mobile/dispatch`, and the desktop `MainViewModel` listens to the dispatcher to apply the change to the runtime/state store.
-
-The Android app subscribes to queued bridge updates by polling:
+The Android bridge now includes a Star dropdown plus met/ally/history controls. These do not directly mutate desktop UI objects. Android opens one persistent connection at:
 
 ```text
-GET /api/mobile/events?after=<lastSequence>&max=25
+ws://<desktop>:8066/api/mobile/socket
 ```
 
-This lets the phone UI update when the selected Star changes on either side. `GET /api/mobile/state` returns the current selected Star and Android-session Star state for initial hydration.
+Text, voice-upload metadata, photos, dispatcher commands, health, state hydration, correlated responses, and pushed dispatcher events are multiplexed over this pipe. Every request carries a small integer `requestId`; Android keeps an ordered send queue and an id-indexed `CompletableFuture` map so the correct UI continuation completes even if independent responses arrive out of order.
+
+The desktop pushes `SelectedStarChanged`, `StarStateChanged`, conversation, transcript, story, and initiative events immediately. On reconnect Android sends its last event sequence and the desktop replays missed events from the dispatcher buffer. The old HTTP `/api/mobile/dispatch`, `/api/mobile/events`, and `/api/mobile/state` routes remain available for compatibility and diagnostics, but the foreground Activity no longer polls them.
 
 ## Android bridge default LAN address
 
@@ -149,4 +149,4 @@ The Android app now keeps the display awake while a Star answer is in progress. 
 
 ## Android Listen button
 
-The production Android UI includes a compact icon-only Listen button beside Talk. It sends a manual `MaybeStarInitiative` request through `/api/mobile/dispatch`, like pressing an NPC interact button, so the selected Star can volunteer a fresh state-backed line without the player typing or recording.
+The production Android UI includes a compact icon-only Listen button beside Talk. It sends a manual `MaybeStarInitiative` request through the WebSocket `dispatch` operation, like pressing an NPC interact button, so the selected Star can volunteer a fresh state-backed line without the player typing or recording.
