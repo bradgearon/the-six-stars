@@ -97,6 +97,9 @@ public final class MainActivity extends ComponentActivity {
     private static final String PREF_SELECTED_STAR_ID = "selectedStarId";
     private static final String PREF_ROMANCE_MODE = "romanceMode";
     private static final String PREF_PLAY_ON_PHONE = "playOnPhone";
+    private static final String PREF_PREPARED_LISTEN_GENERATION = "preparedListenGeneration";
+    private static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
+    private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     private static final String PREF_AREA = "area";
     private static final String PREF_QUEST = "quest";
     private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.217:8066";
@@ -201,6 +204,7 @@ public final class MainActivity extends ComponentActivity {
     private boolean starInitiativeBackgroundEnabled;
     private long lastStarInitiativeRequestMs;
     private long lastManualListenRequestMs;
+    private volatile PrefetchedInitiativeStore.CachedInitiative prefetchedInitiative;
     private boolean starInitiativeServiceReceiverRegistered;
     private Button recordButton;
     private Button photoButton;
@@ -245,6 +249,7 @@ public final class MainActivity extends ComponentActivity {
     private final Object voiceStreamStateLock = new Object();
     private String activeVoiceStreamId = "";
     private long activeVoiceStreamOrdinal = 0L;
+    private volatile boolean desktopVoiceStreamActive;
     private int droppedStaleVoiceFrames;
     private final Object orderedVoiceQueueLock = new Object();
     private final TreeMap<Integer, PhoneVoiceClip> pendingDesktopVoiceClips = new TreeMap<>();
@@ -282,9 +287,10 @@ public final class MainActivity extends ComponentActivity {
         initializeBridgeWebSocket();
         registerStarInitiativeServiceReceiver();
         syncStarInitiativeRuntimePrefs();
-        syncStarInitiativeBackgroundService("Android activity started", false);
         requestAudioPermissionIfNeeded();
         wavAudioQueue.start();
+        loadPrefetchedInitiativeIntoMemory("Android activity created");
+        syncStarInitiativeBackgroundService("Android activity started", true);
         mainHandler.postDelayed(healthLoop, 600);
     }
 
@@ -293,7 +299,8 @@ public final class MainActivity extends ComponentActivity {
         super.onResume();
         registerStarInitiativeServiceReceiver();
         ensureBridgeWebSocket();
-        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("Android activity resumed", false), 3500L);
+        loadPrefetchedInitiativeIntoMemory("Android activity resumed");
+        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("Android activity resumed", true), 1800L);
     }
 
     @Override
@@ -399,6 +406,7 @@ public final class MainActivity extends ComponentActivity {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
+                invalidatePrefetchedInitiative("Selected Star changed.");
                 syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
@@ -610,6 +618,7 @@ public final class MainActivity extends ComponentActivity {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
                 refreshProdStarUi(starSpinner.getSelectedItem().toString());
+                invalidatePrefetchedInitiative("Selected Star changed.");
                 syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
@@ -827,6 +836,7 @@ public final class MainActivity extends ComponentActivity {
                         .putBoolean(PREF_STAR_INITIATIVE_ENABLED, starInitiativeEnabled)
                         .putBoolean(PREF_STAR_INITIATIVE_BACKGROUND_ENABLED, starInitiativeBackgroundEnabled)
                         .apply();
+                invalidatePrefetchedInitiative("Android Star/voice/romance settings changed.");
                 syncStarInitiativeBackgroundService("Prod settings saved", true);
                 setDebug("Prod settings saved", "Bridge=" + baseUrl() + ", phoneVoice=" + (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) + ", romance=" + (romanceCheck == null || romanceCheck.isChecked()) + ", starInitiative=" + starInitiativeEnabled + ", autoSpeak=" + starInitiativeEnabled);
                 status.setText(buildProdMenuStatusText());
@@ -924,6 +934,7 @@ public final class MainActivity extends ComponentActivity {
         card.setOnClickListener(v -> {
             selectStarInSpinner(meta.id);
             refreshProdStarUi(meta.id);
+            invalidatePrefetchedInitiative("Selected Star changed.");
             syncStarInitiativeBackgroundService("Selected Star changed", true);
             dispatchSelectStar(meta.id);
             if (activeStarSelectionDialog != null) activeStarSelectionDialog.dismiss();
@@ -934,6 +945,7 @@ public final class MainActivity extends ComponentActivity {
     private void switchUiMode(boolean useProd) {
         prodMode = useProd;
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_PROD_MODE, useProd).apply();
+        invalidatePrefetchedInitiative("Android session mode changed.");
         buildUi();
         syncStarInitiativeBackgroundService("Android UI mode switched", true);
         testConnection(false);
@@ -1429,6 +1441,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void pauseStarInitiativeBackgroundService(String reason) {
+        blockPreparedListenFor(5L * 60L * 1000L);
         Intent intent = new Intent(this, StarInitiativeBackgroundService.class);
         intent.setAction(StarInitiativeBackgroundService.ACTION_STOP);
         try {
@@ -1447,8 +1460,11 @@ public final class MainActivity extends ComponentActivity {
             String message = intent.getStringExtra("message");
             String starId = intent.getStringExtra("starId");
             if ("requestStarted".equalsIgnoreCase(status)) {
-                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Background Star initiative service is asking whether she has something to say.");
-                if (prodMiniStatusText != null) prodMiniStatusText.setText((starId == null || starId.length() == 0 ? selectedStarName() : starId) + " is thinking at rest...");
+                if (prodMiniStatusText != null) {
+                    prodMiniStatusText.setText((starId == null || starId.length() == 0 ? selectedStarName() : starId) + " is quietly preparing something to say...");
+                }
+            } else if ("cacheReady".equalsIgnoreCase(status)) {
+                loadPrefetchedInitiativeIntoMemory("background service prepared a Listen response");
             }
             setDebug("Background at-rest service", clip(message == null ? status : message, 1200));
             appendVoiceDebug("Background at-rest service", clip(message == null ? status : message, 220));
@@ -1458,24 +1474,159 @@ public final class MainActivity extends ComponentActivity {
         if (!ACTION_STAR_INITIATIVE_SERVICE_RESPONSE.equals(action)) return;
 
         boolean ok = intent.getBooleanExtra("ok", false);
+        boolean cacheReady = intent.getBooleanExtra("cacheReady", false);
         String eventJson = intent.getStringExtra("eventJson");
         String body = intent.getStringExtra("body");
         String message = intent.getStringExtra("message");
         try {
-            if (ok && eventJson != null && eventJson.trim().length() > 0) {
+            if (ok && cacheReady) {
+                loadPrefetchedInitiativeIntoMemory("background service response");
+            } else if (ok && eventJson != null && eventJson.trim().length() > 0) {
+                // Backward compatibility with service responses created before the prepared cache.
                 handleBridgeEvent(new JSONObject(eventJson));
             } else if (ok && body != null && body.trim().length() > 0) {
                 handleConversationResponse("Background at-rest Star initiative complete", body);
             } else {
-                setDebug("Background at-rest service", message == null ? "No at-rest response." : message);
-                appendVoiceDebug("Background at-rest service", message == null ? "No at-rest response." : message);
-                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Background Star initiative service finished without a response.");
+                setDebug("Background at-rest service", message == null ? "No prepared at-rest response yet." : message);
+                appendVoiceDebug("Background at-rest service", message == null ? "No prepared at-rest response yet." : message);
             }
         } catch (Exception ex) {
             setDebug("Background at-rest service parse failed", ex.toString());
             appendVoiceDebug("Background at-rest service parse failed", ex.toString());
-            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Background Star initiative service response parse failed.");
         }
+    }
+
+    private void blockPreparedListenFor(long delayMs) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        long requested = System.currentTimeMillis() + Math.max(0L, delayMs);
+        long existing = prefs.getLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, 0L);
+        if (requested > existing) {
+            prefs.edit().putLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, requested).apply();
+        }
+    }
+
+    private void allowPreparedListenAfter(long delayMs, String reason) {
+        long when = System.currentTimeMillis() + Math.max(0L, delayMs);
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, when)
+                .apply();
+        appendVoiceDebug("Prepared Listen idle window", (reason == null ? "The app is quiet again." : reason) + " Next cache check may run after " + Math.max(0L, delayMs) + " ms.");
+    }
+
+    private void maybeResumePreparedListenAfterAudio(String reason) {
+        if (destroyed || desktopVoiceStreamActive || !wavAudioQueue.isIdle()) return;
+        allowPreparedListenAfter(2500L, reason);
+        mainHandler.postDelayed(
+                () -> syncStarInitiativeBackgroundService("Audio is idle; prepare the next Listen response", true),
+                2800L);
+    }
+
+    private void loadPrefetchedInitiativeIntoMemory(String reason) {
+        if (destroyed) return;
+        final String expectedSessionId = currentSessionId();
+        final String expectedStarId = selectedStarName();
+        foregroundRequestExecutor.execute(() -> {
+            PrefetchedInitiativeStore.CachedInitiative loaded = PrefetchedInitiativeStore.load(
+                    getApplicationContext(),
+                    expectedSessionId,
+                    expectedStarId);
+            if (destroyed) return;
+            runOnUiThread(() -> {
+                if (!expectedSessionId.equalsIgnoreCase(currentSessionId())
+                        || !expectedStarId.equalsIgnoreCase(selectedStarName())) {
+                    return;
+                }
+                prefetchedInitiative = loaded;
+                if (loaded != null) {
+                    if (prodMiniStatusText != null) {
+                        prodMiniStatusText.setText(expectedStarId + " already has something ready to say.");
+                    }
+                    appendVoiceDebug(
+                            "Prepared Listen cache ready",
+                            expectedStarId + " has " + loaded.chunks.size() + " audio chunk(s) in memory. " + (reason == null ? "" : reason));
+                }
+            });
+        });
+    }
+
+    private void invalidatePrefetchedInitiative(String reason) {
+        prefetchedInitiative = null;
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        long nextGeneration = prefs.getLong(PREF_PREPARED_LISTEN_GENERATION, 0L) + 1L;
+        prefs.edit()
+                .putLong(PREF_PREPARED_LISTEN_GENERATION, nextGeneration)
+                .putLong(PREF_LAST_BACKGROUND_REQUEST_MS, 0L)
+                .apply();
+        PrefetchedInitiativeStore.clear(getApplicationContext());
+        appendVoiceDebug("Prepared Listen cache cleared", reason == null ? "The cached at-rest line is no longer current." : reason);
+    }
+
+    private boolean playPrefetchedInitiativeIfAvailable() {
+        String sessionId = currentSessionId();
+        String starId = selectedStarName();
+        PrefetchedInitiativeStore.CachedInitiative prepared = prefetchedInitiative;
+        if (prepared == null
+                || !sessionId.equalsIgnoreCase(prepared.sessionId)
+                || !starId.equalsIgnoreCase(prepared.starId)) {
+            prepared = PrefetchedInitiativeStore.load(getApplicationContext(), sessionId, starId);
+        }
+        if (prepared == null || prepared.chunks == null || prepared.chunks.isEmpty()) return false;
+
+        prefetchedInitiative = null;
+        invalidatePrefetchedInitiative("The player consumed " + starId + "'s prepared at-rest line.");
+        blockPreparedListenFor(5L * 60L * 1000L);
+        wavAudioQueue.clearForNewStream();
+
+        boolean playOnPhone = playOnPhoneCheck != null
+                ? playOnPhoneCheck.isChecked()
+                : getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_PLAY_ON_PHONE, true);
+        int queued = 0;
+        if (playOnPhone) {
+            for (PrefetchedInitiativeStore.CachedVoiceChunk chunk : prepared.chunks) {
+                try {
+                    String checksum = chunk.sha256.length() > 0 ? chunk.sha256 : sha256Hex(chunk.wav);
+                    int[] markers = parseSpeechActivitySegments(chunk.speechActivitySegmentsMs);
+                    wavAudioQueue.enqueue(new PhoneVoiceClip(
+                            chunk.wav,
+                            starId + " prepared Listen chunk " + (chunk.chunkIndex + 1) + "/" + Math.max(1, chunk.totalChunks),
+                            checksum,
+                            false,
+                            "",
+                            0L,
+                            chunk.chunkIndex,
+                            markers));
+                    queued++;
+                } catch (Exception ex) {
+                    appendVoiceDebug("Prepared Listen audio chunk failed", ex.toString());
+                }
+            }
+        }
+
+        try {
+            JSONObject response = new JSONObject(prepared.response.toString());
+            response.put("voiceChunksQueued", queued);
+            response.put("voiceMessage", playOnPhone
+                    ? "Played immediately from Android's prepared at-rest voice cache."
+                    : "Prepared at-rest text was consumed; Play on Phone is disabled.");
+            response.put("prefetchForListen", true);
+            response.put("prefetchedAtUtc", prepared.createdAtMs);
+            handleConversationResponse("Prepared Listen response", response.toString());
+        } catch (Exception ex) {
+            setDebug("Prepared Listen response failed", ex.toString());
+            appendVoiceDebug("Prepared Listen response failed", ex.toString());
+        }
+
+        if (prodMiniStatusText != null) {
+            prodMiniStatusText.setText(queued > 0 ? "Playing " + starId + "'s prepared thought..." : starId + "'s prepared thought opened.");
+        }
+        appendVoiceDebug("Listen played instantly", starId + " consumed " + prepared.chunks.size() + " prepared audio chunk(s); queued=" + queued + ".");
+        if (!playOnPhone || queued == 0) {
+            allowPreparedListenAfter(4500L, "The prepared text was consumed without local audio playback.");
+        }
+        mainHandler.postDelayed(
+                () -> syncStarInitiativeBackgroundService("Prepared Listen cache consumed; prepare the next one", true),
+                5000L);
+        return true;
     }
 
     private void dispatchToggleMet() {
@@ -1557,6 +1708,8 @@ public final class MainActivity extends ComponentActivity {
         lastStarInitiativeRequestMs = now;
 
         syncStarInitiativeRuntimePrefs();
+        if (playPrefetchedInitiativeIfAvailable()) return;
+
         pauseStarInitiativeBackgroundService("Manual Listen button has priority over background at-rest checks.");
         String starName = selectedStarName();
         if (prodMiniStatusText != null) prodMiniStatusText.setText("Listening for " + starName + "...");
@@ -2252,6 +2405,7 @@ public final class MainActivity extends ComponentActivity {
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
+        invalidatePrefetchedInitiative("The player sent an image, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
         foregroundRequestExecutor.execute(() -> {
             try {
@@ -2348,6 +2502,7 @@ public final class MainActivity extends ComponentActivity {
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
+        invalidatePrefetchedInitiative("The player sent a text message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
 
         try {
@@ -2485,6 +2640,7 @@ public final class MainActivity extends ComponentActivity {
         }
 
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
+        invalidatePrefetchedInitiative("The player sent a voice message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");
         foregroundRequestExecutor.execute(() -> {
             try {
@@ -2531,6 +2687,9 @@ public final class MainActivity extends ComponentActivity {
                 String starId = optStringEither(json, "starId", "StarId", "Star");
                 int chunks = optIntEither(json, "voiceChunksSent", "VoiceChunksSent", 0);
                 int bytes = optIntEither(json, "voiceBytesSent", "VoiceBytesSent", 0);
+                boolean voiceRequested = optBooleanEither(json, "voiceRequested", "VoiceRequested", false);
+                boolean voiceSocketConnected = optBooleanEither(json, "voiceSocketConnected", "VoiceSocketConnected", false);
+                boolean preparedListenPlayback = optBooleanEither(json, "prefetchForListen", "PrefetchForListen", false);
                 String voiceMessage = optStringEither(json, "voiceMessage", "VoiceMessage", "");
                 String voiceError = optStringEither(json, "voiceError", "VoiceError", "");
                 long serverElapsedMs = optLongEither(json, "serverElapsedMs", "ServerElapsedMs", 0L);
@@ -2579,6 +2738,7 @@ public final class MainActivity extends ComponentActivity {
                     if (prodMiniStatusText != null) prodMiniStatusText.setText("No at-rest line right now.");
                     setDebug(title, "No at-rest speech. score=" + initiativeStateScore + " skippedBeforeLlm=" + initiativeSkippedBeforeLlm + " topic=" + initiativeTopic + " reason=" + noLine);
                     appendVoiceDebug("At-rest Star initiative", "No speech: " + clip(noLine, 220));
+                    allowPreparedListenAfter(4500L, "The at-rest check returned no speech, so another prepared check may run after a short quiet pause.");
                     setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "At-rest Star initiative finished without speech.");
                     return;
                 }
@@ -2632,12 +2792,15 @@ public final class MainActivity extends ComponentActivity {
                 if (voiceError.length() > 0) details += "\nVoice note: " + voiceError;
                 setDebug(title, details);
                 appendVoiceDebug(starId + " returned text", "WebSocket response at " + now() + ", responseChars=" + visibleResponse.length() + ", spokenChars=" + spoken.length() + ", voiceMessage=" + clip(voiceMessage, 140));
+                if (!preparedListenPlayback && (!voiceRequested || !voiceSocketConnected)) {
+                    allowPreparedListenAfter(4500L, "The foreground response has no pending phone voice stream.");
+                }
             } catch (Exception ex) {
                 responseText.setText(clip(body, 8000));
                 setDebug(title + " (raw)", clip(body, 900));
             } finally {
                 setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, title + " finished; screen can rest after any streaming voice/playback completes.");
-                mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("foreground conversation finished", false), 30000L);
+                mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("foreground conversation finished; prepare the next Listen response", true), 6500L);
             }
         });
     }
@@ -2736,7 +2899,9 @@ public final class MainActivity extends ComponentActivity {
                     audioSocket = null;
                 }
             }
+            desktopVoiceStreamActive = false;
             setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, "Phone voice socket disconnected.");
+            runOnUiThread(() -> maybeResumePreparedListenAfterAudio("The phone voice socket disconnected and no speech remains queued."));
         }
     }
 
@@ -2841,6 +3006,8 @@ public final class MainActivity extends ComponentActivity {
             }
         }
         if (startedNew) {
+            desktopVoiceStreamActive = true;
+            blockPreparedListenFor(5L * 60L * 1000L);
             wavAudioQueue.clearForNewStream();
             final long ordinal = streamOrdinal;
             final String id = streamId;
@@ -2863,6 +3030,8 @@ public final class MainActivity extends ComponentActivity {
         boolean clear = false;
         synchronized (voiceStreamStateLock) {
             if ("start".equalsIgnoreCase(action)) {
+                desktopVoiceStreamActive = true;
+                blockPreparedListenFor(5L * 60L * 1000L);
                 boolean sameStream = streamOrdinal == activeVoiceStreamOrdinal && streamId.equals(activeVoiceStreamId);
                 if (!sameStream) {
                     // A fresh desktop process/socket may restart streamOrdinal at 1. Treat the
@@ -2876,6 +3045,7 @@ public final class MainActivity extends ComponentActivity {
                     resetOrderedVoiceQueueLocked();
                 }
             } else if ("cancel".equalsIgnoreCase(action) || "end".equalsIgnoreCase(action)) {
+                desktopVoiceStreamActive = false;
                 if (streamId.equals(activeVoiceStreamId) || streamOrdinal >= activeVoiceStreamOrdinal) {
                     activeVoiceStreamOrdinal = streamOrdinal;
                     activeVoiceStreamId = streamId;
@@ -2902,6 +3072,7 @@ public final class MainActivity extends ComponentActivity {
             runOnUiThread(() -> {
                 if (clearedForStream) appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing.");
                 setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, starId + " voice stream " + action + ".");
+                maybeResumePreparedListenAfterAudio(starId + " voice stream " + action + " and the audio queue is idle.");
             });
         }
     }
@@ -2957,6 +3128,7 @@ public final class MainActivity extends ComponentActivity {
 
 
     private void resetVoiceStreamStateForSocketReconnect() {
+        desktopVoiceStreamActive = false;
         synchronized (voiceStreamStateLock) {
             activeVoiceStreamId = "";
             activeVoiceStreamOrdinal = 0L;
@@ -2982,6 +3154,7 @@ public final class MainActivity extends ComponentActivity {
         audioSocketThread = null;
         connectedAudioHost = "";
         connectedAudioPort = -1;
+        desktopVoiceStreamActive = false;
         setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, "Phone voice socket closed.");
     }
 
@@ -3381,6 +3554,10 @@ public final class MainActivity extends ComponentActivity {
             if (clip != null && clip.wav != null && clip.wav.length > 0) queue.offer(clip);
         }
 
+        boolean isIdle() {
+            return queue.isEmpty() && activeTrack == null;
+        }
+
         private void loop() {
             while (running) {
                 try {
@@ -3526,6 +3703,7 @@ public final class MainActivity extends ComponentActivity {
                             KEEP_AWAKE_REASON_AUDIO_PLAYBACK,
                             false,
                             "Audio playback finished.");
+                    maybeResumePreparedListenAfterAudio("The Star finished speaking and the audio queue drained.");
                 });
             }
         }

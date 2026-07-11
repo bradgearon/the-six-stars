@@ -17,6 +17,7 @@ When present, these are not labels to recite. They describe what she currently n
 {{ end }}{{ if data.recentTurns.size > 0 }}Recent turns, newest first:
 {{ for turn in data.recentTurns }}- Last Cat: {{ turn.player }} | {{ data.starDisplayName }}: {{ turn.star }}
 {{ end }}{{ end }}{{ if data.manualInteract }}Manual interact mode=true. The Last Cat deliberately asked to hear from her. Almost always speak. Choose a fresh state-backed feeling, action, desire, compliment, observation, need, want, question, or invitation, and give him a complete little moment rather than a minimal acknowledgment.
+{{ else if data.preparedListen }}Prepared Listen mode=true. Quietly prepare one fresh state-backed moment for the next time the Last Cat chooses to Listen. Prefer to speak and make it worth hearing, but do not refer to preparation, caching, waiting, mobile, or the app.
 {{ else }}Manual interact mode=false. Prefer to speak whenever the supplied state contains a fresh authentic impulse she could naturally share. Use silence only when the state is genuinely empty, contradictory, or would repeat the recent turns.
 {{ end }}Return only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText.
 priority is 0-1. speechDecisionVector contains exactly one saySomethingNow item with score 0-100 and confidence 0-1.

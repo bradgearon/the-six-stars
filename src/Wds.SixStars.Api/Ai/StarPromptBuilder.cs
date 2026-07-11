@@ -580,7 +580,8 @@ namespace Wds.SixStars.Api.Ai
                     : string.Join("; ", state.LastTopAffectedEmotions.Take(4).Select(x => x.ToString())),
                 ongoingSummary = string.IsNullOrWhiteSpace(state.ConversationSummary) ? string.Empty : Truncate(state.ConversationSummary, 360),
                 recentTurns,
-                manualInteract = IsTruthyFlag(request, "starInitiativeForce")
+                manualInteract = IsTruthyFlag(request, "starInitiativeForce"),
+                preparedListen = IsTruthyFlag(request, "starInitiativePrepareForListen")
             };
 
             return _templates.Render("initiative_user.sbn", data).TrimEnd();
@@ -797,6 +798,10 @@ namespace Wds.SixStars.Api.Ai
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
                     task.AppendLine("Manual Listen/A-button mode is active: treat this like the Last Cat pressed interact beside an NPC. Prefer to always produce a short fresh line unless it would violate canon or repeat something just said. Pick a state-backed observation, feeling, desire, compliment, cute girlfriend note, warning, or question and set hasSomethingToSay=true.");
+                }
+                else if (IsTruthyFlag(request, "starInitiativePrepareForListen"))
+                {
+                    task.AppendLine("Prepared Listen mode is active: quietly prepare one fresh state-backed line for the next time the Last Cat chooses to Listen. Prefer to speak and create a complete little moment, but this remains background work and must not displace a live player conversation.");
                 }
                 task.AppendLine("Use TODAY STAR STATE JSON first, especially wantsToTalkAbout / thingsSheWantsToTalkAbout and conversationHooks, plus the relationship posture, recent emotional state, and interstar status if present.");
                 task.AppendLine("If she is girlfriend, also use GIRLFRIEND HOURLY STATE: needVector, wantVector, thingsSheWantsToSay, and cuteThingsSheWantsToSay are explicit candidate sources for spontaneous girlfriend speech while exploring.");
@@ -1836,6 +1841,10 @@ namespace Wds.SixStars.Api.Ai
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
                     sb.AppendLine("Manual Listen/A-button mode is active: behave like the Last Cat pressed interact beside an NPC. Do not be silent unless absolutely necessary; choose a fresh natural line from current state, relationship posture, girlfriend wants/needs, or recent conversation, and make spokenText non-empty.");
+                }
+                else if (IsTruthyFlag(request, "starInitiativePrepareForListen"))
+                {
+                    sb.AppendLine("Prepared Listen mode is active: quietly prepare one fresh line that will be held until the Last Cat chooses to Listen. Prefer a complete state-backed moment and never mention that it was prepared or cached.");
                 }
                 sb.AppendLine("Do not say the player asked this. Do not mention systems, JSON, vectors, mobile, reconnects, or initiative checks.");
                 sb.AppendLine("If she has something real to say, use 1-3 short spokenText chunks. If nothing feels important, give a brief gentle check-in or observation instead of forcing drama.");

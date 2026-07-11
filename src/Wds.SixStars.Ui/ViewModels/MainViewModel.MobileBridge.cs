@@ -647,13 +647,33 @@ public sealed partial class MainViewModel
                     Quest = string.IsNullOrWhiteSpace(command.Quest) ? "AndroidProdStarInitiative" : command.Quest,
                     RomanceMode = command.RomanceMode,
                     SpeakOnDesktop = command.SpeakOnDesktop,
-                    ReturnAudio = command.ReturnAudio,
+                    ReturnAudio = command.PrefetchForListen ? false : command.ReturnAudio,
+                    ReturnAudioInline = command.ReturnAudioInline || command.PrefetchForListen,
+                    PrefetchForListen = command.PrefetchForListen,
                     ClientName = string.IsNullOrWhiteSpace(command.ClientName) ? "SixStarsMobileAndroid-StarInitiative" : command.ClientName,
                     Reason = string.IsNullOrWhiteSpace(command.Reason) ? "mobile at-rest initiative" : command.Reason
                 };
                 MobileBridgeResponse initiativeResponse = await ProcessMobileConversationAsync(initiativeRequest, string.Empty, cancellationToken).ConfigureAwait(false);
                 StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "MaybeStarInitiative", sessionId, starId, state, initiativeResponse);
+                if (command.PrefetchForListen)
+                {
+                    // A prepared Listen response is private cache material for the requesting phone.
+                    // Do not publish it to every connected UI before the user presses Listen.
+                    result.SuppressEventPublication = true;
+                    result.PrefetchForListen = true;
+                    result.PrefetchedAtUtc = initiativeResponse.PrefetchedAtUtc ?? DateTimeOffset.UtcNow;
+                    result.State = null;
+                    result.RecentConversationHistory.Clear();
+                    result.Event = null;
+                    result.Message = initiativeResponse.Ok
+                        ? (initiativeResponse.InitiativeShouldSpeak && initiativeResponse.InlineVoiceChunks.Count > 0
+                            ? starId + " prepared an at-rest line and voice for the next Listen tap."
+                            : starId + " did not prepare a usable at-rest line yet.")
+                        : initiativeResponse.VoiceError;
+                    return result;
+                }
+
                 result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
                     EventType = initiativeResponse.Ok ? "StarInitiativeResponseReady" : "StarInitiativeResponseFailed",
@@ -859,6 +879,11 @@ public sealed partial class MainViewModel
             VoiceSocketConnected = response.VoiceSocketConnected,
             VoiceChunksSent = response.VoiceChunksSent,
             VoiceBytesSent = response.VoiceBytesSent,
+            VoiceChunksCached = response.VoiceChunksCached,
+            VoiceBytesCached = response.VoiceBytesCached,
+            InlineVoiceChunks = (response.InlineVoiceChunks ?? new List<MobileInlineVoiceChunk>()).ToList(),
+            PrefetchForListen = response.PrefetchForListen,
+            PrefetchedAtUtc = response.PrefetchedAtUtc,
             VoiceMessage = response.VoiceMessage,
             VoiceError = response.VoiceError,
             ServerElapsedMs = response.ServerElapsedMs,
@@ -1448,7 +1473,8 @@ public sealed partial class MainViewModel
             requestType = RequestType.Chat;
         }
         bool isAtRestInitiative = requestType == RequestType.StarInitiative;
-        bool isManualInitiative = isAtRestInitiative
+        bool isPrefetchInitiative = isAtRestInitiative && mobileRequest.PrefetchForListen;
+        bool isManualInitiative = isAtRestInitiative && !isPrefetchInitiative
             && (ContainsIgnoreCase(mobileRequest.ClientName, "Manual")
                 || ContainsIgnoreCase(mobileRequest.ClientName, "ListenButton")
                 || ContainsIgnoreCase(mobileRequest.Reason, "manual")
@@ -1456,10 +1482,26 @@ public sealed partial class MainViewModel
         bool gateTaken = false;
         System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        if (isAtRestInitiative && !isManualInitiative)
+        if (isPrefetchInitiative)
         {
-            // Automatic at-rest initiative must never get in front of a real player action. If the
-            // mobile runtime is busy, skip this quiet check and try later.
+            // Probe the foreground gate, but do not hold it while the low-priority prefetch waits in
+            // the API background dispatcher. A player message arriving one millisecond later must be
+            // able to take the mobile foreground gate immediately.
+            bool mobileWasIdle = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            gateWaitMs = gateStopwatch.ElapsedMilliseconds;
+            if (!mobileWasIdle)
+            {
+                MobileBridgeResponse skipped = CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
+                skipped.GateWaitMs = gateWaitMs;
+                skipped.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
+                return skipped;
+            }
+            _mobileBridgeRuntimeGate.Release();
+        }
+        else if (isAtRestInitiative && !isManualInitiative)
+        {
+            // Automatic visible at-rest initiative must never get in front of a real player action.
+            // If the mobile runtime is busy, skip this quiet check and try later.
             gateTaken = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
             if (!gateTaken)
@@ -1485,15 +1527,18 @@ public sealed partial class MainViewModel
 
         try
         {
-            bool wantsPhoneAudio = mobileRequest.ReturnAudio;
+            bool wantsInlineAudio = mobileRequest.ReturnAudioInline && isAtRestInitiative;
+            bool wantsPhoneAudio = mobileRequest.ReturnAudio && !wantsInlineAudio;
             DateTimeOffset started = DateTimeOffset.Now;
 
             OnUiThread(() =>
             {
                 MobileBridgeLastRequest = started.ToString("HH:mm:ss") + " " + mobileRequest.ClientName + " -> " + starId + " " + requestType + ": " + TruncateForUi(mobileRequest.PlayerText, 180);
-                MobileBridgeStatus = "Android request is using the desktop runtime for " + starId + ".";
-                AppendMobileBridgeVoiceDebug("Phone request arrived", starId + " " + requestType + ", phoneAudio=" + wantsPhoneAudio + ", textChars=" + (mobileRequest.PlayerText?.Length ?? 0));
-                Status = "Android bridge request received for " + starId + ".";
+                MobileBridgeStatus = mobileRequest.PrefetchForListen
+                    ? "Preparing a private at-rest Listen cache for " + starId + "."
+                    : "Android request is using the desktop runtime for " + starId + ".";
+                AppendMobileBridgeVoiceDebug(mobileRequest.PrefetchForListen ? "Listen cache request arrived" : "Phone request arrived", starId + " " + requestType + ", phoneAudio=" + wantsPhoneAudio + ", inlineAudio=" + wantsInlineAudio + ", textChars=" + (mobileRequest.PlayerText?.Length ?? 0));
+                if (!mobileRequest.PrefetchForListen) Status = "Android bridge request received for " + starId + ".";
             });
 
             StarInteractionRequest request = new StarInteractionRequest
@@ -1511,10 +1556,19 @@ public sealed partial class MainViewModel
             MobileAttachedPhotoResult photoResult = await AddMobileAttachedPhotoContextAsync(request, mobileRequest, cancellationToken).ConfigureAwait(false);
 
             ResetLlmDebugLog(request);
-            CancellationToken runtimeToken = _operationController.BeginNewOperation("android bridge request to " + starId);
-            using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
+            CancellationToken runtimeToken = isPrefetchInitiative
+                ? cancellationToken
+                : _operationController.BeginNewOperation("android bridge request to " + starId);
+            using CancellationTokenSource linkedCts = isPrefetchInitiative
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
             System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            StarInteractionResponse starResponse = await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            StarInteractionResponse starResponse = isPrefetchInitiative
+                ? await _runtime.ProcessWhenForegroundIdleAsync(
+                    request,
+                    "Prepare " + starId + "'s private Android Listen response only after foreground conversation is idle.",
+                    linkedCts.Token).ConfigureAwait(false)
+                : await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
             StarState stateAfterResponse = await _runtime.GetStarStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
@@ -1552,12 +1606,27 @@ public sealed partial class MainViewModel
             if (requestType == RequestType.StarInitiative && (!starResponse.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(starResponse.SpokenText)))
             {
                 wantsPhoneAudio = false;
+                wantsInlineAudio = false;
                 response.VoiceRequested = false;
             }
 
-            OnUiThread(() => AppendMobileBridgeVoiceDebug(requestType == RequestType.StarInitiative ? "Star initiative check ready" : "Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio + ", initiativeShouldSpeak=" + starResponse.InitiativeShouldSpeak));
+            if (wantsInlineAudio)
+            {
+                response.PrefetchForListen = mobileRequest.PrefetchForListen;
+                response.PrefetchedAtUtc = DateTimeOffset.UtcNow;
+                response.InlineVoiceChunks = await GenerateMobileInlineVoiceChunksAsync(starResponse, linkedCts.Token).ConfigureAwait(false);
+                response.VoiceChunksCached = response.InlineVoiceChunks.Count;
+                response.VoiceBytesCached = response.InlineVoiceChunks.Sum(x => string.IsNullOrWhiteSpace(x.AudioBase64) ? 0 : (x.AudioBase64.Length * 3 / 4));
+                response.VoiceRequested = response.InlineVoiceChunks.Count > 0;
+                response.VoiceSocketConnected = false;
+                response.VoiceMessage = response.InlineVoiceChunks.Count > 0
+                    ? "Prepared " + response.InlineVoiceChunks.Count + " voice chunk(s) inside the private Listen cache response."
+                    : "The at-rest line returned without cacheable voice audio.";
+            }
 
-            OnUiThread(() =>
+            OnUiThread(() => AppendMobileBridgeVoiceDebug(requestType == RequestType.StarInitiative ? "Star initiative check ready" : "Text response ready", (starResponse.StarId ?? starId) + " spokenChars=" + (response.SpokenText?.Length ?? 0) + ", phoneAudio=" + wantsPhoneAudio + ", inlineAudio=" + wantsInlineAudio + ", cachedChunks=" + response.VoiceChunksCached + ", initiativeShouldSpeak=" + starResponse.InitiativeShouldSpeak));
+
+            if (!mobileRequest.PrefetchForListen) OnUiThread(() =>
             {
                 StarOutput = FormatStarOutput(starResponse);
                 Status = "Android bridge response ready for " + starResponse.StarId + ". Heart Δ " + starResponse.StateDeltas.Heart + ", Trust Δ " + starResponse.StateDeltas.Trust + ", Romance Δ " + starResponse.StateDeltas.Romance + ".";
@@ -1602,7 +1671,11 @@ public sealed partial class MainViewModel
                     }, _jsonOptions);
             });
 
-            if (wantsPhoneAudio)
+            if (wantsInlineAudio)
+            {
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Prepared inline Android Listen cache audio.");
+            }
+            else if (wantsPhoneAudio)
             {
                 response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
                 response.VoiceMessage = response.VoiceSocketConnected
@@ -1652,13 +1725,18 @@ public sealed partial class MainViewModel
                 ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge response returned without voice playback.");
             }
 
-            response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
-            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+            if (!wantsInlineAudio) response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
+            if (!mobileRequest.PrefetchForListen)
+            {
+                PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+            }
             OnUiThread(() =>
             {
-                MobileBridgeStatus = wantsPhoneAudio
-                    ? "Android text response returned. Phone voice generation continues in the background."
-                    : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
+                MobileBridgeStatus = wantsInlineAudio
+                    ? "Prepared Android Listen cache: " + response.VoiceChunksCached + " chunk(s), " + response.VoiceBytesCached + " bytes."
+                    : wantsPhoneAudio
+                        ? "Android text response returned. Phone voice generation continues in the background."
+                        : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
             });
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
             return response;
@@ -1724,6 +1802,8 @@ public sealed partial class MainViewModel
         context.Flags["phoneAudioSocketConnected"] = ((_mobileBridgeAudioHost?.ClientCount ?? 0) > 0).ToString().ToLowerInvariant();
         context.Flags["speakOnDesktop"] = request.SpeakOnDesktop.ToString().ToLowerInvariant();
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
+        context.Flags["returnAudioInline"] = request.ReturnAudioInline.ToString().ToLowerInvariant();
+        context.Flags["prefetchForListen"] = request.PrefetchForListen.ToString().ToLowerInvariant();
         if (request.GirlfriendProposal || GirlfriendProposalIntentDetector.IsProposal(request.PlayerText))
         {
             context.Flags["girlfriendProposalDetected"] = "true";
@@ -1734,7 +1814,13 @@ public sealed partial class MainViewModel
             context.Flags["starInitiative"] = "true";
             string initiativeReason = !string.IsNullOrWhiteSpace(request.Reason) ? request.Reason : (string.IsNullOrWhiteSpace(request.Quest) ? "mobile at-rest initiative" : request.Quest);
             context.Flags["initiativeReason"] = initiativeReason;
-            if (ContainsIgnoreCase(request.ClientName, "Manual") || ContainsIgnoreCase(initiativeReason, "manual") || ContainsIgnoreCase(initiativeReason, "button"))
+            if (request.PrefetchForListen)
+            {
+                context.Flags["starInitiativePrepareForListen"] = "true";
+            }
+            else if (ContainsIgnoreCase(request.ClientName, "Manual")
+                || ContainsIgnoreCase(initiativeReason, "manual")
+                || ContainsIgnoreCase(initiativeReason, "button"))
             {
                 context.Flags["starInitiativeForce"] = "true";
             }
@@ -2074,7 +2160,9 @@ public sealed partial class MainViewModel
             IsGirlfriendReadyAfter = stateAfterResponse?.IsGirlfriendReady ?? response.IsGirlfriendReadyAfter,
             IsGirlfriendAfter = stateAfterResponse?.IsGirlfriend
                 ?? response.RelationshipEvents.Any(x => x.IndexOf("Accepted girlfriend proposal", StringComparison.OrdinalIgnoreCase) >= 0),
-            VoiceRequested = mobileRequest.ReturnAudio && response.InitiativeShouldSpeak && !string.IsNullOrWhiteSpace(response.SpokenText),
+            VoiceRequested = (mobileRequest.ReturnAudio || mobileRequest.ReturnAudioInline) && response.InitiativeShouldSpeak && !string.IsNullOrWhiteSpace(response.SpokenText),
+            PrefetchForListen = mobileRequest.PrefetchForListen,
+            PrefetchedAtUtc = mobileRequest.PrefetchForListen ? DateTimeOffset.UtcNow : null,
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
             StoryId = response.StoryId ?? string.Empty,
             StoryTitle = response.StoryTitle ?? string.Empty,
@@ -2102,10 +2190,60 @@ public sealed partial class MainViewModel
             DailyStateXml = string.Empty,
             VoiceMessage = requestType == RequestType.StarInitiative && !response.InitiativeShouldSpeak
                 ? FirstNonEmptyForMobile(response.InitiativeReason, "The Star had nothing state-backed to say right now.")
-                : mobileRequest.ReturnAudio
-                    ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
-                    : "Phone voice was not requested."
+                : mobileRequest.ReturnAudioInline
+                    ? "Voice will be generated inline for a private Android Listen cache."
+                    : mobileRequest.ReturnAudio
+                        ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
+                        : "Phone voice was not requested."
         };
+    }
+
+    private async Task<List<MobileInlineVoiceChunk>> GenerateMobileInlineVoiceChunksAsync(StarInteractionResponse starResponse, CancellationToken cancellationToken)
+    {
+        PrepareVoiceCloneReferenceForTts(starResponse);
+        List<byte[]> generated = new List<byte[]>();
+        object generatedGate = new object();
+
+        using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
+        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+        {
+            AutoPlayChunks = false
+        };
+
+        pipeline.ChunkReadyForConsumer += (_, args) =>
+        {
+            byte[] source = args.Result?.WavAudio ?? Array.Empty<byte>();
+            if (source.Length == 0) return;
+            byte[] copy = new byte[source.Length];
+            Buffer.BlockCopy(source, 0, copy, 0, source.Length);
+            lock (generatedGate) generated.Add(copy);
+        };
+
+        string generationError = string.Empty;
+        pipeline.GenerationError += (_, args) => generationError = args.ErrorMessage ?? "TTS generation error.";
+        await pipeline.SpeakStreamingAsync(DefaultSessionId, starResponse, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(generationError)) throw new InvalidOperationException(generationError);
+
+        List<byte[]> ordered;
+        lock (generatedGate) ordered = generated.ToList();
+        int total = ordered.Count;
+        List<MobileInlineVoiceChunk> chunks = new List<MobileInlineVoiceChunk>(total);
+        for (int index = 0; index < total; index++)
+        {
+            byte[] wav = ordered[index];
+            MobileSpeechActivityResult markers = MobileAudioSpeechActivityMarkers.AnalyzeWav(wav);
+            chunks.Add(new MobileInlineVoiceChunk
+            {
+                ChunkIndex = index,
+                TotalChunks = total,
+                MimeType = "audio/wav",
+                AudioBase64 = Convert.ToBase64String(wav),
+                Sha256 = Sha256Hex(wav),
+                SpeechActivitySegmentsMs = markers.Segments
+            });
+        }
+
+        return chunks;
     }
 
     private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null, string backgroundAnalysisId = "")

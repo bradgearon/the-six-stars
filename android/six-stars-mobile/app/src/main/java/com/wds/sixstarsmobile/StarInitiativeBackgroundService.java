@@ -35,10 +35,10 @@ public final class StarInitiativeBackgroundService extends Service {
     private static final String PREF_BRIDGE_URL = "bridgeUrl";
     private static final String PREF_SELECTED_STAR_ID = "selectedStarId";
     private static final String PREF_ROMANCE_MODE = "romanceMode";
-    private static final String PREF_PLAY_ON_PHONE = "playOnPhone";
+    private static final String PREF_PREPARED_LISTEN_GENERATION = "preparedListenGeneration";
     private static final String PREF_AREA = "area";
-    private static final String PREF_QUEST = "quest";
     private static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
+    private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.217:8066";
 
     private final Random random = new Random();
@@ -47,6 +47,7 @@ public final class StarInitiativeBackgroundService extends Service {
     private Handler workerHandler;
     private ExecutorService networkExecutor;
     private volatile boolean stopped;
+    private volatile long nextRetryDelayMs = 20000L;
 
     private final Runnable checkRunnable = new Runnable() {
         @Override
@@ -63,14 +64,16 @@ public final class StarInitiativeBackgroundService extends Service {
         workerHandler = new Handler(workerThread.getLooper());
         networkExecutor = Executors.newSingleThreadExecutor();
         stopped = false;
-        scheduleNextCheck(30000L);
-        broadcastStatus("started", "Star initiative background service started. First quiet check will happen after about 30 seconds so foreground replies keep priority.", selectedStarId());
+        scheduleNextCheck(6000L);
+        broadcastStatus("started", "Prepared Listen cache service started. It will quietly prepare one at-rest line and voice when the runtime is idle.", selectedStarId());
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
+            stopped = true;
+            if (workerHandler != null) workerHandler.removeCallbacksAndMessages(null);
             broadcastStatus("stopped", "Star initiative background service stopped.", selectedStarId());
             stopSelf();
             return START_NOT_STICKY;
@@ -81,7 +84,7 @@ public final class StarInitiativeBackgroundService extends Service {
         if (ACTION_CHECK_NOW.equals(action)) {
             scheduleCheckAfterQuietMoment(reason == null ? "foreground requested quiet check" : reason);
         } else {
-            scheduleNextCheck(30000L);
+            scheduleNextCheck(6000L);
         }
         return START_STICKY;
     }
@@ -113,11 +116,11 @@ public final class StarInitiativeBackgroundService extends Service {
     }
 
     private void scheduleRandomNextCheck() {
-        int delaySeconds;
+        int delayMinutes;
         synchronized (random) {
-            delaySeconds = 135 + random.nextInt(235); // About 2.25 to 6.15 minutes.
+            delayMinutes = 25 + random.nextInt(16); // Cache exists; verify only every 25-40 minutes.
         }
-        scheduleNextCheck(delaySeconds * 1000L);
+        scheduleNextCheck(delayMinutes * 60L * 1000L);
     }
 
     private void queueBackgroundCheck(String reason) {
@@ -133,13 +136,16 @@ public final class StarInitiativeBackgroundService extends Service {
 
         final String checkReason = reason == null || reason.length() == 0 ? "Android background initiative service" : reason;
         networkExecutor.execute(() -> {
+            boolean cacheReady = false;
             try {
-                runBackgroundInitiativeCheck(checkReason);
+                cacheReady = runBackgroundInitiativeCheck(checkReason);
             } catch (Exception ex) {
-                broadcastResponse(false, selectedStarId(), "", "", "Background Star initiative failed: " + ex, checkReason);
+                nextRetryDelayMs = 60000L;
+                broadcastResponse(false, false, selectedStarId(), "Background prepared Listen request failed: " + ex, checkReason);
             } finally {
                 checkInFlight.set(false);
-                scheduleRandomNextCheck();
+                if (cacheReady) scheduleRandomNextCheck();
+                else scheduleNextCheck(Math.max(3500L, nextRetryDelayMs));
             }
         });
     }
@@ -154,50 +160,78 @@ public final class StarInitiativeBackgroundService extends Service {
         return enabled;
     }
 
-    private void runBackgroundInitiativeCheck(String reason) throws Exception {
+    private boolean runBackgroundInitiativeCheck(String reason) throws Exception {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        nextRetryDelayMs = 20000L;
         long now = System.currentTimeMillis();
+        String starId = selectedStarId();
+        String sessionId = prefs.getBoolean(PREF_PROD_MODE, true) ? "android-phone-prod" : "android-phone-dev";
+        long cacheGeneration = prefs.getLong(PREF_PREPARED_LISTEN_GENERATION, 0L);
+
+        long notBeforeMs = prefs.getLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, 0L);
+        if (now < notBeforeMs) {
+            nextRetryDelayMs = Math.min(5L * 60L * 1000L, Math.max(3500L, notBeforeMs - now + 250L));
+            broadcastStatus("waitingForIdle", starId + " will prepare her next Listen response after the current request or speech is fully idle.", starId);
+            return false;
+        }
+
+        if (PrefetchedInitiativeStore.hasFresh(this, sessionId, starId)) {
+            broadcastStatus("cacheReady", starId + " already has a prepared at-rest voice waiting for Listen.", starId);
+            broadcastResponse(true, true, starId, "Prepared Listen cache is ready.", reason);
+            return true;
+        }
+
         long last = prefs.getLong(PREF_LAST_BACKGROUND_REQUEST_MS, 0L);
-        if (now - last < 120000L) {
-            return;
+        if (now - last < 12000L) {
+            nextRetryDelayMs = Math.max(3500L, 12000L - (now - last) + 250L);
+            return false;
         }
         prefs.edit().putLong(PREF_LAST_BACKGROUND_REQUEST_MS, now).apply();
 
-        String starId = selectedStarId();
-        broadcastStatus("requestStarted", starId + " is quietly checking whether she has something to say. Reason: " + reason, starId);
+        broadcastStatus("requestStarted", starId + " is quietly preparing her next at-rest line and voice. Reason: " + reason, starId);
 
         JSONObject json = new JSONObject();
-        json.put("commandId", "android-bg-initiative-" + now);
+        json.put("commandId", "android-bg-listen-prefetch-" + now);
         json.put("commandType", "MaybeStarInitiative");
         json.put("sourceClientId", "SixStarsMobileAndroidBackgroundService");
-        json.put("sessionId", prefs.getBoolean(PREF_PROD_MODE, true) ? "android-phone-prod" : "android-phone-dev");
+        json.put("sessionId", sessionId);
         json.put("starId", starId);
         json.put("requestType", "StarInitiative");
         json.put("playerText", "");
         json.put("area", prefs.getString(PREF_AREA, "VirethornCaves"));
-        json.put("quest", "AndroidBackgroundStarInitiativeService");
+        json.put("quest", "AndroidPreparedListenCache");
         json.put("romanceMode", prefs.getBoolean(PREF_ROMANCE_MODE, true));
         json.put("speakOnDesktop", false);
-        json.put("returnAudio", prefs.getBoolean(PREF_PLAY_ON_PHONE, true));
-        json.put("clientName", "SixStarsMobileAndroid-BackgroundStarInitiativeService");
-        json.put("reason", reason);
+        json.put("returnAudio", false);
+        json.put("returnAudioInline", true);
+        json.put("prefetchForListen", true);
+        json.put("clientName", "SixStarsMobileAndroid-PreparedListenCache");
+        json.put("reason", "prepare one private at-rest line and voice for the next Android Listen tap; " + reason);
 
         String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
-        JSONObject response = new JSONObject(body);
-        JSONObject event = response.optJSONObject("event");
-        boolean ok = response.optBoolean("ok", event != null);
-        boolean shouldSpeak = true;
-        String message = response.optString("message", ok ? starId + " had an at-rest response." : "No at-rest response.");
-        if (event != null) {
-            shouldSpeak = event.optBoolean("initiativeShouldSpeak", event.optBoolean("InitiativeShouldSpeak", event.optString("spokenText", event.optString("SpokenText", "")).trim().length() > 0));
-            String reasonText = event.optString("initiativeReason", event.optString("InitiativeReason", ""));
-            if (!shouldSpeak && reasonText.length() > 0) message = reasonText;
-        } else {
-            shouldSpeak = response.optBoolean("initiativeShouldSpeak", response.optBoolean("InitiativeShouldSpeak", response.optString("spokenText", response.optString("SpokenText", "")).trim().length() > 0));
-            String reasonText = response.optString("initiativeReason", response.optString("InitiativeReason", ""));
-            if (!shouldSpeak && reasonText.length() > 0) message = reasonText;
+        if (stopped
+                || cacheGeneration != prefs.getLong(PREF_PREPARED_LISTEN_GENERATION, 0L)
+                || !starId.equalsIgnoreCase(selectedStarId())) {
+            broadcastStatus("cacheDiscarded", "Discarded a prepared line because the player spoke, changed Stars, or consumed the previous cache while it was being generated.", starId);
+            return false;
         }
-        broadcastResponse(ok && shouldSpeak, starId, shouldSpeak && event != null ? event.toString() : "", body, message, reason);
+
+        JSONObject response = new JSONObject(body);
+        boolean saved = PrefetchedInitiativeStore.save(this, sessionId, starId, response);
+        if (saved) {
+            int chunks = response.optInt("voiceChunksCached", response.optJSONArray("inlineVoiceChunks") == null ? 0 : response.optJSONArray("inlineVoiceChunks").length());
+            int bytes = response.optInt("voiceBytesCached", 0);
+            String message = starId + " prepared " + Math.max(1, chunks) + " voice chunk(s)" + (bytes > 0 ? " (" + bytes + " bytes)" : "") + " for the next Listen tap.";
+            broadcastStatus("cacheReady", message, starId);
+            broadcastResponse(true, true, starId, message, reason);
+            return true;
+        }
+
+        nextRetryDelayMs = 60000L;
+        String message = response.optString("initiativeReason", response.optString("message", starId + " did not prepare an at-rest line yet."));
+        broadcastStatus("cacheEmpty", message, starId);
+        broadcastResponse(true, false, starId, message, reason);
+        return false;
     }
 
     private String selectedStarId() {
@@ -223,13 +257,12 @@ public final class StarInitiativeBackgroundService extends Service {
         sendBroadcast(intent);
     }
 
-    private void broadcastResponse(boolean ok, String starId, String eventJson, String body, String message, String reason) {
+    private void broadcastResponse(boolean ok, boolean cacheReady, String starId, String message, String reason) {
         Intent intent = new Intent(ACTION_RESPONSE);
         intent.setPackage(getPackageName());
         intent.putExtra("ok", ok);
+        intent.putExtra("cacheReady", cacheReady);
         intent.putExtra("starId", starId == null ? selectedStarId() : starId);
-        intent.putExtra("eventJson", eventJson == null ? "" : eventJson);
-        intent.putExtra("body", body == null ? "" : body);
         intent.putExtra("message", message == null ? "" : message);
         intent.putExtra("reason", reason == null ? "" : reason);
         sendBroadcast(intent);

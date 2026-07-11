@@ -530,6 +530,41 @@ namespace Wds.SixStars.Api.Engine
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Active background work preempted without discarding pending state analysis: " + reason);
         }
 
+        public async Task<StarInteractionResponse> ProcessWhenForegroundIdleAsync(
+            StarInteractionRequest request,
+            string description,
+            CancellationToken cancellationToken)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            TaskCompletionSource<StarInteractionResponse> completion = new TaskCompletionSource<StarInteractionResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using CancellationTokenRegistration registration = cancellationToken.Register(() => completion.TrySetCanceled());
+
+            _backgroundDispatcher.Enqueue(
+                "PreparedListen",
+                string.IsNullOrWhiteSpace(description) ? "Prepare an at-rest Listen response while foreground conversation is idle." : description,
+                BackgroundAiRequestPriority.High,
+                async dispatcherToken =>
+                {
+                    try
+                    {
+                        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, dispatcherToken);
+                        StarInteractionResponse response = await ProcessAsync(request, linked.Token).ConfigureAwait(false);
+                        completion.TrySetResult(response);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        completion.TrySetCanceled();
+                    }
+                    catch (Exception ex)
+                    {
+                        completion.TrySetException(ex);
+                    }
+                },
+                cancellationToken);
+
+            return await completion.Task.ConfigureAwait(false);
+        }
+
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
             bool isStarInitiativeRequest = request != null && request.RequestType == RequestType.StarInitiative;
@@ -732,7 +767,8 @@ namespace Wds.SixStars.Api.Engine
             }
 
             double effectiveScore = score + (confidence * (state != null && state.IsGirlfriend ? 35.0 : 25.0));
-            bool force = IsTruthy(GetContextFlag(request, "starInitiativeForce"));
+            bool force = IsTruthy(GetContextFlag(request, "starInitiativeForce"))
+                || IsTruthy(GetContextFlag(request, "starInitiativePrepareForListen"));
             bool vectorWantsSpeech = score > 0 || confidence > 0;
             bool modelWantsSpeech = response.InitiativeShouldSpeak || vectorWantsSpeech;
             bool accepted = force || (hasText && modelWantsSpeech && (effectiveScore >= randomThreshold || (state != null && state.IsGirlfriend && confidence > 0 && score > 0)));
@@ -790,6 +826,7 @@ namespace Wds.SixStars.Api.Engine
             List<string> topics = ExtractInitiativeTopics(request, state).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).Take(12).ToList();
             string summary = FirstNonEmpty(GetContextFlag(request, "todayStarStateSummary"), state.TodayState?.Summary);
             bool force = IsTruthy(GetContextFlag(request, "starInitiativeForce"));
+            bool prepareForListen = IsTruthy(GetContextFlag(request, "starInitiativePrepareForListen"));
             bool reconnect = ContainsIgnoreCase(GetContextFlag(request, "initiativeReason"), "reconnect") || ContainsIgnoreCase(request.PlayerText, "reconnect");
             bool hasRecentEmotion = state.LastTopAffectedEmotions != null && state.LastTopAffectedEmotions.Any();
             bool hasRecentConversation = state.MemoryLog != null && state.MemoryLog.Any(x => x != null && x.CreatedAt > DateTimeOffset.UtcNow.AddHours(-4));
@@ -805,8 +842,9 @@ namespace Wds.SixStars.Api.Engine
             else if (state.IsAlly) { score += 0.05; reasons.Add("ally relationship"); }
             if (reconnect) { score += 0.05; reasons.Add("phone reconnect/rest nudge"); }
             if (force) { score += 0.10; reasons.Add("manual/forced check"); }
+            if (prepareForListen) { score += 0.10; reasons.Add("prepared Listen cache check"); }
 
-            bool shouldAsk = force || score >= 0.28;
+            bool shouldAsk = force || prepareForListen || score >= 0.28;
             if (!shouldAsk && topics.Count == 0)
             {
                 reasons.Add("no daily wants-to-talk topics were present in state");

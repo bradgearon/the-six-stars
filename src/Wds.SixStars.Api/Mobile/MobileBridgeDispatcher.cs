@@ -61,7 +61,7 @@ public sealed class MobileBridgeDispatcher
         {
             MobileBridgeDispatchResult result = await handler(command, cancellationToken).ConfigureAwait(false);
             result.CommandId = command.CommandId;
-            if (result.Event == null)
+            if (result.Event == null && !result.SuppressEventPublication)
             {
                 result.Event = Publish(MobileBridgeDispatchEvent.FromResult(command, result));
             }
@@ -180,6 +180,8 @@ public sealed class MobileBridgeDispatchCommand
     public bool RomanceMode { get; set; } = true;
     public bool SpeakOnDesktop { get; set; }
     public bool ReturnAudio { get; set; } = true;
+    public bool ReturnAudioInline { get; set; }
+    public bool PrefetchForListen { get; set; }
     public string ClientName { get; set; } = "SixStarsMobileAndroid";
     public string PhotoBase64 { get; set; } = string.Empty;
     public string PhotoMimeType { get; set; } = "image/jpeg";
@@ -218,6 +220,11 @@ public sealed class MobileBridgeDispatchResult
     public bool VoiceSocketConnected { get; set; }
     public int VoiceChunksSent { get; set; }
     public int VoiceBytesSent { get; set; }
+    public int VoiceChunksCached { get; set; }
+    public int VoiceBytesCached { get; set; }
+    public List<MobileInlineVoiceChunk> InlineVoiceChunks { get; set; } = new List<MobileInlineVoiceChunk>();
+    public bool PrefetchForListen { get; set; }
+    public DateTimeOffset? PrefetchedAtUtc { get; set; }
     public string VoiceMessage { get; set; } = string.Empty;
     public string VoiceError { get; set; } = string.Empty;
     public long ServerElapsedMs { get; set; }
@@ -260,6 +267,9 @@ public sealed class MobileBridgeDispatchResult
     [JsonIgnore]
     public Func<Task>? OnTransportFailureAsync { get; set; }
 
+    [JsonIgnore]
+    public bool SuppressEventPublication { get; set; }
+
     public void StartAfterTransportResponse()
     {
         Func<Task>? work = AfterTransportResponseAsync;
@@ -283,6 +293,16 @@ public sealed class MobileBridgeDispatchResult
             try { await cleanup().ConfigureAwait(false); } catch { }
         });
     }
+}
+
+public sealed class MobileInlineVoiceChunk
+{
+    public int ChunkIndex { get; set; }
+    public int TotalChunks { get; set; } = 1;
+    public string MimeType { get; set; } = "audio/wav";
+    public string AudioBase64 { get; set; } = string.Empty;
+    public string Sha256 { get; set; } = string.Empty;
+    public string SpeechActivitySegmentsMs { get; set; } = string.Empty;
 }
 
 public sealed class MobileBridgeDispatchEvent

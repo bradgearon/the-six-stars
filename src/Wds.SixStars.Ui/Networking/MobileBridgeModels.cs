@@ -19,6 +19,8 @@ public sealed class MobileBridgeRequest
     public bool RomanceMode { get; set; } = true;
     public bool SpeakOnDesktop { get; set; }
     public bool ReturnAudio { get; set; } = true;
+    public bool ReturnAudioInline { get; set; }
+    public bool PrefetchForListen { get; set; }
     public string ClientName { get; set; } = "SixStarsMobileAndroid";
     public string Reason { get; set; } = string.Empty;
     public string AudioFormat { get; set; } = "wav";
@@ -62,6 +64,11 @@ public sealed class MobileBridgeResponse
     public bool VoiceSocketConnected { get; set; }
     public int VoiceChunksSent { get; set; }
     public int VoiceBytesSent { get; set; }
+    public int VoiceChunksCached { get; set; }
+    public int VoiceBytesCached { get; set; }
+    public List<MobileInlineVoiceChunk> InlineVoiceChunks { get; set; } = new List<MobileInlineVoiceChunk>();
+    public bool PrefetchForListen { get; set; }
+    public DateTimeOffset? PrefetchedAtUtc { get; set; }
     public string VoiceMessage { get; set; } = string.Empty;
     public string VoiceError { get; set; } = string.Empty;
     public long ServerElapsedMs { get; set; }
