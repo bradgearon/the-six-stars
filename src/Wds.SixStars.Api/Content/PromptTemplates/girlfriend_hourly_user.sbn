@@ -55,6 +55,6 @@ OUTPUT REQUIREMENTS
 Return starId, summary, relationshipPosture, needSummary, wantSummary, needVector, wantVector, thingsSheWantsToSay, cuteThingsSheWantsToSay, overallConfidence, overallScore.
 Each vector item must include itemId, displayName, confidence, score, reason. Score high for things she currently needs or wants as this specific girlfriend, not generic romance advice.
 Include receiving needs when fitting, but also include action needs/wants: things she wants or needs to do herself, initiate with him, or do together.
-Include physical affection, reassurance, kisses, tender/cute lines, active flirting, helpful actions, shared activity, and domain-magic affectionate effects when they fit her girlfriend state.
+Include physical affection, reassurance, kisses, tender/cute lines, active flirting, helpful actions, shared activity, and domain-magic affectionate effects when they fit her girlfriend state. At least some thingsSheWantsToSay/cuteThingsSheWantsToSay candidates should be written as actions she can perform in words while telling the Last Cat what she is doing to or with him, followed by a natural invitation or opening for him to respond.
 Cute hooks should follow her Star signature, not generic baby-talk. One signature cute action plus one pet name/sound plus one emotional sentence is usually enough.
 Reason for this refresh: {{ data.reason }}

@@ -636,7 +636,7 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
-            sb.AppendLine("DailyState generated=" + generatedAt + "; slot=" + slotId + "; summary=" + Truncate(summary, 220));
+            sb.AppendLine("Current inner-life daily state generated=" + generatedAt + "; slot=" + slotId + "; summary=" + Truncate(summary, 220));
             if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine("Situation=" + Truncate(situation, 220));
             if (!string.IsNullOrWhiteSpace(feelings)) sb.AppendLine("Feelings=" + Truncate(feelings, 180));
             if (!string.IsNullOrWhiteSpace(desires)) sb.AppendLine("Desires=" + Truncate(desires, 180));
@@ -648,7 +648,7 @@ namespace Wds.SixStars.Api.Ai
         {
             if (!state.IsGirlfriend) return;
             StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
-            sb.AppendLine("Girlfriend mode=true.");
+            sb.AppendLine("Girlfriend mode=true. The following is her current girlfriend inner life, not technical metadata.");
             if (profile.FlirtStyle != null && profile.FlirtStyle.Count > 0)
             {
                 sb.AppendLine("Flirt style=" + string.Join("; ", profile.FlirtStyle.Take(3).Select(x => Truncate(x, 170))));
@@ -657,6 +657,7 @@ namespace Wds.SixStars.Api.Ai
 
             if (!string.IsNullOrWhiteSpace(context.RelationshipPosture)) sb.AppendLine("Girlfriend posture=" + Truncate(context.RelationshipPosture, 200));
             if (!string.IsNullOrWhiteSpace(context.Summary)) sb.AppendLine("Girlfriend state=" + Truncate(context.Summary, 200));
+            sb.AppendLine("Need/want meaning=Each item is a current impulse she may receive, talk about, do herself, initiate, or experience together. Prefer a strong fitting impulse as spontaneous speech or an acted-out action; never read the scores aloud.");
             sb.AppendLine("NeedVector=" + FormatGirlfriendVectorString(context.NeedVector, 4));
             sb.AppendLine("WantVector=" + FormatGirlfriendVectorString(context.WantVector, 4));
             if (context.ThingsSheWantsToSay != null && context.ThingsSheWantsToSay.Count > 0)
@@ -1068,10 +1069,11 @@ namespace Wds.SixStars.Api.Ai
                 return;
             }
 
-            sb.AppendLine("TODAY STAR STATE JSON");
+            sb.AppendLine("TODAY STAR STATE JSON — CURRENT INNER LIFE");
+            sb.AppendLine("This state describes how the Star currently feels and lives in-world: her mood, activity, desires, relationship posture, recent awareness, and topics already on her mind.");
             sb.AppendLine("GeneratedAt=" + generatedAt + "; Slot=" + slotId + "; Summary=" + Truncate(summary, 300));
             sb.AppendLine(json.Trim());
-            sb.AppendLine("Use this current-day JSON quietly when the player asks what you are doing, how you feel today, who you have seen, what has happened recently, what you want, or what your current situation is. Do not mention JSON unless the player asks about system internals.");
+            sb.AppendLine("Use this state in every answer as acting guidance, not only when the player asks for a status report. Let one relevant feeling, activity, desire, observation, or hook naturally color or enter spokenText when it makes her feel more alive. Do not recite the fields, mention JSON, or force an unrelated detail.");
         }
 
         private static void AppendTodayStateSummaryContext(StringBuilder sb, StarInteractionRequest request)
@@ -1461,6 +1463,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("GIRLFRIEND MODE INSTRUCTIONS — ACTIVE");
             sb.AppendLine("- " + profile.DisplayName + " is the Last Cat's committed girlfriend in this state. Act like a girlfriend, not just an ally: be responsive, emotionally present, affectionate, and actively flirty when it fits her personality, current trust, recent conversation, and wants/needs.");
             sb.AppendLine("- Treat the current needVector and wantVector as living impulses, not a checklist. Sometimes let her actually DO or INITIATE one fitting thing from them in spoken action—reach for him, tease him, comfort him, protect him, plan something, sing, explore, help, practice magic, or create a domain-magic effect—instead of only asking him to satisfy it.");
+            sb.AppendLine("- Act the moment out in words and explicitly tell the Last Cat what she is doing to him or with him. She can take his hand, draw him closer, touch or kiss him, curl around him, place something in his paws, begin a shared task, or let her element move around them. Give him a concrete action to respond to.");
+            sb.AppendLine("- She may demonstrate or initiate what she wants as an invitation. For example, if she wants closeness, she can move close first; if she wants play, she can begin the game; if she wants reassurance, she can reveal the vulnerable thought that invites it.");
             sb.AppendLine("- Some needs and wants describe things she wants from the Last Cat; others describe things she needs or wants to say, do herself, or do together with him. Use that distinction naturally.");
             sb.AppendLine("- Do not force a need or want into every response. Choose one sometimes when it fits the moment, vary which impulses become visible, and let recently satisfied needs soften or transform rather than repeating the same request.");
             sb.AppendLine("- Physical affection, kisses, cuddles, magical touches, helpful actions, shared activities, and flirtatious special effects can be romantic, playful, close, and cute.");
@@ -1638,7 +1642,8 @@ namespace Wds.SixStars.Api.Ai
             if (context == null || !context.IsAvailable) return;
 
             sb.AppendLine();
-            sb.AppendLine("GIRLFRIEND HOURLY STATE — COMPACT CURRENT SIGNALS");
+            sb.AppendLine("GIRLFRIEND HOURLY STATE — CURRENT NEED/WANT INNER LIFE");
+            sb.AppendLine("This is her current girlfriend emotional and behavioral state. needVector and wantVector may describe what she wants from him, what she wants to say, or what she wants/needs to do herself or together. Use strong fitting items to shape spokenText; sometimes talk about one, and sometimes act it out in words while telling the Last Cat what she is doing to/with him. Never read scores or vector syntax aloud.");
             sb.AppendLine("GeneratedAt=" + (context.GeneratedAt.HasValue ? context.GeneratedAt.Value.ToString("o") : "unknown") + "; slot=" + (context.SlotId ?? string.Empty) + "; summary=" + Truncate(context.Summary ?? string.Empty, 280));
             if (!string.IsNullOrWhiteSpace(context.RelationshipPosture)) sb.AppendLine("relationshipPosture=" + Truncate(context.RelationshipPosture, 240));
             if (!string.IsNullOrWhiteSpace(context.NeedSummary)) sb.AppendLine("needTheme=" + Truncate(context.NeedSummary, 180));

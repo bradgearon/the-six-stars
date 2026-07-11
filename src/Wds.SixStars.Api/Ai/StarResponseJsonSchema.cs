@@ -242,22 +242,23 @@ namespace Wds.SixStars.Api.Ai
         public static object CreateStarInitiativeResponseFormat()
         {
             // This path runs from the phone's manual Listen button and the at-rest scheduler.
-            // Keep the grammar intentionally tiny: the model only decides whether to speak and,
-            // when it does, returns one brief line. The runtime does not need a full emotion or
-            // girlfriend-vector response for this check.
+            // Keep the grammar focused, but allow a small complete spontaneous moment rather than
+            // forcing every initiative response into one minimal line. The single decision vector
+            // feeds the deterministic score/confidence gate; it is not a relationship update.
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "hasSomethingToSay", "priority", "selectedTopic", "reason", "spokenText" } },
+                { "required", new[] { "starId", "hasSomethingToSay", "priority", "speechDecisionVector", "selectedTopic", "reason", "spokenText" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
                         { "hasSomethingToSay", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "priority", NumberProperty(0, 1) },
-                        { "selectedTopic", StringProperty(120) },
-                        { "reason", StringProperty(180) },
-                        { "spokenText", StarInitiativeSpokenTextArray(1) }
+                        { "speechDecisionVector", GirlfriendVectorArray(1) },
+                        { "selectedTopic", StringProperty(160) },
+                        { "reason", StringProperty(260) },
+                        { "spokenText", StarInitiativeSpokenTextArray(3) }
                     }
                 }
             };
@@ -592,7 +593,7 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> array = new Dictionary<string, object>
             {
                 { "type", "array" },
-                { "items", StringProperty(320) }
+                { "items", StringProperty(500) }
             };
             if (maxItems > 0) array["maxItems"] = maxItems;
             return array;

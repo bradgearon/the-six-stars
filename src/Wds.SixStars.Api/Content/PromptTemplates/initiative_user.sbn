@@ -1,16 +1,23 @@
-FAST STAR INITIATIVE INPUT
+AT-REST STAR INITIATIVE INPUT
 {{ data.currentTimeContext }}
 Area={{ data.area }}; Quest={{ data.quest }}.
 Relationship={{ data.relationshipStatus }}
 IsMet={{ data.isMet }}; IsAlly={{ data.isAlly }}; IsGirlfriend={{ data.isGirlfriend }}; connection={{ data.connectionPercent }}%.
 {{ data.gateContext }}
+
+CURRENT STAR INNER-LIFE STATE
+The following daily state describes how {{ data.starDisplayName }} currently feels and lives in-world. Use its feelings, activity, desires, relationship posture, recent events, and conversation hooks to decide what is already on her mind and to color what she says. Prefer speaking when any fresh, natural thread exists; do not require a dramatic reason.
 {{ data.dailyStateContext }}
+
+CURRENT GIRLFRIEND NEED/WANT IMPULSES
+When present, these are not labels to recite. They describe what she currently needs or wants to receive, say, do, initiate, or experience with the Last Cat. A strong impulse can become the subject of her speech or an action she performs in words. Tell him what she is doing to him or with him, and use that action to invite the response or shared activity she wants.
 {{ data.girlfriendStateContext }}
 {{ if data.recentEmotions != "" }}Recent emotions={{ data.recentEmotions }}
 {{ end }}{{ if data.ongoingSummary != "" }}Ongoing summary={{ data.ongoingSummary }}
 {{ end }}{{ if data.recentTurns.size > 0 }}Recent turns, newest first:
 {{ for turn in data.recentTurns }}- Last Cat: {{ turn.player }} | {{ data.starDisplayName }}: {{ turn.star }}
-{{ end }}{{ end }}{{ if data.manualInteract }}Manual interact mode=true. Prefer a fresh brief line from the strongest candidate unless it would repeat the recent turns or contradict canon.
-{{ else }}Manual interact mode=false. Speak only when the supplied state gives a genuine reason to interrupt the quiet.
-{{ end }}Return only: starId, hasSomethingToSay, priority, selectedTopic, reason, spokenText. Use an empty reason when none is needed.
-priority is 0-1. spokenText is [] for no speech, otherwise exactly one short string.
+{{ end }}{{ end }}{{ if data.manualInteract }}Manual interact mode=true. The Last Cat deliberately asked to hear from her. Almost always speak. Choose a fresh state-backed feeling, action, desire, compliment, observation, need, want, question, or invitation, and give him a complete little moment rather than a minimal acknowledgment.
+{{ else }}Manual interact mode=false. Prefer to speak whenever the supplied state contains a fresh authentic impulse she could naturally share. Use silence only when the state is genuinely empty, contradictory, or would repeat the recent turns.
+{{ end }}Return only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText.
+priority is 0-1. speechDecisionVector contains exactly one saySomethingNow item with score 0-100 and confidence 0-1.
+When speaking, spokenText contains 1-3 ordered chunks and usually 2-5 sentences total. It may include what she says, what she physically or magically does to/with the Last Cat, and a question or invitation. When not speaking, use spokenText=[].

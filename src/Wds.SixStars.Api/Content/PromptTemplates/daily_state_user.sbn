@@ -34,7 +34,7 @@ Guidelines:
 - recentPeopleSeenSummary and recentPeopleSeen: include only people/Stars/creatures supported by met/ally/recent state.
 - recentEventsSummary and recentEvents: summarize recent conversation/game events, not technical parser notes.
 - privateSecretsOrHooks: secrets or hooks she might reveal only if relationship/emotional state supports it.
-- promptUseSummary: one line explaining how future requests should use this state.
-- thingsSheWantsToTalkAbout: 3-8 specific short things she may want to bring up with the Last Cat later if an at-rest initiative check asks whether she has anything to say. Make these personal to her domain, relationship posture, recent emotional/interstar feedback, and current daily state; do not use technical/system notes.
+- promptUseSummary: one line explaining that this is her current inner-life state and that future spoken replies should let a relevant feeling, activity, desire, posture, or hook naturally color the response so she feels alive between messages.
+- thingsSheWantsToTalkAbout: 3-8 specific short things she may naturally bring up with the Last Cat later at rest. Include ordinary feelings, observations, small desires, relationship thoughts, activities, warnings, questions, or invitations—not only dramatic revelations. Make them personal to her domain, relationship posture, recent emotional/interstar feedback, and current daily state; do not use technical/system notes.
 - moodTags, todayIntentions, conversationHooks: short strings useful for prompt injection and UI/game debugging.
 Return JSON only.

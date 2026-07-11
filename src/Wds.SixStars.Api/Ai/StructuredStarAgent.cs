@@ -574,18 +574,17 @@ namespace Wds.SixStars.Api.Ai
 
         private static int ResolveInitiativeMaxTokens()
         {
-            // Initiative returns at most one short line. A small cap prevents a local model from
-            // spending normal-chat time elaborating on a yes/no at-rest decision. This cap is
-            // isolated from ordinary speech/story requests because some local backends are less
-            // reliable when those larger responses are capped.
+            // Initiative stays much smaller than normal chat, but it may now contain a complete
+            // 1-3 chunk living moment with an acted-out need/want. Keep enough room for valid JSON
+            // plus several natural sentences without allowing a long-form generation.
             string? configured = Environment.GetEnvironmentVariable("SIX_STARS_LLM_INITIATIVE_MAX_TOKENS");
             if (int.TryParse(configured, out int value))
             {
                 if (value <= 0) return 0;
-                return Math.Max(96, Math.Min(512, value));
+                return Math.Max(160, Math.Min(768, value));
             }
 
-            return 256;
+            return 512;
         }
 
         private static int ResolveStoryPlanMaxTokens()
