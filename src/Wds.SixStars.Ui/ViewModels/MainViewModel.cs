@@ -65,7 +65,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _selectedStarId = "Elusiaa";
     private RequestType _selectedRequestType = RequestType.Chat;
     private string _playerText = string.Empty;
-    private string _storySuggestion = string.Empty;
     private string _area = "VirethornCaves";
     private string _quest = "DesktopDevHarness";
     private bool _romanceMode = true;
@@ -125,7 +124,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         ConfigureLocalModelEnvironment();
         _selectedStarId = ResolveDefaultStarId(Environment.GetEnvironmentVariable("SIX_STARS_DEFAULT_STAR_ID") ?? _appConfig.Companion.DefaultStarId);
         _playerText = string.Empty;
-        _storySuggestion = string.Empty;
         _operationController = new SixStarsRuntimeOperationController();
         _selectedAudioBackend = NormalizeAudioBackend(
             Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND") ?? _appConfig.VoiceOutput.AudioBackend);
@@ -355,7 +353,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         RequestTypes = new ObservableCollection<RequestType>
         {
             RequestType.Chat,
-            RequestType.Story,
             RequestType.Letter,
             RequestType.BattleUpdate,
             RequestType.Debug
@@ -368,8 +365,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         SendCommand = new RelayCommand(async _ => await SendAsync());
         SendMessageCommand = new RelayCommand(async _ => await SendMessageAsync());
-        TellStoryCommand = new RelayCommand(async _ => await TellStoryAsync());
-        InterruptStoryCommand = new RelayCommand(_ => InterruptStory("User clicked Interrupt Story."));
         GoblinHarpiesCommand = new RelayCommand(async _ => await QuickSendAsync(RequestType.Chat, "Elusiaa, maybe we should ask why the harpies were smiling before we punish the goblin at the bridge."));
         CruelEscalationCommand = new RelayCommand(async _ => await QuickSendAsync(RequestType.Chat, "Cast holy harder on the goblin and make him pay."));
         KindCompanyCommand = new RelayCommand(async _ => await QuickSendAsync(RequestType.Chat, SelectedStarId + ", stay with me and keep me company while I work. I trust you."));
@@ -404,8 +399,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ICommand SendCommand { get; }
     public ICommand SendMessageCommand { get; }
-    public ICommand TellStoryCommand { get; }
-    public ICommand InterruptStoryCommand { get; }
     public ICommand GoblinHarpiesCommand { get; }
     public ICommand CruelEscalationCommand { get; }
     public ICommand KindCompanyCommand { get; }
@@ -458,12 +451,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _playerText;
         set => SetProperty(ref _playerText, value);
-    }
-
-    public string StorySuggestion
-    {
-        get => _storySuggestion;
-        set => SetProperty(ref _storySuggestion, value);
     }
 
     public string Area
@@ -2260,7 +2247,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarOutput = string.Empty;
                 LastTranscript = string.Empty;
                 PlayerText = string.Empty;
-                StorySuggestion = string.Empty;
                 Status = "Cleared all local Star data for desktop, Android dev, Android prod, daily JSON/XML cache, relationship scores, and conversation history.";
                 DebugJson = JsonSerializer.Serialize(new { action = "clear_all_star_data", cleared }, _jsonOptions);
             });
@@ -2335,17 +2321,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         SelectedRequestType = RequestType.Chat;
         if (string.IsNullOrWhiteSpace(PlayerText))
         {
-            Status = "Type a message first, or use Tell Me A Story for automatic story generation.";
+            Status = "Type a message first. Long answers and stories are requested through normal Chat.";
             return;
         }
 
-        await SendAsync();
-    }
-
-    private async Task TellStoryAsync()
-    {
-        StopActiveStoryState();
-        SelectedRequestType = RequestType.Story;
         await SendAsync();
     }
 
@@ -2364,7 +2343,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             TargetMinutes = 0,
             TargetChunkCount = 0,
             MaxSentencesPerChunk = 2,
-            PlayerSuggestion = StorySuggestion ?? string.Empty,
+            PlayerSuggestion = string.Empty,
             ContinueActiveStory = false,
             ActiveStoryId = string.Empty,
             ActiveStoryTitle = string.Empty,
@@ -2388,7 +2367,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             + "Star: " + request.StarId + "\n"
             + "RequestType: " + request.RequestType + "\n"
             + "PlayerText: " + request.PlayerText + "\n"
-            + "StorySuggestion: " + (request.StoryOptions?.PlayerSuggestion ?? string.Empty) + "\n"
             + "===================================================\n");
     }
 
@@ -2447,7 +2425,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             StoryOptions storyOptionsForRequest = CreateStoryOptions(automaticStoryContinuation);
             if (!automaticStoryContinuation && SelectedRequestType != RequestType.Story && string.IsNullOrWhiteSpace(playerTextForRequest))
             {
-                Status = "Type a message first, or choose Tell Me A Story so the selected Star can choose the story automatically.";
+                Status = "Type a message first. Long answers and stories are handled through normal Chat.";
                 return;
             }
 
@@ -2465,7 +2443,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!automaticStoryContinuation)
             {
                 PlayerText = string.Empty;
-                StorySuggestion = string.Empty;
             }
 
             ResetLlmDebugLog(request);

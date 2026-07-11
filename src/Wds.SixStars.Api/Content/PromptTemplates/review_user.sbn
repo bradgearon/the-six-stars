@@ -1,21 +1,21 @@
 BACKGROUND REVIEW INPUT
-Star: {{ StarDisplayName }}
-RequestType: {{ RequestType }}
-{{ CurrentTimeContext }}
+Star: {{ data.starDisplayName }}
+RequestType: {{ data.requestType }}
+{{ data.currentTimeContext }}
 Player latest message:
-{{ PlayerTextBlock }}
+{{ data.playerTextBlock }}
 Exact foreground spokenText already sent to voice generation. Use this array only for conversationSummary context; do not copy spokenText into your response unless the schema explicitly asks for it:
-{{ ForegroundSpokenPartsJson }}
+{{ data.foregroundSpokenPartsJson }}
 Relationship before this review:
-{{ RelationshipContext }}
+{{ data.relationshipContext }}
 
 Recent history for continuity:
-{{ RecentConversationHistory }}
+{{ data.recentConversationHistory }}
 
 Durable memory / quote / marker context:
-{{ DurableMemoryContext }}
+{{ data.durableMemoryContext }}
 
-{{ StoryFieldsContext }}
+{{ data.storyFieldsContext }}
 
 Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, and girlfriendCoupleActivityVector. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.

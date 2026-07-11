@@ -1,0 +1,23 @@
+{{ data.currentTimeContext }}
+Selected Star: {{ data.starDisplayName }}
+Latest player message:
+{{ data.playerTextBlock }}
+Foreground spoken bridge/reply:
+{{ data.foregroundReplyBlock }}
+Ongoing summary: {{ data.ongoingSummary }}
+
+FOREGROUND INFORMATION NEED VECTOR
+{{ if data.foregroundNeeds.size == 0 }}none
+{{ else }}{{ for need in data.foregroundNeeds }}- dataType={{ need.dataType }}; subject={{ need.subject }}; confidence={{ need.confidence }}; score={{ need.score }}; reason={{ need.reason }}
+{{ end }}{{ end }}
+LOCAL DATA INVENTORY
+{{ if data.availableData.size == 0 }}none
+{{ else }}{{ for item in data.availableData }}- dataType={{ item.dataType }}; available={{ item.available }}; count={{ item.count }}; summary={{ item.summary }}
+{{ if item.samples != "" }}  samples={{ item.samples }}
+{{ end }}{{ end }}{{ end }}
+Selector rules:
+- Return rankedNeeds as the useful vector sorted from strongest to weakest after considering the player message and availability.
+- selectedDataType must be one of the available types when shouldRequestMoreInformation=true.
+- Use subject from the foreground vector when useful, otherwise infer a compact subject from the player message, or self.
+- Do not request deep history just because the word remember appears if a direct answer is already possible.
+- Do request deep data when the Star's first reply was a bridge line or the foreground vector points to old history, quotes, markers, lore, bestiary, character, world, screen, or story data.

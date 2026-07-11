@@ -14,7 +14,7 @@ using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarRequestIntentClassifier, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
+    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -55,59 +55,6 @@ namespace Wds.SixStars.Api.Ai
             _jsonOptions.Converters.Add(new FlexibleListJsonConverterFactory());
         }
 
-
-        public async Task<StarRequestIntentResult> ClassifyRequestIntentAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
-        {
-            if (request.RequestType == RequestType.Story)
-            {
-                return new StarRequestIntentResult
-                {
-                    IsStoryRequest = true,
-                    Confidence = 1,
-                    StorySeed = request.StoryOptions?.PlayerSuggestion ?? request.PlayerText ?? string.Empty,
-                    Reason = "Caller already selected Story request type.",
-                    Source = "caller"
-                };
-            }
-
-            try
-            {
-                System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending QUICK story intent classifier request...");
-                string json = await _client.CompleteJsonAsync(
-                    _promptBuilder.BuildStoryIntentMessages(profile, request, state),
-                    StarResponseJsonSchema.CreateStoryIntentResponseFormat(),
-                    0,
-                    "story-intent-classifier",
-                    cancellationToken).ConfigureAwait(false);
-
-                StoryIntentModel? model = JsonSerializer.Deserialize<StoryIntentModel>(ExtractJson(json), _jsonOptions);
-                if (model == null) throw new InvalidOperationException("Story intent classifier returned empty JSON.");
-                return new StarRequestIntentResult
-                {
-                    IsStoryRequest = model.IsStoryRequest,
-                    Confidence = Clamp01(model.Confidence),
-                    StorySeed = model.IsStoryRequest ? (model.StorySeed ?? string.Empty).Trim() : string.Empty,
-                    Reason = model.Reason ?? string.Empty,
-                    Source = "llm"
-                };
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                bool fallback = LooksLikeStoryRequest(request.PlayerText);
-                return new StarRequestIntentResult
-                {
-                    IsStoryRequest = fallback,
-                    Confidence = fallback ? 0.62 : 0.25,
-                    StorySeed = fallback ? (request.PlayerText ?? string.Empty).Trim() : string.Empty,
-                    Reason = "Story intent LLM check failed; heuristic fallback used: " + ex.Message,
-                    Source = "heuristic-fallback"
-                };
-            }
-        }
 
         public async Task<InformationNeedSelectionResult> AnalyzeInformationNeedAsync(
             StarProfile profile,
@@ -1235,9 +1182,13 @@ namespace Wds.SixStars.Api.Ai
 
         private static List<string> CleanSpeechParts(IEnumerable<string>? parts)
         {
+            // Never discard foreground speech. Long Chat answers are intentionally represented as
+            // an ordered spokenText array, and every item must survive for UI display and TTS.
+            // The prompt asks the model to make natural one-or-two-sentence chunks; this cleanup
+            // only normalizes whitespace and does not impose a character cap or append ellipses.
             return (parts ?? Enumerable.Empty<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => TruncateForSpeech(x.Replace("\r", " ").Replace("\n", " ").Trim(), 600))
+                .Select(x => Regex.Replace(x.Replace("\r", " ").Replace("\n", " "), @"\s+", " ").Trim())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToList();
         }
@@ -1416,11 +1367,6 @@ namespace Wds.SixStars.Api.Ai
                 .ThenByDescending(x => x.Confidence)
                 .Take(Math.Max(1, maxItems))
                 .ToList();
-        }
-
-        private static bool LooksLikeStoryRequest(string? text)
-        {
-            return StoryIntentLexicon.ContainsStoryIntentTrigger(text);
         }
 
         private static double Clamp01(double value)
@@ -2009,22 +1955,6 @@ namespace Wds.SixStars.Api.Ai
             if (string.IsNullOrWhiteSpace(value)) return;
             string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
             if (cleaned.Length > 0) parts.Add(cleaned);
-        }
-
-        private static string TruncateForSpeech(string value, int maxLength)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-            string trimmed = value.Trim();
-            if (trimmed.Length <= maxLength) return trimmed;
-            return trimmed.Substring(0, maxLength).Trim() + "...";
-        }
-
-        private sealed class StoryIntentModel
-        {
-            public bool IsStoryRequest { get; set; }
-            public double Confidence { get; set; }
-            public string? StorySeed { get; set; }
-            public string? Reason { get; set; }
         }
 
         private static void TrimEmotionScoresToImpactfulSet(StarInteractionResponse response, int maxCount)

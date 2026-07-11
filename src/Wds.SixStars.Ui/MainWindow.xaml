@@ -39,53 +39,30 @@
                 <ColumnDefinition Width="1.15*" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="1*" />
-                    <RowDefinition Height="10" />
-                    <RowDefinition Height="0.9*" />
-                </Grid.RowDefinitions>
-
-                <GroupBox Grid.Row="0" Header="Message To Selected Star — default companion mode">
-                    <DockPanel Margin="8">
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="Type normal chat here, then send. This box starts blank and clears after the request is queued."
-                                   TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
-                        <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="True" TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontSize="15"
-                                 Padding="10" />
-                    </DockPanel>
-                </GroupBox>
-
-                <GroupBox Grid.Row="2" Header="Optional Story Seed">
-                    <DockPanel Margin="8">
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="Optional. Leave this blank and the selected Star chooses the story herself. This box clears after the request is queued."
-                                   TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
-                        <TextBox Text="{Binding StorySuggestion, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="True" TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontSize="14"
-                                 Padding="10" />
-                    </DockPanel>
-                </GroupBox>
-            </Grid>
+            <GroupBox Grid.Column="0" Header="Message To Selected Star — normal conversation">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="Type any request here, including long answers or stories. Everything is handled as normal Chat, displayed in full, and spoken in order. This box clears after the request is queued."
+                               TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
+                    <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontSize="15"
+                             Padding="10" />
+                </DockPanel>
+            </GroupBox>
 
             <GroupBox Grid.Column="2" Header="Quick Actions / Test Buttons">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="8">
                     <TextBlock Text="Primary" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Send Message" Command="{Binding SendMessageCommand}" Margin="0,0,0,8" Height="36" />
-                    <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Margin="0,0,0,8" Height="36" />
-                    <Button Content="Interrupt Story" Command="{Binding InterruptStoryCommand}" Margin="0,0,0,8" Height="34" />
                     <CheckBox Content="Auto Star at-rest lines" IsChecked="{Binding StarInitiativeEnabled, Mode=TwoWay}" Margin="0,0,0,6" />
                     <Button Content="Ask Star If She Wants To Speak" Command="{Binding AskStarInitiativeNowCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />
-                    <TextBlock Text="Send Message keeps RequestType=Chat and requires typed text. Tell Me A Story sets RequestType=Story; with blank message/seed, the selected Star invents the story herself. Interrupt Story stops local cached story autoplay. Open LLM Exchange Log Folder shows the durable daily .log prompt logs. Clear Selected Star History resets one Star. Clear All Star Data resets every Star state saved locally and refreshes both desktop and Android dev sessions." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <TextBlock Text="Send Message always uses normal Chat. Ask for a long answer or a story directly in the message box; every spokenText chunk is displayed and spoken in order. Open LLM Exchange Log Folder shows the durable daily .log prompt logs. Clear Selected Star History resets one Star. Clear All Star Data resets every Star state saved locally and refreshes both desktop and Android dev sessions." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Separator Margin="0,8,0,8" />
                     <TextBlock Text="Scenario Tests" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Goblin / Harpy Discernment" Command="{Binding GoblinHarpiesCommand}" Margin="0,0,0,8" Height="34" />
@@ -183,7 +160,6 @@
             <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top">
                 <Button Content="Send Current Request" Command="{Binding SendCommand}" Width="150" Height="38" />
                 <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" />
-                <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Width="140" Height="38" Margin="8,0,0,0" />
             </StackPanel>
 
             <Border Grid.Column="2" Padding="8" BorderBrush="#DDD" BorderThickness="1" CornerRadius="8" Background="#FAFAFA" MinHeight="160">

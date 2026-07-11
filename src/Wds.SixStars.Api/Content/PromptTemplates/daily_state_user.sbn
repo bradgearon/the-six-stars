@@ -1,25 +1,25 @@
 DAILY STAR STATE REFRESH
-Star: {{ StarDisplayName }}
-SessionId: {{ SessionId }}
-LocalDate: {{ LocalDate }}
-SlotId: {{ SlotId }}
-LocalNow: {{ LocalNow }}
-{{ CurrentTimeContext }}
+Star: {{ data.starDisplayName }}
+SessionId: {{ data.sessionId }}
+LocalDate: {{ data.localDate }}
+SlotId: {{ data.slotId }}
+LocalNow: {{ data.localNow }}
+{{ data.currentTimeContext }}
 
 STAR ACTING CARD
-{{ StarActingCard }}
+{{ data.starActingCard }}
 
 RELATIONSHIP / EMOTION STATE
-{{ RelationshipContext }}
+{{ data.relationshipContext }}
 
 RECENT CONVERSATION TURNS
-{{ RecentConversationTurns }}
+{{ data.recentConversationTurns }}
 
 DURABLE MEMORY / MARKERS / STORIES
-{{ DurableMemoryContext }}
+{{ data.durableMemoryContext }}
 
 PREVIOUS DAILY STATE JSON
-{{ PreviousDailyStateJson }}
+{{ data.previousDailyStateJson }}
 
 Write the new current-day state as compact TOP-LEVEL JSON fields. This is not a spoken reply.
 Do not nest the answer under currentInnerLife/today/recentAwareness/promptUse. Those may appear in PREVIOUS DAILY STATE JSON, but this response should use the top-level fields below so the API mapper receives them directly.

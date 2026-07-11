@@ -578,21 +578,17 @@ namespace Wds.SixStars.Api.Engine
                 return thinkingResponse;
             }
 
-            StarRequestIntentResult? requestIntent = await ClassifyAndPrepareRequestModeAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+            PrepareExplicitStoryRequest(request, state);
 
             if (request.RequestType == RequestType.Story && !IsStoryGenerationWorkerRequest(request))
             {
-                StarInteractionResponse thinkingResponse = CreateStoryThinkingResponse(profile, request, requestIntent);
+                StarInteractionResponse thinkingResponse = CreateStoryThinkingResponse(profile, request);
                 ApplyVoiceDefaults(profile, thinkingResponse);
-                QueueStoryGenerationAfterThinkingResponse(profile, request, state, requestIntent, cancellationToken);
+                QueueStoryGenerationAfterThinkingResponse(profile, request, state, cancellationToken);
                 return thinkingResponse;
             }
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
-            if (requestIntent != null)
-            {
-                response.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
-            }
             response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
             response.UnityEvents.Add(new UnityEventEnvelope
@@ -1954,7 +1950,7 @@ namespace Wds.SixStars.Api.Engine
                 && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static StarInteractionResponse CreateStoryThinkingResponse(StarProfile profile, StarInteractionRequest request, StarRequestIntentResult? requestIntent)
+        private static StarInteractionResponse CreateStoryThinkingResponse(StarProfile profile, StarInteractionRequest request)
         {
             string phrase = PickStoryThinkingPhrase(profile);
             StarInteractionResponse response = new StarInteractionResponse
@@ -1979,11 +1975,6 @@ namespace Wds.SixStars.Api.Engine
             response.Debug.Notes.Add("Story request quick-response path used. The full story is being generated in the background, then will be raised through StoryGenerationCompleted.");
             response.Debug.Notes.Add("Story-thinking phrase source: StarProfile.StoryThinkingPhrases JSON/fallback.");
             response.Debug.Notes.Add(BuildStoryLengthDebugNote(request.StoryOptions));
-            if (requestIntent != null)
-            {
-                response.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
-            }
-
             response.UnityEvents.Add(new UnityEventEnvelope
             {
                 Type = "StoryGenerationStarted",
@@ -2378,7 +2369,7 @@ namespace Wds.SixStars.Api.Engine
             };
         }
 
-        private void QueueStoryGenerationAfterThinkingResponse(StarProfile profile, StarInteractionRequest request, StarState state, StarRequestIntentResult? requestIntent, CancellationToken cancellationToken)
+        private void QueueStoryGenerationAfterThinkingResponse(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
         {
             // Clone the original request before leaving the foreground turn. The UI will immediately
             // start a separate TTS playback operation for the quick thinking phrase, and voice/VAD can
@@ -2408,11 +2399,6 @@ namespace Wds.SixStars.Api.Engine
                 {
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ". This is detached from the quick-thinking TTS operation token so the placeholder voice cannot cancel the story LLM call.");
                     StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, workToken).ConfigureAwait(false);
-                    if (requestIntent != null)
-                    {
-                        storyResponse.Debug.Notes.Add("Pre-flight story intent check: " + requestIntent.Source + " confidence=" + requestIntent.Confidence.ToString("0.00") + " story=" + requestIntent.IsStoryRequest + " reason=" + requestIntent.Reason);
-                    }
-
                     ApplyVoiceDefaults(profile, storyResponse);
                     if (_agent is IStarTurnAnalyzer analyzer)
                     {
@@ -2480,90 +2466,19 @@ namespace Wds.SixStars.Api.Engine
                 storyToken);
         }
 
-        private async Task<StarRequestIntentResult?> ClassifyAndPrepareRequestModeAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
+        private static void PrepareExplicitStoryRequest(StarInteractionRequest request, StarState state)
         {
-            StarRequestIntentResult? intent = null;
-
-            if (request.RequestType == RequestType.Chat)
-            {
-                if (StoryIntentLexicon.TryFindStoryIntentTrigger(request.PlayerText, out string storyIntentTrigger))
-                {
-                    request.GameContext.Flags["storyIntentTrigger"] = storyIntentTrigger;
-                    request.GameContext.Flags["storyIntentCheckSource"] = "llm_required_after_story_alias";
-                    request.GameContext.RecentEvents.Add("A story-like word was detected (" + storyIntentTrigger + "), so the runtime is asking the micro-intent LLM classifier before changing modes.");
-
-                    if (_agent is IStarRequestIntentClassifier classifier)
-                    {
-                        intent = await classifier.ClassifyRequestIntentAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
-                        request.GameContext.Flags["storyIntentCheckSource"] = intent.Source;
-                        request.GameContext.Flags["storyIntentConfidence"] = intent.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-                        request.GameContext.Flags["storyIntentReason"] = intent.Reason ?? string.Empty;
-
-                        if (intent.IsStoryRequest && intent.Confidence >= 0.60)
-                        {
-                            request.GameContext.Flags["autoPromotedToStory"] = "true";
-                            request.RequestType = RequestType.Story;
-                            request.GameContext.RecentEvents.Add("Story micro-intent LLM confirmed Story mode with confidence " + intent.Confidence.ToString("0.00") + ".");
-                        }
-                        else
-                        {
-                            request.GameContext.Flags["autoPromotedToStory"] = "false";
-                            request.GameContext.RecentEvents.Add("Story word detected, but micro-intent LLM kept this as Chat. Reason: " + (intent.Reason ?? string.Empty));
-                        }
-                    }
-                    else
-                    {
-                        bool strictFallback = LooksLikeDirectStoryCommand(request.PlayerText);
-                        intent = new StarRequestIntentResult
-                        {
-                            IsStoryRequest = strictFallback,
-                            Confidence = strictFallback ? 0.62 : 0.20,
-                            StorySeed = strictFallback ? (request.PlayerText ?? string.Empty) : string.Empty,
-                            Source = "strict_story_heuristic_no_llm",
-                            Reason = strictFallback ? "Direct story command detected without classifier." : "Story word was present but no direct story command was detected."
-                        };
-                        request.GameContext.Flags["storyIntentConfidence"] = intent.Confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
-                        request.GameContext.Flags["storyIntentReason"] = intent.Reason;
-                        if (strictFallback) request.RequestType = RequestType.Story;
-                    }
-                }
-                else if (_agent is IStarRequestIntentClassifier)
-                {
-                    request.GameContext.Flags["storyIntentTrigger"] = string.Empty;
-                    request.GameContext.Flags["storyIntentCheckSource"] = "skipped_no_story_alias";
-                    request.GameContext.Flags["storyIntentConfidence"] = "0.00";
-                    request.GameContext.Flags["storyIntentReason"] = "Skipped story intent LLM check because the player text did not contain a story alias trigger word such as story, tale, fable, legend, myth, parable, saga, chronicle, or narration.";
-                    request.GameContext.RecentEvents.Add("Skipped pre-flight story intent LLM classifier because the player text did not contain a story alias trigger word.");
-                }
-            }
-
+            // Story narration is never inferred from ordinary Chat text. A player can ask for a
+            // long story in Chat and receive the entire answer through spokenText like any other
+            // response. The legacy structured Story pipeline remains available only to callers
+            // that explicitly set RequestType.Story.
             if (request.RequestType == RequestType.Story)
             {
-                PrepareStoryOptionsForNewOrContinuingStory(request, state, intent);
+                PrepareStoryOptionsForNewOrContinuingStory(request, state);
             }
-
-            return intent;
         }
 
-        private static bool LooksLikeDirectStoryCommand(string? text)
-        {
-            string t = (text ?? string.Empty).Trim().ToLowerInvariant();
-            if (t.Length == 0) return false;
-            return t.StartsWith("tell me a story")
-                || t.StartsWith("tell a story")
-                || t.StartsWith("tell me another story")
-                || t.StartsWith("continue the story")
-                || t.StartsWith("finish the story")
-                || t.StartsWith("start a story")
-                || t.StartsWith("make up a story")
-                || t.StartsWith("give me a story")
-                || t.StartsWith("narrate")
-                || t.Contains("tell me a new long story")
-                || t.Contains("can you tell me a story")
-                || t.Contains("will you tell me a story");
-        }
-
-        private static void PrepareStoryOptionsForNewOrContinuingStory(StarInteractionRequest request, StarState state, StarRequestIntentResult? intent)
+        private static void PrepareStoryOptionsForNewOrContinuingStory(StarInteractionRequest request, StarState state)
         {
             if (request.StoryOptions == null) request.StoryOptions = new StoryOptions();
             StoryOptions options = request.StoryOptions;
@@ -2610,15 +2525,7 @@ namespace Wds.SixStars.Api.Engine
             if (string.IsNullOrWhiteSpace(options.Tone)) options.Tone = "comforting, adventurous, cave-travel friendly";
             if (string.IsNullOrWhiteSpace(options.CanonStrictness)) options.CanonStrictness = "high";
 
-            bool autoPromoted = request.GameContext.Flags.TryGetValue("autoPromotedToStory", out string? promoted)
-                && string.Equals(promoted, "true", StringComparison.OrdinalIgnoreCase);
-            if (autoPromoted)
-            {
-                options.PlayerSuggestion = !string.IsNullOrWhiteSpace(intent?.StorySeed)
-                    ? intent!.StorySeed
-                    : (request.PlayerText ?? string.Empty);
-            }
-            else if (string.IsNullOrWhiteSpace(options.PlayerSuggestion) && !string.IsNullOrWhiteSpace(request.PlayerText))
+            if (string.IsNullOrWhiteSpace(options.PlayerSuggestion) && !string.IsNullOrWhiteSpace(request.PlayerText))
             {
                 options.PlayerSuggestion = request.PlayerText;
             }

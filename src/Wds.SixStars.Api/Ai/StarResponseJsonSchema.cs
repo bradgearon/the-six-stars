@@ -26,7 +26,7 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(6) },
+                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "emotionalEffectVector", EmotionEffectVectorProperty() },
                         { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                         { "storyTitle", NullableStringProperty() },
@@ -68,26 +68,6 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema(schemaName, schema);
         }
 
-
-        public static object CreateStoryIntentResponseFormat()
-        {
-            Dictionary<string, object> schema = new Dictionary<string, object>
-            {
-                { "type", "object" },
-                { "additionalProperties", false },
-                { "required", new[] { "isStoryRequest", "confidence", "storySeed", "reason" } },
-                { "properties", new Dictionary<string, object>
-                    {
-                        { "isStoryRequest", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "confidence", NumberProperty(0, 1) },
-                        { "storySeed", StringProperty(500) },
-                        { "reason", StringProperty(180) }
-                    }
-                }
-            };
-
-            return WrapSchema("six_stars_story_intent_classifier", schema);
-        }
 
         public static object CreateDailyStarStateResponseFormat()
         {
@@ -202,7 +182,7 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(6) },
+                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "emotionalEffectVector", EmotionEffectVectorProperty() },
                         { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                         { "storyTitle", NullableStringProperty() },
@@ -249,7 +229,7 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(5) },
+                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "needsMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "informationNeeds", InformationNeedArray(9) }
                     }
@@ -595,13 +575,13 @@ namespace Wds.SixStars.Api.Ai
             return array;
         }
 
-        private static Dictionary<string, object> SpokenTextArray(int maxItems = 0)
+        private static Dictionary<string, object> SpokenTextArray(int maxItems = 0, int maxItemLength = 420)
         {
             Dictionary<string, object> array = new Dictionary<string, object>
             {
                 { "type", "array" },
                 { "minItems", 1 },
-                { "items", StringProperty(420) }
+                { "items", StringProperty(maxItemLength) }
             };
             if (maxItems > 0) array["maxItems"] = maxItems;
             return array;

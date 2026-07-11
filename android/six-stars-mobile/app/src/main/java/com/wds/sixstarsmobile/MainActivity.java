@@ -1792,13 +1792,13 @@ public final class MainActivity extends ComponentActivity {
         String visible = storyMarkdown.length() > 0 ? storyMarkdown : spoken;
         if (visible.length() > 0) {
             if (!recentProdConversationAlreadyHas(starId, visible)) {
-                appendProdConversationLine(starId, clip(visible, 900));
+                appendProdConversationLine(starId, visible);
             }
             String header = starId + " — response ready";
             if (transcript.length() > 0) header += "\nTranscript: " + transcript;
             if (storyTitle.length() > 0) header += "\nStory: " + storyTitle;
             if (storySummary.length() > 0) header += "\nSummary: " + storySummary;
-            responseText.setText(header + "\n\n" + clip(visible, storyMarkdown.length() > 0 ? 20000 : 8000));
+            responseText.setText(header + "\n\n" + visible);
             if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " answered.");
             setDebug("Queued Star response", "event=#" + seq + " " + type + "; recovered from bridge event. responseChars=" + visible.length() + (error.length() > 0 ? "\nerror=" + error : ""));
             appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct WebSocket request promise was interrupted.");
@@ -2594,14 +2594,14 @@ public final class MainActivity extends ComponentActivity {
                     }
                 }
                 if (!recentProdConversationAlreadyHas(starId, visibleResponse)) {
-                    appendProdConversationLine(starId, clip(visibleResponse, 900));
+                    appendProdConversationLine(starId, visibleResponse);
                 }
 
                 String header = title + " — " + starId;
                 if (transcript.length() > 0) header += "\nTranscript: " + transcript;
                 if (storyTitle.length() > 0) header += "\nStory: " + storyTitle;
                 if (storySummary.length() > 0) header += "\nSummary: " + storySummary;
-                responseText.setText(header + "\n\n" + clip(visibleResponse, storyMarkdown.length() > 0 ? 20000 : 8000));
+                responseText.setText(header + "\n\n" + visibleResponse);
 
                 String details = "Response chars: " + visibleResponse.length()
                         + "\nSpoken chars: " + spoken.length()

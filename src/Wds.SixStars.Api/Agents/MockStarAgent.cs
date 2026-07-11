@@ -30,7 +30,7 @@ namespace Wds.SixStars.Api.Agents
                 }
             };
 
-            if (request.RequestType == RequestType.Story || LooksLikeStoryRequest(request.PlayerText))
+            if (request.RequestType == RequestType.Story)
             {
                 PopulateStoryResponse(profile, request, state, response);
             }
@@ -303,7 +303,7 @@ namespace Wds.SixStars.Api.Agents
 
         private static string DetectIntent(StarInteractionRequest request)
         {
-            if (request.RequestType == RequestType.Story || LooksLikeStoryRequest(request.PlayerText)) return "story_request";
+            if (request.RequestType == RequestType.Story) return "story_request";
             if (request.PlayerText.ToLowerInvariant().Contains("goblin")) return "moral_discernment";
             if (request.RequestType == RequestType.BattleUpdate) return "battle_update";
             if (request.RequestType == RequestType.Letter) return "letter_submission";
@@ -319,11 +319,6 @@ namespace Wds.SixStars.Api.Agents
             if (score < 0) score = 0;
             if (score > 1) score = 1;
             return score;
-        }
-
-        private static bool LooksLikeStoryRequest(string text)
-        {
-            return StoryIntentLexicon.ContainsStoryIntentTrigger(text);
         }
 
         private static void SetScore(StarInteractionResponse response, string id, double score, double confidence, string reason)

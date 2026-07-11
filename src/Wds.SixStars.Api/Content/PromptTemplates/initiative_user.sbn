@@ -1,0 +1,16 @@
+FAST STAR INITIATIVE INPUT
+{{ data.currentTimeContext }}
+Area={{ data.area }}; Quest={{ data.quest }}.
+Relationship={{ data.relationshipStatus }}
+IsMet={{ data.isMet }}; IsAlly={{ data.isAlly }}; IsGirlfriend={{ data.isGirlfriend }}; connection={{ data.connectionPercent }}%.
+{{ data.gateContext }}
+{{ data.dailyStateContext }}
+{{ data.girlfriendStateContext }}
+{{ if data.recentEmotions != "" }}Recent emotions={{ data.recentEmotions }}
+{{ end }}{{ if data.ongoingSummary != "" }}Ongoing summary={{ data.ongoingSummary }}
+{{ end }}{{ if data.recentTurns.size > 0 }}Recent turns, newest first:
+{{ for turn in data.recentTurns }}- Last Cat: {{ turn.player }} | {{ data.starDisplayName }}: {{ turn.star }}
+{{ end }}{{ end }}{{ if data.manualInteract }}Manual interact mode=true. Prefer a fresh brief line from the strongest candidate unless it would repeat the recent turns or contradict canon.
+{{ else }}Manual interact mode=false. Speak only when the supplied state gives a genuine reason to interrupt the quiet.
+{{ end }}Return only: starId, hasSomethingToSay, priority, selectedTopic, reason, spokenText. Use an empty reason when none is needed.
+priority is 0-1. spokenText is [] for no speech, otherwise exactly one short string.

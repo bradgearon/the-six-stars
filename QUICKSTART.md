@@ -143,10 +143,10 @@ Elusiaa Session Totals:
 4. The wake word should trigger detection
 5. Your speech will be transcribed and sent to the LLM
 
-### Test Quick Buttons
+### Test Requests and Quick Buttons
 
-Try the preset quick test buttons:
-- "Tell Me A Story"
+Try a normal Chat request or one of the preset quick-test buttons:
+- Ask for stories directly in the normal message box (for example, “Tell me a one-page story”)
 - "Goblin / Harpy Discernment"
 - "Kind Company Test"
 
