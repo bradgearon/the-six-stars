@@ -20,6 +20,8 @@ namespace Wds.SixStars.Api.Background
         private Task? _workerTask;
         private long _nextSequence;
         private int _foregroundDepth;
+        private CancellationTokenSource? _activeRequestCts;
+        private string _activeRequestId = string.Empty;
         private bool _disposed;
         private const int MaxDelayWakeSeconds = 15;
 
@@ -37,15 +39,40 @@ namespace Wds.SixStars.Api.Background
 
         public IDisposable EnterForegroundRequest(string reason)
         {
+            CancellationTokenSource? activeToCancel;
+            string activeRequestId;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
                 _foregroundDepth++;
+                activeToCancel = _activeRequestCts;
+                activeRequestId = _activeRequestId;
+            }
+
+            if (activeToCancel != null && !activeToCancel.IsCancellationRequested)
+            {
+                try { activeToCancel.Cancel(); } catch { }
+                Publish("Preempted", "background", activeRequestId, "Foreground work preempted the active background LLM request.", QueuedCount);
             }
 
             Publish("ForegroundStarted", "foreground", reason ?? string.Empty, "A foreground reply request is active; background AI stacks will wait.", 0);
             SafeReleaseSignal();
             return new ForegroundLease(this, reason ?? string.Empty);
+        }
+
+        public void CancelActiveRequest(string reason)
+        {
+            CancellationTokenSource? activeToCancel;
+            string activeRequestId;
+            lock (_gate)
+            {
+                activeToCancel = _activeRequestCts;
+                activeRequestId = _activeRequestId;
+            }
+
+            if (activeToCancel == null || activeToCancel.IsCancellationRequested) return;
+            try { activeToCancel.Cancel(); } catch { }
+            Publish("Preempted", "background", activeRequestId, reason ?? "Background request cancelled.", QueuedCount);
         }
 
         public BackgroundAiRequestReceipt Enqueue(
@@ -152,14 +179,18 @@ namespace Wds.SixStars.Api.Background
 
                 await WaitForForegroundIdleAsync(shutdownToken).ConfigureAwait(false);
 
+                CancellationTokenSource? linked = null;
                 try
                 {
-                    using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken, request.CancellationToken))
+                    linked = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken, request.CancellationToken);
+                    lock (_gate)
                     {
-                        Publish("Started", request.StackName, request.Id, request.Description, QueuedCount);
-                        await request.ExecuteAsync(linked.Token).ConfigureAwait(false);
-                        Publish("Completed", request.StackName, request.Id, request.Description, QueuedCount);
+                        _activeRequestCts = linked;
+                        _activeRequestId = request.Id;
                     }
+                    Publish("Started", request.StackName, request.Id, request.Description, QueuedCount);
+                    await request.ExecuteAsync(linked.Token).ConfigureAwait(false);
+                    Publish("Completed", request.StackName, request.Id, request.Description, QueuedCount);
                 }
                 catch (OperationCanceledException)
                 {
@@ -168,6 +199,18 @@ namespace Wds.SixStars.Api.Background
                 catch (Exception ex)
                 {
                     Publish("Failed", request.StackName, request.Id, ex.Message, QueuedCount);
+                }
+                finally
+                {
+                    lock (_gate)
+                    {
+                        if (ReferenceEquals(_activeRequestCts, linked))
+                        {
+                            _activeRequestCts = null;
+                            _activeRequestId = string.Empty;
+                        }
+                    }
+                    linked?.Dispose();
                 }
             }
         }
@@ -239,6 +282,7 @@ namespace Wds.SixStars.Api.Background
                 _disposed = true;
                 _queue.Clear();
             }
+            try { _activeRequestCts?.Cancel(); } catch { }
             _shutdownCts.Cancel();
             SafeReleaseSignal();
             _signal.Dispose();

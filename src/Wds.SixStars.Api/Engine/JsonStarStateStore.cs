@@ -20,7 +20,7 @@ namespace Wds.SixStars.Api.Engine
         public string FilePath => _filePath;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly JsonSerializerOptions _jsonOptions;
-        private SixStarsSaveData? _cache;
+        private readonly Dictionary<string, SixStarsSaveData> _cacheBySession = new Dictionary<string, SixStarsSaveData>(StringComparer.OrdinalIgnoreCase);
 
         public JsonStarStateStore(string filePath)
         {
@@ -302,7 +302,7 @@ namespace Wds.SixStars.Api.Engine
                     SavedAt = DateTimeOffset.UtcNow,
                     Stars = states.ToList()
                 };
-                _cache = data;
+                _cacheBySession[NormalizeSessionId(sessionId)] = data;
                 await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -332,64 +332,86 @@ namespace Wds.SixStars.Api.Engine
 
         private async Task<SixStarsSaveData> LoadAsync(string sessionId, CancellationToken cancellationToken)
         {
-            if (_cache != null)
+            string normalizedSessionId = NormalizeSessionId(sessionId);
+            if (_cacheBySession.TryGetValue(normalizedSessionId, out SixStarsSaveData? cached))
             {
-                return _cache;
+                return cached;
             }
 
-            if (!File.Exists(_filePath))
-            {
-                _cache = new SixStarsSaveData { SessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId };
-                await MergeStarShardFilesAsync(_cache, _cache.SessionId, cancellationToken).ConfigureAwait(false);
-                return _cache;
-            }
+            SixStarsSaveData data = new SixStarsSaveData { SessionId = normalizedSessionId };
+            string sessionPath = GetSessionAggregatePath(normalizedSessionId);
+            SixStarsSaveData? loaded = await TryLoadDataFileAsync(sessionPath, cancellationToken).ConfigureAwait(false);
 
-            try
+            // Backward compatibility: the historical root aggregate is only valid for the session
+            // written inside it. Never return an Android aggregate for desktop-local-dev (or vice versa).
+            if (loaded == null)
             {
-                using (FileStream stream = new FileStream(_filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                SixStarsSaveData? legacy = await TryLoadDataFileAsync(_filePath, cancellationToken).ConfigureAwait(false);
+                if (legacy != null && string.Equals(NormalizeSessionId(legacy.SessionId), normalizedSessionId, StringComparison.OrdinalIgnoreCase))
                 {
-                    SixStarsSaveData? loaded = await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                    _cache = loaded ?? new SixStarsSaveData { SessionId = sessionId };
-                    if (string.IsNullOrWhiteSpace(_cache.SessionId)) _cache.SessionId = sessionId;
-                    if (_cache.Stars == null) _cache.Stars = new List<StarState>();
-                    await MergeStarShardFilesAsync(_cache, _cache.SessionId, cancellationToken).ConfigureAwait(false);
-                    return _cache;
+                    loaded = legacy;
                 }
             }
-            catch (FileNotFoundException)
+
+            if (loaded != null)
             {
-                _cache = new SixStarsSaveData { SessionId = sessionId };
-                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
-                return _cache;
+                data = loaded;
+                data.SessionId = normalizedSessionId;
+                if (data.Stars == null) data.Stars = new List<StarState>();
             }
-            catch (DirectoryNotFoundException)
+
+            // Per-Star shards are the most recent durable source and also allow recovery from an
+            // interrupted aggregate-file write.
+            await MergeStarShardFilesAsync(data, normalizedSessionId, cancellationToken).ConfigureAwait(false);
+            _cacheBySession[normalizedSessionId] = data;
+            return data;
+        }
+
+        private async Task<SixStarsSaveData?> TryLoadDataFileAsync(string path, CancellationToken cancellationToken)
+        {
+            if (!File.Exists(path)) return null;
+            try
             {
-                _cache = new SixStarsSaveData { SessionId = sessionId };
-                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
-                return _cache;
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                {
+                    return await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                }
             }
-            catch (JsonException)
-            {
-                _cache = new SixStarsSaveData { SessionId = sessionId };
-                await MergeStarShardFilesAsync(_cache, sessionId, cancellationToken).ConfigureAwait(false);
-                return _cache;
-            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (JsonException) { return null; }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
         }
 
         private async Task SaveFileAsync(SixStarsSaveData data, CancellationToken cancellationToken)
         {
+            data.SessionId = NormalizeSessionId(data.SessionId);
             data.SavedAt = DateTimeOffset.UtcNow;
-            string? directory = Path.GetDirectoryName(_filePath);
+            _cacheBySession[data.SessionId] = data;
+
+            // Session-specific aggregates prevent desktop and Android from overwriting one another.
+            await WriteDataFileAsync(GetSessionAggregatePath(data.SessionId), data, cancellationToken).ConfigureAwait(false);
+
+            // Keep the old root file as a last-saved-session compatibility mirror for existing tools.
+            // LoadAsync verifies SessionId before using it, so this mirror can no longer contaminate
+            // another session.
+            await WriteDataFileAsync(_filePath, data, cancellationToken).ConfigureAwait(false);
+            await WriteStarShardFilesAsync(data, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task WriteDataFileAsync(string path, SixStarsSaveData data, CancellationToken cancellationToken)
+        {
+            string? directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-            string tempPath = _filePath + ".tmp";
+            string tempPath = path + ".tmp";
             using (FileStream stream = File.Create(tempPath))
             {
                 await JsonSerializer.SerializeAsync(stream, data, _jsonOptions, cancellationToken).ConfigureAwait(false);
             }
 
-            if (File.Exists(_filePath)) File.Delete(_filePath);
-            File.Move(tempPath, _filePath);
-            await WriteStarShardFilesAsync(data, cancellationToken).ConfigureAwait(false);
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(tempPath, path);
         }
 
         private async Task MergeStarShardFilesAsync(SixStarsSaveData data, string sessionId, CancellationToken cancellationToken)
@@ -444,6 +466,18 @@ namespace Wds.SixStars.Api.Engine
                 if (File.Exists(path)) File.Delete(path);
                 File.Move(tempPath, path);
             }
+        }
+
+        private string GetSessionAggregatePath(string sessionId)
+        {
+            string? directory = Path.GetDirectoryName(_filePath);
+            if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
+            return Path.Combine(directory, "sessions", SafeFileName(NormalizeSessionId(sessionId)) + ".json");
+        }
+
+        private static string NormalizeSessionId(string? sessionId)
+        {
+            return string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId.Trim();
         }
 
         private string GetStarShardDirectory(string sessionId)

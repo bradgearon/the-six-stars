@@ -599,14 +599,14 @@ namespace Wds.SixStars.Api.Ai
         private string BuildCompactReviewUserMessage(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
             StringBuilder history = new StringBuilder();
-            AppendRecentConversationHistory(history, profile, state, Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: false);
+            AppendRecentConversationHistory(history, profile, state, Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true);
 
             StringBuilder memory = new StringBuilder();
             memory.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
-            AppendList(memory, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(12).ToList());
-            AppendList(memory, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(12).ToList());
-            AppendRememberedMarkers(memory, state, 20);
-            AppendList(memory, "Relationship events", state.RelationshipEvents.Take(10).ToList());
+            AppendList(memory, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(6).ToList());
+            AppendList(memory, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(6).ToList());
+            AppendRememberedMarkers(memory, state, 8);
+            AppendList(memory, "Relationship events", state.RelationshipEvents.Take(6).ToList());
             if (state.StoryHistory.Count > 0)
             {
                 memory.AppendLine("Stories already told by this Star:");
@@ -620,11 +620,11 @@ namespace Wds.SixStars.Api.Ai
             relationship.AppendLine(BuildRelationshipStatus(state));
             relationship.AppendLine("IsGirlfriend=" + state.IsGirlfriend + "; GirlfriendSince=" + (state.GirlfriendSince.HasValue ? state.GirlfriendSince.Value.ToString("o") : "none") + "; IsGirlfriendReady=" + state.IsGirlfriendReady + ".");
             relationship.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%.");
-            AppendConnectionFlirtGuidance(relationship, profile, state);
-            AppendGirlfriendModeInstructionSet(relationship, profile, state);
+            // This pass does not speak, so it does not need the full flirt/cute instruction stack.
+            // Keep only the current girlfriend state and a small durable slice needed to score the turn.
             AppendGirlfriendHourlyStateContext(relationship, state);
-            AppendGirlfriendDurableStateContext(relationship, state, 8);
-            AppendDialogueMemoryContext(relationship, state, 10);
+            AppendGirlfriendDurableStateContext(relationship, state, 3);
+            AppendDialogueMemoryContext(relationship, state, 4);
             relationship.AppendLine("Girlfriend readiness: " + (state.IsGirlfriendReady ? "ready" : "not ready") + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
 
             StringBuilder story = new StringBuilder();
@@ -644,7 +644,7 @@ namespace Wds.SixStars.Api.Ai
                 { "RequestType", request.RequestType.ToString() },
                 { "CurrentTimeContext", BuildCurrentTimeContext() },
                 { "PlayerTextBlock", request.RequestType == RequestType.StarInitiative ? "> [No player message. This is a system at-rest state check.]" : QuoteBlock(request.PlayerText) },
-                { "ForegroundSpokenPartsJson", FormatSpokenParts(foregroundResponse.SpokenParts).TrimEnd() },
+                { "ForegroundSpokenPartsJson", FormatSpokenPartsForReview(foregroundResponse.SpokenParts, 3600).TrimEnd() },
                 { "RelationshipContext", relationship.ToString().TrimEnd() },
                 { "RecentConversationHistory", history.ToString().TrimEnd() },
                 { "DurableMemoryContext", memory.ToString().TrimEnd() },
@@ -1391,6 +1391,52 @@ namespace Wds.SixStars.Api.Ai
             }
             sb.AppendLine("]");
             return sb.ToString();
+        }
+
+        private static string FormatSpokenPartsForReview(IEnumerable<string> parts, int maxCharacters)
+        {
+            List<string> clean = (parts ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .ToList();
+            int totalCharacters = clean.Sum(x => x.Length);
+            if (totalCharacters <= maxCharacters) return FormatSpokenParts(clean);
+
+            int headBudget = Math.Max(800, (int)(maxCharacters * 0.62));
+            int tailBudget = Math.Max(500, maxCharacters - headBudget - 160);
+            List<string> selectedHead = new List<string>();
+            List<string> selectedTail = new List<string>();
+            int used = 0;
+            foreach (string part in clean)
+            {
+                if (used >= headBudget) break;
+                string value = part.Length <= headBudget - used ? part : Truncate(part, Math.Max(80, headBudget - used));
+                selectedHead.Add(value);
+                used += value.Length;
+            }
+
+            used = 0;
+            for (int i = clean.Count - 1; i >= selectedHead.Count; i--)
+            {
+                if (used >= tailBudget) break;
+                string part = clean[i];
+                string value = part.Length <= tailBudget - used ? part : TruncateFromEnd(part, Math.Max(80, tailBudget - used));
+                selectedTail.Insert(0, value);
+                used += value.Length;
+            }
+
+            List<string> compact = new List<string>(selectedHead);
+            int shownCharacters = selectedHead.Sum(x => x.Length) + selectedTail.Sum(x => x.Length);
+            compact.Add("[Background review excerpt: " + Math.Max(0, totalCharacters - shownCharacters) + " spoken characters omitted; the complete response was still returned to the player and TTS.]");
+            compact.AddRange(selectedTail);
+            return FormatSpokenParts(compact);
+        }
+
+        private static string TruncateFromEnd(string value, int maxCharacters)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length <= maxCharacters) return value ?? string.Empty;
+            if (maxCharacters <= 3) return value.Substring(value.Length - maxCharacters);
+            return "..." + value.Substring(value.Length - (maxCharacters - 3));
         }
 
         private string BuildSystemMessage(StarProfile profile)

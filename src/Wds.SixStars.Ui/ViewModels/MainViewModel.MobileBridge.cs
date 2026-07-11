@@ -1413,6 +1413,7 @@ public sealed partial class MainViewModel
         System.Diagnostics.Stopwatch totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
         long gateWaitMs = 0;
         long runtimeElapsedMs = 0;
+        string backgroundAnalysisId = string.Empty;
         string starId = ResolveDefaultStarId(mobileRequest.StarId);
         RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
         if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
@@ -1484,6 +1485,7 @@ public sealed partial class MainViewModel
             using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
             System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
             StarInteractionResponse starResponse = await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
             if (photoResult.Attached)
             {
@@ -1569,51 +1571,54 @@ public sealed partial class MainViewModel
                     }, _jsonOptions);
             });
 
-            if (!string.IsNullOrWhiteSpace(starResponse.BackgroundAnalysisId))
-            {
-                _pendingBackgroundAnalysisId = starResponse.BackgroundAnalysisId;
-            }
-
             if (wantsPhoneAudio)
             {
                 response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
                 response.VoiceMessage = response.VoiceSocketConnected
-                    ? "Text returned immediately. Voice is generating in the desktop app and will stream to the Android phone socket."
-                    : "Text returned immediately, but no Android audio socket is connected yet.";
+                    ? "Text will be delivered first. Voice generation starts immediately after the correlated response is written to Android."
+                    : "Text will be delivered first, but no Android audio socket is connected yet.";
 
-                OnUiThread(() => AppendMobileBridgeVoiceDebug("HTTP response returned to phone", response.VoiceSocketConnected ? "Voice generation is now running in the background." : "No phone audio socket was connected."));
-
-                Task phoneVoiceTask = Task.Run(async () =>
+                string exactAnalysisId = backgroundAnalysisId;
+                response.AfterTransportResponseAsync = async () =>
                 {
+                    Task phoneVoiceTask = SendMobileVoiceAsync(starResponse, response, CancellationToken.None, sharedStoryVoiceStream, exactAnalysisId);
+                    if (sharedStoryVoiceStream != null)
+                    {
+                        lock (_mobileVoiceStreamGate)
+                        {
+                            if (ReferenceEquals(_pendingMobileStoryVoiceStream, sharedStoryVoiceStream))
+                            {
+                                _pendingMobileStoryThinkingVoiceTask = phoneVoiceTask;
+                            }
+                        }
+                    }
+
                     try
                     {
-                        await SendMobileVoiceAsync(starResponse, response, CancellationToken.None, sharedStoryVoiceStream).ConfigureAwait(false);
+                        await phoneVoiceTask.ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
                         OnUiThread(() => MobileBridgeStatus = "Android background voice error: " + ex.Message);
-                        try { ReleasePendingBackgroundAnalysis("Android background voice failed: " + ex.Message); } catch { }
+                        ReleasePendingBackgroundAnalysis(exactAnalysisId, "Android background voice failed: " + ex.Message);
                     }
-                });
-
-                if (sharedStoryVoiceStream != null)
+                };
+                response.OnTransportFailureAsync = () =>
                 {
-                    lock (_mobileVoiceStreamGate)
-                    {
-                        if (ReferenceEquals(_pendingMobileStoryVoiceStream, sharedStoryVoiceStream))
-                        {
-                            _pendingMobileStoryThinkingVoiceTask = phoneVoiceTask;
-                        }
-                    }
-                }
+                    ReleasePendingBackgroundAnalysis(exactAnalysisId, "Android response transport failed before voice could start.");
+                    return Task.CompletedTask;
+                };
+
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Text response ready for phone", response.VoiceSocketConnected ? "TTS is deferred until the WebSocket/HTTP response has been sent." : "No phone audio socket was connected."));
             }
             else if (mobileRequest.SpeakOnDesktop || _appConfig.MobileBridge.SpeakResponsesOnDesktop)
             {
                 await SpeakStarResponseAsync(starResponse, linkedCts.Token).ConfigureAwait(false);
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android-requested desktop speech completed.");
             }
             else
             {
-                ReleasePendingBackgroundAnalysis("Android bridge response returned without voice playback.");
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge response returned without voice playback.");
             }
 
             response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
@@ -1629,6 +1634,7 @@ public sealed partial class MainViewModel
         }
         catch (OperationCanceledException)
         {
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge request was cancelled after the foreground response was created.");
             MobileBridgeResponse cancelled = new MobileBridgeResponse
             {
                 Ok = false,
@@ -1644,6 +1650,7 @@ public sealed partial class MainViewModel
         }
         catch (Exception ex)
         {
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge failed after the foreground response was created: " + ex.Message);
             OnUiThread(() => MobileBridgeStatus = "Android bridge error: " + ex.Message);
             MobileBridgeResponse failed = new MobileBridgeResponse
             {
@@ -2064,7 +2071,7 @@ public sealed partial class MainViewModel
         };
     }
 
-    private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null)
+    private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null, string backgroundAnalysisId = "")
     {
         bool ownsStream = existingStream == null;
         MobileVoiceStreamScope voiceStream = existingStream ?? BeginMobileVoiceStream(starResponse, _storySpeechAdapter.ShouldUseStoryAutoplay(starResponse), "Android phone voice request");
@@ -2078,7 +2085,7 @@ public sealed partial class MainViewModel
                 mobileResponse.VoiceSocketConnected = false;
                 mobileResponse.VoiceError = "No Android audio socket is connected. The phone should connect to TCP " + ResolveMobileBridgeAudioPort() + " after /health.";
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation skipped", "No Android audio socket was connected at stream start; stale reconnects will not receive this old stream."));
-                ReleasePendingBackgroundAnalysis("Android bridge had no phone audio socket; released background analysis after text response.");
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge had no phone audio socket; released background analysis after text response.");
                 return;
             }
 
@@ -2170,7 +2177,7 @@ public sealed partial class MainViewModel
 
             if (!voiceToken.IsCancellationRequested)
             {
-                ReleasePendingBackgroundAnalysis("Android phone voice chunks were generated/sent.");
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android phone voice chunks were generated/sent.");
             }
         }
         catch (OperationCanceledException)
@@ -2185,6 +2192,7 @@ public sealed partial class MainViewModel
             }
             catch { }
             OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream cancelled", "stream=" + voiceStream.Ordinal + " was replaced."));
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android voice stream was replaced by a newer request.");
         }
         finally
         {
@@ -2305,7 +2313,7 @@ public sealed partial class MainViewModel
                 }
             }
 
-            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, sharedStoryVoiceStream).ConfigureAwait(false);
+            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, sharedStoryVoiceStream, response.BackgroundAnalysisId).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -2379,7 +2387,7 @@ public sealed partial class MainViewModel
 
         try
         {
-            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, null).ConfigureAwait(false);
+            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, null, response.BackgroundAnalysisId).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

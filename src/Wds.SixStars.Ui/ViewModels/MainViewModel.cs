@@ -1286,7 +1286,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void ReleasePendingBackgroundAnalysis(string reason)
     {
-        string analysisId = _pendingBackgroundAnalysisId;
+        ReleasePendingBackgroundAnalysis(_pendingBackgroundAnalysisId, reason);
+    }
+
+    private void ReleasePendingBackgroundAnalysis(string analysisId, string reason)
+    {
         if (string.IsNullOrWhiteSpace(analysisId))
         {
             return;
@@ -1294,8 +1298,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (_runtime.StartBackgroundAnalysisAfterVoiceReady(analysisId, reason))
         {
-            _pendingBackgroundAnalysisId = string.Empty;
-            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released after voice ready: " + reason);
+            if (string.Equals(_pendingBackgroundAnalysisId, analysisId, StringComparison.OrdinalIgnoreCase))
+            {
+                _pendingBackgroundAnalysisId = string.Empty;
+            }
+            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released " + analysisId + " after voice ready: " + reason);
         }
     }
 

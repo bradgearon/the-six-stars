@@ -234,7 +234,16 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 {
                     MobileBridgeRequest? mobileRequest = JsonSerializer.Deserialize<MobileBridgeRequest>(request.Body, _jsonOptions);
                     MobileBridgeResponse response = await _messageHandler(mobileRequest ?? new MobileBridgeRequest(), serverToken).ConfigureAwait(false);
-                    await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                    try
+                    {
+                        await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                        response.StartAfterTransportResponse();
+                    }
+                    catch
+                    {
+                        response.StartTransportFailureCleanup();
+                        throw;
+                    }
                     return;
                 }
 
@@ -242,7 +251,16 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 {
                     MobileBridgeRequest? mobileRequest = JsonSerializer.Deserialize<MobileBridgeRequest>(request.Body, _jsonOptions);
                     MobileBridgeResponse response = await _audioHandler(mobileRequest ?? new MobileBridgeRequest(), serverToken).ConfigureAwait(false);
-                    await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                    try
+                    {
+                        await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                        response.StartAfterTransportResponse();
+                    }
+                    catch
+                    {
+                        response.StartTransportFailureCleanup();
+                        throw;
+                    }
                     return;
                 }
 
@@ -390,7 +408,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         try
         {
             SocketOperationResult result = await ExecuteSocketOperationAsync(operation, payload, cancellationToken).ConfigureAwait(false);
-            await SafeSendSocketAsync(connection, new
+            bool sent = await SafeSendSocketAsync(connection, new
             {
                 type = "response",
                 requestId,
@@ -400,6 +418,8 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 error = result.Error,
                 completedAtUtc = DateTimeOffset.UtcNow
             }, cancellationToken).ConfigureAwait(false);
+            if (sent) result.MobileResponse?.StartAfterTransportResponse();
+            else result.MobileResponse?.StartTransportFailureCleanup();
         }
         catch (OperationCanceledException)
         {
@@ -427,13 +447,13 @@ public sealed class MobileBridgeHttpServer : IDisposable
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
                 MobileBridgeResponse response = await _messageHandler(request, cancellationToken).ConfigureAwait(false);
-                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response));
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }
             case "audio":
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
                 MobileBridgeResponse response = await _audioHandler(request, cancellationToken).ConfigureAwait(false);
-                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response));
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }
             case "dispatch":
             {
@@ -504,15 +524,17 @@ public sealed class MobileBridgeHttpServer : IDisposable
         }
     }
 
-    private async Task SafeSendSocketAsync(MobileBridgeWebSocketConnection connection, object value, CancellationToken cancellationToken)
+    private async Task<bool> SafeSendSocketAsync(MobileBridgeWebSocketConnection connection, object value, CancellationToken cancellationToken)
     {
         try
         {
             await connection.SendJsonAsync(value, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            return true;
         }
         catch
         {
             RemoveWebSocketClient(connection);
+            return false;
         }
     }
 
@@ -569,16 +591,18 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
     private sealed class SocketOperationResult
     {
-        public SocketOperationResult(bool ok, object payload, string error)
+        public SocketOperationResult(bool ok, object payload, string error, MobileBridgeResponse? mobileResponse = null)
         {
             Ok = ok;
             Payload = payload;
             Error = error ?? string.Empty;
+            MobileResponse = mobileResponse;
         }
 
         public bool Ok { get; }
         public object Payload { get; }
         public string Error { get; }
+        public MobileBridgeResponse? MobileResponse { get; }
     }
 
     private async Task<HttpRequest> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)

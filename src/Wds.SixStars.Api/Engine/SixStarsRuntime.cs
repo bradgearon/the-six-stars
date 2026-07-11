@@ -28,7 +28,6 @@ namespace Wds.SixStars.Api.Engine
         private readonly int _recentScreenCount;
         private readonly int _recentHistoryCount;
         private readonly object _backgroundGate = new object();
-        private CancellationTokenSource? _backgroundAnalysisCts;
         private CancellationTokenSource? _backgroundStoryGenerationCts;
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
@@ -512,23 +511,23 @@ namespace Wds.SixStars.Api.Engine
 
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
+            // Foreground work may preempt the active background model call, but pending durable
+            // analyses must survive. Clearing this dictionary used to lose state updates whenever
+            // Android replaced/cancelled a voice stream or started the next turn.
+            try { _backgroundDispatcher.CancelActiveRequest(reason); } catch { }
             lock (_backgroundGate)
             {
                 try
                 {
-                    _backgroundAnalysisCts?.Cancel();
-                    _backgroundAnalysisCts?.Dispose();
                     _backgroundStoryGenerationCts?.Cancel();
                     _backgroundStoryGenerationCts?.Dispose();
-                    _pendingBackgroundAnalysis.Clear();
                 }
                 catch
                 {
                 }
-                _backgroundAnalysisCts = new CancellationTokenSource();
                 _backgroundStoryGenerationCts = new CancellationTokenSource();
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis cancelled: " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Active background work preempted without discarding pending state analysis: " + reason);
         }
 
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
@@ -2717,6 +2716,24 @@ namespace Wds.SixStars.Api.Engine
                 };
             }
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis " + analysisId + " is waiting for foreground voice generation to complete.");
+
+            // A transport disconnect or replaced Android voice stream must never leave this update
+            // waiting forever. Normal voice completion removes it first, so this fallback is a no-op
+            // in the healthy path. Keep the delay long enough that a one-page story can finish TTS.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    int fallbackSeconds = 180;
+                    string? configured = Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_FALLBACK_SECONDS");
+                    if (int.TryParse(configured, out int parsed)) fallbackSeconds = Math.Max(30, Math.Min(900, parsed));
+                    await Task.Delay(TimeSpan.FromSeconds(fallbackSeconds)).ConfigureAwait(false);
+                    StartBackgroundAnalysisAfterVoiceReady(analysisId, "Voice-ready callback fallback after " + fallbackSeconds + " seconds.");
+                }
+                catch
+                {
+                }
+            });
         }
 
         public bool StartBackgroundAnalysisAfterVoiceReady(string analysisId, string reason = "Foreground voice generation completed")
@@ -2738,23 +2755,12 @@ namespace Wds.SixStars.Api.Engine
             }
 
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after voice ready: " + reason);
-            QueueBackgroundAnalysis(pending.Analyzer, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
+            QueueBackgroundAnalysis(analysisId, pending.Analyzer, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }
 
-        private void QueueBackgroundAnalysis(IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void QueueBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
-            CancellationToken token;
-            lock (_backgroundGate)
-            {
-                if (_backgroundAnalysisCts == null || _backgroundAnalysisCts.IsCancellationRequested)
-                {
-                    _backgroundAnalysisCts?.Dispose();
-                    _backgroundAnalysisCts = new CancellationTokenSource();
-                }
-                token = _backgroundAnalysisCts.Token;
-            }
-
             _backgroundDispatcher.Enqueue(
                 "PrimaryBackgroundAnalysis",
                 "Analyze emotion vectors and update durable Star state for " + request.StarId,
@@ -2782,15 +2788,39 @@ namespace Wds.SixStars.Api.Engine
                     }
                     catch (OperationCanceledException)
                     {
-                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis cancelled.");
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis was preempted and will be retried after foreground work: " + analysisId);
+                        // Reinsert the exact analysis rather than dropping it. The dispatcher will not
+                        // run the retry until all foreground leases have completed.
+                        lock (_backgroundGate)
+                        {
+                            _pendingBackgroundAnalysis[analysisId] = new PendingBackgroundAnalysis
+                            {
+                                AnalysisId = analysisId,
+                                Analyzer = analyzer,
+                                Profile = profile,
+                                Request = request,
+                                StateBeforeTurn = state,
+                                ForegroundResponse = foregroundResponse
+                            };
+                        }
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await Task.Delay(500).ConfigureAwait(false);
+                                StartBackgroundAnalysisAfterVoiceReady(analysisId, "Retry after foreground preempted the background model call.");
+                            }
+                            catch
+                            {
+                            }
+                        });
                     }
                     catch (Exception ex)
                     {
                         System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
                         BackgroundAnalysisFailed?.Invoke(this, ex);
                     }
-                },
-                token);
+                });
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)

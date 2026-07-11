@@ -157,9 +157,9 @@ namespace Wds.SixStars.Api.State
             {
                 CreatedAt = now,
                 RequestType = request.RequestType,
-                PlayerText = request.PlayerText ?? string.Empty,
-                StarResponse = request.StarResponse ?? string.Empty,
-                Summary = string.IsNullOrWhiteSpace(request.ChangesSummary) ? request.ConversationSummary : request.ChangesSummary,
+                PlayerText = CompactDurableText(request.PlayerText, 8000),
+                StarResponse = CompactDurableText(request.StarResponse, 24000),
+                Summary = CompactDurableText(string.IsNullOrWhiteSpace(request.ChangesSummary) ? request.ConversationSummary : request.ChangesSummary, 4000),
                 ActualDelta = request.ActualDelta,
                 SuggestedDelta = request.SuggestedDelta,
                 EmotionalConnectionPercentBefore = emotionalConnectionBefore,
@@ -1690,6 +1690,18 @@ namespace Wds.SixStars.Api.State
                     { "deterministicEmotionSummary", entry.DeterministicEmotionSummary ?? string.Empty }
                 }
             };
+        }
+
+        private static string CompactDurableText(string? value, int maxCharacters)
+        {
+            string text = value ?? string.Empty;
+            if (text.Length <= maxCharacters) return text;
+            int head = Math.Max(1, (int)(maxCharacters * 0.70));
+            int tail = Math.Max(1, maxCharacters - head - 96);
+            int omitted = Math.Max(0, text.Length - head - tail);
+            return text.Substring(0, head)
+                + "\n[... " + omitted + " characters omitted from durable state; complete response was delivered to UI/TTS ...]\n"
+                + text.Substring(text.Length - tail);
         }
 
         private static bool StartsWithAny(string value, params string[] prefixes)

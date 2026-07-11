@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Mobile;
 
@@ -89,5 +91,34 @@ public sealed class MobileBridgeResponse
     public string DailyStateJson { get; set; } = string.Empty;
     public string DailyStateXml { get; set; } = string.Empty;
     public List<string> Notes { get; } = new List<string>();
+    [JsonIgnore]
+    public Func<Task>? AfterTransportResponseAsync { get; set; }
+
+    [JsonIgnore]
+    public Func<Task>? OnTransportFailureAsync { get; set; }
+
+    public void StartAfterTransportResponse()
+    {
+        Func<Task>? work = AfterTransportResponseAsync;
+        AfterTransportResponseAsync = null;
+        OnTransportFailureAsync = null;
+        if (work == null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await work().ConfigureAwait(false); } catch { }
+        });
+    }
+
+    public void StartTransportFailureCleanup()
+    {
+        Func<Task>? cleanup = OnTransportFailureAsync;
+        AfterTransportResponseAsync = null;
+        OnTransportFailureAsync = null;
+        if (cleanup == null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await cleanup().ConfigureAwait(false); } catch { }
+        });
+    }
 }
 
