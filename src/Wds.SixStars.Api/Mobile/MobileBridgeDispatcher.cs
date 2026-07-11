@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
@@ -248,6 +249,40 @@ public sealed class MobileBridgeDispatchResult
     public string DailyStateXml { get; set; } = string.Empty;
     public StarState? State { get; set; }
     public MobileBridgeDispatchEvent? Event { get; set; }
+
+    // Conversation-like dispatch commands (manual Listen, automatic at-rest initiative, and
+    // photo requests) return through MobileBridgeDispatchResult rather than MobileBridgeResponse.
+    // Keep the post-transport voice lifecycle attached to the wrapper so voice starts only after
+    // the correlated response has actually been written to the phone.
+    [JsonIgnore]
+    public Func<Task>? AfterTransportResponseAsync { get; set; }
+
+    [JsonIgnore]
+    public Func<Task>? OnTransportFailureAsync { get; set; }
+
+    public void StartAfterTransportResponse()
+    {
+        Func<Task>? work = AfterTransportResponseAsync;
+        AfterTransportResponseAsync = null;
+        OnTransportFailureAsync = null;
+        if (work == null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await work().ConfigureAwait(false); } catch { }
+        });
+    }
+
+    public void StartTransportFailureCleanup()
+    {
+        Func<Task>? cleanup = OnTransportFailureAsync;
+        AfterTransportResponseAsync = null;
+        OnTransportFailureAsync = null;
+        if (cleanup == null) return;
+        _ = Task.Run(async () =>
+        {
+            try { await cleanup().ConfigureAwait(false); } catch { }
+        });
+    }
 }
 
 public sealed class MobileBridgeDispatchEvent

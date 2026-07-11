@@ -804,8 +804,19 @@ public sealed partial class MainViewModel
 
     private MobileBridgeDispatchResult CreateConversationDispatchResult(MobileBridgeDispatchCommand command, string commandType, string sessionId, string starId, StarState state, MobileBridgeResponse response)
     {
+        // ProcessMobileConversationAsync intentionally defers Android TTS until its correlated
+        // transport response is written. Dispatch-based operations used by Listen/initiative/photo
+        // wrap that response, so move the lifecycle callbacks to the wrapper instead of dropping
+        // them. Dropping these callbacks produced text with no phone audio.
+        Func<Task>? afterTransportResponse = response.AfterTransportResponseAsync;
+        Func<Task>? onTransportFailure = response.OnTransportFailureAsync;
+        response.AfterTransportResponseAsync = null;
+        response.OnTransportFailureAsync = null;
+
         return new MobileBridgeDispatchResult
         {
+            AfterTransportResponseAsync = afterTransportResponse,
+            OnTransportFailureAsync = onTransportFailure,
             Ok = response.Ok,
             CommandId = command.CommandId,
             CommandType = commandType,

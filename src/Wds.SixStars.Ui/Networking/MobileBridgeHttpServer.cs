@@ -226,7 +226,16 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 {
                     MobileBridgeDispatchCommand? command = JsonSerializer.Deserialize<MobileBridgeDispatchCommand>(request.Body, _jsonOptions);
                     MobileBridgeDispatchResult response = await _dispatcher.DispatchAsync(command ?? new MobileBridgeDispatchCommand(), serverToken).ConfigureAwait(false);
-                    await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                    try
+                    {
+                        await WriteJsonAsync(stream, response.Ok ? 200 : 500, response, serverToken).ConfigureAwait(false);
+                        response.StartAfterTransportResponse();
+                    }
+                    catch
+                    {
+                        response.StartTransportFailureCleanup();
+                        throw;
+                    }
                     return;
                 }
 
@@ -418,8 +427,16 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 error = result.Error,
                 completedAtUtc = DateTimeOffset.UtcNow
             }, cancellationToken).ConfigureAwait(false);
-            if (sent) result.MobileResponse?.StartAfterTransportResponse();
-            else result.MobileResponse?.StartTransportFailureCleanup();
+            if (sent)
+            {
+                result.MobileResponse?.StartAfterTransportResponse();
+                result.DispatchResult?.StartAfterTransportResponse();
+            }
+            else
+            {
+                result.MobileResponse?.StartTransportFailureCleanup();
+                result.DispatchResult?.StartTransportFailureCleanup();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -459,7 +476,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
             {
                 MobileBridgeDispatchCommand command = JsonSerializer.Deserialize<MobileBridgeDispatchCommand>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeDispatchCommand();
                 MobileBridgeDispatchResult response = await _dispatcher.DispatchAsync(command, cancellationToken).ConfigureAwait(false);
-                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : response.Error);
+                return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : response.Error, dispatchResult: response);
             }
             case "state":
             {
@@ -591,18 +608,25 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
     private sealed class SocketOperationResult
     {
-        public SocketOperationResult(bool ok, object payload, string error, MobileBridgeResponse? mobileResponse = null)
+        public SocketOperationResult(
+            bool ok,
+            object payload,
+            string error,
+            MobileBridgeResponse? mobileResponse = null,
+            MobileBridgeDispatchResult? dispatchResult = null)
         {
             Ok = ok;
             Payload = payload;
             Error = error ?? string.Empty;
             MobileResponse = mobileResponse;
+            DispatchResult = dispatchResult;
         }
 
         public bool Ok { get; }
         public object Payload { get; }
         public string Error { get; }
         public MobileBridgeResponse? MobileResponse { get; }
+        public MobileBridgeDispatchResult? DispatchResult { get; }
     }
 
     private async Task<HttpRequest> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)
