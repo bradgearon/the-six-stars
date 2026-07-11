@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows.Input;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.DailyState;
+using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Mobile;
 using Wds.SixStars.Api.Speech;
@@ -756,7 +757,7 @@ public sealed partial class MainViewModel
         }
     }
 
-    private void PublishMobileConversationResponseEventIfNeeded(MobileBridgeRequest mobileRequest, StarInteractionRequest request, MobileBridgeResponse response, StarInteractionResponse starResponse)
+    private void PublishMobileConversationResponseEventIfNeeded(MobileBridgeRequest mobileRequest, StarInteractionRequest request, MobileBridgeResponse response, StarInteractionResponse starResponse, StarState stateAfterResponse)
     {
         if (request == null || response == null) return;
         if (request.RequestType == RequestType.StarInitiative || request.RequestType == RequestType.Photo) return;
@@ -771,6 +772,17 @@ public sealed partial class MainViewModel
                 SessionId = request.SessionId ?? string.Empty,
                 StarId = response.StarId ?? request.StarId ?? string.Empty,
                 SelectedStarId = SelectedStarId,
+                IsMet = stateAfterResponse.IsMet,
+                IsAlly = stateAfterResponse.IsAlly,
+                Heart = stateAfterResponse.Heart,
+                Trust = stateAfterResponse.Trust,
+                Romance = stateAfterResponse.Romance,
+                EmotionalConnectionPercent = stateAfterResponse.EmotionalConnectionPercent,
+                IsGirlfriendReady = stateAfterResponse.IsGirlfriendReady,
+                IsGirlfriend = stateAfterResponse.IsGirlfriend,
+                GirlfriendCuteModeEnabled = stateAfterResponse.GirlfriendCuteModeEnabled,
+                GirlfriendCuteModeActive = stateAfterResponse.GirlfriendCuteModeEnabled && (stateAfterResponse.GirlfriendHourlyState?.CuteModeActive ?? false),
+                GirlfriendCuteModeSignature = stateAfterResponse.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 Message = response.Ok ? "The Star response is ready for Android. If the direct HTTP request was interrupted, the phone can use this queued event." : response.VoiceError,
                 Error = response.Ok ? string.Empty : response.VoiceError,
                 Transcript = response.Transcript ?? string.Empty,
@@ -1382,6 +1394,7 @@ public sealed partial class MainViewModel
         }
 
         request.PlayerText = transcriptText;
+        request.GirlfriendProposal = GirlfriendProposalIntentDetector.IsProposal(transcriptText);
         OnUiThread(() =>
         {
             LastTranscript = transcriptText;
@@ -1428,6 +1441,12 @@ public sealed partial class MainViewModel
         string starId = ResolveDefaultStarId(mobileRequest.StarId);
         RequestType requestType = ParseMobileRequestType(mobileRequest.RequestType);
         if (HasMobilePhoto(mobileRequest)) requestType = RequestType.Photo;
+        mobileRequest.GirlfriendProposal = mobileRequest.GirlfriendProposal
+            || GirlfriendProposalIntentDetector.IsProposal(mobileRequest.PlayerText);
+        if (mobileRequest.GirlfriendProposal && requestType != RequestType.Photo && requestType != RequestType.StarInitiative)
+        {
+            requestType = RequestType.Chat;
+        }
         bool isAtRestInitiative = requestType == RequestType.StarInitiative;
         bool isManualInitiative = isAtRestInitiative
             && (ContainsIgnoreCase(mobileRequest.ClientName, "Manual")
@@ -1496,6 +1515,7 @@ public sealed partial class MainViewModel
             using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
             System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
             StarInteractionResponse starResponse = await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            StarState stateAfterResponse = await _runtime.GetStarStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
             if (photoResult.Attached)
@@ -1525,7 +1545,7 @@ public sealed partial class MainViewModel
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice stream reserved", "The thinking phrase and generated story will share stream=" + sharedStoryVoiceStream.StreamId + " so Android does not cut a word when the full story arrives."));
             }
 
-            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse);
+            MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse, stateAfterResponse);
             response.GateWaitMs = gateWaitMs;
             response.RuntimeElapsedMs = runtimeElapsedMs;
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
@@ -1633,7 +1653,7 @@ public sealed partial class MainViewModel
             }
 
             response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
-            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse);
+            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
             OnUiThread(() =>
             {
                 MobileBridgeStatus = wantsPhoneAudio
@@ -1704,6 +1724,11 @@ public sealed partial class MainViewModel
         context.Flags["phoneAudioSocketConnected"] = ((_mobileBridgeAudioHost?.ClientCount ?? 0) > 0).ToString().ToLowerInvariant();
         context.Flags["speakOnDesktop"] = request.SpeakOnDesktop.ToString().ToLowerInvariant();
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
+        if (request.GirlfriendProposal || GirlfriendProposalIntentDetector.IsProposal(request.PlayerText))
+        {
+            context.Flags["girlfriendProposalDetected"] = "true";
+            context.RecentEvents.Add("The mobile transport explicitly preserved a girlfriend-proposal intent for the relationship runtime.");
+        }
         if (IsMobileStarInitiativeRequest(request))
         {
             context.Flags["starInitiative"] = "true";
@@ -2019,7 +2044,7 @@ public sealed partial class MainViewModel
         return null;
     }
 
-    private MobileBridgeResponse CreateMobileResponse(MobileBridgeRequest mobileRequest, StarInteractionRequest runtimeRequest, string transcript, StarInteractionResponse response)
+    private MobileBridgeResponse CreateMobileResponse(MobileBridgeRequest mobileRequest, StarInteractionRequest runtimeRequest, string transcript, StarInteractionResponse response, StarState? stateAfterResponse = null)
     {
         RequestType requestType = runtimeRequest?.RequestType ?? ParseMobileRequestType(mobileRequest.RequestType);
         return new MobileBridgeResponse
@@ -2046,8 +2071,9 @@ public sealed partial class MainViewModel
             BenaveilDelta = response.StateDeltas.BenaveilInfluence,
             EmotionalConnectionDelta = response.StateDeltas.EmotionalConnectionPercent,
             EmotionalConnectionAfter = response.EmotionalConnectionPercentAfter,
-            IsGirlfriendReadyAfter = response.IsGirlfriendReadyAfter,
-            IsGirlfriendAfter = false,
+            IsGirlfriendReadyAfter = stateAfterResponse?.IsGirlfriendReady ?? response.IsGirlfriendReadyAfter,
+            IsGirlfriendAfter = stateAfterResponse?.IsGirlfriend
+                ?? response.RelationshipEvents.Any(x => x.IndexOf("Accepted girlfriend proposal", StringComparison.OrdinalIgnoreCase) >= 0),
             VoiceRequested = mobileRequest.ReturnAudio && response.InitiativeShouldSpeak && !string.IsNullOrWhiteSpace(response.SpokenText),
             VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
             StoryId = response.StoryId ?? string.Empty,
@@ -2373,7 +2399,10 @@ public sealed partial class MainViewModel
 
     private async Task HandleGeneratedMobileGirlfriendProposalResponseAsync(StarInteractionResponse response)
     {
-        PublishMobileGirlfriendProposalEvent(response, "GirlfriendProposalResponseReady", "The full girlfriend proposal response is ready for Android.");
+        string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
+        string starId = response.StarId ?? SelectedStarId;
+        StarState persistedState = await _runtime.GetStarStateAsync(sessionId, starId, CancellationToken.None).ConfigureAwait(false);
+        PublishMobileGirlfriendProposalEvent(response, persistedState, "GirlfriendProposalResponseReady", "The full girlfriend proposal response and persisted relationship state are ready for Android.");
         OnUiThread(() =>
         {
             StarOutput = FormatStarOutput(response);
@@ -2381,20 +2410,20 @@ public sealed partial class MainViewModel
             AppendMobileBridgeVoiceDebug("Girlfriend proposal ready", (response.StarId ?? "Star") + " response chars=" + (response.SpokenText?.Length ?? 0));
         });
 
-        string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
         StarInteractionRequest runtimeRequest = new StarInteractionRequest
         {
-            StarId = response.StarId ?? SelectedStarId,
+            StarId = starId,
             RequestType = RequestType.Chat,
             SessionId = sessionId
         };
         MobileBridgeResponse mobileResponse = CreateMobileResponse(new MobileBridgeRequest
         {
-            StarId = response.StarId ?? SelectedStarId,
+            StarId = starId,
             RequestType = "Chat",
             ReturnAudio = true,
-            SessionId = sessionId
-        }, runtimeRequest, string.Empty, response);
+            SessionId = sessionId,
+            GirlfriendProposal = true
+        }, runtimeRequest, string.Empty, response, persistedState);
 
         try
         {
@@ -2407,22 +2436,28 @@ public sealed partial class MainViewModel
         }
     }
 
-    private void PublishMobileGirlfriendProposalEvent(StarInteractionResponse response, string eventType, string message)
+    private void PublishMobileGirlfriendProposalEvent(StarInteractionResponse response, StarState persistedState, string eventType, string message)
     {
-        if (response == null) return;
+        if (response == null || persistedState == null) return;
         string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
-        string proposalDecision = ExtractUnityEventData(response, "decision", string.Empty);
-        bool proposalIsGirlfriend = response.RelationshipEvents.Any(x => x.IndexOf("Accepted girlfriend proposal", StringComparison.OrdinalIgnoreCase) >= 0)
-            || string.Equals(proposalDecision, "accept", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(proposalDecision, "already_girlfriend", StringComparison.OrdinalIgnoreCase);
         _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
             EventType = eventType,
             SourceClientId = "desktop-runtime",
             SessionId = sessionId,
-            StarId = response.StarId ?? SelectedStarId,
+            StarId = persistedState.StarId,
             SelectedStarId = SelectedStarId,
-            IsGirlfriend = proposalIsGirlfriend,
+            IsMet = persistedState.IsMet,
+            IsAlly = persistedState.IsAlly,
+            Heart = persistedState.Heart,
+            Trust = persistedState.Trust,
+            Romance = persistedState.Romance,
+            EmotionalConnectionPercent = persistedState.EmotionalConnectionPercent,
+            IsGirlfriendReady = persistedState.IsGirlfriendReady,
+            IsGirlfriend = persistedState.IsGirlfriend,
+            GirlfriendCuteModeEnabled = persistedState.GirlfriendCuteModeEnabled,
+            GirlfriendCuteModeActive = persistedState.GirlfriendCuteModeEnabled && (persistedState.GirlfriendHourlyState?.CuteModeActive ?? false),
+            GirlfriendCuteModeSignature = persistedState.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             Message = message,
             SpokenText = response.SpokenText ?? string.Empty,
             EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,

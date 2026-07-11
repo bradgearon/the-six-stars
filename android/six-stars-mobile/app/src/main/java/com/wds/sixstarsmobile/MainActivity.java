@@ -1778,6 +1778,7 @@ public final class MainActivity extends ComponentActivity {
         String storySummary = optStringEither(event, "storySummary", "StorySummary", "").trim();
         String error = optStringEither(event, "error", "Error", "").trim();
         updateEmotionVectorsFromJson(event);
+        applyStarStateObject(event, type);
         String dailyLine = extractDailyStateLine(event);
         if (dailyLine.length() > 0) currentDailyStarState = dailyLine;
 
@@ -1866,7 +1867,11 @@ public final class MainActivity extends ComponentActivity {
         selectedStarCuteModeEnabled = optBooleanEither(event, "girlfriendCuteModeEnabled", "GirlfriendCuteModeEnabled", selectedStarCuteModeEnabled);
         selectedStarCuteModeActive = optBooleanEither(event, "girlfriendCuteModeActive", "GirlfriendCuteModeActive", selectedStarCuteModeActive);
         selectedStarCuteModeSignature = optStringEither(event, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
-        if (prodBreakupButton != null) prodBreakupButton.setVisibility(View.GONE);
+        applyStarStateObject(event, type);
+        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
+        if (prodMiniStatusText != null) {
+            prodMiniStatusText.setText(girlfriend ? starId + " is now your girlfriend." : starId + " answered your girlfriend proposal.");
+        }
         if (spoken.length() > 0) {
             appendProdConversationLine(starId, clip(spoken, 900));
             responseText.setText(starId + " — girlfriend proposal\n\n" + clip(spoken, 8000));
@@ -2277,6 +2282,58 @@ public final class MainActivity extends ComponentActivity {
         });
     }
 
+    private static boolean looksLikeGirlfriendProposal(String text) {
+        if (text == null || text.trim().length() == 0) return false;
+        String normalized = text.toLowerCase(Locale.US)
+                .replace('‘', '\'')
+                .replace('’', '\'')
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim()
+                .replace("girl friend", "girlfriend");
+        String padded = " " + normalized + " ";
+        String[] direct = new String[] {
+                " be my girlfriend ",
+                " be my girl ",
+                " be my gf ",
+                " become my girlfriend ",
+                " will you be my girlfriend ",
+                " would you be my girlfriend ",
+                " could you be my girlfriend ",
+                " can you be my girlfriend ",
+                " do you want to be my girlfriend ",
+                " do you wanna be my girlfriend ",
+                " would you like to be my girlfriend ",
+                " i want you to be my girlfriend ",
+                " can i be your boyfriend ",
+                " could i be your boyfriend ",
+                " would you let me be your boyfriend ",
+                " i want to be your boyfriend ",
+                " will you go out with me ",
+                " would you go out with me ",
+                " do you want to go out with me ",
+                " will you date me ",
+                " would you date me ",
+                " do you want to date me ",
+                " will you be mine ",
+                " would you be mine "
+        };
+        for (String phrase : direct) {
+            if (padded.contains(phrase)) return true;
+        }
+        if (!padded.contains(" girlfriend ")) return false;
+        boolean relationshipTarget = padded.contains(" my girlfriend ")
+                || padded.contains(" your boyfriend ")
+                || padded.contains(" boyfriend and girlfriend ");
+        boolean proposalMarker = padded.contains(" will ") || padded.contains(" would ")
+                || padded.contains(" could ") || padded.contains(" can ")
+                || padded.contains(" want ") || padded.contains(" wanna ") || padded.contains(" please ")
+                || padded.contains(" asking ") || padded.contains(" ask ");
+        boolean proposalVerb = padded.contains(" be ") || padded.contains(" become ")
+                || padded.contains(" date ") || padded.contains(" choose ")
+                || padded.contains(" accept ") || padded.contains(" want ");
+        return relationshipTarget && proposalMarker && proposalVerb;
+    }
+
     private void sendMessage() {
         String playerText = messageEdit == null ? "" : messageEdit.getText().toString();
         String requestType = requestTypeSpinner == null || requestTypeSpinner.getSelectedItem() == null ? "Chat" : requestTypeSpinner.getSelectedItem().toString();
@@ -2296,6 +2353,7 @@ public final class MainActivity extends ComponentActivity {
         try {
             JSONObject json = baseRequestJson();
             json.put("playerText", playerText);
+            json.put("girlfriendProposal", looksLikeGirlfriendProposal(playerText));
             setDebug("Sending text", "Message box cleared. The request was placed directly on the persistent WebSocket. Voice will arrive on the phone audio socket when generated.");
             appendVoiceDebug(starName + " received your message", "WebSocket message request sent immediately at " + now());
             sendSocketRequest("message", json, 180000L,
@@ -2481,6 +2539,12 @@ public final class MainActivity extends ComponentActivity {
                 long clientQueueMs = optLongEither(json, "clientQueueMs", "ClientQueueMs", 0L);
                 long clientSocketRoundTripMs = optLongEither(json, "clientSocketRoundTripMs", "ClientSocketRoundTripMs", 0L);
                 long clientAfterSendMs = optLongEither(json, "clientAfterSendMs", "ClientAfterSendMs", 0L);
+                boolean hasGirlfriendState = json.has("isGirlfriendAfter") || json.has("IsGirlfriendAfter");
+                boolean girlfriendAfter = optBooleanEither(json, "isGirlfriendAfter", "IsGirlfriendAfter", selectedStarIsGirlfriend);
+                if (hasGirlfriendState) {
+                    selectedStarIsGirlfriend = girlfriendAfter;
+                    if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriendAfter ? View.VISIBLE : View.GONE);
+                }
                 String storyTitle = optStringEither(json, "storyTitle", "StoryTitle", "");
                 String storyMarkdown = optStringEither(json, "storyMarkdown", "StoryMarkdown", "");
                 String storySummary = optStringEither(json, "storySummary", "StorySummary", "");

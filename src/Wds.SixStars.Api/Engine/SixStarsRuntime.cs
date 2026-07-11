@@ -2032,7 +2032,8 @@ namespace Wds.SixStars.Api.Engine
         {
             if (request.RequestType != RequestType.Chat) return null;
             if (IsGirlfriendProposalWorkerRequest(request)) return null;
-            if (!LooksLikeGirlfriendProposal(request.PlayerText)) return null;
+            bool explicitProposalIntent = IsTruthy(GetGameContextFlag(request.GameContext, "girlfriendProposalDetected", "false"));
+            if (!explicitProposalIntent && !GirlfriendProposalIntentDetector.IsProposal(request.PlayerText)) return null;
 
             string currentGirlfriend = await GetCurrentGirlfriendStarIdAsync(request.SessionId, cancellationToken).ConfigureAwait(false);
             bool alreadyTaken = !string.IsNullOrWhiteSpace(currentGirlfriend) && !string.Equals(currentGirlfriend, request.StarId, StringComparison.OrdinalIgnoreCase);
@@ -2073,25 +2074,6 @@ namespace Wds.SixStars.Api.Engine
                 ShouldAcceptByDeterministicGate = eligible && !alreadyTaken && !alreadyThisGirlfriend,
                 Reason = reason
             };
-        }
-
-        private static bool LooksLikeGirlfriendProposal(string? text)
-        {
-            string t = (text ?? string.Empty).ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(t)) return false;
-            return ContainsAny(t,
-                "be my girlfriend",
-                "will you be my girlfriend",
-                "would you be my girlfriend",
-                "can you be my girlfriend",
-                "be my girl",
-                "be my gf",
-                "will you go out with me",
-                "would you go out with me",
-                "go out with me",
-                "date me",
-                "be with me")
-                || (t.Contains("girlfriend") && ContainsAny(t, "be", "become", "my", "ask", "asking", "would", "will", "could", "want"));
         }
 
         private static StarInteractionResponse CreateGirlfriendProposalThinkingResponse(StarProfile profile, StarInteractionRequest request, GirlfriendProposalDecision decision)
@@ -2181,19 +2163,14 @@ namespace Wds.SixStars.Api.Engine
             workerRequest.GameContext.Flags["girlfriendProposalReason"] = initialDecision.Reason ?? string.Empty;
             workerRequest.GameContext.RecentEvents.Add("The Star already answered with a preprogrammed girlfriend-proposal thinking phrase; now generate the real yes/no answer using full state.");
 
-            CancellationToken storyToken;
-            lock (_backgroundGate)
-            {
-                _backgroundStoryGenerationCts?.Cancel();
-                _backgroundStoryGenerationCts?.Dispose();
-                _backgroundStoryGenerationCts = new CancellationTokenSource();
-                storyToken = _backgroundStoryGenerationCts.Token;
-            }
-
+            // A proposal is a foreground relationship transaction, not disposable background
+            // flavor. Keep its continuation independent from the shared story/background CTS so a
+            // mobile state refresh, automatic initiative check, or later foreground request cannot
+            // cancel the state transition after the Star has begun answering.
             _backgroundDispatcher.Enqueue(
                 "GirlfriendProposalDecision",
-                "Generate full girlfriend proposal response for " + workerRequest.StarId,
-                BackgroundAiRequestPriority.Normal,
+                "Generate and durably commit girlfriend proposal response for " + workerRequest.StarId,
+                BackgroundAiRequestPriority.High,
                 async workToken =>
             {
                 try
@@ -2281,7 +2258,7 @@ namespace Wds.SixStars.Api.Engine
                     GirlfriendProposalFailed?.Invoke(this, ex);
                 }
             },
-                storyToken);
+                CancellationToken.None);
         }
 
         private sealed class GirlfriendProposalDecision

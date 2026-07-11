@@ -13,6 +13,7 @@ public sealed class MobileBridgeRequest
     public string StarId { get; set; } = "Elusiaa";
     public string RequestType { get; set; } = "Chat";
     public string PlayerText { get; set; } = string.Empty;
+    public bool GirlfriendProposal { get; set; }
     public string Area { get; set; } = "VirethornCaves";
     public string Quest { get; set; } = "AndroidPhoneBridge";
     public bool RomanceMode { get; set; } = true;
