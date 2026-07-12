@@ -1489,21 +1489,27 @@ namespace Wds.SixStars.Api.Engine
             clone.GameContext.Flags["informationNeedsFullVector"] = SummarizeNeedsForEvent(fullVector);
             clone.GameContext.Flags["informationNeedsSelected"] = SummarizeNeedsForEvent(selectedNeeds);
             clone.GameContext.Flags["informationNeedDecision"] = SummarizeSelection(decision);
-            clone.GameContext.RecentEvents.Add("The previous foreground reply returned an information-needs vector. The API layer deterministically selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached EXTRA REQUESTED INFORMATION. Answer the player's same message now. Speak naturally as if you remembered, checked the local archive, or found the relevant lore. If it still does not answer it, say you could not find enough.");
+            clone.GameContext.Flags["informationOriginalPlayerSpeech"] = request.PlayerText ?? string.Empty;
+            clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The fast response detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
             return clone;
         }
 
         private static List<InformationNeedVectorItem> NormalizeInformationNeedVector(StarInteractionResponse response, string playerText)
         {
             List<InformationNeedVectorItem> needs = (response.InformationNeeds ?? new List<InformationNeedVectorItem>())
-                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
-                .Select(x => new InformationNeedVectorItem
+                .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.DataType) || LoreLibraryIndexReader.IsContentBackedType(x.Subject)))
+                .Select(x =>
                 {
-                    DataType = NormalizeInformationDataType(x.DataType),
-                    Subject = string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim(),
-                    Confidence = Clamp01(x.Confidence),
-                    Score = ClampScore(x.Score),
-                    Reason = x.Reason ?? string.Empty
+                    bool typeWasInSubject = string.IsNullOrWhiteSpace(x.DataType) && LoreLibraryIndexReader.IsContentBackedType(x.Subject);
+                    string resolvedType = typeWasInSubject ? x.Subject : x.DataType;
+                    return new InformationNeedVectorItem
+                    {
+                        DataType = NormalizeInformationDataType(resolvedType),
+                        Subject = typeWasInSubject ? ExtractLikelySubject(playerText) : (string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim()),
+                        Confidence = Clamp01(x.Confidence),
+                        Score = ClampScore(x.Score),
+                        Reason = x.Reason ?? string.Empty
+                    };
                 })
                 .GroupBy(x => x.DataType, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(x => Math.Max(x.Confidence, x.Score / 100.0)).First())
@@ -1531,22 +1537,43 @@ namespace Wds.SixStars.Api.Engine
             int learnedItems = state.ThingsLearnedOrSuggestedByPlayer == null ? 0 : state.ThingsLearnedOrSuggestedByPlayer.Count;
             int quotes = state.AllImportantPlayerQuotes == null ? 0 : state.AllImportantPlayerQuotes.Count;
             int markers = state.RememberedMarkers == null ? 0 : state.RememberedMarkers.Count(x => x.IsActive);
-            int lore = (profile.LibraryCanonNotes == null ? 0 : profile.LibraryCanonNotes.Count) + (profile.AngelStories == null ? 0 : profile.AngelStories.Count);
             int stories = state.StoryHistory == null ? 0 : state.StoryHistory.Count;
             int screens = request.RecentScreenCaptures == null ? 0 : request.RecentScreenCaptures.Count;
 
-            return new List<InformationNeedAvailabilityItem>
+            List<InformationNeedAvailabilityItem> result = new List<InformationNeedAvailabilityItem>
             {
                 Availability("history", oldArchives + recentHistory + learnedItems, oldArchives > 0 ? oldArchives + " old archives plus " + recentHistory + " recent turns and " + learnedItems + " durable learned item(s)" : recentHistory + " recent turns plus " + learnedItems + " durable learned item(s); no old archive yet", state.ThingsLearnedOrSuggestedByPlayer?.Take(4)),
                 Availability("quotes", quotes, quotes + " durable important player quote(s)", state.AllImportantPlayerQuotes?.Select(x => x.Quote).Take(4)),
                 Availability("markers", markers, markers + " active remembered marker(s)", state.RememberedMarkers?.Where(x => x.IsActive).Select(x => x.MarkerName).Take(6)),
-                Availability("lore", lore, lore + " local profile/canon lore item(s)", profile.LibraryCanonNotes?.Take(4)),
-                Availability("bestiary", lore, lore > 0 ? "Bestiary/world data currently maps to local lore/profile canon slices." : "No loaded bestiary index is available yet.", profile.LibraryCanonNotes?.Where(x => ContainsAny(x, "creature", "monster", "slime", "goblin", "harpy", "dragon", "beast")).Take(4)),
-                Availability("characters", 1 + lore, "Selected Star profile plus local character lore", new[] { profile.DisplayName, profile.Element, profile.Domain }.Where(x => !string.IsNullOrWhiteSpace(x))),
-                Availability("world", lore, lore > 0 ? "World data currently maps to local canon/profile lore." : "No extra world index is available yet.", profile.LibraryCanonNotes?.Take(4)),
+                BuildLoreIndexAvailability("lore"),
+                BuildLoreIndexAvailability("bestiary"),
+                BuildLoreIndexAvailability("characters"),
+                BuildLoreIndexAvailability("world"),
                 Availability("screen", screens, screens + " recent screen/vision capture(s)", request.RecentScreenCaptures?.Select(x => x.CompanionSafeSummary).Take(4)),
-                Availability("story", stories, stories + " story history entrie(s)", state.StoryHistory?.Select(x => x.Title).Take(4))
+                BuildStoryAvailability(stories, state)
             };
+
+            return result;
+        }
+
+        private static InformationNeedAvailabilityItem BuildLoreIndexAvailability(string dataType)
+        {
+            if (LoreLibraryIndexReader.TryRead(dataType, out LoreLibraryIndexDocument index))
+            {
+                return Availability(dataType, 1, "Content/LoreLibrary/docs/" + index.RelativePath + " is available (" + index.CharacterCount + " chars).", new[] { index.RelativePath });
+            }
+
+            return Availability(dataType, 0, "No canonical " + dataType + "/index.md lore folder is available.", Array.Empty<string>());
+        }
+
+        private static InformationNeedAvailabilityItem BuildStoryAvailability(int storyHistoryCount, StarState state)
+        {
+            bool hasIndex = LoreLibraryIndexReader.TryRead("story", out LoreLibraryIndexDocument index);
+            int count = storyHistoryCount + (hasIndex ? 1 : 0);
+            List<string> samples = new List<string>();
+            if (hasIndex) samples.Add(index.RelativePath);
+            if (state.StoryHistory != null) samples.AddRange(state.StoryHistory.Select(x => x.Title).Where(x => !string.IsNullOrWhiteSpace(x)).Take(4));
+            return Availability("story", count, storyHistoryCount + " personal story history entrie(s)" + (hasIndex ? " plus the canonical story/index.md folder." : "; no canonical story index."), samples);
         }
 
         private static InformationNeedAvailabilityItem Availability(string dataType, int count, string summary, IEnumerable<string>? samples)
@@ -1559,12 +1586,6 @@ namespace Wds.SixStars.Api.Engine
                 Summary = summary ?? string.Empty,
                 SampleSubjects = (samples ?? Enumerable.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => TruncateForInfo(x, 100)).Take(6).ToList()
             };
-        }
-
-        private static bool ContainsAny(string? value, params string[] tokens)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return false;
-            return tokens.Any(t => value.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static InformationNeedSelectionResult SelectInformationNeedDeterministically(
@@ -1696,8 +1717,13 @@ namespace Wds.SixStars.Api.Engine
         private static string BuildRequestedInformationContext(StarProfile profile, StarState state, List<InformationNeedVectorItem> needs, string playerText, int maxChars, StarInteractionRequest? request = null)
         {
             StringBuilder sb = new StringBuilder();
-            sb.AppendLine("EXTRA REQUESTED INFORMATION");
-            sb.AppendLine("Use this only to answer the player's latest message. Mention naturally that you remembered, found an old marker, found lore, checked the screen/story archive, or could not find enough detail. Do not dump the archive.");
+            sb.AppendLine("SECOND RESPONSE REQUEST WITH MORE INFORMATION");
+            sb.AppendLine("The fast foreground response said more information was needed. This request includes the matching local source. Answer the player's original speech again now, giving the exact detail asked for when it appears below.");
+            sb.AppendLine("Do not repeat the earlier uncertainty bridge. Do not invent or generalize. If the exact answer is present, state it clearly and naturally in character. If it is not present, say that the attached source did not contain the exact detail.");
+            sb.AppendLine();
+            sb.AppendLine("PLAYER'S ORIGINAL SPEECH:");
+            sb.AppendLine(QuoteForInfo(playerText ?? string.Empty));
+            sb.AppendLine();
             sb.AppendLine("Selected need vector: " + SummarizeNeedsForEvent(needs));
 
             bool wantsHistory = Wants(needs, "history");
@@ -1706,6 +1732,7 @@ namespace Wds.SixStars.Api.Engine
             bool wantsLore = Wants(needs, "lore") || Wants(needs, "characters") || Wants(needs, "world") || Wants(needs, "bestiary");
             bool wantsScreen = Wants(needs, "screen");
             bool wantsStory = Wants(needs, "story");
+            bool attachedCanonicalIndex = AppendMatchedLoreIndexes(sb, needs);
 
             if (wantsQuotes && state.AllImportantPlayerQuotes != null && state.AllImportantPlayerQuotes.Count > 0)
             {
@@ -1770,7 +1797,7 @@ namespace Wds.SixStars.Api.Engine
             if (wantsStory && state.StoryHistory != null && state.StoryHistory.Count > 0)
             {
                 sb.AppendLine();
-                sb.AppendLine("STORY HISTORY ARCHIVE:");
+                sb.AppendLine("PERSONAL STORY HISTORY ARCHIVE:");
                 foreach (StarStoryHistoryEntry story in state.StoryHistory.Take(18))
                 {
                     sb.AppendLine("- " + story.Title + " | finished=" + story.Finished + " | " + TruncateForInfo(story.Summary, 650));
@@ -1789,10 +1816,10 @@ namespace Wds.SixStars.Api.Engine
                 }
             }
 
-            if (wantsLore)
+            if (wantsLore && !attachedCanonicalIndex)
             {
                 sb.AppendLine();
-                sb.AppendLine("CHARACTER / WORLD / BESTIARY LORE AVAILABLE LOCALLY:");
+                sb.AppendLine("FALLBACK STAR PROFILE CANON (no matching folder index was found):");
                 sb.AppendLine("Star: " + profile.DisplayName + " | element=" + profile.Element + " | domain=" + profile.Domain + " | core quote=" + profile.CoreQuote);
                 if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + TruncateForInfo(profile.PersonalityShort, 500));
                 if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory: " + TruncateForInfo(profile.BackstorySummary, 900));
@@ -1803,6 +1830,26 @@ namespace Wds.SixStars.Api.Engine
             string result = sb.ToString().TrimEnd();
             if (result.Length > maxChars) result = result.Substring(0, maxChars).TrimEnd() + "\n[Extra information clipped by runtime cap.]";
             return result;
+        }
+
+        private static bool AppendMatchedLoreIndexes(StringBuilder sb, List<InformationNeedVectorItem> needs)
+        {
+            bool attached = false;
+            foreach (string dataType in (needs ?? new List<InformationNeedVectorItem>())
+                .Select(x => NormalizeInformationDataType(x.DataType))
+                .Where(LoreLibraryIndexReader.IsContentBackedType)
+                .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!LoreLibraryIndexReader.TryRead(dataType, out LoreLibraryIndexDocument index)) continue;
+                attached = true;
+                sb.AppendLine();
+                sb.AppendLine("MATCHED LORE FOLDER: Content/LoreLibrary/docs/" + index.FolderName + "/");
+                sb.AppendLine("ATTACHED FILE: " + index.RelativePath);
+                sb.AppendLine("The complete canonical index for the selected folder follows:");
+                sb.AppendLine();
+                sb.AppendLine(index.Content.Trim());
+            }
+            return attached;
         }
 
         private static IEnumerable<StarImportantQuoteRecord> SelectQuoteRecords(List<StarImportantQuoteRecord> quotes, List<InformationNeedVectorItem> needs, string playerText, int max)

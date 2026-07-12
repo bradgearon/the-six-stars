@@ -639,23 +639,46 @@ namespace Wds.SixStars.Api.Ai
             if (string.IsNullOrWhiteSpace(text)) return;
             string lower = text.ToLowerInvariant();
             bool asksForFacts = text.Contains('?')
-                || Regex.IsMatch(lower, @"\b(who|what|where|when|which|how|explain|describe|tell me about|do you know)\b", RegexOptions.IgnoreCase);
+                || Regex.IsMatch(lower, @"\b(who|what|where|when|which|how|explain|describe|tell me about|do you know|how many|how much)\b", RegexOptions.IgnoreCase);
             if (!asksForFacts) return;
 
             List<(string DataType, string Reason)> required = new List<(string, string)>();
-            if (Regex.IsMatch(lower, @"\b(skill|skills|spell|spells|ability|abilities|talent|talents|power|powers|attack|attacks|move|moves|skill tree)\b"))
-                required.Add(("lore", "The player asked for exact skill, spell, ability, or combat canon."));
-            if (Regex.IsMatch(lower, @"\b(monster|monsters|enemy|enemies|boss|bosses|creature|creatures|beast|beasts|bestiary)\b"))
-                required.Add(("bestiary", "The player asked for exact monster, enemy, boss, or creature canon."));
-            if (Regex.IsMatch(lower, @"\b(person|people|npc|npcs|character|characters|who is|who are)\b"))
-                required.Add(("characters", "The player asked for exact information about a person or character."));
+            bool mentionsSkill = Regex.IsMatch(lower, @"\b(skill|skills|spell|spells|ability|abilities|talent|talents|power|powers|mana|stardust|cooldown|skill tree)\b");
+            bool mentionsCreature = Regex.IsMatch(lower, @"\b(monster|monsters|enemy|enemies|boss|bosses|creature|creatures|beast|beasts|bestiary|slime|slimes|slimebro|madslime|slimastadon|goblin|goblins|harpy|harpies|dragon|dragons|skeleton|skeletons|virethorn|bone bloom|leviathan|oculothorax|buzz|scorpion|crawler|demon|demons|owl|owls|golem|golems|ninja|ninjas)\b");
+            bool asksForCombatStat = Regex.IsMatch(lower, @"\b(hp|hit points?|health|damage|attack|attacks|weakness|weaknesses|resistance|resistances|drop|drops|loot|level|cost|costs)\b");
+            bool mentionsCharacter = Regex.IsMatch(lower, @"\b(person|people|npc|npcs|character|characters|who is|who are|elusiaa|kaelia|khavia|auerlis|maera|nyxari|marrowlily|bradmageddon)\b");
+            bool mentionsWorld = Regex.IsMatch(lower, @"\b(area|areas|place|places|location|locations|cave|caves|settlement|settlements|sanctuary|temple|temples|world|quest|quests|where is|where are)\b");
+            bool mentionsExactStory = Regex.IsMatch(lower, @"\b(scene|scenes|meeting|meetings|dialogue|conversation|what happened|story canon|story detail|lore story)\b");
+
+            if (mentionsSkill || (asksForCombatStat && !mentionsCreature))
+                required.Add(("lore", "The player asked for exact skill, spell, ability, cost, or combat canon."));
+            if (mentionsCreature)
+                required.Add(("bestiary", "The player asked for exact monster, enemy, boss, creature, HP, attack, weakness, or drop canon."));
+            if (mentionsCharacter)
+                required.Add(("characters", "The player asked for exact information about a person, Star, companion, guardian, or NPC."));
+            if (mentionsWorld)
+                required.Add(("world", "The player asked for exact area, place, settlement, quest, ecology, or world canon."));
+            if (mentionsExactStory)
+                required.Add(("story", "The player asked for exact scene, meeting, dialogue, or story continuity."));
             if (required.Count == 0) return;
 
             model.InformationNeeds ??= new List<InformationNeedVectorItem>();
             string subject = CleanOneLine(text, 160);
             foreach ((string dataType, string reason) in required)
             {
-                if (model.InformationNeeds.Any(x => string.Equals(x.DataType, dataType, StringComparison.OrdinalIgnoreCase))) continue;
+                InformationNeedVectorItem? existing = model.InformationNeeds.FirstOrDefault(x =>
+                    string.Equals(x.DataType, dataType, StringComparison.OrdinalIgnoreCase)
+                    || (string.IsNullOrWhiteSpace(x.DataType) && string.Equals(x.Subject, dataType, StringComparison.OrdinalIgnoreCase)));
+                if (existing != null)
+                {
+                    existing.DataType = dataType;
+                    existing.Subject = subject;
+                    existing.Confidence = Math.Max(existing.Confidence, 0.98);
+                    existing.Score = Math.Max(existing.Score, 100);
+                    existing.Reason = string.IsNullOrWhiteSpace(existing.Reason) ? reason : existing.Reason;
+                    continue;
+                }
+
                 model.InformationNeeds.Add(new InformationNeedVectorItem
                 {
                     DataType = dataType,

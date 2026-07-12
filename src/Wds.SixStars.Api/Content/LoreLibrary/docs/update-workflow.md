@@ -5,8 +5,8 @@ This library is designed to be updated as new canon is given.
 ## Default update process
 
 1. **Identify the entry type.** Is the new material lore, character, enemy, plant, letter, area design, system, quest, dialogue, art reference, or production rule?
-2. **Update the specific file first.** For example, a new Maera secret goes in `docs/characters/six-stars/maera.md`.
-3. **Update the relevant index.** Character, bestiary, plant-life, letters, areas, or systems index.
+2. **Update the authoring source first.** For example, a new Maera secret can be drafted in the relevant character/source document.
+3. **Update the canonical runtime index.** Content-backed retrieval reads one complete index from `docs/lore/`, `docs/bestiary/`, `docs/characters/`, `docs/world/`, or `docs/story/`.
 4. **Update the game bible if canon changed.** Core story, tone, mechanics, areas, endings, or companion rules must be reflected in `docs/game-bible/game-developer-bible.md`.
 5. **Update cross-system docs.** Romance, AI dialogue, skill trees, endings, audio motifs, or MMO carry-over may need changes.
 6. **Log the change.** Add a short note to `CHANGELOG.md`.
@@ -17,10 +17,10 @@ This library is designed to be updated as new canon is given.
 - **Letters to Leviathan or Behemoth/Bahamut:** `docs/letters/guardians/`.
 - **Letters carried by the Last Cat from childhood:** `docs/letters/last-cat/`.
 - **Letters from settlements, mothers, fathers, students, villagers:** keep the raw letter in the proper folder and link it from the index.
-- **Enemies:** `docs/bestiary/` or a family file under `docs/bestiary/families/`.
+- **Enemies:** update `docs/bestiary/index.md`; it is the one complete bestiary file sent during a bestiary follow-up.
 - **Plants and flora:** `docs/plant-life/` even if they are dangerous.
 - **Stars:** character entry, AI profile, relationship notes, skill tree links, and game bible summary.
-- **Area art descriptions:** update the area doc and `docs/areas/visual-reference.md`.
+- **Area art descriptions:** update `docs/areas/index.md`, then refresh `docs/world/index.md` because world retrieval sends the complete world index.
 
 ## Canon tiers
 

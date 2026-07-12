@@ -775,9 +775,11 @@ namespace Wds.SixStars.Api.Ai
                 if (request.GameContext.Flags.TryGetValue("extraInformationContext", out string? extraInformationContext) && !string.IsNullOrWhiteSpace(extraInformationContext))
                 {
                     task.AppendLine();
-                    task.AppendLine("EXTRA REQUESTED INFORMATION FROM LOCAL STATE / ARCHIVES");
+                    task.AppendLine("SECOND RESPONSE REQUEST WITH MATCHED INFORMATION");
+                    task.AppendLine("The first fast response detected that more information was needed. The player's original speech is still the PlayerText at the top of this request and is repeated inside the attached context below.");
+                    task.AppendLine("Use the matched folder index or dynamic archive to answer that exact original request now. Give the precise requested detail when it is present. Do not repeat the earlier checking/uncertainty bridge and do not invent missing facts.");
                     task.AppendLine(extraInformationContext);
-                    task.AppendLine("Use this extra information to answer the same latest player message. If it answers the question, speak naturally as if you remembered or found the old note. If it still does not answer, say you searched your memory and cannot find enough yet.");
+                    task.AppendLine("If the attached information contains the answer, respond directly and naturally in character. If it does not contain the exact answer, say that the additional source did not provide that detail.");
                 }
                 AppendGirlfriendProposalGuidance(task, profile, request, state);
             }
@@ -807,6 +809,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer. Use false, [], and [] when no extra information or new durable learning is needed. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
                 contract.AppendLine("informationNeeds is a full optional information-request vector, not a single final decision. The host/API layer will analyze the whole vector, compare it to available local data, and deterministically decide whether to run a deep second pass.");
+                contract.AppendLine("Content-backed dataType names match the local folders exactly: lore=skills/spells/abilities/weapons/mechanics; bestiary=monsters/enemies/bosses/creatures/HP/drops; characters=Stars/people/NPCs/companions/guardians; world=areas/locations/settlements/ecology/quests; story=exact scenes/meetings/dialogue/story continuity. A deep pass receives the selected folder's complete index.md plus the original player speech.");
                 contract.AppendLine("When the latest message may need older context or data outside this prompt, return the whole informationNeeds vector: one separate entry for each area you considered from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
                 contract.AppendLine("Omit informationNeeds or return [] when the answer is clearly available in the provided prompt.");
                 contract.AppendLine("If you set needsMoreInformation=true or return a high scoring informationNeeds vector, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a selector and second pass with a local archive/lore slice.");
