@@ -15,8 +15,8 @@ Last remembered reply from {{ data.starDisplayName }}: {{ data.lastRememberedRep
 {{ data.importantMemoryContext }}
 Latest screen/vision update: {{ data.latestScreenOneLine }}
 
-CURRENT STAR INNER-LIFE STATE
-This is {{ data.starDisplayName }}'s current in-world emotional and day state: how she feels, what she is doing, what she wants, her relationship posture, recent awareness, and topics already alive in her mind. Use it to help her answer as a person whose life continues between messages. Let a relevant part subtly enter spokenText when it makes the reply more lifelike, but do not mechanically summarize the state or mention its storage format.
+STAR STATE RESPONSE
+This compact state contains only situationSummary, feelingsSummary, desires, privateSecretsOrHooks, whatSheIsDoing, and moodTags. Use it to help {{ data.starDisplayName }} answer as a person whose life continues between messages. Let a relevant part subtly enter spokenText when it makes the reply more lifelike, but do not mechanically summarize the fields or mention their storage format.
 {{ data.todayStarStateContext }}
 
 {{ data.taskSpecificGuidance }}

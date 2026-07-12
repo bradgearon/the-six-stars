@@ -589,62 +589,10 @@ namespace Wds.SixStars.Api.Ai
             return _templates.Render("initiative_user.sbn", data).TrimEnd();
         }
 
-        private static void AppendCompactInitiativeDailyState(StringBuilder sb, StarInteractionRequest request)
+        private void AppendCompactInitiativeDailyState(StringBuilder sb, StarInteractionRequest request)
         {
-            string json = string.Empty;
-            string summary = string.Empty;
-            string generatedAt = string.Empty;
-            string slotId = string.Empty;
-            if (request.GameContext != null && request.GameContext.Flags != null)
-            {
-                request.GameContext.Flags.TryGetValue("todayStarStateJson", out json);
-                request.GameContext.Flags.TryGetValue("todayStarStateSummary", out summary);
-                request.GameContext.Flags.TryGetValue("todayStarStateGeneratedAt", out generatedAt);
-                request.GameContext.Flags.TryGetValue("todayStarStateSlotId", out slotId);
-            }
-
-            if (string.IsNullOrWhiteSpace(json) && string.IsNullOrWhiteSpace(summary))
-            {
-                sb.AppendLine("Daily state=none.");
-                return;
-            }
-
-            string situation = string.Empty;
-            string feelings = string.Empty;
-            string desires = string.Empty;
-            string activity = string.Empty;
-            List<string> hooks = new List<string>();
-            if (!string.IsNullOrWhiteSpace(json))
-            {
-                try
-                {
-                    using JsonDocument document = JsonDocument.Parse(json);
-                    JsonElement root = document.RootElement;
-                    situation = FirstJsonString(root, new[] { "currentInnerLife", "situationSummary" }, new[] { "situationSummary" });
-                    feelings = FirstJsonString(root, new[] { "currentInnerLife", "feelings" }, new[] { "currentInnerLife", "feelingsSummary" }, new[] { "feelingsSummary" });
-                    desires = FirstJsonString(root, new[] { "currentInnerLife", "desires" }, new[] { "currentInnerLife", "currentDesires" }, new[] { "currentDesires" });
-                    activity = FirstJsonString(root, new[] { "today", "whatSheIsDoing" }, new[] { "whatSheIsDoingToday" });
-                    hooks = FirstJsonStringList(
-                        root,
-                        new[] { "today", "conversationHooks" },
-                        new[] { "today", "wantsToTalkAbout" },
-                        new[] { "today", "thingsSheWantsToTalkAbout" },
-                        new[] { "conversationHooks" },
-                        new[] { "wantsToTalkAbout" },
-                        new[] { "thingsSheWantsToTalkAbout" });
-                }
-                catch
-                {
-                    // A malformed cached daily JSON blob should not slow or fail the initiative check.
-                }
-            }
-
-            sb.AppendLine("Current inner-life daily state generated=" + generatedAt + "; slot=" + slotId + "; summary=" + Truncate(summary, 220));
-            if (!string.IsNullOrWhiteSpace(situation)) sb.AppendLine("Situation=" + Truncate(situation, 220));
-            if (!string.IsNullOrWhiteSpace(feelings)) sb.AppendLine("Feelings=" + Truncate(feelings, 180));
-            if (!string.IsNullOrWhiteSpace(desires)) sb.AppendLine("Desires=" + Truncate(desires, 180));
-            if (!string.IsNullOrWhiteSpace(activity)) sb.AppendLine("Activity=" + Truncate(activity, 160));
-            if (hooks.Count > 0) sb.AppendLine("Conversation hooks=" + string.Join(" | ", hooks.Take(4).Select(x => Truncate(x, 150))));
+            object data = BuildStarStateTemplateData(request, includeAtRestFields: true);
+            sb.Append(_templates.Render("star_state_at_rest.sbn", data).TrimEnd());
         }
 
         private static void AppendCompactInitiativeGirlfriendState(StringBuilder sb, StarProfile profile, StarState state)
@@ -805,7 +753,7 @@ namespace Wds.SixStars.Api.Ai
                 {
                     task.AppendLine("Prepared Listen mode is active: quietly prepare one fresh state-backed line for the next time the Last Cat chooses to Listen. Prefer to speak and create a complete little moment, but this remains background work and must not displace a live player conversation.");
                 }
-                task.AppendLine("Use TODAY STAR STATE JSON first, especially wantsToTalkAbout / thingsSheWantsToTalkAbout and conversationHooks, plus the relationship posture, recent emotional state, and interstar status if present.");
+                task.AppendLine("Use the AT-REST STAR STATE first, especially wantsToTalkAbout and conversationHooks, plus the recent emotional state and interstar status if present.");
                 task.AppendLine("If she is girlfriend, also use GIRLFRIEND HOURLY STATE: needVector, wantVector, thingsSheWantsToSay, and cuteThingsSheWantsToSay are explicit candidate sources for spontaneous girlfriend speech while exploring.");
                 task.AppendLine("She may use thingsSheWantsToSay/cuteThingsSheWantsToSay, but should check the recent conversation first and avoid repeating a thing she already said recently.");
                 task.AppendLine("Think of this as two outputs: first decide hasSomethingToSay/shouldSpeak and fill speechDecisionVector with one item for itemId=saySomethingNow; then if yes put exactly what she wants to say in spokenText.");
@@ -849,7 +797,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 contract.AppendLine("Return star initiative JSON only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText.");
                 contract.AppendLine("speechDecisionVector must contain exactly one item: itemId='saySomethingNow', displayName='Say something now', confidence 0-1, score 0-100, reason. Confidence is zero-based: any confidence can help the runtime accept the line, but score still describes urgency/desire.");
-                contract.AppendLine("hasSomethingToSay/shouldSpeak is the first output: true only when TODAY STAR STATE JSON, GIRLFRIEND HOURLY STATE, relationship posture, recent emotion state, or interstar feedback gives her a real reason to speak now.");
+                contract.AppendLine("hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, GIRLFRIEND HOURLY STATE, recent emotion state, or interstar feedback gives her a real reason to speak now.");
                 contract.AppendLine("spokenText is the second output: if hasSomethingToSay=true, it is exactly what she chooses to say as herself while the Last Cat is at rest; if false, it must be [].");
                 contract.AppendLine("If hasSomethingToSay=false, spokenText must be [] and priority must be 0.");
                 contract.AppendLine("If hasSomethingToSay=true, spokenText must be 1-3 short chunks she says naturally on her own, not as an answer to a player message.");
@@ -1054,35 +1002,116 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use couple activity history only as intimacy tone. Do not make it the story premise unless the player asked for a romantic story.");
         }
 
-        private static void AppendTodayStateContext(StringBuilder sb, StarInteractionRequest request)
+        private void AppendTodayStateContext(StringBuilder sb, StarInteractionRequest request)
+        {
+            object data = BuildStarStateTemplateData(request, includeAtRestFields: false);
+            sb.Append(_templates.Render("star_state_response.sbn", data).TrimEnd());
+        }
+
+        private static object BuildStarStateTemplateData(StarInteractionRequest request, bool includeAtRestFields)
         {
             string json = string.Empty;
-            string legacyXml = string.Empty;
-            string summary = string.Empty;
-            string generatedAt = string.Empty;
-            string slotId = string.Empty;
             if (request.GameContext != null && request.GameContext.Flags != null)
             {
                 request.GameContext.Flags.TryGetValue("todayStarStateJson", out json);
-                request.GameContext.Flags.TryGetValue("todayStarStateXml", out legacyXml);
-                request.GameContext.Flags.TryGetValue("todayStarStateSummary", out summary);
-                request.GameContext.Flags.TryGetValue("todayStarStateGeneratedAt", out generatedAt);
-                request.GameContext.Flags.TryGetValue("todayStarStateSlotId", out slotId);
             }
 
-            if (string.IsNullOrWhiteSpace(json) && !string.IsNullOrWhiteSpace(legacyXml)) json = legacyXml;
+            string situationSummary = string.Empty;
+            string feelingsSummary = string.Empty;
+            string desires = string.Empty;
+            string privateSecretsOrHooks = string.Empty;
+            string whatSheIsDoing = string.Empty;
+            List<string> moodTags = new List<string>();
+            List<string> conversationHooks = new List<string>();
+            List<string> wantsToTalkAbout = new List<string>();
 
-            if (string.IsNullOrWhiteSpace(json))
+            if (!string.IsNullOrWhiteSpace(json))
             {
-                sb.AppendLine("TODAY STAR STATE JSON: none yet. If the player asks what you are up to, answer from your profile, relationship state, and recent history without pretending to know a generated daily schedule.");
-                return;
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(json);
+                    JsonElement root = document.RootElement;
+                    situationSummary = FirstJsonString(
+                        root,
+                        new[] { "currentInnerLife", "situationSummary" },
+                        new[] { "situationSummary" });
+                    feelingsSummary = FirstJsonString(
+                        root,
+                        new[] { "currentInnerLife", "feelingsSummary" },
+                        new[] { "currentInnerLife", "feelings" },
+                        new[] { "feelingsSummary" },
+                        new[] { "feelings" });
+                    desires = FirstJsonString(
+                        root,
+                        new[] { "currentInnerLife", "desires" },
+                        new[] { "currentInnerLife", "currentDesires" },
+                        new[] { "desires" },
+                        new[] { "currentDesires" });
+                    privateSecretsOrHooks = FirstJsonString(
+                        root,
+                        new[] { "currentInnerLife", "privateSecretsOrHooks" },
+                        new[] { "privateSecretsOrHooks" });
+                    whatSheIsDoing = FirstJsonString(
+                        root,
+                        new[] { "today", "whatSheIsDoing" },
+                        new[] { "today", "whatSheIsDoingToday" },
+                        new[] { "whatSheIsDoing" },
+                        new[] { "whatSheIsDoingToday" });
+                    moodTags = FirstJsonStringList(
+                        root,
+                        new[] { "today", "moodTags" },
+                        new[] { "moodTags" });
+
+                    if (includeAtRestFields)
+                    {
+                        conversationHooks = FirstJsonStringList(
+                            root,
+                            new[] { "today", "conversationHooks" },
+                            new[] { "conversationHooks" });
+                        wantsToTalkAbout = FirstJsonStringList(
+                            root,
+                            new[] { "today", "wantsToTalkAbout" },
+                            new[] { "today", "thingsSheWantsToTalkAbout" },
+                            new[] { "wantsToTalkAbout" },
+                            new[] { "thingsSheWantsToTalkAbout" });
+                    }
+                }
+                catch
+                {
+                    // A malformed cached state must never cause a foreground or at-rest request to fail.
+                }
             }
 
-            sb.AppendLine("TODAY STAR STATE JSON — CURRENT INNER LIFE");
-            sb.AppendLine("This state describes how the Star currently feels and lives in-world: her mood, activity, desires, relationship posture, recent awareness, and topics already on her mind.");
-            sb.AppendLine("GeneratedAt=" + generatedAt + "; Slot=" + slotId + "; Summary=" + Truncate(summary, 300));
-            sb.AppendLine(json.Trim());
-            sb.AppendLine("Use this state in every answer as acting guidance, not only when the player asks for a status report. Let one relevant feeling, activity, desire, observation, or hook naturally color or enter spokenText when it makes her feel more alive. Do not recite the fields, mention JSON, or force an unrelated detail.");
+            situationSummary = Truncate(situationSummary, 700);
+            feelingsSummary = Truncate(feelingsSummary, 700);
+            desires = Truncate(desires, 700);
+            privateSecretsOrHooks = Truncate(privateSecretsOrHooks, 700);
+            whatSheIsDoing = Truncate(whatSheIsDoing, 900);
+            moodTags = moodTags.Take(12).Select(x => Truncate(x, 100)).ToList();
+            conversationHooks = conversationHooks.Take(12).Select(x => Truncate(x, 220)).ToList();
+            wantsToTalkAbout = wantsToTalkAbout.Take(12).Select(x => Truncate(x, 220)).ToList();
+
+            bool hasState = !string.IsNullOrWhiteSpace(situationSummary)
+                || !string.IsNullOrWhiteSpace(feelingsSummary)
+                || !string.IsNullOrWhiteSpace(desires)
+                || !string.IsNullOrWhiteSpace(privateSecretsOrHooks)
+                || !string.IsNullOrWhiteSpace(whatSheIsDoing)
+                || moodTags.Count > 0
+                || conversationHooks.Count > 0
+                || wantsToTalkAbout.Count > 0;
+
+            return new
+            {
+                hasState,
+                situationSummary,
+                feelingsSummary,
+                desires,
+                privateSecretsOrHooks,
+                whatSheIsDoing,
+                moodTags,
+                conversationHooks,
+                wantsToTalkAbout
+            };
         }
 
         private static void AppendTodayStateSummaryContext(StringBuilder sb, StarInteractionRequest request)
@@ -1843,7 +1872,7 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine();
                 sb.AppendLine("STAR AT-REST INITIATIVE MODE");
                 sb.AppendLine("This is not a player command. The app is quietly asking whether " + profile.DisplayName + " wants to say something to the Last Cat while he is quiet, newly connected, or resting.");
-                sb.AppendLine("Use TODAY STAR STATE JSON, especially today.wantsToTalkAbout / conversationHooks, recent emotional/interstar feedback, and relationship state. Speak as if you chose to bring it up naturally.");
+                sb.AppendLine("Use the AT-REST STAR STATE, especially wantsToTalkAbout and conversationHooks, recent emotional/interstar feedback, and relationship state. Speak as if you chose to bring it up naturally.");
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
                     sb.AppendLine("Manual Listen/A-button mode is active: behave like the Last Cat pressed interact beside an NPC. Do not be silent unless absolutely necessary; choose a fresh natural line from current state, relationship posture, girlfriend wants/needs, or recent conversation, and make spokenText non-empty.");
