@@ -189,7 +189,7 @@ namespace Wds.SixStars.Api.Ai
             }
 
             string json = JsonSerializer.Serialize(payload, _jsonOptions);
-            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, maxTokens), "request", exchangeId, debugLabel, responseFormatMode);
+            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, responseFormat, maxTokens), "request", exchangeId, debugLabel, responseFormatMode);
 
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl))
             {
@@ -258,7 +258,7 @@ namespace Wds.SixStars.Api.Ai
                 : "not sent; backend/model default";
         }
 
-        private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, int? effectiveMaxTokens)
+        private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, object? requestedResponseFormat, int? effectiveMaxTokens)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("================ LLM REQUEST ================");
@@ -266,6 +266,12 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Endpoint: " + _options.EndpointUrl);
             sb.AppendLine("Model: " + _options.Model);
             sb.AppendLine("ResponseFormatMode: " + responseFormatMode);
+            sb.AppendLine("ResponseFormatSent:");
+            sb.AppendLine(payload.TryGetValue("response_format", out object? sentResponseFormat)
+                ? PrettyJson(sentResponseFormat)
+                : "not sent");
+            sb.AppendLine("RequestedResponseFormatDefinition:");
+            sb.AppendLine(requestedResponseFormat != null ? PrettyJson(requestedResponseFormat) : "none");
             sb.AppendLine("Temperature: " + _options.Temperature);
             sb.AppendLine("MaxTokens: " + DescribeMaxTokens(effectiveMaxTokens));
             sb.AppendLine("ReasoningControls: " + (ShouldSendReasoningControlFields() ? ("off; budget=" + Math.Max(0, _options.ReasoningBudget).ToString(System.Globalization.CultureInfo.InvariantCulture) + "; format=" + (string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat)) : "not sent"));

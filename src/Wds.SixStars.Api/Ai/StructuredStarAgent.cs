@@ -1941,8 +1941,18 @@ namespace Wds.SixStars.Api.Ai
                 int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
                 if (firstNewLine >= 0 && lastFence > firstNewLine) text = text.Substring(firstNewLine + 1, lastFence - firstNewLine - 1).Trim();
             }
+            text = StripModelControlTokens(text).Trim();
             if (text.StartsWith("{", StringComparison.Ordinal) || text.StartsWith("[", StringComparison.Ordinal)) return new List<string>();
             return CleanSpeechParts(new[] { CleanRawTextForSpeech(text) });
+        }
+
+        private static string StripModelControlTokens(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string text = value;
+            text = Regex.Replace(text, @"<\|channel>\s*(thought|analysis|assistant|final)\s*<channel\|>", string.Empty, RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"<\|(thought|analysis|assistant|final|start|end)\|>", string.Empty, RegexOptions.IgnoreCase);
+            return text;
         }
 
         private static List<string> ExtractJsonStringArrayProperty(string text, string propertyName)
@@ -1976,7 +1986,7 @@ namespace Wds.SixStars.Api.Ai
         private static string CleanRawTextForSpeech(string value)
         {
             if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-            string text = value.Trim();
+            string text = StripModelControlTokens(value).Trim();
             text = Regex.Replace(text, "^\\s*(assistant|star|spokenText|spoken_text|reply|response)\\s*[:：]\\s*", string.Empty, RegexOptions.IgnoreCase).Trim();
             text = text.Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase).Replace("```", string.Empty).Trim();
             return text;
