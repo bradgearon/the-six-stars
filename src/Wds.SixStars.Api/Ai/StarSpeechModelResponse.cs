@@ -49,6 +49,10 @@ namespace Wds.SixStars.Api.Ai
         [JsonPropertyName("informationNeeds")]
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
 
+        /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat in this turn.</summary>
+        [JsonPropertyName("thingsLearnedOrSuggestedByPlayer")]
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+
         /// <summary>
         /// Compact foreground emotion-vector hint for speed tests. Format is one entry per canonical
         /// StarEmotionMatrix.StandardEmotionIds item in order: confidence:score;confidence:score;...

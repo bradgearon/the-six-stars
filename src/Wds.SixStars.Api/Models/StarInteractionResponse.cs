@@ -97,6 +97,9 @@ namespace Wds.SixStars.Api.Models
         public bool InformationFollowupSucceeded { get; set; }
         public string InformationFollowupContextSummary { get; set; } = string.Empty;
 
+        /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+
         /// <summary>Full optional foreground information-needs vector returned by the Star before deterministic selection.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();

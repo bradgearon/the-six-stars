@@ -78,6 +78,9 @@ namespace Wds.SixStars.Api.Models
 
         public List<string> MemoryNotes { get; set; } = new List<string>();
 
+        /// <summary>Durable facts, reported events, preferences, plans, and game-world suggestions the Star has explicitly learned from the Last Cat.</summary>
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+
         /// <summary>Exact things the player explicitly asked this Star to remember: coordinates, location markers, descriptions, and named points of interest.</summary>
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
 

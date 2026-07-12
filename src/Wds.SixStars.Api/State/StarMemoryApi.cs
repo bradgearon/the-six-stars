@@ -117,6 +117,7 @@ namespace Wds.SixStars.Api.State
             // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
             // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
+            List<string> newlyLearnedOrSuggested = AddUniqueWithResult(state.ThingsLearnedOrSuggestedByPlayer, request.ThingsLearnedOrSuggestedByPlayer, _options.MaxThingsLearnedOrSuggestedByPlayer);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
             UpsertRememberedMarkers(state, markersToStore, now);
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
@@ -171,6 +172,7 @@ namespace Wds.SixStars.Api.State
                 WisdomScore = request.WisdomScore
             };
             if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
+            entry.ThingsLearnedOrSuggestedByPlayer.AddRange(newlyLearnedOrSuggested);
             entry.RememberedMarkers.AddRange(markersToStore);
             entry.ReferencedMemoryMarkerIds.AddRange(request.ReferencedMemoryMarkerIds);
             entry.Tags.AddRange(request.DetectedCombos);
@@ -194,6 +196,18 @@ namespace Wds.SixStars.Api.State
                 LogEntry = entry
             };
             result.UnityEvents.Add(CreateMemoryUpdatedEvent(request.StarId, state, entry, applied, _options.AcceptModelSuggestedDeltas));
+            foreach (string learnedItem in newlyLearnedOrSuggested)
+            {
+                result.UnityEvents.Add(new UnityEventEnvelope
+                {
+                    Type = "StarLearnedAboutPlayer",
+                    Target = request.StarId,
+                    Data =
+                    {
+                        { "item", learnedItem }
+                    }
+                });
+            }
             if (IsStoryRequest(request.RequestType) && (!string.IsNullOrWhiteSpace(request.StoryTitle) || !string.IsNullOrWhiteSpace(request.StoryId)))
             {
                 result.UnityEvents.Add(new UnityEventEnvelope
@@ -846,6 +860,11 @@ namespace Wds.SixStars.Api.State
             if (state.MemoryNotes == null)
             {
                 state.MemoryNotes = new List<string>();
+                changed = true;
+            }
+            if (state.ThingsLearnedOrSuggestedByPlayer == null)
+            {
+                state.ThingsLearnedOrSuggestedByPlayer = new List<string>();
                 changed = true;
             }
             if (state.GirlfriendHistory == null)
@@ -1721,6 +1740,22 @@ namespace Wds.SixStars.Api.State
         private static bool IsHurtEmotion(string key)
         {
             return key == "Hurt" || key == "Sad" || key == "Angry" || key == "Frustrated" || key == "Suspicious" || key == "Guilty" || key == "Lonely";
+        }
+
+        private static List<string> AddUniqueWithResult(List<string> target, IEnumerable<string> values, int max)
+        {
+            List<string> added = new List<string>();
+            if (target == null || values == null) return added;
+            foreach (string raw in values)
+            {
+                string value = CompactDurableText(raw, 900);
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                if (target.Any(x => string.Equals(x, value, StringComparison.OrdinalIgnoreCase))) continue;
+                target.Insert(0, value);
+                added.Add(value);
+            }
+            Trim(target, max);
+            return added;
         }
 
         private static void AddUnique(List<string> target, IEnumerable<string> source, int maxCount)

@@ -476,7 +476,6 @@ namespace Wds.SixStars.Api.DailyState
                     heart = state.Heart,
                     trust = state.Trust,
                     romance = state.Romance,
-                    benaveilInfluence = state.BenaveilInfluence,
                     connectionPercent = Math.Round(state.EmotionalConnectionPercent, 1),
                     isMet = state.IsMet,
                     isAlly = state.IsAlly,
@@ -529,7 +528,7 @@ namespace Wds.SixStars.Api.DailyState
             Element(sb, 2, "coreQuote", profile.CoreQuote);
             Element(sb, 2, "personality", profile.PersonalityShort);
             sb.AppendLine("  </identity>");
-            sb.AppendLine("  <relationship heart=\"" + state.Heart + "\" trust=\"" + state.Trust + "\" romance=\"" + state.Romance + "\" benaveilInfluence=\"" + state.BenaveilInfluence + "\" connectionPercent=\"" + state.EmotionalConnectionPercent.ToString("0.0", CultureInfo.InvariantCulture) + "\" isMet=\"" + state.IsMet.ToString().ToLowerInvariant() + "\" isAlly=\"" + state.IsAlly.ToString().ToLowerInvariant() + "\" isGirlfriendReady=\"" + state.IsGirlfriendReady.ToString().ToLowerInvariant() + "\" />");
+            sb.AppendLine("  <relationship heart=\"" + state.Heart + "\" trust=\"" + state.Trust + "\" romance=\"" + state.Romance + "\" connectionPercent=\"" + state.EmotionalConnectionPercent.ToString("0.0", CultureInfo.InvariantCulture) + "\" isMet=\"" + state.IsMet.ToString().ToLowerInvariant() + "\" isAlly=\"" + state.IsAlly.ToString().ToLowerInvariant() + "\" isGirlfriendReady=\"" + state.IsGirlfriendReady.ToString().ToLowerInvariant() + "\" />");
             sb.AppendLine("  <currentInnerLife>");
             Element(sb, 2, "situationSummary", model.SituationSummary);
             Element(sb, 2, "feelings", model.FeelingsSummary);

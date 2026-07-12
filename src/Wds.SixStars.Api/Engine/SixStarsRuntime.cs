@@ -97,6 +97,7 @@ namespace Wds.SixStars.Api.Engine
                     MaxMemoryLogEntries = maxMemoryLogEntries,
                     MaxImportantQuotes = maxImportantQuotes,
                     MaxMemoryNotes = maxMemoryNotes,
+                    MaxThingsLearnedOrSuggestedByPlayer = 256,
                     MaxRecentHistoryForPrompt = recentHistoryCount
                 }),
                 screenContextStore,
@@ -1421,6 +1422,13 @@ namespace Wds.SixStars.Api.Engine
                 followup.InformationFollowupAttempted = true;
                 followup.InformationFollowupSucceeded = true;
                 followup.InformationFollowupContextSummary = foregroundResponse.InformationFollowupContextSummary;
+                foreach (string learnedItem in foregroundResponse.ThingsLearnedOrSuggestedByPlayer ?? new List<string>())
+                {
+                    if (!followup.ThingsLearnedOrSuggestedByPlayer.Any(x => string.Equals(x, learnedItem, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        followup.ThingsLearnedOrSuggestedByPlayer.Add(learnedItem);
+                    }
+                }
                 followup.Debug.Notes.Add("requestStarDeepResponseWithData pass used deterministic information selection plus local archive/lore context.");
                 followup.Debug.Notes.Add("Selected information need: " + SummarizeSelection(decision));
                 followup.Debug.Notes.Add("Full foreground vector: " + SummarizeNeedsForEvent(fullVector));
@@ -1520,6 +1528,7 @@ namespace Wds.SixStars.Api.Engine
         {
             int oldArchives = state.OldConversationArchives == null ? 0 : state.OldConversationArchives.Count;
             int recentHistory = state.MemoryLog == null ? 0 : state.MemoryLog.Count;
+            int learnedItems = state.ThingsLearnedOrSuggestedByPlayer == null ? 0 : state.ThingsLearnedOrSuggestedByPlayer.Count;
             int quotes = state.AllImportantPlayerQuotes == null ? 0 : state.AllImportantPlayerQuotes.Count;
             int markers = state.RememberedMarkers == null ? 0 : state.RememberedMarkers.Count(x => x.IsActive);
             int lore = (profile.LibraryCanonNotes == null ? 0 : profile.LibraryCanonNotes.Count) + (profile.AngelStories == null ? 0 : profile.AngelStories.Count);
@@ -1528,7 +1537,7 @@ namespace Wds.SixStars.Api.Engine
 
             return new List<InformationNeedAvailabilityItem>
             {
-                Availability("history", oldArchives + recentHistory, oldArchives > 0 ? oldArchives + " old archives plus " + recentHistory + " recent turns" : recentHistory + " recent turns; no old archive yet", state.OldConversationArchives?.Select(x => x.Summary).Take(4)),
+                Availability("history", oldArchives + recentHistory + learnedItems, oldArchives > 0 ? oldArchives + " old archives plus " + recentHistory + " recent turns and " + learnedItems + " durable learned item(s)" : recentHistory + " recent turns plus " + learnedItems + " durable learned item(s); no old archive yet", state.ThingsLearnedOrSuggestedByPlayer?.Take(4)),
                 Availability("quotes", quotes, quotes + " durable important player quote(s)", state.AllImportantPlayerQuotes?.Select(x => x.Quote).Take(4)),
                 Availability("markers", markers, markers + " active remembered marker(s)", state.RememberedMarkers?.Where(x => x.IsActive).Select(x => x.MarkerName).Take(6)),
                 Availability("lore", lore, lore + " local profile/canon lore item(s)", profile.LibraryCanonNotes?.Take(4)),
@@ -1716,6 +1725,19 @@ namespace Wds.SixStars.Api.Engine
                 {
                     sb.AppendLine("- id=" + marker.Id + " | name=" + TruncateForInfo(marker.MarkerName, 120) + " | coords=" + TruncateForInfo(marker.Coordinates, 80) + " | location=" + TruncateForInfo(FirstNonEmpty(marker.LocationText, marker.Area), 160) + " | " + TruncateForInfo(FirstNonEmpty(marker.Description, marker.ReminderText), 420));
                     if (!string.IsNullOrWhiteSpace(marker.SourcePlayerQuote)) sb.AppendLine("  source quote: " + TruncateForInfo(marker.SourcePlayerQuote, 360));
+                }
+            }
+
+            if ((wantsHistory || wantsLore) && state.ThingsLearnedOrSuggestedByPlayer != null && state.ThingsLearnedOrSuggestedByPlayer.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("DURABLE THINGS THIS STAR LEARNED OR HEARD SUGGESTED BY THE LAST CAT:");
+                foreach (string item in state.ThingsLearnedOrSuggestedByPlayer
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .OrderByDescending(x => RelevanceScore(x, needs, playerText))
+                    .Take(80))
+                {
+                    sb.AppendLine("- " + TruncateForInfo(item, 600));
                 }
             }
 
@@ -2536,6 +2558,7 @@ namespace Wds.SixStars.Api.Engine
                 return;
             }
 
+            bool hadExplicitTargetMinutes = options.TargetMinutes > 0;
             if (options.TargetMinutes <= 0)
             {
                 int minMinutes = ResolveStoryRandomMinimumMinutes();
@@ -2548,15 +2571,21 @@ namespace Wds.SixStars.Api.Engine
 
             if (options.TargetChunkCount <= 0)
             {
-                // Local 4B/8B models with a 16k context need a compact first-pass story plan.
-                // Very large 15-35 minute targets were causing finish_reason=length and the UI
-                // only got Chunk 0. Aim for a vivid complete episode, usually like the good
-                // 8-chunk Elusiaa story, and let explicit seeds / env vars ask for more.
                 int minChunks = ResolveStoryRandomMinimumChunks();
-                int maxChunks = ResolveStoryRandomMaximumChunks(minChunks);
-                int flexibleMinuteTarget = Math.Max(2, Math.Min(12, options.TargetMinutes));
-                int desired = Math.Max(minChunks, Math.Min(maxChunks, (int)Math.Ceiling(flexibleMinuteTarget * 0.8)));
-                options.TargetChunkCount = desired;
+                if (hadExplicitTargetMinutes)
+                {
+                    // An explicit duration from the player is a hard creative requirement. Do not
+                    // silently collapse a long requested story back to the short default range.
+                    options.TargetChunkCount = Math.Max(minChunks, (int)Math.Ceiling(Math.Max(1, options.TargetMinutes) * 0.8));
+                }
+                else
+                {
+                    // Unseeded/default story requests stay compact enough for local models, while
+                    // explicit player length requests above are allowed to scale beyond this range.
+                    int maxChunks = ResolveStoryRandomMaximumChunks(minChunks);
+                    int flexibleMinuteTarget = Math.Max(2, Math.Min(12, options.TargetMinutes));
+                    options.TargetChunkCount = Math.Max(minChunks, Math.Min(maxChunks, (int)Math.Ceiling(flexibleMinuteTarget * 0.8)));
+                }
             }
 
             options.Length = "flexible_random_" + options.TargetMinutes + "_minute_complete_story_" + options.TargetChunkCount + "_chunks";
@@ -2775,6 +2804,7 @@ namespace Wds.SixStars.Api.Engine
                 EmotionScores = response.EmotionScores,
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
+                ThingsLearnedOrSuggestedByPlayer = response.ThingsLearnedOrSuggestedByPlayer,
                 RememberedMarkers = response.RememberedMarkers,
                 ReferencedMemoryMarkerIds = response.ReferencedMemoryMarkerIds,
                 SecretsUnlocked = response.SecretsUnlocked,

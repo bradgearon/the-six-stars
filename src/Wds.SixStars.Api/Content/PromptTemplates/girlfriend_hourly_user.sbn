@@ -31,6 +31,8 @@ RECENT CONVERSATION AND MEMORY
 {{ for item in data.importantPlayerQuotes }}- {{ item }}
 {{ end }}{{ end }}{{ if data.memoryNotes.size > 0 }}Memory notes:
 {{ for item in data.memoryNotes }}- {{ item }}
+{{ end }}{{ end }}{{ if data.thingsLearnedOrSuggestedByPlayer.size > 0 }}Things learned or suggested by the Last Cat:
+{{ for item in data.thingsLearnedOrSuggestedByPlayer }}- {{ item }}
 {{ end }}{{ end }}{{ if data.relationshipEvents.size > 0 }}Relationship events:
 {{ for item in data.relationshipEvents }}- {{ item }}
 {{ end }}{{ end }}{{ if data.interstarUpdates.size > 0 }}Interstar updates that may influence what she wants to say or do:

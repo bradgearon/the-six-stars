@@ -249,6 +249,7 @@ namespace Wds.SixStars.Api.Ai
             memory.AppendLine("ConversationSummary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none" : Truncate(state.ConversationSummary, 900)));
             AppendList(memory, "Important player quotes", state.ImportantPlayerQuotes.Take(16).ToList());
             AppendList(memory, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(16).ToList());
+            AppendList(memory, "Things learned or suggested by the Last Cat", (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(24).ToList());
             AppendRememberedMarkers(memory, state, 16);
             AppendList(memory, "Relationship events", state.RelationshipEvents.Take(16).ToList());
             if (state.StoryHistory.Count > 0)
@@ -327,7 +328,7 @@ namespace Wds.SixStars.Api.Ai
             StringBuilder relationship = new StringBuilder();
             relationship.AppendLine(BuildRelationshipStatus(state));
             relationship.AppendLine("IsGirlfriend=" + state.IsGirlfriend + "; GirlfriendSince=" + (state.GirlfriendSince.HasValue ? state.GirlfriendSince.Value.ToString("o") : "none") + "; IsGirlfriendReady=" + state.IsGirlfriendReady + "; Readiness=" + (state.GirlfriendReadinessSummary ?? string.Empty));
-            relationship.AppendLine("Heart=" + state.Heart + "; Trust=" + state.Trust + "; Romance=" + state.Romance + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + "; BenaveilInfluence=" + state.BenaveilInfluence + ".");
+            relationship.AppendLine("Heart=" + state.Heart + "; Trust=" + state.Trust + "; Romance=" + state.Romance + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ".");
             AppendOtherStarsRelationshipLines(relationship, state);
             AppendConnectionFlirtGuidance(relationship, profile, state);
 
@@ -375,6 +376,7 @@ namespace Wds.SixStars.Api.Ai
                 recentTurns,
                 importantPlayerQuotes = (state.ImportantPlayerQuotes ?? new List<string>()).Take(16).ToList(),
                 memoryNotes = (state.MemoryNotes ?? new List<string>()).Where(x => !IsTechnicalMemoryNote(x)).Take(20).ToList(),
+                thingsLearnedOrSuggestedByPlayer = (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(24).ToList(),
                 relationshipEvents = (state.RelationshipEvents ?? new List<string>()).Take(20).ToList(),
                 interstarUpdates = interstar.Take(18).ToList(),
                 previousState = new
@@ -835,10 +837,10 @@ namespace Wds.SixStars.Api.Ai
             StringBuilder contract = new StringBuilder();
             if (request.RequestType == RequestType.Story)
             {
-                contract.AppendLine("Return story foreground JSON only: starId, spokenText, storyTitle, storyId, storyMarkdown, storySummary, storyIsFinished, storyPartIndex. Do not include emotion vectors, emotionScores, voiceDirective, summaries, deltas, loreUsed, riskFlags, or learnedFunctions.");
+                contract.AppendLine("Return story foreground JSON only: starId, spokenText, storyTitle, storyId, storyMarkdown, storySummary, storyIsFinished, storyPartIndex, thingsLearnedOrSuggestedByPlayer. Do not include emotion vectors, emotionScores, voiceDirective, summaries, deltas, loreUsed, riskFlags, or learnedFunctions.");
                 contract.AppendLine("Return the complete story in storyMarkdown, formatted as ## Chunk 0, one or two story sentences, ---, ## Chunk 1, one or two story sentences, ---, and so on. Do not include blank chunks, delimiter-only chunks, or a final empty heading; every chunk must contain narration the TTS can speak.");
                 contract.AppendLine("For an unseeded Story button click, do not answer with only a mood vignette from today's Star state. Develop a new episode: named subject, problem/desire, escalation, surprising turn, and ending. Keep it compact enough to finish inside the JSON response.");
-                contract.AppendLine("Story length discipline: storyMarkdown should normally contain 6-10 chunks. If a longer tale would risk becoming unfinished, shorten the tale and finish it.");
+                contract.AppendLine("Story length discipline: honor the player's explicit requested length. Without an explicit request, 6-10 meaningful chunks is a useful default. Always finish the story rather than stopping mid-scene.");
                 contract.AppendLine("spokenText must be the first actual story chunk from storyMarkdown, not a preface or promise. Start the story itself immediately.");
                 contract.AppendLine("Set storyPartIndex=0. Set storyIsFinished=true when storyMarkdown is a complete episode with a real ending or satisfying soft cliffhanger, even when it has Chunk 1+ for local autoplay. Set storyIsFinished=false only if the story truly requires a later LLM continuation.");
                 contract.AppendLine("Narrate the story itself as " + profile.DisplayName + "; do not talk about preparing the story. Let her emotional reaction show through the imagery, word choice, tenderness, humor, fear, or wonder of the opening lines.");
@@ -855,7 +857,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId, spokenText, and optionally needsMoreInformation plus informationNeeds. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer. Use false, [], and [] when no extra information or new durable learning is needed. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
                 contract.AppendLine("informationNeeds is a full optional information-request vector, not a single final decision. The host/API layer will analyze the whole vector, compare it to available local data, and deterministically decide whether to run a deep second pass.");
                 contract.AppendLine("When the latest message may need older context or data outside this prompt, return the whole informationNeeds vector: one separate entry for each area you considered from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Put subject='self' unless a specific marker/creature/person/topic is named. Confidence is 0-1 and score is 0-100.");
                 contract.AppendLine("Omit informationNeeds or return [] when the answer is clearly available in the provided prompt. needsMoreInformation is optional legacy hint; set it true only when your spokenText is intentionally a brief 'I am trying to remember/check' bridge line.");
@@ -978,6 +980,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("This is a compact continuity slice in addition to the recent conversation history above.");
             AppendList(sb, "Important exact player quotes", state.ImportantPlayerQuotes.Take(10).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(8).ToList());
+            AppendList(sb, "Things learned or suggested by the Last Cat (durable; do not duplicate in the new foreground array)", (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(20).ToList());
             AppendList(sb, "Relationship events", state.RelationshipEvents.Take(8).ToList());
             if (state.StoryHistory.Count > 0)
             {
@@ -995,6 +998,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use these only as optional seasoning. The story must still develop a fresh plot.");
             AppendList(sb, "Best exact Last Cat quotes to optionally echo", state.ImportantPlayerQuotes.Take(4).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(3).ToList());
+            AppendList(sb, "Things learned or suggested by the Last Cat (durable; optional story continuity)", (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(10).ToList());
             AppendList(sb, "Relationship events", state.RelationshipEvents.Take(3).ToList());
             if (state.StoryHistory.Count > 0)
             {
@@ -1180,10 +1184,11 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("When RequestType=Story, you are not merely agreeing to tell a story. You are already telling it aloud as " + profile.DisplayName + ".");
             sb.AppendLine("Do not open with setup phrases such as 'let me tell you', 'shall I begin', 'the story begins', 'I will continue', or 'where we left off'. Start with the actual story prose immediately.");
             sb.AppendLine("For story mode, write a complete story in storyMarkdown on the first response. This is not a story seed/planning task. The tale should feel whole, with a beginning, middle, climax, and satisfying resolution or soft cliffhanger. Format storyMarkdown into numbered markdown speech chunks: ## Chunk 0, then one or two story sentences, then a line containing only --- before the next chunk. Continue this pattern for every chunk. Never emit an empty chunk; if a chunk has no narration, omit that chunk entirely and renumber the remaining chunks.");
-            sb.AppendLine("The target minutes and chunk count are flexible guidance, not a law. When the player presses the Story button with no seed, the request itself is: invent a fresh complete episode now. Use a concrete character, place, problem, escalation, surprise/turn, and ending; do not merely expand today's mood/state into one reflective scene. Complete story > exact duration.");
-            sb.AppendLine("For local models, prefer 6-10 strong chunks over a long unfinished tale. Never stop mid-sentence or mid-scene; if the story is getting long, end it cleanly and set storyIsFinished=true.");
+            sb.AppendLine("The host target minutes and chunk count are flexible when they are automatic defaults. A length explicitly requested by the player is a hard creative requirement. When the player presses the Story button with no seed, the request itself is: invent a fresh complete episode now. Use a concrete character, place, problem, escalation, surprise/turn, and ending; do not merely expand today's mood/state into one reflective scene.");
+            sb.AppendLine("Honor an explicit player-requested length even when it requires many chunks. When no length was requested, use the host target as guidance. Never stop mid-sentence or mid-scene; complete the full requested story and set storyIsFinished=true when its arc has ended.");
             sb.AppendLine("spokenText must be only the first actual story passage from ## Chunk 0. It must not be an introduction about the story. Keep each spokenText item to one or two natural sentences for TTS.");
             sb.AppendLine("After chunk 0, the host will auto-play the remaining cached storyMarkdown chunks locally. Do not expect or ask for follow-up LLM continuation calls.");
+            sb.AppendLine("At low Heart/Trust, " + profile.DisplayName + " may choose a less intimate or less autobiographical tale, but she must still satisfy the requested subject, quality, completeness, and length. Higher bond allows more private and emotionally revealing stories.");
             sb.AppendLine("The Last Cat is a mature dark fantasy game with wonder, horror, danger, tenderness, and comedy. The story must emotionally fit the player's latest request and the current relationship state: comfort him if he asks softly, become playful if he asks playfully, become dark, exciting, violent, tense, or wondrous if the seed asks for that. Do this through the first story sentences, not by preface.");
             sb.AppendLine("Do not repeat a story from StoriesAlreadyTold. Incorporate relevant exact quotes from shared history or known people when natural, but do not overdo it.");
             sb.AppendLine("storyPartIndex must be 0 for the initial story response. Set storyIsFinished=true when the storyMarkdown is a complete episode with a real ending or satisfying soft cliffhanger, even if the host still has cached chunks to autoplay. Only set storyIsFinished=false for an intentionally unfinished story that requires a future LLM continuation.");
@@ -1204,9 +1209,9 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine("Player story seed: none. The Story button was clicked; this alone is the full request. Do not ask for a seed and do not treat the empty player text as a mood prompt. Invent a NEW complete story now.");
                 sb.AppendLine("Default unseeded story rule: choose a concrete plot from game lore, not only the Star's daily mood/state. Include at least one named traveler/NPC/creature, one problem or desire, one surprising turn, and a real ending or satisfying soft cliffhanger.");
             }
-            int displayedTargetChunks = options.TargetChunkCount <= 0 ? 8 : Math.Max(4, Math.Min(10, options.TargetChunkCount));
+            int displayedTargetChunks = options.TargetChunkCount <= 0 ? 8 : Math.Max(1, options.TargetChunkCount);
             sb.AppendLine("ApproxTargetMinutes: " + (options.TargetMinutes <= 0 ? 0 : options.TargetMinutes) + " (very flexible; complete story is more important)");
-            sb.AppendLine("ApproxTargetChunkCount: " + displayedTargetChunks + " (guidance for this local-model first pass; complete the tale cleanly rather than chasing length)");
+            sb.AppendLine("ApproxTargetChunkCount: " + displayedTargetChunks + " (honor this closely when it reflects the player's explicit length request; otherwise use it as guidance)");
             sb.AppendLine("MaxSentencesPerChunk: " + (options.MaxSentencesPerChunk <= 0 ? 2 : options.MaxSentencesPerChunk));
             if (options.StoriesAlreadyTold.Count > 0)
             {
@@ -1216,7 +1221,7 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine(BuildForbiddenStoryMotifHints(options.StoriesAlreadyTold));
             }
             sb.AppendLine("Create a new complete story. The desktop host will speak Chunk 0 from spokenText, then read Chunk 1+ directly from cached storyMarkdown. Empty chunks are invalid because the host will skip them; write only meaningful narration chunks. Do not write a trailing chunk header unless that chunk has narration after it. The final chunk must contain a real ending line or a satisfying soft cliffhanger.");
-            sb.AppendLine("Length rule: use 6-10 chunks by default. Do not pad. Do not leave the tale unfinished just to chase the target length. Complete story > exact duration. A vivid 8-chunk story is better than a 20-chunk story cut off by context.");
+            sb.AppendLine("Length rule: match the length the player requested. If no explicit length was requested, use about 6-10 meaningful chunks by default. Do not pad, but do not shorten an explicitly requested long tale. The story must be complete at the requested scale.");
         }
 
         private static string InterstarVectorAlias(string starId)
@@ -1307,9 +1312,10 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("- No cat has been seen for one hundred years. The universe is drying up because cats are gone; cats are rare astral conduits tied to water, stardust, and restoration.");
             sb.AppendLine("- The player is the sentient Last Cat. He was delivered twenty years ago to an intergalactic orphanage with people and other races from across the universe.");
             sb.AppendLine("- The six Stars are six human women in or near the caves and cave settlements. They have childhoods, parents, village ties, wounds, and their own local histories.");
-            sb.AppendLine("- Each Star is powered/marked by a father-form or spiritual parent-form connected to an unseen angelic source. They do not know the hidden angel's name is Benaveil unless the game explicitly reveals it.");
+            sb.AppendLine("- The caves are dark, deep, fast-moving, and genuinely lethal. Violent and treacherous enemies, poisoned water, collapsing routes, ambushes, and ancient powers can injure or kill both cats and Stars.");
+            sb.AppendLine("- The Last Cat needs the Stars' powers to survive the cave network, and the Stars need his astral growth, judgment, and courage. Neither side is invulnerable.");
+            sb.AppendLine("- The Last Cat is the only known cat and the world's present hope of restoring the lost cats and surviving what waits below. Keep hope alive without softening the danger.");
             sb.AppendLine("- A greater evil may be involved in why the cats are gone, but the Stars do not know the full truth. Treat this as mystery, rumor, intuition, or prophecy, not solved exposition.");
-            sb.AppendLine("- Sometimes angelic forms appear among cave villagers, walk down a corridor, and vanish. Settlements usually know this only as rumor; they have not clearly witnessed or understood it.");
             sb.AppendLine("- Bradmageddon is a name/person they may know as alien to this universe or strangely outside its rules, but they do not know who he truly is unless the host/state says so.");
             sb.AppendLine("- Other Stars are discovery-gated: a Star may know rumors of the six, but she should not talk as if the Last Cat has personally met a Star unless knownStarsMet/state says that Star is met.");
         }
@@ -1734,8 +1740,6 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use this compact profile knowledge in ordinary conversation, not only in story mode. These are facts " + profile.DisplayName + " can naturally talk about when asked.");
             sb.AppendLine("Identity: My name is " + profile.DisplayName + "; element=" + profile.Element + "; domain=" + profile.Domain + ".");
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
-            if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Spiritual father / Benaveil form: " + profile.SpiritualFather + ".");
-            if (!string.IsNullOrWhiteSpace(profile.SpiritualFatherForm)) sb.AppendLine("Father-form meaning: " + Truncate(profile.SpiritualFatherForm, 360));
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 420));
             if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Background: " + Truncate(profile.CompleteBackgroundStory, 520));
             AppendList(sb, "Friends / allies / contacts she may name in normal chat", profile.FriendsAndContacts.Take(10).ToList());
@@ -1747,7 +1751,6 @@ namespace Wds.SixStars.Api.Ai
                     sb.AppendLine("- " + person.DisplayName + " [" + person.Relationship + "]: " + Truncate(person.Summary, 220));
                 }
             }
-            AppendList(sb, "Benaveil form interactions she may discuss", profile.BenaveilFormInteractions.Take(6).ToList());
             AppendList(sb, "Secrets and hooks she may tease when asked", profile.StarSecrets.Take(5).ToList());
             AppendList(sb, "Skill / cave work / Metroidvania details she may mention", profile.SkillSecrets.Take(6).ToList());
             AppendList(sb, "Normal chat behavior rules", profile.SpokenResponseRules.Take(8).ToList());
@@ -1762,7 +1765,6 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 220));
             if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("Story voice: " + Truncate(profile.SpeakingStyle, 240));
-            if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Father-form: " + profile.SpiritualFather + ".");
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory seed: " + Truncate(profile.BackstorySummary, 260));
             AppendList(sb, "Usable recurring people/creatures/contacts", profile.FriendsAndContacts.Take(5).ToList());
             AppendList(sb, "Usable secrets/skills/place hooks", profile.StarSecrets.Concat(profile.SkillSecrets).Take(5).ToList());
@@ -1816,9 +1818,13 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("The player is talking to " + profile.DisplayName + " to hang out with her. She should be conversational, curious, and useful, while staying fully in character.");
             sb.AppendLine("Latest player question to answer completely: " + Truncate(request.PlayerText ?? string.Empty, 500));
             sb.AppendLine("If he asks for her name, the answer must include the exact name: " + profile.DisplayName + ".");
-            sb.AppendLine("If he asks about herself, include at least three concrete details: element/domain, what she does in or around the caves/settlement, one friend or ally, and one guarded hint about her past or father-form if natural.");
+            sb.AppendLine("If he asks about herself, include at least three concrete details: element/domain, what she does in or around the caves/settlement, one friend or ally, and one guarded detail about her past, cave work, or private concern if natural.");
             sb.AppendLine("If he asks whether she has friends, name at least two friends/allies/contacts from the profile and say what they mean to her. Do not answer only with 'Friends?' or 'you do not know me.'");
             sb.AppendLine("If he asks what she does in the caves, give concrete activities: guiding routes, watching settlements, teaching skills, guarding secrets, solving puzzles, helping or testing the Last Cat, and dealing with threats that match her element.");
+            sb.AppendLine("If he asks for any kind of story in ordinary Chat, tell the complete story now in her voice and match the requested length, genre, mood, subject, setting, and intensity. Give it a beginning, development, turning point/climax, and ending.");
+            sb.AppendLine("If he asks for jokes, give exactly the number requested. Make every joke distinct, genuinely structured as a joke, and fitted to her personality and the requested subject.");
+            sb.AppendLine("At low Heart/Trust, stories and jokes may be safer, drier, and less personally revealing; at higher Heart/Trust they may become more intimate, vivid, and generous. Never use low bond to evade, undercount, or leave a story unfinished.");
+            sb.AppendLine("For skills, spells, abilities, monsters, bosses, creatures, people, NPCs, and named characters, do not invent facts. Use supplied canon; when exact information is missing, request it through needsMoreInformation/informationNeeds.");
             sb.AppendLine("If the character is shy, proud, mysterious, shadowed, or guarded, express that as tone while still giving the facts. Example pattern: 'I do not tell everyone this, but...' followed by real information.");
             sb.AppendLine("It is okay to end with a small in-character question back, but only after answering the player's actual question.");
             sb.AppendLine("Emotion and relationship scoring is handled in the background review. In this foreground pass, simply let the relationship state shape her tone without mentioning scores or vectors.");
@@ -1857,11 +1863,8 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendExpandedProfileLore(StringBuilder sb, StarProfile profile)
         {
-            if (!string.IsNullOrWhiteSpace(profile.SpiritualFather)) sb.AppendLine("Spiritual father / Benaveil parent form: " + profile.SpiritualFather);
-            if (!string.IsNullOrWhiteSpace(profile.SpiritualFatherForm)) sb.AppendLine("Father-form meaning: " + profile.SpiritualFatherForm);
             if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Complete background story: " + Truncate(profile.CompleteBackgroundStory, 1600));
             AppendList(sb, "Friends, allies, contacts, and recurring people she can talk about", profile.FriendsAndContacts);
-            AppendList(sb, "Conversation history and emotional history with Benaveil's forms", profile.BenaveilFormInteractions);
             AppendList(sb, "Four core secrets / hidden hooks she may reveal through trust, letters, or story mode", profile.StarSecrets);
             AppendList(sb, "Skill, Metroidvania, and ability secrets she can tease or teach", profile.SkillSecrets);
             AppendList(sb, "Concise canon notes imported from the markdown game library", profile.LibraryCanonNotes);
@@ -1874,8 +1877,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use this lore as character memory and world texture. Do not dump it as exposition. The story should be a good whole story in " + profile.DisplayName + "'s voice, shaped by the player's seed rather than by a fixed formula.");
             sb.AppendLine("Game premise: No cat has been seen for one hundred years. The universe is drying up. The Last Cat is an astral conduit who learns mana abilities from the Stars, then learns no-mana astral versions through the soul sword, the Astral Stream, Leviathan, ancient cat letters, and repeated use.");
             sb.AppendLine("Major places: Virethorn Sanctuary and poisoned water puzzles; Upper Caves / Highroot Waterworks; Bone Caves / Marrow Ossuary with Bone Bloom; Astral Caverns and Leviathan Road; Astral Book Room and hell arcade foreshadowing.");
-            sb.AppendLine("Benaveil: a young angel behind the Stars. His named forms are spiritually called their father-forms. His unnamed dark force can distort music, thought, and mercy. Greater evils push him toward condemnation, but wise play may save everyone.");
-            sb.AppendLine("Stars: Elusiaa-Light/Mercy/Racha; Khavia-Water/Friendship/Chavera; Auerlis-Fire/Joy/Simchi; Maera-Blood/Possession/Maerrow; Kaelia-Void/Mystery/Kaeliss; Nyxari-Shadow/Fragmentation/Nyxara.");
+            sb.AppendLine("Cave tone: the Last Cat moves through dark, deep, dangerous passages where violent and treacherous enemies can kill cats and Stars. He needs Star powers to survive, and he is the only present hope of restoring the cats.");
+            sb.AppendLine("Stars: Elusiaa-Light/Mercy; Khavia-Water/Friendship; Auerlis-Fire/Joy; Maera-Blood/Possession; Kaelia-Void/Mystery; Nyxari-Shadow/Fragmentation.");
             AppendExpandedProfileLore(sb, profile);
             if (profile.AngelStories.Count > 0)
             {
@@ -1885,7 +1888,7 @@ namespace Wds.SixStars.Api.Ai
                     sb.AppendLine("- " + story.Title + ": " + story.Summary);
                 }
             }
-            sb.AppendLine("Story quality reminder: name a specific place or traveler; introduce a desire/problem; include one surprising secret, skill, friend, father-form, letter, or monster when it fits; reach a turning point; end with a real resolution or soft cliffhanger that still feels like a complete episode. Before returning JSON, mentally verify the last ## Chunk has actual narration and the story does not stop mid-sentence or mid-scene.");
+            sb.AppendLine("Story quality reminder: name a specific place or traveler; introduce a desire/problem; include one surprising secret, skill, friend, letter, creature, or cave discovery when it fits; reach a turning point; end with a real resolution or soft cliffhanger that still feels like a complete episode. Before returning JSON, mentally verify the last ## Chunk has actual narration and the story does not stop mid-sentence or mid-scene.");
         }
 
 
@@ -2004,7 +2007,7 @@ namespace Wds.SixStars.Api.Ai
                 stage = "early bond / still learning each other";
             }
 
-            return stage + " (Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", BenaveilInfluence " + state.BenaveilInfluence + ", EmotionalConnection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, GirlfriendReady " + state.IsGirlfriendReady + ", IsAlly " + state.IsAlly + ").";
+            return stage + " (Heart " + state.Heart + ", Trust " + state.Trust + ", Romance " + state.Romance + ", EmotionalConnection " + state.EmotionalConnectionPercent.ToString("0.0") + "%, GirlfriendReady " + state.IsGirlfriendReady + ", IsAlly " + state.IsAlly + ").";
         }
 
         private static string BuildLatestScreenOneLine(IReadOnlyList<ScreenCaptureSummary> screens)
@@ -2023,9 +2026,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 500));
             List<string> friends = profile.FriendsAndContacts ?? new List<string>();
-            List<string> formNotes = profile.BenaveilFormInteractions ?? new List<string>();
             if (friends.Count > 0) sb.AppendLine("Friends/contacts: " + Truncate(string.Join("; ", friends.Take(6)), 600));
-            if (formNotes.Count > 0) sb.AppendLine("Benaveil/form concerns: " + Truncate(string.Join("; ", formNotes.Take(4)), 600));
             sb.AppendLine("Relationship to Last Cat: " + BuildRelationshipStatus(state));
             AppendOtherStarsRelationshipLines(sb, state);
             List<TopAffectedEmotion> top = state.LastTopAffectedEmotions ?? new List<TopAffectedEmotion>();

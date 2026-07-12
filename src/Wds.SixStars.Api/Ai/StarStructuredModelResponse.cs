@@ -35,6 +35,7 @@ namespace Wds.SixStars.Api.Ai
         public string NegativeEmotionVector { get; set; } = string.Empty;
         public bool NeedsMoreInformation { get; set; }
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]

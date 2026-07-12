@@ -20,7 +20,7 @@ namespace Wds.SixStars.Api.Ai
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
-                        "loreUsed", "riskFlags", "wisdomScore"
+                        "thingsLearnedOrSuggestedByPlayer", "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
                 { "properties", new Dictionary<string, object>
@@ -58,6 +58,7 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendCoupleActivitySummary", StringProperty(520) },
                         { "girlfriendCoupleActivityVector", StringProperty(1200) },
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
                         { "loreUsed", StringArray(8) },
                         { "riskFlags", StringArray(5) },
                         { "wisdomScore", NumberProperty(0, 1) }
@@ -225,13 +226,14 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText" } },
+                { "required", new[] { "starId", "spokenText", "needsMoreInformation", "informationNeeds", "thingsLearnedOrSuggestedByPlayer" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
                         { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "needsMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "informationNeeds", InformationNeedArray(9) }
+                        { "informationNeeds", InformationNeedArray(9) },
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) }
                     }
                 }
             };
@@ -388,12 +390,13 @@ namespace Wds.SixStars.Api.Ai
                 { "storyMarkdown", StringProperty() },
                 { "storySummary", StringProperty(900) },
                 { "storyIsFinished", new Dictionary<string, object> { { "type", "boolean" } } },
-                { "storyPartIndex", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 } } }
+                { "storyPartIndex", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 } } },
+                { "thingsLearnedOrSuggestedByPlayer", StringArray(8) }
             };
 
             string[] required = continuation
-                ? new[] { "starId", "spokenText", "storyIsFinished", "storyPartIndex" }
-                : new[] { "starId", "spokenText", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex" };
+                ? new[] { "starId", "spokenText", "storyIsFinished", "storyPartIndex", "thingsLearnedOrSuggestedByPlayer" }
+                : new[] { "starId", "spokenText", "storyTitle", "storyId", "storyMarkdown", "storySummary", "storyIsFinished", "storyPartIndex", "thingsLearnedOrSuggestedByPlayer" };
 
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
@@ -655,13 +658,12 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "heart", "trust", "romance", "benaveilInfluence", "emotionalConnectionPercent" } },
+                { "required", new[] { "heart", "trust", "romance", "emotionalConnectionPercent" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "heart", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -8 }, { "maximum", 8 } } },
                         { "trust", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -8 }, { "maximum", 8 } } },
                         { "romance", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -6 }, { "maximum", 6 } } },
-                        { "benaveilInfluence", new Dictionary<string, object> { { "type", "integer" }, { "minimum", -6 }, { "maximum", 6 } } },
                         { "emotionalConnectionPercent", NumberProperty(-5, 5) }
                     }
                 }

@@ -24,8 +24,6 @@ namespace Wds.SixStars.Api.Stars
         public Dictionary<string, string> EmotionVoiceHints { get; set; } = new Dictionary<string, string>();
         public string DeepPersonality { get; set; } = string.Empty;
         public string BackstorySummary { get; set; } = string.Empty;
-        public string SpiritualFather { get; set; } = string.Empty;
-        public string SpiritualFatherForm { get; set; } = string.Empty;
         public string CompleteBackgroundStory { get; set; } = string.Empty;
 
         /// <summary>Private attraction hook for the prompt. The Star knows this internally but should not confess it cheaply.</summary>
@@ -44,7 +42,6 @@ namespace Wds.SixStars.Api.Stars
         public List<string> RomanceBoundaryRules { get; set; } = new List<string>();
 
         public List<string> FriendsAndContacts { get; set; } = new List<string>();
-        public List<string> BenaveilFormInteractions { get; set; } = new List<string>();
         public List<string> StarSecrets { get; set; } = new List<string>();
         public List<string> SkillSecrets { get; set; } = new List<string>();
         public List<string> LibraryCanonNotes { get; set; } = new List<string>();

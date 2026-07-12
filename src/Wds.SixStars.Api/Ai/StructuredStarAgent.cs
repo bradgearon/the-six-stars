@@ -298,6 +298,8 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received fast LLM speech response ({json.Length} chars)");
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
+            ApplyKnowledgeQuestionInformationNeeds(request, model);
+            model.ThingsLearnedOrSuggestedByPlayer = CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8);
             List<GirlfriendVectorItem> initiativeSpeechDecisionVector = NormalizeGirlfriendVector(model.SpeechDecisionVector, 1);
             bool initiativeVectorWantsSpeech = initiativeSpeechDecisionVector.Any(x => x != null && (x.Score > 0 || x.Confidence > 0));
             StarInteractionResponse response = new StarInteractionResponse
@@ -325,6 +327,7 @@ namespace Wds.SixStars.Api.Ai
                 StoryPartIndex = request.StoryOptions?.NextStoryPartIndex ?? model.StoryPartIndex,
                 NeedsMoreInformation = model.NeedsMoreInformation,
                 InformationNeeds = model.InformationNeeds ?? new List<InformationNeedVectorItem>(),
+                ThingsLearnedOrSuggestedByPlayer = model.ThingsLearnedOrSuggestedByPlayer ?? new List<string>(),
                 Debug = new DebugInfo
                 {
                     DetectedIntent = request.RequestType.ToString(),
@@ -521,6 +524,7 @@ namespace Wds.SixStars.Api.Ai
             response.DetectedCombos.AddRange(model.DetectedCombos);
             // Important quote capture is deterministic now. Ignore model-provided quote choices.
             response.MemoryNotes.AddRange(model.MemoryNotes);
+            response.ThingsLearnedOrSuggestedByPlayer.AddRange(CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8));
             response.RememberedMarkers.AddRange(model.RememberedMarkers);
             response.ReferencedMemoryMarkerIds.AddRange(model.ReferencedMemoryMarkerIds);
             response.SecretsUnlocked.AddRange(model.SecretsUnlocked);
@@ -609,6 +613,59 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(foreground.EmotionalEffectVector) && string.IsNullOrWhiteSpace(analysis.EmotionalEffectVector)) analysis.EmotionalEffectVector = foreground.EmotionalEffectVector;
             if (foreground.StoryPartIndex > 0 && analysis.StoryPartIndex <= 0) analysis.StoryPartIndex = foreground.StoryPartIndex;
             analysis.StoryIsFinished = foreground.StoryIsFinished;
+            foreach (string item in CleanDurableLearnedItems(foreground.ThingsLearnedOrSuggestedByPlayer, 8))
+            {
+                if (!analysis.ThingsLearnedOrSuggestedByPlayer.Any(x => string.Equals(x, item, StringComparison.OrdinalIgnoreCase)))
+                {
+                    analysis.ThingsLearnedOrSuggestedByPlayer.Add(item);
+                }
+            }
+        }
+
+        private static List<string> CleanDurableLearnedItems(IEnumerable<string>? values, int maxItems)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Select(x => CleanOneLine(x, 900))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, maxItems))
+                .ToList();
+        }
+
+        private static void ApplyKnowledgeQuestionInformationNeeds(StarInteractionRequest request, StarSpeechModelResponse model)
+        {
+            if (request == null || model == null || request.RequestType == RequestType.Story || request.RequestType == RequestType.StarInitiative) return;
+            string text = (request.PlayerText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+            string lower = text.ToLowerInvariant();
+            bool asksForFacts = text.Contains('?')
+                || Regex.IsMatch(lower, @"\b(who|what|where|when|which|how|explain|describe|tell me about|do you know)\b", RegexOptions.IgnoreCase);
+            if (!asksForFacts) return;
+
+            List<(string DataType, string Reason)> required = new List<(string, string)>();
+            if (Regex.IsMatch(lower, @"\b(skill|skills|spell|spells|ability|abilities|talent|talents|power|powers|attack|attacks|move|moves|skill tree)\b"))
+                required.Add(("lore", "The player asked for exact skill, spell, ability, or combat canon."));
+            if (Regex.IsMatch(lower, @"\b(monster|monsters|enemy|enemies|boss|bosses|creature|creatures|beast|beasts|bestiary)\b"))
+                required.Add(("bestiary", "The player asked for exact monster, enemy, boss, or creature canon."));
+            if (Regex.IsMatch(lower, @"\b(person|people|npc|npcs|character|characters|who is|who are)\b"))
+                required.Add(("characters", "The player asked for exact information about a person or character."));
+            if (required.Count == 0) return;
+
+            model.InformationNeeds ??= new List<InformationNeedVectorItem>();
+            string subject = CleanOneLine(text, 160);
+            foreach ((string dataType, string reason) in required)
+            {
+                if (model.InformationNeeds.Any(x => string.Equals(x.DataType, dataType, StringComparison.OrdinalIgnoreCase))) continue;
+                model.InformationNeeds.Add(new InformationNeedVectorItem
+                {
+                    DataType = dataType,
+                    Subject = subject,
+                    Confidence = 0.98,
+                    Score = 100,
+                    Reason = reason
+                });
+            }
+            model.NeedsMoreInformation = true;
         }
 
         private static VoiceDirective BuildDefaultVoiceDirective(StarProfile profile, StarInteractionRequest request)
@@ -1134,6 +1191,7 @@ namespace Wds.SixStars.Api.Ai
             model.SuggestedStateDeltas ??= RelationshipDelta.Zero();
             model.ImportantPlayerQuotes ??= new List<string>();
             model.MemoryNotes ??= new List<string>();
+            model.ThingsLearnedOrSuggestedByPlayer ??= new List<string>();
             model.RememberedMarkers ??= new List<StarRememberedMarker>();
             model.ReferencedMemoryMarkerIds ??= new List<string>();
             model.SecretsUnlocked ??= new List<string>();
