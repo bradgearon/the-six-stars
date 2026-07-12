@@ -411,11 +411,9 @@ namespace Wds.SixStars.Api.Ai
                 .Take(12)
                 .Select(need => (object)new
                 {
-                    dataType = need.DataType ?? string.Empty,
-                    subject = need.Subject ?? string.Empty,
+                    subject = string.IsNullOrWhiteSpace(need.Subject) ? need.DataType ?? string.Empty : need.Subject,
                     confidence = need.Confidence.ToString("0.00"),
-                    score = need.Score.ToString("0.0"),
-                    reason = Truncate(need.Reason, 220)
+                    score = need.Score.ToString("0.0")
                 })
                 .ToList();
 
@@ -807,11 +805,12 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer. Use false, [], and [] when no extra information or new durable learning is needed. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
-                contract.AppendLine("informationNeeds is a full optional information-request vector, not a single final decision. The host/API layer will analyze the whole vector, compare it to available local data, and deterministically decide whether to run a deep second pass.");
-                contract.AppendLine("Content-backed dataType names match the local folders exactly: lore=skills/spells/abilities/weapons/mechanics; bestiary=monsters/enemies/bosses/creatures/HP/drops; characters=Stars/people/NPCs/companions/guardians; world=areas/locations/settlements/ecology/quests; story=exact scenes/meetings/dialogue/story continuity. A deep pass receives the selected folder's complete index.md plus the original player speech.");
-                contract.AppendLine("When the latest message may need older context or information outside this prompt, fill the informationNeeds vector: one separate entry for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Omit informationNeeds or return [] when the answer is clearly available in the provided prompt.");
-                contract.AppendLine("If you set needsMoreInformation=true or return a high scoring informationNeeds vector, spokenText should be brief and in character, such as saying you are reaching back into older memory. The host may immediately run a selector and second pass with a local archive/lore slice.");
+                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer. Do not include emotion vectors, emotionScores, topEmotions, emotionalPurpose, voiceDirective, memoryNotes, summaries, deltas, loreUsed, riskFlags, or learnedFunctions in this foreground response.");
+                contract.AppendLine("informationNeeds is an array. Every item must contain exactly three fields: subject, confidence, and score. Do not add dataType, reason, topic, query, or any other field.");
+                contract.AppendLine("The subject field chooses the information source and must be exactly one of: history, quotes, markers, lore, bestiary, characters, world, screen, story. Use lore for skills/spells/abilities/weapons/mechanics; bestiary for monsters/enemies/bosses/creatures/HP/drops; characters for Stars/people/NPCs/companions/guardians; world for areas/locations/settlements/ecology/quests; story for exact scenes/meetings/dialogue/story continuity. The host automatically uses the player's original speech as the lookup question.");
+                contract.AppendLine("When the latest message may need older context or information outside this prompt, fill the informationNeeds array: one separate entry for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas. Do not collapse everything into one history need. Omit informationNeeds or return [] when the answer is clearly available in the provided prompt.");
+                contract.AppendLine("When informationNeeds is not empty, set needsMoreInformation=true and keep spokenText brief and in character while the host retrieves the requested source. When informationNeeds is empty, set needsMoreInformation=false.");
+                contract.AppendLine("Exact shape example: {\"needsMoreInformation\":true,\"informationNeeds\":[{\"subject\":\"bestiary\",\"confidence\":0.75,\"score\":80}]}. Follow this shape exactly.");
                 contract.AppendLine("When the player explicitly asks for a long answer or a story in ordinary Chat, complete it in this same response. Do not redirect to Story mode, do not summarize it early, and do not stop after an introductory sample. Add as many ordered spokenText chunks as needed to finish it.");
                 contract.AppendLine("For an open-ended creative story request, do not request extra information merely because it is a story; invent it from the profile and context already provided. Request older data only when the player explicitly requires a missing canon fact or continuation detail.");
             }

@@ -2,7 +2,7 @@
 
 The runtime sends exactly one canonical `index.md` for a content-backed information need.
 
-| informationNeeds dataType | Folder sent | Contents |
+| informationNeeds subject | Folder sent | Contents |
 |---|---|---|
 | `lore` | `lore/index.md` | Skills, spells, abilities, weapons, combat, and companion mechanics |
 | `bestiary` | `bestiary/index.md` | Monsters, enemies, creatures, bosses, HP, attacks, and drops |

@@ -7,7 +7,7 @@ using Wds.SixStars.Api.Stars;
 namespace Wds.SixStars.Api.Engine
 {
     /// <summary>
-    /// Optional very fast selector that interprets the foreground information-needs vector.
+    /// Optional very fast selector that interprets the foreground informationNeeds array.
     /// It does not fetch data and it does not answer the player; the runtime uses its result
     /// as one input to the deterministic local data-selection decision.
     /// </summary>

@@ -502,14 +502,12 @@ namespace Wds.SixStars.Api.Ai
                     {
                         { "type", "object" },
                         { "additionalProperties", false },
-                        { "required", new[] { "dataType", "subject", "confidence", "score", "reason" } },
+                        { "required", new[] { "subject", "confidence", "score" } },
                         { "properties", new Dictionary<string, object>
                             {
-                                { "dataType", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "history", "quotes", "markers", "lore", "bestiary", "characters", "world", "screen", "story" } } } },
-                                { "subject", StringProperty(160) },
+                                { "subject", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "history", "quotes", "markers", "lore", "bestiary", "characters", "world", "screen", "story" } } } },
                                 { "confidence", NumberProperty(0, 1) },
-                                { "score", NumberProperty(0, 100) },
-                                { "reason", StringProperty(320) }
+                                { "score", NumberProperty(0, 100) }
                             }
                         }
                     }

@@ -185,7 +185,6 @@ public final class MainActivity extends ComponentActivity {
     private View prodTalkButton;
     private View prodListenButton;
     private View prodPhotoButton;
-    private Button prodBreakupButton;
     private View prodVoiceActions;
     private Button prodCancelVoiceButton;
     private Button prodSendVoiceButton;
@@ -532,7 +531,6 @@ public final class MainActivity extends ComponentActivity {
         prodTalkButton = null;
         prodListenButton = null;
         prodPhotoButton = null;
-        prodBreakupButton = null;
         prodVoiceActions = null;
         prodCancelVoiceButton = null;
         prodSendVoiceButton = null;
@@ -552,7 +550,6 @@ public final class MainActivity extends ComponentActivity {
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodListenButton = findViewById(R.id.prod_listen_button);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
-        prodBreakupButton = findViewById(R.id.prod_breakup_button);
         prodVoiceActions = findViewById(R.id.prod_voice_actions);
         prodCancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
         prodSendVoiceButton = findViewById(R.id.prod_send_voice_button);
@@ -593,7 +590,6 @@ public final class MainActivity extends ComponentActivity {
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
         if (prodListenButton != null) prodListenButton.setOnClickListener(v -> requestStarInitiativeFromListenButton());
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
-        if (prodBreakupButton != null) prodBreakupButton.setOnClickListener(v -> dispatchBreakupGirlfriend());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
         prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
         prodTextToggleButton.setOnClickListener(v -> toggleProdTextComposer());
@@ -1128,7 +1124,6 @@ public final class MainActivity extends ComponentActivity {
             String gfSuffix = girlfriend ? "   Girlfriend" + (selectedStarCuteModeEnabled ? (selectedStarCuteModeActive ? "   Cute" : "") : "   Cute off") : (ready ? "   Ready" : "");
             prodRelationshipText.setText("♥ Heart " + heart + "   Trust " + trust + "   Romance " + romance + "   " + String.format(Locale.US, "%.1f", connection) + "%" + gfSuffix);
         }
-        if (prodBreakupButton != null) prodBreakupButton.setVisibility(View.GONE);
         if (prodMiniStatusText != null) prodMiniStatusText.setText(status);
     }
 
@@ -2021,7 +2016,6 @@ public final class MainActivity extends ComponentActivity {
         selectedStarCuteModeActive = optBooleanEither(event, "girlfriendCuteModeActive", "GirlfriendCuteModeActive", selectedStarCuteModeActive);
         selectedStarCuteModeSignature = optStringEither(event, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
         applyStarStateObject(event, type);
-        if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriend ? View.VISIBLE : View.GONE);
         if (prodMiniStatusText != null) {
             prodMiniStatusText.setText(girlfriend ? starId + " is now your girlfriend." : starId + " answered your girlfriend proposal.");
         }
@@ -2702,7 +2696,6 @@ public final class MainActivity extends ComponentActivity {
                 boolean girlfriendAfter = optBooleanEither(json, "isGirlfriendAfter", "IsGirlfriendAfter", selectedStarIsGirlfriend);
                 if (hasGirlfriendState) {
                     selectedStarIsGirlfriend = girlfriendAfter;
-                    if (prodBreakupButton != null) prodBreakupButton.setVisibility(girlfriendAfter ? View.VISIBLE : View.GONE);
                 }
                 String storyTitle = optStringEither(json, "storyTitle", "StoryTitle", "");
                 String storyMarkdown = optStringEither(json, "storyMarkdown", "StoryMarkdown", "");

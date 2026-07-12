@@ -100,7 +100,7 @@ namespace Wds.SixStars.Api.Models
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
-        /// <summary>Full optional foreground information-needs vector returned by the Star before deterministic selection.</summary>
+        /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();
 

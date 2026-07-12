@@ -1351,27 +1351,28 @@ namespace Wds.SixStars.Api.Engine
                 return response;
             }
 
-            List<InformationNeedVectorItem> foregroundVector = NormalizeInformationNeedVector(response, request.PlayerText);
+            List<InformationNeedVectorItem> foregroundVector = NormalizeInformationNeeds(response);
             response.InformationNeeds = foregroundVector;
+            response.Debug.Notes.Add("Normalized model informationNeeds: " + SummarizeNeedsForEvent(foregroundVector));
             if (foregroundVector.Count == 0) return response;
 
             List<InformationNeedAvailabilityItem> availability = BuildInformationNeedAvailability(profile, state, request);
             response.InformationNeedAvailability = availability;
 
-            // The foreground model already returned a scored information-needs vector and the API
+            // The foreground model already returned a scored informationNeeds array and the API
             // already has deterministic availability/threshold logic. Do not spend a second LLM
             // request merely selecting one item from that vector. A real deep-data follow-up still
             // runs only when the deterministic gate decides the need is strong enough.
             InformationNeedSelectionResult? aiSelection = null;
-            InformationNeedSelectionResult decision = SelectInformationNeedDeterministically(foregroundVector, availability, aiSelection, response.NeedsMoreInformation, request.PlayerText);
-            response.Debug.Notes.Add("Information need selection used the foreground vector plus deterministic local-data availability; no selector LLM request was made.");
+            InformationNeedSelectionResult decision = SelectInformationNeedDeterministically(foregroundVector, availability, aiSelection, response.NeedsMoreInformation);
+            response.Debug.Notes.Add("Information need selection used the foreground informationNeeds array plus local-data availability; no selector LLM request was made.");
             response.InformationNeedSelection = decision;
             response.NeedsMoreInformation = decision.ShouldRequestMoreInformation;
             response.InformationFollowupContextSummary = SummarizeInformationNeedDecision(decision, foregroundVector, availability, 0);
 
             if (!decision.ShouldRequestMoreInformation)
             {
-                response.Debug.Notes.Add("Information vector was present, but deterministic API selection did not request a deep second pass: " + decision.Reason);
+                response.Debug.Notes.Add("informationNeeds was present, but deterministic API selection did not request a deep second pass: " + decision.Reason);
                 return response;
             }
 
@@ -1390,7 +1391,7 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "selected", SummarizeSelection(decision) },
-                        { "vector", SummarizeNeedsForEvent(foregroundVector) },
+                        { "informationNeeds", SummarizeNeedsForEvent(foregroundVector) },
                         { "note", "The Star requested more information, but local archives did not have a matching slice." }
                     }
                 });
@@ -1431,7 +1432,7 @@ namespace Wds.SixStars.Api.Engine
                 }
                 followup.Debug.Notes.Add("requestStarDeepResponseWithData pass used deterministic information selection plus local archive/lore context.");
                 followup.Debug.Notes.Add("Selected information need: " + SummarizeSelection(decision));
-                followup.Debug.Notes.Add("Full foreground vector: " + SummarizeNeedsForEvent(fullVector));
+                followup.Debug.Notes.Add("Full foreground informationNeeds: " + SummarizeNeedsForEvent(fullVector));
                 followup.Debug.Notes.Add("Extra context chars: " + context.Length);
                 followup.UnityEvents.Add(new UnityEventEnvelope
                 {
@@ -1440,7 +1441,7 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "selected", SummarizeSelection(decision) },
-                        { "vector", SummarizeNeedsForEvent(fullVector) },
+                        { "informationNeeds", SummarizeNeedsForEvent(fullVector) },
                         { "contextChars", context.Length.ToString() },
                         { "note", "The runtime answered with a second LLM pass using deterministically selected local data." }
                     }
@@ -1462,7 +1463,7 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "selected", SummarizeSelection(decision) },
-                        { "vector", SummarizeNeedsForEvent(fullVector) },
+                        { "informationNeeds", SummarizeNeedsForEvent(fullVector) },
                         { "error", ex.Message }
                     }
                 });
@@ -1494,40 +1495,32 @@ namespace Wds.SixStars.Api.Engine
             return clone;
         }
 
-        private static List<InformationNeedVectorItem> NormalizeInformationNeedVector(StarInteractionResponse response, string playerText)
+        private static List<InformationNeedVectorItem> NormalizeInformationNeeds(StarInteractionResponse response)
         {
-            List<InformationNeedVectorItem> needs = (response.InformationNeeds ?? new List<InformationNeedVectorItem>())
-                .Where(x => x != null && (!string.IsNullOrWhiteSpace(x.DataType) || LoreLibraryIndexReader.IsContentBackedType(x.Subject)))
-                .Select(x =>
+            // The foreground model chooses only the source category in subject. The player's
+            // original speech is kept separately and becomes the lookup question for that source.
+            return (response.InformationNeeds ?? new List<InformationNeedVectorItem>())
+                .Where(x => x != null && IsInformationNeedSubject(x.Subject))
+                .Select(x => new InformationNeedVectorItem
                 {
-                    bool typeWasInSubject = string.IsNullOrWhiteSpace(x.DataType) && LoreLibraryIndexReader.IsContentBackedType(x.Subject);
-                    string resolvedType = typeWasInSubject ? x.Subject : x.DataType;
-                    return new InformationNeedVectorItem
-                    {
-                        DataType = NormalizeInformationDataType(resolvedType),
-                        Subject = typeWasInSubject ? ExtractLikelySubject(playerText) : (string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim()),
-                        Confidence = Clamp01(x.Confidence),
-                        Score = ClampScore(x.Score),
-                        Reason = x.Reason ?? string.Empty
-                    };
+                    Subject = NormalizeInformationDataType(x.Subject),
+                    DataType = NormalizeInformationDataType(x.Subject),
+                    Confidence = Clamp01(x.Confidence),
+                    Score = ClampScore(x.Score)
                 })
                 .GroupBy(x => x.DataType, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(x => Math.Max(x.Confidence, x.Score / 100.0)).First())
                 .OrderByDescending(x => Math.Max(x.Confidence, x.Score / 100.0))
                 .Take(9)
                 .ToList();
+        }
 
-            if (needs.Count == 0 && response.NeedsMoreInformation)
-            {
-                needs.Add(new InformationNeedVectorItem { DataType = "history", Subject = "self", Confidence = 0.72, Score = 72, Reason = "Star set needsMoreInformation without a vector." });
-            }
-
-            if (needs.Count == 0 && LooksLikeOldMemoryRequest(playerText))
-            {
-                needs.Add(new InformationNeedVectorItem { DataType = "history", Subject = ExtractLikelySubject(playerText), Confidence = 0.68, Score = 68, Reason = "Heuristic detected old-memory language." });
-            }
-
-            return needs;
+        private static bool IsInformationNeedSubject(string? subject)
+        {
+            string normalized = (subject ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized == "history" || normalized == "quotes" || normalized == "markers"
+                || normalized == "lore" || normalized == "bestiary" || normalized == "characters"
+                || normalized == "world" || normalized == "screen" || normalized == "story";
         }
 
         private static List<InformationNeedAvailabilityItem> BuildInformationNeedAvailability(StarProfile profile, StarState state, StarInteractionRequest request)
@@ -1592,8 +1585,7 @@ namespace Wds.SixStars.Api.Engine
             List<InformationNeedVectorItem> foregroundVector,
             List<InformationNeedAvailabilityItem> availability,
             InformationNeedSelectionResult? aiSelection,
-            bool legacyNeedsMoreInformation,
-            string playerText)
+            bool legacyNeedsMoreInformation)
         {
             Dictionary<string, InformationNeedAvailabilityItem> availabilityByType = (availability ?? new List<InformationNeedAvailabilityItem>())
                 .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
@@ -1604,14 +1596,18 @@ namespace Wds.SixStars.Api.Engine
                 : foregroundVector;
 
             List<InformationNeedVectorItem> normalized = candidateSource
-                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
-                .Select(x => new InformationNeedVectorItem
+                .Where(x => x != null && (IsInformationNeedSubject(x.Subject) || IsInformationNeedSubject(x.DataType)))
+                .Select(x =>
                 {
-                    DataType = NormalizeInformationDataType(x.DataType),
-                    Subject = string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim(),
-                    Confidence = Clamp01(x.Confidence),
-                    Score = ClampScore(x.Score),
-                    Reason = x.Reason ?? string.Empty
+                    string source = IsInformationNeedSubject(x.Subject) ? x.Subject : x.DataType;
+                    string normalizedSource = NormalizeInformationDataType(source);
+                    return new InformationNeedVectorItem
+                    {
+                        DataType = normalizedSource,
+                        Subject = normalizedSource,
+                        Confidence = Clamp01(x.Confidence),
+                        Score = ClampScore(x.Score)
+                    };
                 })
                 .GroupBy(x => x.DataType, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(x => CombinedNeedScore(x, availabilityByType)).First())
@@ -1627,10 +1623,10 @@ namespace Wds.SixStars.Api.Engine
                     selected = new InformationNeedVectorItem
                     {
                         DataType = aiType,
-                        Subject = string.IsNullOrWhiteSpace(aiSelection.Subject) ? "self" : aiSelection.Subject.Trim(),
+                        Subject = aiType,
                         Confidence = Clamp01(aiSelection.Confidence),
                         Score = ClampScore(aiSelection.Score),
-                        Reason = FirstNonEmpty(aiSelection.Reason, "AI selector chose this area.")
+                        Reason = FirstNonEmpty(aiSelection.Reason, "AI selector chose this source.")
                     };
                 }
             }
@@ -1640,7 +1636,6 @@ namespace Wds.SixStars.Api.Engine
                 selected = normalized.FirstOrDefault(x => IsAvailable(x.DataType, availabilityByType));
             }
 
-            bool oldMemoryHeuristic = LooksLikeOldMemoryRequest(playerText);
             if (selected == null)
             {
                 return new InformationNeedSelectionResult
@@ -1657,7 +1652,7 @@ namespace Wds.SixStars.Api.Engine
             }
 
             double chosenStrength = Math.Max(selected.Confidence, selected.Score / 100.0);
-            bool strongEnough = chosenStrength >= 0.55 || legacyNeedsMoreInformation || oldMemoryHeuristic || (aiSelection != null && aiSelection.ShouldRequestMoreInformation && NormalizeInformationDataType(aiSelection.SelectedDataType) == selected.DataType);
+            bool strongEnough = chosenStrength >= 0.55 || legacyNeedsMoreInformation || (aiSelection != null && aiSelection.ShouldRequestMoreInformation && NormalizeInformationDataType(aiSelection.SelectedDataType) == selected.DataType);
 
             return new InformationNeedSelectionResult
             {
@@ -1668,7 +1663,7 @@ namespace Wds.SixStars.Api.Engine
                 Score = selected.Score,
                 Reason = strongEnough
                     ? "Deterministic API selection chose the strongest available information area. " + selected.Reason
-                    : "Vector was present but below threshold after local availability checks.",
+                    : "informationNeeds was present but below threshold after local availability checks.",
                 Source = aiSelection == null ? "deterministic" : "deterministic+" + FirstNonEmpty(aiSelection.Source, "ai"),
                 RankedNeeds = normalized
             };
@@ -1698,7 +1693,7 @@ namespace Wds.SixStars.Api.Engine
                 selected.Add(new InformationNeedVectorItem
                 {
                     DataType = selectedType,
-                    Subject = string.IsNullOrWhiteSpace(decision.Subject) ? "self" : decision.Subject,
+                    Subject = selectedType,
                     Confidence = Clamp01(decision.Confidence),
                     Score = ClampScore(decision.Score),
                     Reason = decision.Reason
@@ -1706,7 +1701,7 @@ namespace Wds.SixStars.Api.Engine
             }
             else
             {
-                selected[0].Subject = string.IsNullOrWhiteSpace(decision.Subject) ? selected[0].Subject : decision.Subject;
+                selected[0].Subject = selectedType;
                 selected[0].Confidence = Math.Max(selected[0].Confidence, Clamp01(decision.Confidence));
                 selected[0].Score = Math.Max(selected[0].Score, ClampScore(decision.Score));
                 selected[0].Reason = FirstNonEmpty(decision.Reason, selected[0].Reason);
@@ -1724,7 +1719,7 @@ namespace Wds.SixStars.Api.Engine
             sb.AppendLine("PLAYER'S ORIGINAL SPEECH:");
             sb.AppendLine(QuoteForInfo(playerText ?? string.Empty));
             sb.AppendLine();
-            sb.AppendLine("Selected need vector: " + SummarizeNeedsForEvent(needs));
+            sb.AppendLine("Selected informationNeeds: " + SummarizeNeedsForEvent(needs));
 
             bool wantsHistory = Wants(needs, "history");
             bool wantsQuotes = Wants(needs, "quotes") || wantsHistory;
@@ -1926,22 +1921,10 @@ namespace Wds.SixStars.Api.Engine
             return "history";
         }
 
-        private static bool LooksLikeOldMemoryRequest(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return false;
-            return Regex.IsMatch(text, @"\b(remember|earlier|before|last time|old|previous|nostalgia|marker|where did|what did i say|what were we talking|conversation from)\b", RegexOptions.IgnoreCase);
-        }
-
-        private static string ExtractLikelySubject(string? text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return "self";
-            Match about = Regex.Match(text, @"\b(?:about|called|named|marker)\s+(?<subject>[A-Za-z0-9 _'\-]{2,80})", RegexOptions.IgnoreCase);
-            return about.Success ? about.Groups["subject"].Value.Trim() : "self";
-        }
 
         private static string SummarizeInformationNeedDecision(InformationNeedSelectionResult decision, List<InformationNeedVectorItem> vector, List<InformationNeedAvailabilityItem> availability, int contextChars)
         {
-            return SummarizeSelection(decision) + "; vector=" + SummarizeNeedsForEvent(vector) + "; available=" + string.Join(", ", availability.Where(x => x.Available).Select(x => x.DataType + "(" + x.Count + ")")) + "; local context chars=" + contextChars;
+            return SummarizeSelection(decision) + "; informationNeeds=" + SummarizeNeedsForEvent(vector) + "; available=" + string.Join(", ", availability.Where(x => x.Available).Select(x => x.DataType + "(" + x.Count + ")")) + "; local context chars=" + contextChars;
         }
 
         private static string SummarizeSelection(InformationNeedSelectionResult? decision)
@@ -1952,7 +1935,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static string SummarizeNeedsForEvent(List<InformationNeedVectorItem> needs)
         {
-            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x => NormalizeInformationDataType(x.DataType) + ":" + (string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject) + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0")));
+            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x => (string.IsNullOrWhiteSpace(x.Subject) ? NormalizeInformationDataType(x.DataType) : x.Subject) + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0")));
         }
 
         private static double Clamp01(double value)

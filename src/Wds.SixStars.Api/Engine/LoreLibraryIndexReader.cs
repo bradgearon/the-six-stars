@@ -7,7 +7,7 @@ namespace Wds.SixStars.Api.Engine
 {
     /// <summary>
     /// Reads the compact, Star-safe markdown indexes used by information follow-up requests.
-    /// The folder names intentionally match the content-backed informationNeeds data types.
+    /// The folder names intentionally match the content-backed informationNeeds subject categories.
     /// Dynamic types such as history, quotes, markers, and screen remain in saved/runtime state.
     /// </summary>
     internal static class LoreLibraryIndexReader

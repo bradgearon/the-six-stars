@@ -79,14 +79,13 @@ namespace Wds.SixStars.Api.Ai
                 if (model == null) throw new InvalidOperationException("Information-need selector returned empty JSON.");
                 model.Source = "llm";
                 model.RankedNeeds = (model.RankedNeeds ?? new List<InformationNeedVectorItem>())
-                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
+                    .Where(x => x != null && IsInformationNeedSubject(x.Subject))
                     .Select(x => new InformationNeedVectorItem
                     {
-                        DataType = x.DataType,
-                        Subject = string.IsNullOrWhiteSpace(x.Subject) ? "self" : x.Subject.Trim(),
+                        Subject = NormalizeInformationNeedSubject(x.Subject),
+                        DataType = NormalizeInformationNeedSubject(x.Subject),
                         Confidence = Clamp01(x.Confidence),
-                        Score = ClampScore(x.Score),
-                        Reason = x.Reason ?? string.Empty
+                        Score = ClampScore(x.Score)
                     })
                     .Take(9)
                     .ToList();
@@ -99,17 +98,17 @@ namespace Wds.SixStars.Api.Ai
             catch (Exception ex)
             {
                 InformationNeedVectorItem? best = foregroundVector
-                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DataType))
+                    .Where(x => x != null && IsInformationNeedSubject(x.Subject))
                     .OrderByDescending(x => Math.Max(x.Score / 100.0, x.Confidence))
                     .FirstOrDefault();
                 return new InformationNeedSelectionResult
                 {
                     ShouldRequestMoreInformation = best != null && (best.Confidence >= 0.55 || best.Score >= 55),
-                    SelectedDataType = best?.DataType ?? "history",
-                    Subject = string.IsNullOrWhiteSpace(best?.Subject) ? "self" : best!.Subject,
+                    SelectedDataType = best == null ? "history" : NormalizeInformationNeedSubject(best.Subject),
+                    Subject = best == null ? "history" : NormalizeInformationNeedSubject(best.Subject),
                     Confidence = best?.Confidence ?? 0,
                     Score = best?.Score ?? 0,
-                    Reason = "Information-need selector LLM failed; foreground-vector fallback used: " + ex.Message,
+                    Reason = "Information-need selector LLM failed; foreground informationNeeds fallback used: " + ex.Message,
                     Source = "heuristic-fallback",
                     RankedNeeds = foregroundVector == null ? new List<InformationNeedVectorItem>() : foregroundVector.Take(9).ToList()
                 };
@@ -298,7 +297,6 @@ namespace Wds.SixStars.Api.Ai
             System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received fast LLM speech response ({json.Length} chars)");
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
-            ApplyKnowledgeQuestionInformationNeeds(request, model);
             model.ThingsLearnedOrSuggestedByPlayer = CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8);
             List<GirlfriendVectorItem> initiativeSpeechDecisionVector = NormalizeGirlfriendVector(model.SpeechDecisionVector, 1);
             bool initiativeVectorWantsSpeech = initiativeSpeechDecisionVector.Any(x => x != null && (x.Score > 0 || x.Confidence > 0));
@@ -630,65 +628,6 @@ namespace Wds.SixStars.Api.Ai
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(Math.Max(0, maxItems))
                 .ToList();
-        }
-
-        private static void ApplyKnowledgeQuestionInformationNeeds(StarInteractionRequest request, StarSpeechModelResponse model)
-        {
-            if (request == null || model == null || request.RequestType == RequestType.Story || request.RequestType == RequestType.StarInitiative) return;
-            string text = (request.PlayerText ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(text)) return;
-            string lower = text.ToLowerInvariant();
-            bool asksForFacts = text.Contains('?')
-                || Regex.IsMatch(lower, @"\b(who|what|where|when|which|how|explain|describe|tell me about|do you know|how many|how much)\b", RegexOptions.IgnoreCase);
-            if (!asksForFacts) return;
-
-            List<(string DataType, string Reason)> required = new List<(string, string)>();
-            bool mentionsSkill = Regex.IsMatch(lower, @"\b(skill|skills|spell|spells|ability|abilities|talent|talents|power|powers|mana|stardust|cooldown|skill tree)\b");
-            bool mentionsCreature = Regex.IsMatch(lower, @"\b(monster|monsters|enemy|enemies|boss|bosses|creature|creatures|beast|beasts|bestiary|slime|slimes|slimebro|madslime|slimastadon|goblin|goblins|harpy|harpies|dragon|dragons|skeleton|skeletons|virethorn|bone bloom|leviathan|oculothorax|buzz|scorpion|crawler|demon|demons|owl|owls|golem|golems|ninja|ninjas)\b");
-            bool asksForCombatStat = Regex.IsMatch(lower, @"\b(hp|hit points?|health|damage|attack|attacks|weakness|weaknesses|resistance|resistances|drop|drops|loot|level|cost|costs)\b");
-            bool mentionsCharacter = Regex.IsMatch(lower, @"\b(person|people|npc|npcs|character|characters|who is|who are|elusiaa|kaelia|khavia|auerlis|maera|nyxari|marrowlily|bradmageddon)\b");
-            bool mentionsWorld = Regex.IsMatch(lower, @"\b(area|areas|place|places|location|locations|cave|caves|settlement|settlements|sanctuary|temple|temples|world|quest|quests|where is|where are)\b");
-            bool mentionsExactStory = Regex.IsMatch(lower, @"\b(scene|scenes|meeting|meetings|dialogue|conversation|what happened|story canon|story detail|lore story)\b");
-
-            if (mentionsSkill || (asksForCombatStat && !mentionsCreature))
-                required.Add(("lore", "The player asked for exact skill, spell, ability, cost, or combat canon."));
-            if (mentionsCreature)
-                required.Add(("bestiary", "The player asked for exact monster, enemy, boss, creature, HP, attack, weakness, or drop canon."));
-            if (mentionsCharacter)
-                required.Add(("characters", "The player asked for exact information about a person, Star, companion, guardian, or NPC."));
-            if (mentionsWorld)
-                required.Add(("world", "The player asked for exact area, place, settlement, quest, ecology, or world canon."));
-            if (mentionsExactStory)
-                required.Add(("story", "The player asked for exact scene, meeting, dialogue, or story continuity."));
-            if (required.Count == 0) return;
-
-            model.InformationNeeds ??= new List<InformationNeedVectorItem>();
-            string subject = CleanOneLine(text, 160);
-            foreach ((string dataType, string reason) in required)
-            {
-                InformationNeedVectorItem? existing = model.InformationNeeds.FirstOrDefault(x =>
-                    string.Equals(x.DataType, dataType, StringComparison.OrdinalIgnoreCase)
-                    || (string.IsNullOrWhiteSpace(x.DataType) && string.Equals(x.Subject, dataType, StringComparison.OrdinalIgnoreCase)));
-                if (existing != null)
-                {
-                    existing.DataType = dataType;
-                    existing.Subject = subject;
-                    existing.Confidence = Math.Max(existing.Confidence, 0.98);
-                    existing.Score = Math.Max(existing.Score, 100);
-                    existing.Reason = string.IsNullOrWhiteSpace(existing.Reason) ? reason : existing.Reason;
-                    continue;
-                }
-
-                model.InformationNeeds.Add(new InformationNeedVectorItem
-                {
-                    DataType = dataType,
-                    Subject = subject,
-                    Confidence = 0.98,
-                    Score = 100,
-                    Reason = reason
-                });
-            }
-            model.NeedsMoreInformation = true;
         }
 
         private static VoiceDirective BuildDefaultVoiceDirective(StarProfile profile, StarInteractionRequest request)
@@ -1447,6 +1386,19 @@ namespace Wds.SixStars.Api.Ai
                 .ThenByDescending(x => x.Confidence)
                 .Take(Math.Max(1, maxItems))
                 .ToList();
+        }
+
+        private static bool IsInformationNeedSubject(string? value)
+        {
+            string normalized = NormalizeInformationNeedSubject(value);
+            return normalized == "history" || normalized == "quotes" || normalized == "markers"
+                || normalized == "lore" || normalized == "bestiary" || normalized == "characters"
+                || normalized == "world" || normalized == "screen" || normalized == "story";
+        }
+
+        private static string NormalizeInformationNeedSubject(string? value)
+        {
+            return (value ?? string.Empty).Trim().ToLowerInvariant();
         }
 
         private static double Clamp01(double value)

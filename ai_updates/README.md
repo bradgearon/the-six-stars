@@ -541,3 +541,5 @@ Expected response can be JSON:
 ```
 
 or simple plain text such as `Elusiaa`, `Kaelia`, or `none`.
+
+- `FOREGROUND-EMOTION-VECTOR-ROLLBACK.md` — restores the established foreground response behavior while retaining popup-only breakup on Android.
