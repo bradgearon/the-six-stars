@@ -115,6 +115,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly CancellationTokenSource _starInitiativeLoopCts = new CancellationTokenSource();
     private readonly Random _starInitiativeRandom = new Random();
     private DateTimeOffset _lastStarInitiativeAt = DateTimeOffset.MinValue;
+    private int _systemResumeRecoveryActive;
+    private DateTimeOffset _lastSystemResumeRecoveryAt = DateTimeOffset.MinValue;
 
     public MainViewModel()
     {
@@ -1997,6 +1999,89 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 SpeechStatus = "Speech processing error.";
                 DebugJson = ex.ToString();
             });
+        }
+    }
+
+    public void HandleSystemSuspend()
+    {
+        if (!_microphoneSpeechSource.WantsToRun)
+        {
+            return;
+        }
+
+        OnUiThread(() =>
+        {
+            MicrophoneCaptureStatus = "Windows is suspending. Voice input will reopen automatically after resume.";
+            SpeechStatus = MicrophoneCaptureStatus;
+        });
+    }
+
+    public async Task HandleSystemResumeAsync()
+    {
+        if (!_microphoneSpeechSource.WantsToRun)
+        {
+            return;
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - _lastSystemResumeRecoveryAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _systemResumeRecoveryActive, 1) != 0)
+        {
+            return;
+        }
+
+        _lastSystemResumeRecoveryAt = now;
+        try
+        {
+            OnUiThread(() =>
+            {
+                MicrophoneCaptureStatus = "Windows resumed. Rebuilding microphone capture...";
+                SpeechStatus = MicrophoneCaptureStatus;
+                VoiceInputStatus = "Voice input is recovering after sleep.";
+            });
+
+            bool recovered = await _microphoneSpeechSource
+                .RecoverAfterSystemResumeAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (!recovered)
+            {
+                OnUiThread(() =>
+                {
+                    SpeechStatus = "Microphone was not active or could not be reopened after resume.";
+                    VoiceInputStatus = "Voice input recovery did not complete. Use Start Listen to retry.";
+                });
+                return;
+            }
+
+            OnUiThread(() =>
+            {
+                IncomingVoiceLevelPercent = 0;
+                MicrophoneCaptureStatus = "Microphone capture recovered after Windows resume.";
+                SpeechStatus = MicrophoneCaptureStatus;
+                VoiceInputStatus = IsRecording
+                    ? "Push-to-talk recording resumed with a fresh audio device. Audio captured before sleep was discarded."
+                    : SpeechRequireWakeWord
+                        ? "Always-listening VAD recovered. Whisper will transcribe utterances, then text wake-name filtering is applied."
+                        : "Always-listening VAD recovered. Any detected utterance will be sent to the selected Star.";
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                SpeechStatus = "Could not recover microphone after Windows resume: " + ex.Message;
+                VoiceInputStatus = "Voice input recovery failed. Use Start Listen to retry.";
+                DebugJson = ex.ToString();
+            });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _systemResumeRecoveryActive, 0);
         }
     }
 
