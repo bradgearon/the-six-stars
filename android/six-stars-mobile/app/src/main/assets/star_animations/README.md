@@ -23,3 +23,13 @@ Supported state names are open-ended. The current app requests:
 - `talking`
 
 Future emotional state names can be wired by calling `setProdAnimationState("happy")`, `setProdAnimationState("hurt")`, etc. If a state GIF does not exist, the app falls back to `idle.gif`, then to PNG frame resources.
+
+## Optional one-shot shirt-off reaction
+
+Place an optional non-looping GIF at:
+
+```text
+star_animations/<star-id>/shirt-off.gif
+```
+
+When the background emotion review reports `requestToShowBoobs=true`, Android waits until the current Star voice queue is finished, plays this GIF once, holds its last frame for two seconds, and returns to `idle.gif`. If the asset is absent, the app stays on the normal animation.

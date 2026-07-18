@@ -197,6 +197,9 @@ public final class MainActivity extends ComponentActivity {
     private int voiceAnimationGeneration;
     private boolean starVoicePlaybackActive;
     private PhoneVoiceClip activeAnimatedVoiceClip;
+    private boolean pendingShirtOffAnimation;
+    private String pendingShirtOffStarId = "";
+    private boolean shirtOffAnimationActive;
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
@@ -978,6 +981,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void setProdAnimationState(String state) {
         prodAnimationState = (state == null || state.length() == 0) ? "idle" : state.toLowerCase(Locale.US);
+        if (shirtOffAnimationActive) return;
         if (prodSpriteView != null) {
             prodSpriteView.setStarAnimation(selectedStarName(), prodAnimationState, starMeta(selectedStarName()).frameResIds);
         }
@@ -988,6 +992,7 @@ public final class MainActivity extends ComponentActivity {
         activeAnimatedVoiceClip = null;
         starVoicePlaybackActive = false;
         setProdAnimationState("idle");
+        maybePlayPendingShirtOffAnimation();
     }
 
     private void finishStarVoiceAnimationMarkers(PhoneVoiceClip clip) {
@@ -996,6 +1001,50 @@ public final class MainActivity extends ComponentActivity {
         activeAnimatedVoiceClip = null;
         starVoicePlaybackActive = false;
         setProdAnimationState("idle");
+        maybePlayPendingShirtOffAnimation();
+    }
+
+    private void queueShirtOffAnimation(String starId) {
+        if (!prodMode || starId == null || !starId.equalsIgnoreCase(selectedStarName())) return;
+        pendingShirtOffAnimation = true;
+        pendingShirtOffStarId = starId;
+        appendVoiceDebug("Shirt-off reaction queued", "Waiting for " + starId + "'s current voice queue to finish.");
+        maybePlayPendingShirtOffAnimation();
+    }
+
+    private void maybePlayPendingShirtOffAnimation() {
+        if (!pendingShirtOffAnimation
+                || shirtOffAnimationActive
+                || starVoicePlaybackActive
+                || desktopVoiceStreamActive
+                || !wavAudioQueue.isIdle()
+                || prodSpriteView == null) return;
+
+        final String starId = pendingShirtOffStarId;
+        pendingShirtOffAnimation = false;
+        pendingShirtOffStarId = "";
+        if (starId.length() == 0 || !starId.equalsIgnoreCase(selectedStarName())) return;
+
+        // No voice marker should be able to replace the one-shot visual after it begins.
+        voiceAnimationGeneration++;
+        activeAnimatedVoiceClip = null;
+        starVoicePlaybackActive = false;
+        shirtOffAnimationActive = true;
+
+        boolean started = prodSpriteView.playOneShotAnimation(starId, "shirt-off", 2000L, () -> {
+            shirtOffAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Shirt-off reaction finished", starId + " returned to the current voice/idle state after the two-second final-frame hold.");
+            maybePlayPendingShirtOffAnimation();
+        });
+
+        if (!started) {
+            shirtOffAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Shirt-off reaction skipped", "No star_animations/" + starId.toLowerCase(Locale.US) + "/shirt-off.gif asset was found.");
+        } else {
+            appendVoiceDebug("Shirt-off reaction playing", starId + " is playing shirt-off.gif once.");
+        }
     }
 
     private void startStarVoiceAnimationMarkers(PhoneVoiceClip clip, long fallbackDurationMs, long playbackElapsedMs) {
@@ -1114,7 +1163,7 @@ public final class MainActivity extends ComponentActivity {
         StarMeta meta = starMeta(starId);
         prodStarNameText.setText(meta.id);
         prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain + " • tap to switch");
-        if (prodSpriteView != null) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
+        if (prodSpriteView != null && !shirtOffAnimationActive) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
         refreshProdConversationWindow();
     }
 
@@ -2178,6 +2227,7 @@ public final class MainActivity extends ComponentActivity {
     private void applyTopAffectedEmotionsObject(JSONObject state, String status) {
         String starId = optStringEither(state, "starId", "StarId", selectedStarName());
         if (!starId.equalsIgnoreCase(selectedStarName())) return;
+        boolean requestToShowBoobs = optBooleanEither(state, "requestToShowBoobs", "RequestToShowBoobs", false);
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() == 0) top = optStringEither(state, "message", "Message", "Top emotions: none yet.");
         currentTopAffectedEmotions = top;
@@ -2187,6 +2237,7 @@ public final class MainActivity extends ComponentActivity {
             starStateText.setText(base + "\n" + currentTopAffectedEmotions + "\n" + currentDailyStarState + "\n" + currentInterstarStatus + " — " + status);
         }
         appendVoiceDebug("Emotion vector settled", currentTopAffectedEmotions);
+        if (requestToShowBoobs) queueShirtOffAnimation(starId);
     }
 
     private void updateStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
@@ -3065,6 +3116,7 @@ public final class MainActivity extends ComponentActivity {
             runOnUiThread(() -> {
                 if (clearedForStream) appendVoiceDebug(starId + " voice stream " + action, "stream=" + streamOrdinal + ", id=" + streamId + ". Cleared queued Android audio before continuing.");
                 setKeepScreenAwake(KEEP_AWAKE_REASON_VOICE_STREAM, false, starId + " voice stream " + action + ".");
+                maybePlayPendingShirtOffAnimation();
                 maybeResumePreparedListenAfterAudio(starId + " voice stream " + action + " and the audio queue is idle.");
             });
         }
@@ -3692,6 +3744,7 @@ public final class MainActivity extends ComponentActivity {
                 track.release();
                 runOnUiThread(() -> {
                     finishStarVoiceAnimationMarkers(clip);
+                    mainHandler.post(MainActivity.this::maybePlayPendingShirtOffAnimation);
                     setKeepScreenAwake(
                             KEEP_AWAKE_REASON_AUDIO_PLAYBACK,
                             false,

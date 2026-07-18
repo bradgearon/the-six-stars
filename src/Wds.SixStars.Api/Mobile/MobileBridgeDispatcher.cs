@@ -247,6 +247,7 @@ public sealed class MobileBridgeDispatchResult
     public string EmotionalEffectVector { get; set; } = string.Empty;
     public string NegativeEmotionVector { get; set; } = string.Empty;
     public string LastEmotionVectorsText { get; set; } = string.Empty;
+    public bool RequestToShowBoobs { get; set; }
     public string InterstarStatusText { get; set; } = string.Empty;
     public string DailyStateSlotId { get; set; } = string.Empty;
     public string DailyStateLocalDate { get; set; } = string.Empty;
@@ -354,6 +355,7 @@ public sealed class MobileBridgeDispatchEvent
     public string EmotionalEffectVector { get; set; } = string.Empty;
     public string NegativeEmotionVector { get; set; } = string.Empty;
     public string LastEmotionVectorsText { get; set; } = string.Empty;
+    public bool RequestToShowBoobs { get; set; }
     public string InterstarStatusText { get; set; } = string.Empty;
     public string DailyStateSlotId { get; set; } = string.Empty;
     public string DailyStateLocalDate { get; set; } = string.Empty;
@@ -440,6 +442,7 @@ public sealed class MobileBridgeDispatchEvent
             EmotionalEffectVector = !string.IsNullOrWhiteSpace(result.EmotionalEffectVector) ? result.EmotionalEffectVector : (state?.LastEmotionalEffectVector ?? string.Empty),
             NegativeEmotionVector = !string.IsNullOrWhiteSpace(result.NegativeEmotionVector) ? result.NegativeEmotionVector : (state?.LastNegativeEmotionVector ?? string.Empty),
             LastEmotionVectorsText = result.LastEmotionVectorsText ?? string.Empty,
+            RequestToShowBoobs = result.RequestToShowBoobs,
             InterstarStatusText = result.InterstarStatusText ?? string.Empty,
             DailyStateSlotId = !string.IsNullOrWhiteSpace(result.DailyStateSlotId) ? result.DailyStateSlotId : (state?.TodayState?.SlotId ?? string.Empty),
             DailyStateLocalDate = !string.IsNullOrWhiteSpace(result.DailyStateLocalDate) ? result.DailyStateLocalDate : (state?.TodayState?.LocalDate ?? string.Empty),

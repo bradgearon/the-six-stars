@@ -68,6 +68,8 @@ namespace Wds.SixStars.Api.Ai
         public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public string GirlfriendCoupleActivitySummary { get; set; } = string.Empty;
         public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
+        [JsonPropertyName("requestToShowBoobs")]
+        public bool RequestToShowBoobs { get; set; }
         public List<string> LoreUsed { get; set; } = new List<string>();
         public List<string> RiskFlags { get; set; } = new List<string>();
         public double WisdomScore { get; set; }

@@ -1203,6 +1203,7 @@ public sealed partial class MainViewModel
                 EmotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
                 LastEmotionVectorsText = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector),
+                RequestToShowBoobs = response.RequestToShowBoobs,
                 Message = FormatTopAffectedEmotions(response.TopAffectedEmotions)
             });
         }

@@ -10,6 +10,8 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.drawable.Animatable;
+import android.graphics.drawable.Animatable2;
+import android.graphics.drawable.AnimatedImageDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
@@ -63,6 +65,8 @@ public final class PixelStarAnimationView extends View {
     private int frameIndex;
     private String activeKey = "";
     private Drawable activeDrawable;
+    private Animatable2.AnimationCallback activeAnimationCallback;
+    private int animationGeneration;
 
     private final Runnable animator = new Runnable() {
         @Override public void run() {
@@ -193,6 +197,7 @@ public final class PixelStarAnimationView extends View {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
         preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt-off.gif");
     }
 
     @TargetApi(Build.VERSION_CODES.P)
@@ -220,10 +225,91 @@ public final class PixelStarAnimationView extends View {
         activeDrawable = drawable;
         activeDrawable.setFilterBitmap(false);
         activeDrawable.setCallback(this);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && activeDrawable instanceof AnimatedImageDrawable) {
+            ((AnimatedImageDrawable) activeDrawable).setRepeatCount(AnimatedImageDrawable.REPEAT_INFINITE);
+        }
         if (activeDrawable instanceof Animatable && isAttachedToWindow()) {
             ((Animatable) activeDrawable).start();
         }
         invalidate();
+    }
+
+    /**
+     * Plays exactly one optional GIF state, holds its final frame, then invokes onFinished.
+     * Unlike setStarAnimation, this never falls back to idle when the requested asset is absent.
+     */
+    public boolean playOneShotAnimation(
+            String starId,
+            String state,
+            long holdLastFrameMs,
+            Runnable onFinished) {
+        String normalizedStar = normalizeAssetPart(starId);
+        String normalizedState = normalizeAssetPart(state);
+        String assetPath = "star_animations/" + normalizedStar + "/" + normalizedState + ".gif";
+        activeKey = normalizedStar + ":" + normalizedState + ":one-shot";
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return playOneShotAnimatedGif(assetPath, Math.max(0L, holdLastFrameMs), onFinished);
+        }
+
+        // API 26-27 cannot animate GIFs with ImageDecoder. Preserve the optional-asset
+        // contract by showing its first frame for the requested hold duration.
+        try (InputStream in = getContext().getAssets().open(assetPath)) {
+            Bitmap firstFrame = BitmapFactory.decodeStream(in);
+            if (firstFrame == null) return false;
+            setFrames(new Bitmap[]{firstFrame});
+            final int generation = animationGeneration;
+            handler.postDelayed(() -> {
+                if (generation == animationGeneration && onFinished != null) onFinished.run();
+            }, Math.max(1L, holdLastFrameMs));
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    @TargetApi(Build.VERSION_CODES.P)
+    private boolean playOneShotAnimatedGif(String assetPath, long holdLastFrameMs, Runnable onFinished) {
+        if (missingGifAssets.contains(assetPath)) return false;
+
+        Drawable drawable = gifCache.get(assetPath);
+        if (drawable == null) {
+            drawable = decodeAnimatedGif(assetPath);
+            if (drawable == null) {
+                missingGifAssets.add(assetPath);
+                return false;
+            }
+            Drawable cached = gifCache.putIfAbsent(assetPath, drawable);
+            if (cached != null) drawable = cached;
+        }
+        if (!(drawable instanceof AnimatedImageDrawable)) return false;
+
+        clearCurrentAnimation();
+        final AnimatedImageDrawable animated = (AnimatedImageDrawable) drawable;
+        final int generation = animationGeneration;
+        activeDrawable = animated;
+        activeDrawable.setFilterBitmap(false);
+        activeDrawable.setCallback(this);
+        animated.setRepeatCount(0);
+
+        activeAnimationCallback = new Animatable2.AnimationCallback() {
+            @Override public void onAnimationEnd(Drawable endedDrawable) {
+                handler.post(() -> {
+                    if (generation != animationGeneration || activeDrawable != endedDrawable) return;
+                    handler.postDelayed(() -> {
+                        if (generation == animationGeneration
+                                && activeDrawable == endedDrawable
+                                && onFinished != null) {
+                            onFinished.run();
+                        }
+                    }, holdLastFrameMs);
+                });
+            }
+        };
+        animated.registerAnimationCallback(activeAnimationCallback);
+        if (isAttachedToWindow()) animated.start();
+        invalidate();
+        return true;
     }
 
     private int[] findConventionFrameResources(String star, String state) {
@@ -266,7 +352,14 @@ public final class PixelStarAnimationView extends View {
     }
 
     private void clearCurrentAnimation() {
+        animationGeneration++;
         handler.removeCallbacks(animator);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                && activeDrawable instanceof Animatable2
+                && activeAnimationCallback != null) {
+            ((Animatable2) activeDrawable).unregisterAnimationCallback(activeAnimationCallback);
+        }
+        activeAnimationCallback = null;
         if (activeDrawable instanceof Animatable) {
             ((Animatable) activeDrawable).stop();
         }

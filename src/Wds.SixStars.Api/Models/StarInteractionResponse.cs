@@ -169,6 +169,9 @@ namespace Wds.SixStars.Api.Models
         public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
         public List<GirlfriendVectorItem> GirlfriendCoupleActivityItems { get; set; } = new List<GirlfriendVectorItem>();
 
+        /// <summary>True when the latest player message asked the Star to show her breasts or remove her shirt/top.</summary>
+        public bool RequestToShowBoobs { get; set; }
+
         /// <summary>
         /// Runtime coordination id for the deferred background emotion/memory review.
         /// Voice systems should call SixStarsRuntime.StartBackgroundAnalysisAfterVoiceReady

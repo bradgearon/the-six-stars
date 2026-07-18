@@ -390,6 +390,7 @@ namespace Wds.SixStars.Api.Ai
                 model.SpokenParts.AddRange(foregroundResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)));
             }
             StarInteractionResponse response = BuildInteractionResponseFromModel(profile, request, state, model);
+            response.RequestToShowBoobs = model.RequestToShowBoobs || IsRequestToShowBoobs(request.PlayerText);
             response.EmotionalEffectVector = string.IsNullOrWhiteSpace(model.EmotionalEffectVector) ? (foregroundResponse.EmotionalEffectVector ?? string.Empty) : model.EmotionalEffectVector;
             response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
             PreserveForegroundStoryFields(foregroundResponse, response);
@@ -548,6 +549,24 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
+        }
+
+        private static bool IsRequestToShowBoobs(string? playerText)
+        {
+            if (string.IsNullOrWhiteSpace(playerText)) return false;
+            string text = Regex.Replace(playerText.ToLowerInvariant(), "\\s+", " ").Trim();
+
+            bool breastTarget = Regex.IsMatch(text, @"\b(boob|boobs|breast|breasts|tits)\b");
+            bool exposureVerb = Regex.IsMatch(text, @"\b(show|see|flash|reveal|expose|display)\b");
+            if (breastTarget && exposureVerb) return true;
+
+            bool shirtTarget = Regex.IsMatch(text, @"\b(shirt|top|blouse|bra)\b");
+            bool removeBeforeTarget = Regex.IsMatch(text, @"\b(take\s+off|remove|lose|drop|open|unbutton|lift|pull)\b.{0,36}\b(shirt|top|blouse|bra)\b");
+            bool targetBeforeRemove = Regex.IsMatch(text, @"\b(shirt|top|blouse|bra)\b.{0,24}\b(off|up|open)\b");
+            if (shirtTarget && (removeBeforeTarget || targetBeforeRemove)) return true;
+
+            return Regex.IsMatch(text, @"\b(go|be)\s+topless\b")
+                || Regex.IsMatch(text, @"\btopless\s+(for me|please|now)\b");
         }
 
         private static List<InterstarEmotionVectorResult> NormalizeInterstarEmotionVectors(IEnumerable<InterstarEmotionVectorResult>? values)

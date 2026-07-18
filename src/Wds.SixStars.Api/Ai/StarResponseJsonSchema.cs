@@ -177,7 +177,7 @@ namespace Wds.SixStars.Api.Ai
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
-                        "loreUsed", "riskFlags", "wisdomScore"
+                        "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
                 { "properties", new Dictionary<string, object>
@@ -210,6 +210,7 @@ namespace Wds.SixStars.Api.Ai
                         { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendCoupleActivitySummary", StringProperty(520) },
                         { "girlfriendCoupleActivityVector", StringProperty(1200) },
+                        { "requestToShowBoobs", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "loreUsed", StringArray(5) },
                         { "riskFlags", StringArray(3) },
                         { "wisdomScore", NumberProperty(0, 1) }
