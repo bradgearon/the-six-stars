@@ -25,3 +25,7 @@ The desktop publishes `requestToShowBoobs` with the settled background-emotion b
 5. returns to `idle.gif`.
 
 If the optional asset is absent, Android leaves the normal animation active.
+
+## Filename playback correction
+
+The one-shot player now preserves hyphens in optional GIF filenames. Previously the caller requested `shirt-off`, but generic state normalization converted it to `shirt_off`, so a correctly named `shirt-off.gif` was never opened even though it had been preloaded. The player now tries the documented hyphenated filename first and the underscored compatibility filename second.

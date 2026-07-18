@@ -198,6 +198,7 @@ public final class PixelStarAnimationView extends View {
         preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt-off.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt_off.gif");
     }
 
     @TargetApi(Build.VERSION_CODES.P)
@@ -244,28 +245,42 @@ public final class PixelStarAnimationView extends View {
             long holdLastFrameMs,
             Runnable onFinished) {
         String normalizedStar = normalizeAssetPart(starId);
-        String normalizedState = normalizeAssetPart(state);
-        String assetPath = "star_animations/" + normalizedStar + "/" + normalizedState + ".gif";
-        activeKey = normalizedStar + ":" + normalizedState + ":one-shot";
+        String fileState = normalizeAssetFilePart(state);
+        String legacyState = normalizeAssetPart(state);
+        String[] assetPaths = fileState.equals(legacyState)
+                ? new String[]{"star_animations/" + normalizedStar + "/" + fileState + ".gif"}
+                : new String[]{
+                        "star_animations/" + normalizedStar + "/" + fileState + ".gif",
+                        "star_animations/" + normalizedStar + "/" + legacyState + ".gif"
+                };
+        activeKey = normalizedStar + ":" + fileState + ":one-shot";
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            return playOneShotAnimatedGif(assetPath, Math.max(0L, holdLastFrameMs), onFinished);
+            for (String assetPath : assetPaths) {
+                if (playOneShotAnimatedGif(assetPath, Math.max(0L, holdLastFrameMs), onFinished)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // API 26-27 cannot animate GIFs with ImageDecoder. Preserve the optional-asset
         // contract by showing its first frame for the requested hold duration.
-        try (InputStream in = getContext().getAssets().open(assetPath)) {
-            Bitmap firstFrame = BitmapFactory.decodeStream(in);
-            if (firstFrame == null) return false;
-            setFrames(new Bitmap[]{firstFrame});
-            final int generation = animationGeneration;
-            handler.postDelayed(() -> {
-                if (generation == animationGeneration && onFinished != null) onFinished.run();
-            }, Math.max(1L, holdLastFrameMs));
-            return true;
-        } catch (Exception ignored) {
-            return false;
+        for (String assetPath : assetPaths) {
+            try (InputStream in = getContext().getAssets().open(assetPath)) {
+                Bitmap firstFrame = BitmapFactory.decodeStream(in);
+                if (firstFrame == null) continue;
+                setFrames(new Bitmap[]{firstFrame});
+                final int generation = animationGeneration;
+                handler.postDelayed(() -> {
+                    if (generation == animationGeneration && onFinished != null) onFinished.run();
+                }, Math.max(1L, holdLastFrameMs));
+                return true;
+            } catch (Exception ignored) {
+                // Try the compatibility filename before reporting the optional animation missing.
+            }
         }
+        return false;
     }
 
     @TargetApi(Build.VERSION_CODES.P)
@@ -328,6 +343,11 @@ public final class PixelStarAnimationView extends View {
     private String normalizeAssetPart(String value) {
         if (value == null) return "idle";
         return value.trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_]+", "_");
+    }
+
+    private String normalizeAssetFilePart(String value) {
+        if (value == null) return "idle";
+        return value.trim().toLowerCase(Locale.US).replaceAll("[^a-z0-9_-]+", "_");
     }
 
     public void setFrameResources(int[] resourceIds) {

@@ -32,4 +32,6 @@ Place an optional non-looping GIF at:
 star_animations/<star-id>/shirt-off.gif
 ```
 
+`shirt_off.gif` is also accepted for compatibility, but `shirt-off.gif` is the preferred name.
+
 When the background emotion review reports `requestToShowBoobs=true`, Android waits until the current Star voice queue is finished, plays this GIF once, holds its last frame for two seconds, and returns to `idle.gif`. If the asset is absent, the app stays on the normal animation.
