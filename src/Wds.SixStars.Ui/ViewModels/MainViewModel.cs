@@ -2231,37 +2231,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _operationController.CancelAllRuntimeOperations(reason);
     }
 
-    private static IEnumerable<string> GetFullResetSessionIds(string? primarySessionId = null)
-    {
-        string[] candidates =
-        {
-            primarySessionId ?? string.Empty,
-            DefaultSessionId,
-            "android-phone-dev",
-            "android-phone-prod",
-            "local-dev"
-        };
-
-        return candidates
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-    }
-
     private async Task<StarState> ResetStarEverywhereAsync(string starId, string? primarySessionId, CancellationToken cancellationToken)
     {
-        StarState? primaryState = null;
-        foreach (string sessionId in GetFullResetSessionIds(primarySessionId))
-        {
-            StarState reset = await _runtime.ResetStarMemoryAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            await _runtime.ClearDailyStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            if (primaryState == null || string.Equals(sessionId, primarySessionId, StringComparison.OrdinalIgnoreCase) || string.Equals(sessionId, DefaultSessionId, StringComparison.OrdinalIgnoreCase))
-            {
-                primaryState = reset;
-            }
-        }
-
-        return primaryState ?? await _runtime.GetStarStateAsync(string.IsNullOrWhiteSpace(primarySessionId) ? DefaultSessionId : primarySessionId, starId, cancellationToken).ConfigureAwait(false);
+        string requestSessionId = string.IsNullOrWhiteSpace(primarySessionId) ? DefaultSessionId : primarySessionId!.Trim();
+        StarState reset = await _runtime.ResetStarMemoryAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
+        await _runtime.ClearDailyStateAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
+        return reset;
     }
 
     private async Task ClearSelectedStarHistoryAsync()
@@ -2313,7 +2288,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarState state = await ResetStarEverywhereAsync(star, DefaultSessionId, CancellationToken.None).ConfigureAwait(false);
                 _stateChangeTracker.Reset(star);
                 cleared.Add(new { starId = star, state.IsMet, state.IsAlly, state.Heart, state.Trust, state.Romance, state.EmotionalConnectionPercent });
-                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear all local data for " + star + " across desktop, Android dev, and Android prod sessions.");
+                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear the shared local state for " + star + ".");
             }
 
             StarState selectedState = await _runtime.GetStarStateAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
@@ -2332,7 +2307,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarOutput = string.Empty;
                 LastTranscript = string.Empty;
                 PlayerText = string.Empty;
-                Status = "Cleared all local Star data for desktop, Android dev, Android prod, daily JSON/XML cache, relationship scores, and conversation history.";
+                Status = "Cleared the shared local Star state, daily JSON/XML cache, relationship scores, and conversation history.";
                 DebugJson = JsonSerializer.Serialize(new { action = "clear_all_star_data", cleared }, _jsonOptions);
             });
         }
@@ -3531,34 +3506,21 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return FormatTodayStarState(state.TodayState.SlotId, state.TodayState.Summary);
         }
 
-        string[] sessions =
+        try
         {
-            DefaultSessionId,
-            "android-phone-dev",
-            "local-dev"
-        };
-
-        foreach (string sessionId in sessions.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase))
+            StarDailyStateRecord? record = await _runtime.GetCurrentDailyStateAsync(DefaultSessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (record != null && (!string.IsNullOrWhiteSpace(record.JsonContent) || !string.IsNullOrWhiteSpace(record.XmlContent)))
+            {
+                return FormatTodayStarState(record.SlotId, record.Summary);
+            }
+        }
+        catch (OperationCanceledException)
         {
-            try
-            {
-                StarDailyStateRecord? record = await _runtime.GetCurrentDailyStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                if (record == null || (string.IsNullOrWhiteSpace(record.JsonContent) && string.IsNullOrWhiteSpace(record.XmlContent))) continue;
-                string text = FormatTodayStarState(record.SlotId, record.Summary);
-                if (!string.Equals(sessionId, DefaultSessionId, StringComparison.OrdinalIgnoreCase))
-                {
-                    text += " (loaded from " + sessionId + " fallback daily JSON)";
-                }
-                return text;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine("[DailyState] Could not load UI daily state for " + sessionId + "/" + starId + ": " + ex.Message);
-            }
+            throw;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[DailyState] Could not load shared UI daily state for " + starId + ": " + ex.Message);
         }
 
         return "Today: no daily Star state yet.";

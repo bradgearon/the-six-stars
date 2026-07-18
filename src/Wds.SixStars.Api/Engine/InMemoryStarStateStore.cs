@@ -14,24 +14,20 @@ namespace Wds.SixStars.Api.Engine
 
         public Task<StarState> GetAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, starId);
-            StarState state = _states.GetOrAdd(key, _ => CreateDefaultState(starId));
+            StarState state = _states.GetOrAdd(starId, _ => CreateDefaultState(starId));
             NormalizeState(state);
             return Task.FromResult(state);
         }
 
         public Task SaveAsync(string sessionId, StarState state, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, state.StarId);
-            _states[key] = state;
+            _states[state.StarId] = state;
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<StarState>> GetAllAsync(string sessionId, CancellationToken cancellationToken)
         {
-            string prefix = sessionId + ":";
             IReadOnlyList<StarState> states = _states
-                .Where(x => x.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 .Select(x => x.Value)
                 .ToList();
             return Task.FromResult(states);
@@ -39,15 +35,11 @@ namespace Wds.SixStars.Api.Engine
 
         public Task ReplaceSessionAsync(string sessionId, IEnumerable<StarState> states, CancellationToken cancellationToken)
         {
-            string prefix = sessionId + ":";
-            foreach (string key in _states.Keys.Where(x => x.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
-            {
-                _states.TryRemove(key, out _);
-            }
+            _states.Clear();
 
             foreach (StarState state in states)
             {
-                _states[BuildKey(sessionId, state.StarId)] = state;
+                _states[state.StarId] = state;
             }
 
             return Task.CompletedTask;
@@ -56,8 +48,7 @@ namespace Wds.SixStars.Api.Engine
 
         public Task ResetStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, starId);
-            _states[key] = CreateDefaultState(starId);
+            _states[starId] = CreateDefaultState(starId);
             return Task.CompletedTask;
         }
 
@@ -119,9 +110,5 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
-        private static string BuildKey(string sessionId, string starId)
-        {
-            return sessionId + ":" + starId;
-        }
     }
 }

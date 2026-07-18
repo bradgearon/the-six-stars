@@ -16,11 +16,13 @@ namespace Wds.SixStars.Api.Engine
     /// </summary>
     public sealed class JsonStarStateStore : IStarStateStore
     {
+        private const string CanonicalSessionId = "local-dev";
+        private const int CanonicalStateVersion = 2;
         private readonly string _filePath;
         public string FilePath => _filePath;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly JsonSerializerOptions _jsonOptions;
-        private readonly Dictionary<string, SixStarsSaveData> _cacheBySession = new Dictionary<string, SixStarsSaveData>(StringComparer.OrdinalIgnoreCase);
+        private SixStarsSaveData? _cachedData;
 
         public JsonStarStateStore(string filePath)
         {
@@ -297,12 +299,12 @@ namespace Wds.SixStars.Api.Engine
             {
                 SixStarsSaveData data = new SixStarsSaveData
                 {
-                    Version = 1,
-                    SessionId = sessionId,
+                    Version = CanonicalStateVersion,
+                    SessionId = CanonicalSessionId,
                     SavedAt = DateTimeOffset.UtcNow,
                     Stars = states.ToList()
                 };
-                _cacheBySession[NormalizeSessionId(sessionId)] = data;
+                _cachedData = data;
                 await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -332,39 +334,139 @@ namespace Wds.SixStars.Api.Engine
 
         private async Task<SixStarsSaveData> LoadAsync(string sessionId, CancellationToken cancellationToken)
         {
-            string normalizedSessionId = NormalizeSessionId(sessionId);
-            if (_cacheBySession.TryGetValue(normalizedSessionId, out SixStarsSaveData? cached))
+            // The transport still carries a session id for request correlation, but Star state is
+            // one canonical save shared by desktop, Android, and any future clients.
+            if (_cachedData != null)
             {
-                return cached;
+                return _cachedData;
             }
 
-            SixStarsSaveData data = new SixStarsSaveData { SessionId = normalizedSessionId };
-            string sessionPath = GetSessionAggregatePath(normalizedSessionId);
-            SixStarsSaveData? loaded = await TryLoadDataFileAsync(sessionPath, cancellationToken).ConfigureAwait(false);
-
-            // Backward compatibility: the historical root aggregate is only valid for the session
-            // written inside it. Never return an Android aggregate for desktop-local-dev (or vice versa).
-            if (loaded == null)
+            SixStarsSaveData? root = await TryLoadDataFileAsync(_filePath, cancellationToken).ConfigureAwait(false);
+            if (root != null && root.Version >= CanonicalStateVersion && string.Equals(NormalizeSessionId(root.SessionId), CanonicalSessionId, StringComparison.OrdinalIgnoreCase))
             {
-                SixStarsSaveData? legacy = await TryLoadDataFileAsync(_filePath, cancellationToken).ConfigureAwait(false);
-                if (legacy != null && string.Equals(NormalizeSessionId(legacy.SessionId), normalizedSessionId, StringComparison.OrdinalIgnoreCase))
+                root.SessionId = CanonicalSessionId;
+                if (root.Stars == null) root.Stars = new List<StarState>();
+                foreach (StarState state in root.Stars.Where(x => x != null)) NormalizeStateDefaults(state);
+                _cachedData = root;
+                return root;
+            }
+
+            SixStarsSaveData data = await MigrateLegacySessionStateAsync(root, cancellationToken).ConfigureAwait(false);
+            _cachedData = data;
+            await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
+            return data;
+        }
+
+        private async Task<SixStarsSaveData> MigrateLegacySessionStateAsync(SixStarsSaveData? root, CancellationToken cancellationToken)
+        {
+            List<LegacyStarCandidate> candidates = new List<LegacyStarCandidate>();
+            if (root != null) AddAggregateCandidates(candidates, root, _filePath);
+
+            string? stateDirectory = Path.GetDirectoryName(_filePath);
+            if (string.IsNullOrWhiteSpace(stateDirectory)) stateDirectory = Environment.CurrentDirectory;
+
+            string sessionsDirectory = Path.Combine(stateDirectory, "sessions");
+            if (Directory.Exists(sessionsDirectory))
+            {
+                foreach (string path in Directory.EnumerateFiles(sessionsDirectory, "*.json", SearchOption.TopDirectoryOnly))
                 {
-                    loaded = legacy;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    SixStarsSaveData? legacy = await TryLoadDataFileAsync(path, cancellationToken).ConfigureAwait(false);
+                    if (legacy != null) AddAggregateCandidates(candidates, legacy, path);
                 }
             }
 
-            if (loaded != null)
+            string starsDirectory = Path.Combine(stateDirectory, "stars");
+            if (Directory.Exists(starsDirectory))
             {
-                data = loaded;
-                data.SessionId = normalizedSessionId;
-                if (data.Stars == null) data.Stars = new List<StarState>();
+                foreach (string path in Directory.EnumerateFiles(starsDirectory, "*.json", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    StarState? state = await TryLoadStarFileAsync(path, cancellationToken).ConfigureAwait(false);
+                    if (state == null || string.IsNullOrWhiteSpace(state.StarId)) continue;
+                    candidates.Add(new LegacyStarCandidate(state, GetLastWriteTime(path)));
+                }
             }
 
-            // Per-Star shards are the most recent durable source and also allow recovery from an
-            // interrupted aggregate-file write.
-            await MergeStarShardFilesAsync(data, normalizedSessionId, cancellationToken).ConfigureAwait(false);
-            _cacheBySession[normalizedSessionId] = data;
-            return data;
+            List<StarState> migratedStates = candidates
+                .Where(x => x.State != null && !string.IsNullOrWhiteSpace(x.State.StarId))
+                .GroupBy(x => x.State.StarId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(GetMigrationPriority).First().State)
+                .ToList();
+
+            foreach (StarState state in migratedStates) NormalizeStateDefaults(state);
+
+            return new SixStarsSaveData
+            {
+                Version = Math.Max(CanonicalStateVersion, root?.Version ?? CanonicalStateVersion),
+                SessionId = CanonicalSessionId,
+                SavedAt = DateTimeOffset.UtcNow,
+                Stars = migratedStates
+            };
+        }
+
+        private static void AddAggregateCandidates(List<LegacyStarCandidate> candidates, SixStarsSaveData data, string path)
+        {
+            if (data?.Stars == null) return;
+            DateTimeOffset sourceTime = data.SavedAt > DateTimeOffset.MinValue ? data.SavedAt : GetLastWriteTime(path);
+            foreach (StarState state in data.Stars.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)))
+            {
+                candidates.Add(new LegacyStarCandidate(state, sourceTime));
+            }
+        }
+
+        private static MigrationPriority GetMigrationPriority(LegacyStarCandidate candidate)
+        {
+            StarState state = candidate.State;
+            int durableEvidenceCount =
+                (state.MemoryLog?.Count ?? 0) +
+                (state.OldConversationArchives?.Count ?? 0) +
+                (state.EmotionUpdateHistory?.Count ?? 0) +
+                (state.EmotionVectorHistory?.Count ?? 0) +
+                (state.RelationshipEvents?.Count ?? 0) +
+                (state.AllImportantPlayerQuotes?.Count ?? 0) +
+                (state.ThingsLearnedOrSuggestedByPlayer?.Count ?? 0);
+
+            int relationshipProgress = Math.Max(0, state.Heart) + Math.Max(0, state.Trust) + Math.Max(0, state.Romance);
+            DateTimeOffset activity = state.LastInteractionAt
+                ?? state.LastDailyStateSourceUpdateAt
+                ?? candidate.SourceTime;
+
+            // Prefer the state that contains the largest real interaction history. This avoids a
+            // newly-created zero-value session replacing the established relationship during the
+            // one-time migration. Timestamps resolve ties without treating a blank reset as richer.
+            return new MigrationPriority(
+                state.InteractionCount,
+                durableEvidenceCount,
+                relationshipProgress,
+                activity,
+                candidate.SourceTime);
+        }
+
+        private async Task<StarState?> TryLoadStarFileAsync(string path, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                {
+                    return await JsonSerializer.DeserializeAsync<StarState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (JsonException) { return null; }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+
+        private static DateTimeOffset GetLastWriteTime(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? new DateTimeOffset(File.GetLastWriteTimeUtc(path)) : DateTimeOffset.MinValue;
+            }
+            catch (IOException) { return DateTimeOffset.MinValue; }
+            catch (UnauthorizedAccessException) { return DateTimeOffset.MinValue; }
         }
 
         private async Task<SixStarsSaveData?> TryLoadDataFileAsync(string path, CancellationToken cancellationToken)
@@ -386,18 +488,14 @@ namespace Wds.SixStars.Api.Engine
 
         private async Task SaveFileAsync(SixStarsSaveData data, CancellationToken cancellationToken)
         {
-            data.SessionId = NormalizeSessionId(data.SessionId);
+            data.SessionId = CanonicalSessionId;
+            data.Version = Math.Max(CanonicalStateVersion, data.Version);
             data.SavedAt = DateTimeOffset.UtcNow;
-            _cacheBySession[data.SessionId] = data;
+            _cachedData = data;
 
-            // Session-specific aggregates prevent desktop and Android from overwriting one another.
-            await WriteDataFileAsync(GetSessionAggregatePath(data.SessionId), data, cancellationToken).ConfigureAwait(false);
-
-            // Keep the old root file as a last-saved-session compatibility mirror for existing tools.
-            // LoadAsync verifies SessionId before using it, so this mirror can no longer contaminate
-            // another session.
+            // One canonical aggregate is the only relationship/memory state. Session identifiers
+            // remain transport metadata and never select a different save.
             await WriteDataFileAsync(_filePath, data, cancellationToken).ConfigureAwait(false);
-            await WriteStarShardFilesAsync(data, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task WriteDataFileAsync(string path, SixStarsSaveData data, CancellationToken cancellationToken)
@@ -414,89 +512,52 @@ namespace Wds.SixStars.Api.Engine
             File.Move(tempPath, path);
         }
 
-        private async Task MergeStarShardFilesAsync(SixStarsSaveData data, string sessionId, CancellationToken cancellationToken)
-        {
-            string directory = GetStarShardDirectory(sessionId);
-            if (!Directory.Exists(directory)) return;
-
-            foreach (string path in Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
-                    {
-                        StarState? state = await JsonSerializer.DeserializeAsync<StarState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                        if (state == null || string.IsNullOrWhiteSpace(state.StarId)) continue;
-                        NormalizeStateDefaults(state);
-                        int index = data.Stars.FindIndex(x => string.Equals(x.StarId, state.StarId, StringComparison.OrdinalIgnoreCase));
-                        if (index >= 0) data.Stars[index] = state;
-                        else data.Stars.Add(state);
-                    }
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-                catch (JsonException)
-                {
-                }
-            }
-        }
-
-        private async Task WriteStarShardFilesAsync(SixStarsSaveData data, CancellationToken cancellationToken)
-        {
-            if (data == null || data.Stars == null) return;
-            string sessionId = string.IsNullOrWhiteSpace(data.SessionId) ? "local-dev" : data.SessionId;
-            string directory = GetStarShardDirectory(sessionId);
-            Directory.CreateDirectory(directory);
-
-            foreach (StarState state in data.Stars.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                NormalizeStateDefaults(state);
-                string path = GetStarShardPath(sessionId, state.StarId);
-                string tempPath = path + ".tmp";
-                using (FileStream stream = File.Create(tempPath))
-                {
-                    await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                }
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tempPath, path);
-            }
-        }
-
-        private string GetSessionAggregatePath(string sessionId)
-        {
-            string? directory = Path.GetDirectoryName(_filePath);
-            if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
-            return Path.Combine(directory, "sessions", SafeFileName(NormalizeSessionId(sessionId)) + ".json");
-        }
-
         private static string NormalizeSessionId(string? sessionId)
         {
-            return string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId.Trim();
+            return string.IsNullOrWhiteSpace(sessionId) ? CanonicalSessionId : sessionId.Trim();
         }
 
-        private string GetStarShardDirectory(string sessionId)
+        private sealed class LegacyStarCandidate
         {
-            string? directory = Path.GetDirectoryName(_filePath);
-            if (string.IsNullOrWhiteSpace(directory)) directory = Environment.CurrentDirectory;
-            return Path.Combine(directory, "stars", SafeFileName(string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId));
+            public LegacyStarCandidate(StarState state, DateTimeOffset sourceTime)
+            {
+                State = state;
+                SourceTime = sourceTime;
+            }
+
+            public StarState State { get; }
+            public DateTimeOffset SourceTime { get; }
         }
 
-        private string GetStarShardPath(string sessionId, string starId)
+        private readonly struct MigrationPriority : IComparable<MigrationPriority>
         {
-            return Path.Combine(GetStarShardDirectory(sessionId), SafeFileName(starId) + ".json");
-        }
+            public MigrationPriority(int interactionCount, int durableEvidenceCount, int relationshipProgress, DateTimeOffset activity, DateTimeOffset sourceTime)
+            {
+                InteractionCount = interactionCount;
+                DurableEvidenceCount = durableEvidenceCount;
+                RelationshipProgress = relationshipProgress;
+                Activity = activity;
+                SourceTime = sourceTime;
+            }
 
-        private static string SafeFileName(string value)
-        {
-            string text = string.IsNullOrWhiteSpace(value) ? "unknown" : value.Trim();
-            foreach (char invalid in Path.GetInvalidFileNameChars()) text = text.Replace(invalid, '_');
-            return string.IsNullOrWhiteSpace(text) ? "unknown" : text;
+            private int InteractionCount { get; }
+            private int DurableEvidenceCount { get; }
+            private int RelationshipProgress { get; }
+            private DateTimeOffset Activity { get; }
+            private DateTimeOffset SourceTime { get; }
+
+            public int CompareTo(MigrationPriority other)
+            {
+                int result = InteractionCount.CompareTo(other.InteractionCount);
+                if (result != 0) return result;
+                result = DurableEvidenceCount.CompareTo(other.DurableEvidenceCount);
+                if (result != 0) return result;
+                result = RelationshipProgress.CompareTo(other.RelationshipProgress);
+                if (result != 0) return result;
+                result = Activity.CompareTo(other.Activity);
+                if (result != 0) return result;
+                return SourceTime.CompareTo(other.SourceTime);
+            }
         }
 
     }

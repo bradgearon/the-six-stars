@@ -18,6 +18,7 @@ namespace Wds.SixStars.Api.State
     /// </summary>
     public sealed class StarMemoryApi : IStarMemoryApi
     {
+        private const string CanonicalSessionId = "local-dev";
         private readonly IStarStateStore _stateStore;
         private readonly StarMemoryOptions _options;
 
@@ -278,8 +279,8 @@ namespace Wds.SixStars.Api.State
             IReadOnlyList<StarState> states = await _stateStore.GetAllAsync(sessionId, cancellationToken).ConfigureAwait(false);
             return new SixStarsSaveData
             {
-                Version = 1,
-                SessionId = sessionId,
+                Version = 2,
+                SessionId = CanonicalSessionId,
                 SavedAt = DateTimeOffset.UtcNow,
                 Stars = states.ToList()
             };
@@ -287,8 +288,7 @@ namespace Wds.SixStars.Api.State
 
         public Task ImportSaveDataAsync(SixStarsSaveData saveData, CancellationToken cancellationToken)
         {
-            string sessionId = string.IsNullOrWhiteSpace(saveData.SessionId) ? "local-dev" : saveData.SessionId;
-            return _stateStore.ReplaceSessionAsync(sessionId, saveData.Stars, cancellationToken);
+            return _stateStore.ReplaceSessionAsync(CanonicalSessionId, saveData.Stars, cancellationToken);
         }
 
 

@@ -62,7 +62,7 @@
                     <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />
-                    <TextBlock Text="Send Message always uses normal Chat. Ask for a long answer or a story directly in the message box; every spokenText chunk is displayed and spoken in order. Open LLM Exchange Log Folder shows the durable daily .log prompt logs. Clear Selected Star History resets one Star. Clear All Star Data resets every Star state saved locally and refreshes both desktop and Android dev sessions." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <TextBlock Text="Send Message always uses normal Chat. Ask for a long answer or a story directly in the message box; every spokenText chunk is displayed and spoken in order. Open LLM Exchange Log Folder shows the durable daily .log prompt logs. Clear Selected Star History resets one Star. Clear All Star Data resets the single shared Star state used by desktop and Android." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Separator Margin="0,8,0,8" />
                     <TextBlock Text="Scenario Tests" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Goblin / Harpy Discernment" Command="{Binding GoblinHarpiesCommand}" Margin="0,0,0,8" Height="34" />

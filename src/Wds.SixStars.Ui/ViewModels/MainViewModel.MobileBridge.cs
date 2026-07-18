@@ -562,7 +562,7 @@ public sealed partial class MainViewModel
                         Romance = reset.Romance,
                         EmotionalConnectionPercent = reset.EmotionalConnectionPercent,
                         IsGirlfriendReady = reset.IsGirlfriendReady,
-                        Message = "Elusiaa helped fully clear local Star data for " + star + " across desktop, Android dev, Android prod, daily JSON/XML cache, relationship scores, and conversation history."
+                        Message = "Elusiaa helped fully clear the shared local Star state for " + star + ", including daily JSON/XML cache, relationship scores, and conversation history."
                     });
                 }
                 if (selectedState == null) selectedState = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
@@ -572,7 +572,7 @@ public sealed partial class MainViewModel
                     StarOutput = string.Empty;
                     LastTranscript = string.Empty;
                 });
-                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept every Star memory shelf clean across desktop and Android sessions and refreshed the state.");
+                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept the shared Star memory shelf clean and refreshed the state.");
             }
             case "SendPhoto":
             {

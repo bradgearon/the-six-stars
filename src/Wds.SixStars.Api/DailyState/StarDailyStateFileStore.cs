@@ -9,6 +9,7 @@ namespace Wds.SixStars.Api.DailyState
 {
     public sealed class StarDailyStateFileStore
     {
+        private const string CanonicalSessionId = "local-dev";
         private readonly string _rootDirectory;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
@@ -114,6 +115,7 @@ namespace Wds.SixStars.Api.DailyState
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                record.SessionId = CanonicalSessionId;
                 string starFolder = BuildStarFolder(record.SessionId, record.StarId);
                 Directory.CreateDirectory(starFolder);
                 string dayFolder = Path.Combine(starFolder, SafeName(record.LocalDate));
@@ -169,7 +171,7 @@ namespace Wds.SixStars.Api.DailyState
             if (string.IsNullOrWhiteSpace(xml)) return null;
             return new StarDailyStateRecord
             {
-                SessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId,
+                SessionId = CanonicalSessionId,
                 StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId,
                 LocalDate = DateTime.Now.ToString("yyyy-MM-dd"),
                 SlotId = "current-xml-fallback",
@@ -207,7 +209,8 @@ namespace Wds.SixStars.Api.DailyState
 
         private string BuildStarFolder(string sessionId, string starId)
         {
-            return Path.Combine(_rootDirectory, SafeName(sessionId), SafeName(starId));
+            // Daily state belongs to the same single Star save regardless of which client asked.
+            return Path.Combine(_rootDirectory, SafeName(starId));
         }
 
         private static string SafeName(string? value)
