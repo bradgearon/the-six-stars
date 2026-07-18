@@ -138,6 +138,12 @@ DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
 ATTN_IMPLEMENTATION = os.environ.get("QWEN_TTS_ATTN_IMPLEMENTATION", "sdpa")
 DTYPE_NAME = os.environ.get("QWEN_TTS_DTYPE", "bfloat16" if DEVICE.startswith("cuda") else "float32")
 USE_CUDA_GRAPHS = os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true").strip().lower() not in {"0", "false", "no"}
+# Load the Qwen generation model as soon as the service starts so the first
+# phone/desktop reply does not pay the full model-load and CUDA warmup cost.
+# The WebSocket listener still comes up immediately; a request that arrives
+# during preload waits on the same engine lock instead of starting a duplicate
+# model load.
+PRELOAD_MODEL = os.environ.get("QWEN_TTS_PRELOAD_MODEL", "true").strip().lower() not in {"0", "false", "no", "off"}
 # Voice Clone Studio gets its speed from faster_qwen3_tts when CUDA graphs are enabled.
 # Keep this on by default and fall back to qwen_tts only if the package is missing.
 USE_FASTER_QWEN3 = os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true").strip().lower() not in {"0", "false", "no"}
@@ -346,6 +352,8 @@ class QwenTtsEngine:
         # the shared voice-clone prompt cache so the same Star prompt is built once.
         self._cache_lock = threading.Lock()
         self._model_lock = asyncio.Lock()
+        self.model_loading = False
+        self.model_load_error = ""
         logger.info("Qwen TTS engine created")
 
     async def ensure_loaded(self) -> None:
@@ -354,7 +362,15 @@ class QwenTtsEngine:
         async with self._model_lock:
             if self.model_loaded:
                 return
-            await asyncio.to_thread(self._load_model_sync)
+            self.model_loading = True
+            self.model_load_error = ""
+            try:
+                await asyncio.to_thread(self._load_model_sync)
+            except Exception as exc:
+                self.model_load_error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                self.model_loading = False
 
     @staticmethod
     def _call_if_supported(target: Any, method_names: List[str], *args: Any, **kwargs: Any) -> bool:
@@ -1472,6 +1488,9 @@ async def handle_client(websocket: WebSocketServerProtocol, path: str) -> None:
             "backend": "qwen3-tts",
             "model": MODEL_PATH,
             "device": DEVICE,
+            "modelLoaded": ENGINE.model_loaded,
+            "modelLoading": ENGINE.model_loading,
+            "modelLoadError": ENGINE.model_load_error,
             "cudaGraphsRequested": USE_CUDA_GRAPHS,
             "cudaGraphsActive": ENGINE.cuda_graphs_active,
             "fasterBackend": ENGINE.using_faster_backend,
@@ -1520,9 +1539,44 @@ async def main() -> None:
         USE_FASTER_QWEN3,
         MODEL_PATH,
     )
-    logger.info("Model will lazy-load on first request. Press Ctrl+C to stop.")
+    logger.info(
+        "TTS startup preload: %s. The WebSocket listener opens immediately while model loading/warmup runs in the background.",
+        PRELOAD_MODEL,
+    )
+
+    async def preload_generation_model() -> None:
+        started = time.monotonic()
+        try:
+            logger.info("Preloading Qwen3-TTS generation model before the first spoken reply...")
+            await ENGINE.ensure_loaded()
+            logger.info(
+                "[READY] Qwen3-TTS generation model preloaded in %.2fs. First phone/desktop reply will reuse the warm model.",
+                time.monotonic() - started,
+            )
+        except Exception as exc:
+            # Keep the listener alive so clients receive the real generation error
+            # instead of a connection refusal. A later request may retry the load.
+            logger.error(
+                "Qwen3-TTS startup preload failed after %.2fs: %s: %s",
+                time.monotonic() - started,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+
     async with serve(handle_client, HOST, PORT, subprotocols=None, max_size=32 * 1024 * 1024):
-        await asyncio.Future()
+        preload_task: Optional[asyncio.Task[None]] = None
+        if PRELOAD_MODEL:
+            preload_task = asyncio.create_task(preload_generation_model(), name="qwen-tts-model-preload")
+        else:
+            logger.info("Model preload disabled; the first request will lazy-load Qwen3-TTS.")
+
+        try:
+            await asyncio.Future()
+        finally:
+            if preload_task is not None and not preload_task.done():
+                preload_task.cancel()
+                await asyncio.gather(preload_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

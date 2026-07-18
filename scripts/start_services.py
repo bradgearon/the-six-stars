@@ -227,6 +227,7 @@ def shared_environment() -> Dict[str, str]:
         "QWEN_TTS_CLONE_AUDIO_DIR": os.environ.get("QWEN_TTS_CLONE_AUDIO_DIR", str(full_path("src/Wds.SixStars.Api/Content/VoiceClones"))),
         "QWEN_TTS_STARS_DIR": os.environ.get("QWEN_TTS_STARS_DIR", str(full_path("src/Wds.SixStars.Api/Content/Stars"))),
         "QWEN_TTS_DEVICE": os.environ.get("QWEN_TTS_DEVICE", "cuda"),
+        "QWEN_TTS_PRELOAD_MODEL": os.environ.get("QWEN_TTS_PRELOAD_MODEL", "true"),
         "SIX_STARS_REQUIRE_CUDA": os.environ.get("SIX_STARS_REQUIRE_CUDA", "true"),
         "QWEN_TTS_CHUNK_GENERATION_MODE": os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "parallel"),
         "QWEN_TTS_PARALLEL_CHUNKS": os.environ.get("QWEN_TTS_PARALLEL_CHUNKS", "true"),
@@ -498,6 +499,33 @@ def main() -> int:
     llm_port = os.environ.get("LOCAL_LLM_PORT", os.environ.get("LLM_PORT", "8080"))
     tts_port = os.environ.get("QWEN_TTS_PORT", os.environ.get("TTS_PORT", "8100"))
 
+    # Start Qwen first so its model preload overlaps the slower LLM and ASR startup.
+    # The WebSocket listener becomes available quickly; the first synthesis request
+    # shares the in-progress preload instead of triggering a second cold load.
+    if not falsy(os.environ.get("SIX_STARS_START_TTS", "true")):
+        tts_url = start_engine_service(manager, "tts", manifest, nvidia)
+        if tts_url is None:
+            websocket_tts_script = ROOT / "scripts" / "websocket_tts_server.py"
+            if websocket_tts_script.exists():
+                qwen_model = os.environ.get("QWEN_TTS_MODEL_PATH", model_name_or_path("tts", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"))
+                resolved_qwen_model = resolve_model_ref("tts", qwen_model, os.environ.get("QWEN_TTS_LOCAL_PATH", ""), aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"])
+                print(f"START   Source WebSocket Qwen TTS: {resolved_qwen_model}")
+                manager.start_service(
+                    "Source WebSocket Qwen TTS",
+                    [PY_EXE, str(websocket_tts_script)],
+                    f"ws://localhost:{tts_port}/tts/stream",
+                    {
+                        "QWEN_TTS_MODEL_PATH": resolved_qwen_model,
+                        "QWEN_TTS_DEVICE": "cuda",
+                        "SIX_STARS_REQUIRE_CUDA": "true",
+                        "QWEN_TTS_CHUNK_GENERATION_MODE": "parallel",
+                        "QWEN_TTS_PARALLEL_CHUNKS": "true",
+                        "QWEN_TTS_MAX_PARALLEL_CHUNKS": "0",
+                    },
+                )
+    else:
+        print("SKIP    Qwen TTS disabled by SIX_STARS_START_TTS=false")
+
     # Local LLM is now part of the engine runtime. Default to starting it unless explicitly disabled.
     llm_endpoint: Optional[str] = None
     if not falsy(os.environ.get("SIX_STARS_START_LOCAL_LLM", "true")):
@@ -557,30 +585,6 @@ def main() -> int:
                 )
     else:
         print("SKIP    Whisper disabled by SIX_STARS_START_WHISPER=false")
-
-    if not falsy(os.environ.get("SIX_STARS_START_TTS", "true")):
-        tts_url = start_engine_service(manager, "tts", manifest, nvidia)
-        if tts_url is None:
-            websocket_tts_script = ROOT / "scripts" / "websocket_tts_server.py"
-            if websocket_tts_script.exists():
-                qwen_model = os.environ.get("QWEN_TTS_MODEL_PATH", model_name_or_path("tts", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"))
-                resolved_qwen_model = resolve_model_ref("tts", qwen_model, os.environ.get("QWEN_TTS_LOCAL_PATH", ""), aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"])
-                print(f"START   Source WebSocket Qwen TTS: {resolved_qwen_model}")
-                manager.start_service(
-                    "Source WebSocket Qwen TTS",
-                    [PY_EXE, str(websocket_tts_script)],
-                    f"ws://localhost:{tts_port}/tts/stream",
-                    {
-                        "QWEN_TTS_MODEL_PATH": resolved_qwen_model,
-                        "QWEN_TTS_DEVICE": "cuda",
-                        "SIX_STARS_REQUIRE_CUDA": "true",
-                        "QWEN_TTS_CHUNK_GENERATION_MODE": "parallel",
-                        "QWEN_TTS_PARALLEL_CHUNKS": "true",
-                        "QWEN_TTS_MAX_PARALLEL_CHUNKS": "0",
-                    },
-                )
-    else:
-        print("SKIP    Qwen TTS disabled by SIX_STARS_START_TTS=false")
 
     manager.print_table()
 

@@ -211,6 +211,7 @@ internal static class Program
         env["QWEN_TTS_LANGUAGE"] = "English";
         env["SIX_STARS_REQUIRE_CUDA"] = "true";
         env["QWEN_TTS_DEVICE"] = "cuda";
+        env["QWEN_TTS_PRELOAD_MODEL"] = env.TryGetValue("QWEN_TTS_PRELOAD_MODEL", out var preloadTts) ? preloadTts : "true";
         env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "parallel";
         env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "0";
         env["QWEN_TTS_PARALLEL_CHUNKS"] = "true";
@@ -277,9 +278,12 @@ internal sealed class RuntimeSupervisor : IDisposable
     public async Task StartAllAsync(int waitSeconds)
     {
         Directory.CreateDirectory(Path.Combine(_root, "logs", "services"));
+        // Start Qwen first. Its WebSocket listener comes up quickly and the Python service
+        // preloads the generation model while the launcher waits for LLM/ASR health checks.
+        // This removes most of the cold TTS cost from the first Android/desktop reply.
+        await StartKindAsync("tts", 5);
         await StartKindAsync("llm", waitSeconds);
         await StartKindAsync("asr", Math.Min(waitSeconds, 45));
-        await StartKindAsync("tts", 5); // WebSocket health is not HTTP; launch and let UI connect.
     }
 
     private async Task StartKindAsync(string kind, int waitSeconds)

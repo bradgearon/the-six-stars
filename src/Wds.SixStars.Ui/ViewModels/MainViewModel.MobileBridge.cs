@@ -2369,6 +2369,20 @@ public sealed partial class MainViewModel
             OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream cancelled", "stream=" + voiceStream.Ordinal + " was replaced."));
             ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android voice stream was replaced by a newer request.");
         }
+        catch (Exception ex)
+        {
+            mobileResponse.VoiceError = "Android phone voice failed: " + ex.Message;
+            try
+            {
+                if (_mobileBridgeAudioHost != null)
+                {
+                    await _mobileBridgeAudioHost.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            catch { }
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Android voice stream failed", "stream=" + voiceStream.Ordinal + ", error=" + ex.Message));
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android phone voice failed: " + ex.Message);
+        }
         finally
         {
             if (ownsStream)

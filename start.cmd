@@ -46,6 +46,7 @@ if not defined SIX_STARS_LLM_API_KEY if defined LM_API_TOKEN set "SIX_STARS_LLM_
 if not defined SIX_STARS_SCREEN_LLM_API_KEY if defined SIX_STARS_LLM_API_KEY set "SIX_STARS_SCREEN_LLM_API_KEY=%SIX_STARS_LLM_API_KEY%"
 if not defined SIX_STARS_REQUIRE_CUDA set "SIX_STARS_REQUIRE_CUDA=true"
 if not defined QWEN_TTS_DEVICE set "QWEN_TTS_DEVICE=cuda"
+if not defined QWEN_TTS_PRELOAD_MODEL set "QWEN_TTS_PRELOAD_MODEL=true"
 if not defined QWEN_TTS_LANGUAGE set "QWEN_TTS_LANGUAGE=English"
 if not defined QWEN_TTS_MODEL_PATH set "QWEN_TTS_MODEL_PATH=Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 if not defined QWEN_TTS_CLONE_AUDIO_DIR set "QWEN_TTS_CLONE_AUDIO_DIR=src\Wds.SixStars.Api\Content\VoiceClones"

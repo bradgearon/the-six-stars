@@ -51,30 +51,48 @@ namespace Wds.SixStars.Api.Voice
                 return;
             }
 
-            if (_webSocket != null)
-            {
-                _webSocket.Dispose();
-            }
-
-            _webSocket = new ClientWebSocket();
-            _connectionCts = new CancellationTokenSource();
-
             Uri wsUri = new Uri(_options.WebSocketUrl);
-            Debug.WriteLine($"[WebSocketTtsVoiceGenerator] Connecting to {wsUri}...");
+            int maxAttempts = Math.Max(1, _options.MaxReconnectAttempts);
+            Exception? lastError = null;
 
-            try
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                await _webSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
-                Debug.WriteLine("[WebSocketTtsVoiceGenerator] Connected successfully");
+                cancellationToken.ThrowIfCancellationRequested();
 
-                // Start receiving messages
-                _receiveTask = Task.Run(() => ReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
+                try { _connectionCts?.Cancel(); } catch { }
+                try { _webSocket?.Dispose(); } catch { }
+                try { _connectionCts?.Dispose(); } catch { }
+
+                _webSocket = new ClientWebSocket();
+                _connectionCts = new CancellationTokenSource();
+
+                Debug.WriteLine($"[WebSocketTtsVoiceGenerator] Connecting to {wsUri} (attempt {attempt}/{maxAttempts})...");
+
+                try
+                {
+                    await _webSocket.ConnectAsync(wsUri, cancellationToken).ConfigureAwait(false);
+                    Debug.WriteLine("[WebSocketTtsVoiceGenerator] Connected successfully");
+
+                    // Start receiving messages
+                    _receiveTask = Task.Run(() => ReceiveLoopAsync(_connectionCts.Token), _connectionCts.Token);
+                    return;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastError = ex;
+                    Debug.WriteLine($"[WebSocketTtsVoiceGenerator] Connection attempt {attempt}/{maxAttempts} failed: {ex.Message}");
+                    try { _webSocket.Dispose(); } catch { }
+
+                    if (attempt < maxAttempts)
+                    {
+                        await Task.Delay(_options.ReconnectDelay, cancellationToken).ConfigureAwait(false);
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[WebSocketTtsVoiceGenerator] Connection failed: {ex.Message}");
-                throw;
-            }
+
+            throw new InvalidOperationException(
+                $"Could not connect to the Qwen TTS WebSocket at {wsUri} after {maxAttempts} attempt(s).",
+                lastError);
         }
 
         public async Task DisconnectAsync()
