@@ -807,9 +807,9 @@ namespace Wds.SixStars.Api.Ai
             {
                 contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer.");
                 contract.AppendLine();
-                contract.AppendLine("informationNeeds is an array of subject, confidence, and score.");
-                contract.AppendLine("The subject field chooses the information source and must be exactly one of: history, quotes, markers, lore, bestiary, characters, world, screen, story. When the latest message may need older context or information outside this prompt, fill the informationNeeds array: one separate entry for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas.");
-                contract.AppendLine();
+                contract.AppendLine("informationNeeds is an array of objects with subject, confidence, and score.");
+                contract.AppendLine("The subject field chooses the information source and must be exactly one of: history, quotes, markers, lore, bestiary, characters, world, screen, story. When the latest message may need older context or information outside this prompt, return the informationNeeds array: one separate object for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas.");
+                contract.AppendLine("Content-backed subject names match the local folders or memory exactly: lore=skills/spells/abilities/weapons/mechanics; bestiary=monsters/enemies/bosses/creatures/HP/drops; characters=Stars/people/NPCs/companions/guardians; world=areas/locations/settlements/ecology/quests; story=exact scenes/meetings/dialogue/story continuity. A deep pass receives the selected subjects complete information plus the original player speech.");
                 contract.AppendLine("For an open-ended creative story request, do not request extra information merely because it is a story; invent it from the profile and context already provided. Request older data only when the player explicitly requires a missing canon fact or continuation detail.");
             }
             if (request.RequestType == RequestType.Story)
