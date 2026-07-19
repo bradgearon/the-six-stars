@@ -939,5 +939,12 @@
     "I heard you. I am deciding whether hope is playing tricks on me again.",
     "Stay there. I need to see whether this is a door or only an echo.",
     "One breath. I will not let a question like that vanish into nothing."
+  ],
+  "characterAttributesVersion": 1,
+  "characterAttributes": "45,80,45,50,20,65,85,20,45,35,25,75,90",
+  "characterAttributeNotes": [
+    "High insight and patience make her perceptive, but high despair and fear can freeze her future.",
+    "Low hope and zeal mean she may withdraw, delay, or assume change is impossible.",
+    "Benaveil pressure should mostly sharpen despair, fear, fatalism, and cold distance."
   ]
 }

@@ -26,6 +26,15 @@ namespace Wds.SixStars.Api.Stars
         public string BackstorySummary { get; set; } = string.Empty;
         public string CompleteBackgroundStory { get; set; } = string.Empty;
 
+        /// <summary>Version of the compact character attribute schema used by CharacterAttributes.</summary>
+        public int CharacterAttributesVersion { get; set; } = StarCharacterAttributeSchema.Version;
+
+        /// <summary>Compact 0-100 character attribute scores in StarCharacterAttributeSchema.AttributeOrder.</summary>
+        public string CharacterAttributes { get; set; } = string.Empty;
+
+        /// <summary>Plain-language trait hints used by prompts and tuning tools.</summary>
+        public List<string> CharacterAttributeNotes { get; set; } = new List<string>();
+
         /// <summary>Private attraction hook for the prompt. The Star knows this internally but should not confess it cheaply.</summary>
         public string SecretAttractionHook { get; set; } = string.Empty;
 

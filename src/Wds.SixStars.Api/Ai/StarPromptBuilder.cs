@@ -200,6 +200,83 @@ namespace Wds.SixStars.Api.Ai
             };
         }
 
+        public IReadOnlyList<ChatMessage> BuildDecisionScoreMessages(StarProfile profile, StarDecisionScoreRequest request, StarState state)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            state = state ?? new StarState { StarId = profile.StarId };
+
+            string attributeOrder = string.IsNullOrWhiteSpace(request.CharacterAttributesOrder)
+                ? StarCharacterAttributeSchema.AttributeOrderText
+                : request.CharacterAttributesOrder.Trim();
+            string attributes = string.IsNullOrWhiteSpace(request.CharacterAttributes)
+                ? BuildCharacterAttributeScores(profile)
+                : request.CharacterAttributes.Trim();
+            string scoreOrder = string.IsNullOrWhiteSpace(request.RequestedScoreOrder)
+                ? StarCharacterAttributeSchema.DecisionScoreOrderText
+                : request.RequestedScoreOrder.Trim();
+
+            StringBuilder facts = new StringBuilder();
+            if (request.SceneFacts == null || request.SceneFacts.Count == 0)
+            {
+                facts.AppendLine("none supplied");
+            }
+            else
+            {
+                foreach (KeyValuePair<string, string> item in request.SceneFacts.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    facts.AppendLine("- " + item.Key + "=" + Truncate(item.Value ?? string.Empty, 300));
+                }
+            }
+
+            StringBuilder additionalData = new StringBuilder();
+            if (request.AdditionalData != null)
+            {
+                foreach (KeyValuePair<string, string> item in request.AdditionalData.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    additionalData.AppendLine("- " + item.Key + "=" + Truncate(item.Value ?? string.Empty, 300));
+                }
+            }
+
+            StringBuilder relationship = new StringBuilder();
+            relationship.AppendLine(string.IsNullOrWhiteSpace(request.RelationshipState) ? BuildRelationshipStatus(state) : request.RelationshipState.Trim());
+            relationship.AppendLine("BenaveilPressureLevel=" + (request.GameContext?.BenaveilPressureLevel ?? 0));
+            relationship.AppendLine("IsMet=" + state.IsMet + "; IsAlly=" + state.IsAlly + "; IsGirlfriend=" + state.IsGirlfriend + "; EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ".");
+            AppendCharacterAttributeRequestContext(relationship, profile);
+
+            string system = "You are a deterministic-support scorer for The Last Cat. You are not choosing a story route, dialogue route, quest flag, or canon outcome. You only score the named Star's current inner impulses from 0 to 100 using the requested order. Return complete JSON only. Scores are soft psychology values for the host game code to consume. Do not add outputs not present in the schema.";
+
+            StringBuilder user = new StringBuilder();
+            user.AppendLine("DECISION IMPULSE SCORING REQUEST");
+            user.AppendLine("StarId=" + profile.StarId + "; DisplayName=" + profile.DisplayName + "; Element=" + profile.Element + "; Domain=" + profile.Domain + ".");
+            user.AppendLine("SceneKey=" + (request.SceneKey ?? string.Empty));
+            user.AppendLine("CharacterAttributesOrder=" + attributeOrder);
+            user.AppendLine(profile.DisplayName + "CharacterAttributes=" + attributes);
+            user.AppendLine("Attribute meaning=0 is absent/weak, 100 is dominant. Use the attribute scores silently as broad personality pressure, not as math to explain aloud.");
+            if (profile.CharacterAttributeNotes != null && profile.CharacterAttributeNotes.Count > 0)
+            {
+                user.AppendLine("CharacterAttributeNotes=" + string.Join("; ", profile.CharacterAttributeNotes.Take(8).Select(x => Truncate(x, 220))));
+            }
+            user.AppendLine("RelationshipState=" + relationship.ToString().TrimEnd());
+            user.AppendLine("SceneFacts:");
+            user.Append(facts.ToString());
+            user.AppendLine("PlayerRecentAction=" + QuoteInline(Truncate(request.PlayerRecentAction ?? string.Empty, 900)));
+            if (!string.IsNullOrWhiteSpace(request.AdditionalInstructions)) user.AppendLine("AdditionalInstructions=" + Truncate(request.AdditionalInstructions, 900));
+            if (additionalData.Length > 0)
+            {
+                user.AppendLine("AdditionalData:");
+                user.Append(additionalData.ToString());
+            }
+            user.AppendLine("RequestedScoreOrder=" + scoreOrder);
+            user.AppendLine("Output rules: scoreOrder must echo RequestedScoreOrder exactly. scores must contain one integer per requested item, comma-separated, in that exact order. confidence is 0-100. reasonCode is a short snake_case reason. shortExplanation is one short sentence for debugging. Do not choose the scene outcome.");
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system),
+                new ChatMessage("user", user.ToString().TrimEnd())
+            };
+        }
+
         public IReadOnlyList<ChatMessage> BuildDailyStarStateMessages(StarDailyStateGenerationRequest request)
         {
             StarProfile profile = request.Profile;
@@ -216,6 +293,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) starCard.AppendLine("Personality: " + profile.PersonalityShort);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) starCard.AppendLine("Backstory: " + Truncate(profile.BackstorySummary, 800));
             if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) starCard.AppendLine("Complete background: " + Truncate(profile.CompleteBackgroundStory, 1200));
+            AppendCharacterAttributeRequestContext(starCard, profile);
             AppendPrivateRomanceProfile(starCard, profile);
             AppendList(starCard, "Friends and contacts", profile.FriendsAndContacts.Take(12).ToList());
 
@@ -720,7 +798,8 @@ namespace Wds.SixStars.Api.Ai
                 relationship.AppendLine("Ally status: " + (state.IsAlly ? "ally/unlocked" : "not an active ally yet; Elusiaa is the only default ally until story/gameplay unlocks this Star."));
                 relationship.AppendLine("Emotional connection skill level: " + (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel) ? "interested_private_potential_partner" : state.EmotionalConnectionSkillLevel));
                 relationship.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%; girlfriendReady=" + state.IsGirlfriendReady + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
-                relationship.AppendLine("Current state stats are part of the request every turn. Use them silently to shape warmth, caution, flirtation, distance, curiosity, secrets, and how personal your answer becomes. Do not speak the numbers unless the player asks about mechanics.");
+                relationship.AppendLine("Current state stats and character attributes are part of the request every turn. Use them silently to shape warmth, caution, flaw pressure, flirtation, distance, curiosity, secrets, and how personal your answer becomes. Do not speak the numbers unless the player asks about mechanics.");
+                AppendCharacterAttributeRequestContext(relationship, profile);
                 AppendOtherStarsRelationshipLines(relationship, state);
                 AppendAccumulatedEmotionTotals(relationship, state);
                 AppendConnectionFlirtGuidance(relationship, profile, state);
@@ -1762,6 +1841,27 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
+        private static void AppendCharacterAttributeRequestContext(StringBuilder sb, StarProfile profile)
+        {
+            if (sb == null || profile == null) return;
+            string scores = BuildCharacterAttributeScores(profile);
+            if (string.IsNullOrWhiteSpace(scores)) return;
+            sb.AppendLine("CharacterAttributesVersion=" + (profile.CharacterAttributesVersion <= 0 ? StarCharacterAttributeSchema.Version : profile.CharacterAttributesVersion));
+            sb.AppendLine("CharacterAttributesOrder=" + StarCharacterAttributeSchema.AttributeOrderText);
+            sb.AppendLine(profile.DisplayName + "CharacterAttributes=" + scores);
+            sb.AppendLine("CharacterAttributesRule=Use these broad 0-100 trait pressures silently to flavor voice, flaws, instincts, restraint, and judgment. Do not recite them unless the Last Cat asks about mechanics.");
+            if (profile.CharacterAttributeNotes != null && profile.CharacterAttributeNotes.Count > 0)
+            {
+                sb.AppendLine("CharacterAttributeNotes=" + string.Join("; ", profile.CharacterAttributeNotes.Take(6).Select(x => Truncate(x, 180))));
+            }
+        }
+
+        private static string BuildCharacterAttributeScores(StarProfile profile)
+        {
+            if (profile == null) return string.Empty;
+            return StarCharacterAttributeSchema.NormalizeCompactScores(profile.CharacterAttributes, StarCharacterAttributeSchema.AttributeOrder.Length);
+        }
+
         private static void AppendFastConversationProfile(StringBuilder sb, StarProfile profile)
         {
             sb.AppendLine();
@@ -1769,6 +1869,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use this compact profile knowledge in ordinary conversation, not only in story mode. These are facts " + profile.DisplayName + " can naturally talk about when asked.");
             sb.AppendLine("Identity: My name is " + profile.DisplayName + "; element=" + profile.Element + "; domain=" + profile.Domain + ".");
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
+            AppendCharacterAttributeRequestContext(sb, profile);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 420));
             if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Background: " + Truncate(profile.CompleteBackgroundStory, 520));
             AppendList(sb, "Friends / allies / contacts she may name in normal chat", profile.FriendsAndContacts.Take(10).ToList());
@@ -1792,6 +1893,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Use this for story mode. The story should sound like " + profile.DisplayName + " telling it aloud, but it should still be a complete episode with plot.");
             sb.AppendLine("Identity: " + profile.DisplayName + "; element=" + profile.Element + "; domain=" + profile.Domain + ".");
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
+            AppendCharacterAttributeRequestContext(sb, profile);
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 220));
             if (!string.IsNullOrWhiteSpace(profile.SpeakingStyle)) sb.AppendLine("Story voice: " + Truncate(profile.SpeakingStyle, 240));
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory seed: " + Truncate(profile.BackstorySummary, 260));
@@ -2051,6 +2153,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Element/domain: " + profile.Element + " / " + profile.Domain);
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 420));
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
+            AppendCharacterAttributeRequestContext(sb, profile);
             if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Backstory summary: " + Truncate(profile.BackstorySummary, 500));
             List<string> friends = profile.FriendsAndContacts ?? new List<string>();
             if (friends.Count > 0) sb.AppendLine("Friends/contacts: " + Truncate(string.Join("; ", friends.Take(6)), 600));

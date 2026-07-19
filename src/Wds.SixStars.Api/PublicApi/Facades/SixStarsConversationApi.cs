@@ -30,6 +30,11 @@ namespace Wds.SixStars.Api.Engine
             return _runtime.GetStarStateAsync(sessionId, starId, cancellationToken);
         }
 
+        public Task<StarDecisionScoreResponse> ScoreDecisionAsync(StarDecisionScoreRequest request, CancellationToken cancellationToken)
+        {
+            return _runtime.ScoreDecisionAsync(request, cancellationToken);
+        }
+
         public Task<StarInteractionHistoryPage> GetStarInteractionHistoryAsync(string sessionId, string starId, int skip, int take, CancellationToken cancellationToken)
         {
             return _runtime.GetStarInteractionHistoryAsync(sessionId, starId, skip, take, cancellationToken);

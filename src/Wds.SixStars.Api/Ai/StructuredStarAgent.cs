@@ -14,7 +14,7 @@ using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
+    public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -267,6 +267,40 @@ namespace Wds.SixStars.Api.Ai
             response.ChangesSummary = originProfile.DisplayName + " privately processed interstar feedback about the Last Cat; hidden state only.";
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM interstar origin feedback vector pass.");
             return response;
+        }
+
+        public async Task<StarDecisionScoreResponse> ScoreDecisionAsync(StarProfile profile, StarDecisionScoreRequest request, StarState state, CancellationToken cancellationToken)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            state = state ?? new StarState { StarId = profile.StarId };
+
+            System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Sending decision impulse score request for " + profile.StarId + " scene " + (request.SceneKey ?? string.Empty) + "...");
+            string json = await _client.CompleteJsonAsync(
+                _promptBuilder.BuildDecisionScoreMessages(profile, request, state),
+                StarResponseJsonSchema.CreateDecisionScoreResponseFormat(),
+                0,
+                "decision-impulse-score",
+                cancellationToken).ConfigureAwait(false);
+
+            StarDecisionScoreResponse? model = JsonSerializer.Deserialize<StarDecisionScoreResponse>(ExtractJson(json), _jsonOptions);
+            if (model == null) throw new InvalidOperationException("Decision score response returned empty JSON.");
+
+            string requestedScoreOrder = string.IsNullOrWhiteSpace(request.RequestedScoreOrder)
+                ? StarCharacterAttributeSchema.DecisionScoreOrderText
+                : request.RequestedScoreOrder.Trim();
+            int scoreCount = requestedScoreOrder.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Length;
+            if (scoreCount <= 0) scoreCount = StarCharacterAttributeSchema.DecisionScoreOrder.Length;
+
+            model.StarId = string.IsNullOrWhiteSpace(model.StarId) ? profile.StarId : model.StarId;
+            model.SceneKey = string.IsNullOrWhiteSpace(model.SceneKey) ? (request.SceneKey ?? string.Empty) : CleanOneLine(model.SceneKey, 160);
+            model.ScoreOrder = requestedScoreOrder;
+            model.Scores = StarCharacterAttributeSchema.NormalizeCompactScores(model.Scores, scoreCount);
+            model.Confidence = ClampScore(model.Confidence);
+            model.ReasonCode = CleanOneLine(model.ReasonCode, 140);
+            model.ShortExplanation = CleanOneLine(model.ShortExplanation, 360);
+            model.Source = "llm";
+            return model;
         }
 
         public async Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)

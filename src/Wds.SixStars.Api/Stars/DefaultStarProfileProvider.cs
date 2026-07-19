@@ -24,6 +24,7 @@ namespace Wds.SixStars.Api.Stars
 
             foreach (StarProfile profile in profiles)
             {
+                ApplyDefaultCharacterAttributes(profile);
                 StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
             }
 
@@ -43,6 +44,63 @@ namespace Wds.SixStars.Api.Stars
         public IReadOnlyList<StarProfile> GetAllProfiles()
         {
             return _profiles.Values.ToList();
+        }
+
+        private static void ApplyDefaultCharacterAttributes(StarProfile profile)
+        {
+            if (profile == null || !string.IsNullOrWhiteSpace(profile.CharacterAttributes)) return;
+            profile.CharacterAttributesVersion = StarCharacterAttributeSchema.Version;
+            switch ((profile.StarId ?? string.Empty).Trim().ToLowerInvariant())
+            {
+                case "elusiaa":
+                    profile.CharacterAttributes = "90,55,75,80,75,55,65,80,70,35,45,30,10";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High mercy and zeal make her protective, but pride can make her too certain when innocents seem harmed.",
+                        "Patience, humility, and insight are the traits that help her delay judgment and investigate."
+                    };
+                    break;
+                case "maera":
+                    profile.CharacterAttributes = "45,25,70,40,80,30,55,35,55,90,85,45,40";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High control and wrath make her possessive, vengeful, and quick to protect by punishing.",
+                        "Low patience and humility mean she can mistake devotion for ownership until guided."
+                    };
+                    break;
+                case "auerlis":
+                    profile.CharacterAttributes = "55,30,65,60,90,45,50,75,55,45,80,35,20";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High zeal and wrath make her decisive, fiery, and tempted to burn through cruelty or deadness.",
+                        "Joy and hope keep her from despair, but low patience makes restraint difficult under pressure."
+                    };
+                    break;
+                case "khavia":
+                    profile.CharacterAttributes = "85,70,50,60,55,75,55,90,25,50,20,45,15";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High mercy, patience, humility, and hope make her seek friendship and reconnection first.",
+                        "Her flaw is over-connection: she may force unity or closeness before truth and boundaries are understood."
+                    };
+                    break;
+                case "kaelia":
+                    profile.CharacterAttributes = "45,80,45,50,20,65,85,20,45,35,25,75,90";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High insight and patience make her perceptive, but high despair and fear can freeze her future.",
+                        "Low hope and zeal mean she may withdraw, delay, or assume change is impossible."
+                    };
+                    break;
+                case "nyxari":
+                    profile.CharacterAttributes = "35,60,80,70,65,35,65,30,60,85,50,70,65";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High control, justice, fear, and fragmented insight make her tactical, severe, and tempted to treat people as pieces.",
+                        "She can see roles and formations before she sees whole persons, especially when under threat."
+                    };
+                    break;
+            }
         }
 
         private static StarProfile CreateElusiaa()

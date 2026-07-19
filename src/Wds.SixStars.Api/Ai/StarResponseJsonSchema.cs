@@ -221,6 +221,29 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema(schemaName, schema);
         }
 
+        public static object CreateDecisionScoreResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "starId", "sceneKey", "scoreOrder", "scores", "confidence", "reasonCode", "shortExplanation" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "sceneKey", StringProperty(160) },
+                        { "scoreOrder", StringProperty(320) },
+                        { "scores", StringProperty(160) },
+                        { "confidence", NumberProperty(0, 100) },
+                        { "reasonCode", StringProperty(140) },
+                        { "shortExplanation", StringProperty(360) }
+                    }
+                }
+            };
+
+            return WrapSchema("six_stars_decision_impulse_scores", schema);
+        }
+
         public static object CreateSpeechResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

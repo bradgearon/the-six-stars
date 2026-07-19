@@ -171,6 +171,41 @@ namespace Wds.SixStars.Api.Engine
             return _memoryApi.GetStarStateAsync(sessionId, starId, cancellationToken);
         }
 
+        public async Task<StarDecisionScoreResponse> ScoreDecisionAsync(StarDecisionScoreRequest request, CancellationToken cancellationToken)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            string starId = string.IsNullOrWhiteSpace(request.StarId) ? "Elusiaa" : request.StarId.Trim();
+            request.StarId = starId;
+            if (string.IsNullOrWhiteSpace(request.SessionId)) request.SessionId = "local-dev";
+            if (string.IsNullOrWhiteSpace(request.CharacterAttributesOrder)) request.CharacterAttributesOrder = StarCharacterAttributeSchema.AttributeOrderText;
+            if (string.IsNullOrWhiteSpace(request.RequestedScoreOrder)) request.RequestedScoreOrder = StarCharacterAttributeSchema.DecisionScoreOrderText;
+
+            StarProfile profile = _profileProvider.GetProfile(starId);
+            if (string.IsNullOrWhiteSpace(request.CharacterAttributes))
+            {
+                request.CharacterAttributes = StarCharacterAttributeSchema.NormalizeCompactScores(profile.CharacterAttributes, StarCharacterAttributeSchema.AttributeOrder.Length);
+            }
+
+            StarState state = await _memoryApi.GetStarStateAsync(request.SessionId, starId, cancellationToken).ConfigureAwait(false);
+            if (_agent is IStarDecisionScorer scorer)
+            {
+                return await scorer.ScoreDecisionAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
+            }
+
+            int scoreCount = request.RequestedScoreOrder.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Length;
+            return new StarDecisionScoreResponse
+            {
+                StarId = profile.StarId,
+                SceneKey = request.SceneKey ?? string.Empty,
+                ScoreOrder = request.RequestedScoreOrder,
+                Scores = StarCharacterAttributeSchema.NormalizeCompactScores(string.Empty, scoreCount <= 0 ? StarCharacterAttributeSchema.DecisionScoreOrder.Length : scoreCount),
+                Confidence = 0,
+                ReasonCode = "no_decision_scorer",
+                ShortExplanation = "The configured Star agent does not implement decision impulse scoring.",
+                Source = "fallback"
+            };
+        }
+
         public Task<StarInteractionHistoryPage> GetStarInteractionHistoryAsync(string sessionId, string starId, int skip, int take, CancellationToken cancellationToken)
         {
             return _memoryApi.GetStarInteractionHistoryAsync(sessionId, starId, skip, take, cancellationToken);
