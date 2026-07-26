@@ -119,7 +119,7 @@ The desktop pushes `SelectedStarChanged`, `StarStateChanged`, conversation, tran
 The Android client now defaults to:
 
 ```text
-http://192.168.1.217:8066
+http://192.168.1.8:8066
 ```
 
 The phone voice stream still uses the desktop voice queue socket advertised by `/health`. The phone receives ordinary WAV bytes and plays/saves them locally.

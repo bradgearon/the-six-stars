@@ -17,7 +17,7 @@ This update reverts the earlier Qwen TTS meta-tensor/serialized-generation exper
   - `requireCuda=true`
   - `allowCpuFallback=false`
 - Updated launcher runtime selection so LLM, ASR, and TTS select only NVIDIA/CUDA packs by default.
-- Updated Android default bridge URL to `http://192.168.1.217:8066`.
+- Updated Android default bridge URL to `http://192.168.1.8:8066`.
 
 ## Why
 

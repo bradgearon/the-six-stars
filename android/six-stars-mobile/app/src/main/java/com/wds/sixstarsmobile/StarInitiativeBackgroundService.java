@@ -39,7 +39,8 @@ public final class StarInitiativeBackgroundService extends Service {
     private static final String PREF_AREA = "area";
     private static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
     private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
-    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.217:8066";
+    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.8:8066";
+    private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
 
     private final Random random = new Random();
     private final AtomicBoolean checkInFlight = new AtomicBoolean(false);
@@ -241,9 +242,14 @@ public final class StarInitiativeBackgroundService extends Service {
     }
 
     private String baseUrl() {
-        String value = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
+        SharedPreferences preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String value = preferences.getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
         if (value == null) value = DEFAULT_BRIDGE_URL;
         value = value.trim();
+        if (LEGACY_BRIDGE_URL.equalsIgnoreCase(value)) {
+            value = DEFAULT_BRIDGE_URL;
+            preferences.edit().putString(PREF_BRIDGE_URL, value).apply();
+        }
         if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
         return value.length() == 0 ? DEFAULT_BRIDGE_URL : value;
     }

@@ -102,7 +102,8 @@ public final class MainActivity extends ComponentActivity {
     private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     private static final String PREF_AREA = "area";
     private static final String PREF_QUEST = "quest";
-    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.217:8066";
+    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.8:8066";
+    private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";
     private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
@@ -1298,7 +1299,14 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private String savedBridgeUrl() {
-        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
+        SharedPreferences preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String value = preferences.getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
+        if (value == null || value.trim().length() == 0) return DEFAULT_BRIDGE_URL;
+        if (LEGACY_BRIDGE_URL.equalsIgnoreCase(value.trim())) {
+            preferences.edit().putString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL).apply();
+            return DEFAULT_BRIDGE_URL;
+        }
+        return value;
     }
 
     private String baseUrl() {
