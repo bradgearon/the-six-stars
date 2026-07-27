@@ -39,7 +39,7 @@ public final class StarInitiativeBackgroundService extends Service {
     private static final String PREF_AREA = "area";
     private static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
     private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
-    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.8:8066";
+    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.179:8066";
     private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
 
     private final Random random = new Random();

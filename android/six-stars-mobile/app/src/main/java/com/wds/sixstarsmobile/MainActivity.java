@@ -102,7 +102,7 @@ public final class MainActivity extends ComponentActivity {
     private static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     private static final String PREF_AREA = "area";
     private static final String PREF_QUEST = "quest";
-    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.8:8066";
+    private static final String DEFAULT_BRIDGE_URL = "http://192.168.1.179:8066";
     private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";

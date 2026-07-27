@@ -33,7 +33,7 @@ public sealed partial class MainViewModel
     private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
     private Task? _pendingMobileStoryThinkingVoiceTask;
     private long _mobileVoiceStreamOrdinal;
-    private string _mobileBridgeHostName = "192.168.1.8";
+    private string _mobileBridgeHostName = "192.168.1.179";
     private string _mobileBridgePort = "8066";
     private bool _mobileBridgeEnabled;
     private string _mobileBridgeStatus = "Android phone bridge stopped.";
@@ -102,7 +102,7 @@ public sealed partial class MainViewModel
 
     private void InitializeMobileBridgeCommandsAndMaybeStart()
     {
-        _mobileBridgeHostName = string.IsNullOrWhiteSpace(_appConfig.MobileBridge.HostName) ? "192.168.1.8" : _appConfig.MobileBridge.HostName;
+        _mobileBridgeHostName = string.IsNullOrWhiteSpace(_appConfig.MobileBridge.HostName) ? "192.168.1.179" : _appConfig.MobileBridge.HostName;
         _mobileBridgePort = (_appConfig.MobileBridge.Port <= 0 ? 8066 : _appConfig.MobileBridge.Port).ToString(System.Globalization.CultureInfo.InvariantCulture);
         StartMobileBridgeCommand = new RelayCommand(_ => StartMobileBridgeServer());
         StopMobileBridgeCommand = new RelayCommand(_ => StopMobileBridgeServer("Stopped by user."));
