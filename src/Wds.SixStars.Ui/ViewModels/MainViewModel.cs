@@ -28,6 +28,9 @@ using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.State;
 using Wds.SixStars.Api.Voice;
+using Wds.SixStars.Api.WorldEvents;
+using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.PreparedSpeech;
 using Wds.SixStars.Ui.Audio;
 using Wds.SixStars.Ui.Configuration;
 using Wds.SixStars.Ui.Infrastructure;
@@ -59,6 +62,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SixStarsRuntimeOperationController _operationController;
     private readonly MobileBridgeDispatcher _mobileBridgeDispatcher = new MobileBridgeDispatcher();
     private readonly StarStorySpeechAdapter _storySpeechAdapter = new StarStorySpeechAdapter();
+    private readonly SemaphoreSlim _preparedSpeechGenerationGate = new SemaphoreSlim(1, 1);
     private readonly bool _useStreamingTts;
     private readonly StringBuilder _llmDebugLog = new StringBuilder();
 
@@ -161,7 +165,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             maxMemoryLogEntries: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_LOG_ENTRIES"), _appConfig.Memory.MaxMemoryLogEntries),
             maxImportantQuotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_IMPORTANT_QUOTES"), _appConfig.Memory.MaxImportantQuotes),
             maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes),
-            dailyStateOptions: CreateDailyStarStateOptions());
+            dailyStateOptions: CreateDailyStarStateOptions(),
+            worldEventOptions: CreateWorldEventOptions(),
+            speechIntentOptions: CreateStarSpeechIntentOptions(),
+            preparedSpeechOptions: CreatePreparedSpeechOptions(),
+            foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions());
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
@@ -294,25 +302,33 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Status = "Girlfriend proposal response failed after thinking phrase: " + ex.Message;
         });
-        _runtime.DailyStateUpdated += (_, args) => OnUiThread(() =>
+        _runtime.DailyStateUpdated += (_, args) =>
         {
-            TodayStarStateText = FormatTodayStarState(args.Record.SlotId, args.Record.Summary);
-            Status = "Daily Star state refreshed for " + args.Record.StarId + " (" + args.Record.SlotId + ").";
-            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            OnUiThread(() =>
             {
-                EventType = "DailyStarStateUpdated",
-                SessionId = args.Record.SessionId,
-                StarId = args.Record.StarId,
-                SelectedStarId = SelectedStarId,
-                Message = args.Record.Summary,
-                DailyStateSlotId = args.Record.SlotId,
-                DailyStateLocalDate = args.Record.LocalDate,
-                DailyStateGeneratedAt = args.Record.GeneratedAt,
-                DailyStateSummary = args.Record.Summary,
-                DailyStateJson = !string.IsNullOrWhiteSpace(args.Record.JsonContent) ? args.Record.JsonContent : args.Record.XmlContent,
-                DailyStateXml = string.Empty
+                TodayStarStateText = FormatTodayStarState(args.Record.SlotId, args.Record.Summary);
+                Status = "Daily Star state refreshed for " + args.Record.StarId + " (" + args.Record.SlotId + ").";
+                _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "DailyStarStateUpdated",
+                    SessionId = args.Record.SessionId,
+                    StarId = args.Record.StarId,
+                    SelectedStarId = SelectedStarId,
+                    Message = args.Record.Summary,
+                    DailyStateSlotId = args.Record.SlotId,
+                    DailyStateLocalDate = args.Record.LocalDate,
+                    DailyStateGeneratedAt = args.Record.GeneratedAt,
+                    DailyStateSummary = args.Record.Summary,
+                    DailyStateJson = !string.IsNullOrWhiteSpace(args.Record.JsonContent) ? args.Record.JsonContent : args.Record.XmlContent,
+                    DailyStateXml = string.Empty
+                });
             });
-        });
+            _ = PrepareHighPrioritySpeechForStarAsync(args.Record.StarId, "daily state refreshed");
+        };
+        _runtime.SpeechIntentChanged += (_, args) =>
+        {
+            if (args.ChangeType == "upserted") _ = PrepareHighPrioritySpeechForStarAsync(args.Intent.StarId, "speech intention became eligible");
+        };
         _runtime.DailyStateUpdateFailed += (_, ex) => OnUiThread(() =>
         {
             Status = "Daily Star state refresh failed: " + ex.Message;
@@ -838,6 +854,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             StateRoot = string.IsNullOrWhiteSpace(cfg.StateRoot) ? "state/daily-star-state" : cfg.StateRoot,
             PollSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_DAILY_STATE_POLL_SECONDS"), cfg.PollSeconds),
             MaxXmlCharsForPrompt = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_DAILY_STATE_MAX_XML_CHARS"), cfg.MaxXmlCharsForPrompt),
+            MaxJsonCharsForPrompt = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_DAILY_STATE_MAX_JSON_CHARS"), cfg.MaxJsonCharsForPrompt),
             StarIds = cfg.StarIds == null ? new List<string>() : cfg.StarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList(),
             RefreshSlots = cfg.RefreshSlots == null || cfg.RefreshSlots.Count == 0
                 ? DailyStarStateOptions.CreateDefaultSlots()
@@ -849,6 +866,87 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 }).ToList()
         };
         return options;
+    }
+
+    private WorldEventOptions CreateWorldEventOptions()
+    {
+        WorldEventsConfig cfg = _appConfig.WorldEvents ?? new WorldEventsConfig();
+        return new WorldEventOptions
+        {
+            Enabled = cfg.Enabled,
+            StateRoot = string.IsNullOrWhiteSpace(cfg.StateRoot) ? "state/world-events" : cfg.StateRoot,
+            MaximumStoredEvents = cfg.MaximumStoredEvents,
+            PromptEventCount = cfg.PromptEventCount,
+            RefreshDebounceSeconds = cfg.RefreshDebounceSeconds,
+            ApiKey = FirstNonEmpty(Environment.GetEnvironmentVariable("SIX_STARS_WORLD_EVENT_API_KEY"), cfg.ApiKey) ?? string.Empty,
+            Feeds = (cfg.Feeds ?? new List<WorldEventFeedConfig>()).Select(x => new WorldEventFeedOptions
+            {
+                FeedId = x.FeedId,
+                Url = x.Url,
+                Enabled = x.Enabled,
+                PollSeconds = x.PollSeconds,
+                ApiKey = x.ApiKey
+            }).ToList()
+        };
+    }
+
+    private StarSpeechIntentOptions CreateStarSpeechIntentOptions()
+    {
+        StarSpeechIntentConfig cfg = _appConfig.StarSpeechIntents ?? new StarSpeechIntentConfig();
+        return new StarSpeechIntentOptions
+        {
+            Enabled = cfg.Enabled,
+            StateRoot = cfg.StateRoot,
+            MaximumStoredIntents = cfg.MaximumStoredIntents,
+            AgingPointsPerHour = cfg.AgingPointsPerHour,
+            MaximumAgeBoost = cfg.MaximumAgeBoost,
+            HighPriorityPreparationThreshold = cfg.HighPriorityPreparationThreshold,
+            MediumPriorityPreparationThreshold = cfg.MediumPriorityPreparationThreshold,
+            HighPriorityAutoSpeakThreshold = cfg.HighPriorityAutoSpeakThreshold,
+            MediumPriorityAutoSpeakThreshold = cfg.MediumPriorityAutoSpeakThreshold,
+            MaximumPreparedItemsPerStar = cfg.MaximumPreparedItemsPerStar,
+            MaximumPrepareAttempts = cfg.MaximumPrepareAttempts,
+            PreparationTimeoutMinutes = cfg.PreparationTimeoutMinutes,
+            PrepareRetryDelaySeconds = cfg.PrepareRetryDelaySeconds,
+            LeaseMinutes = cfg.LeaseMinutes,
+            SpokenArchiveDays = cfg.SpokenArchiveDays,
+            MinimumRepeatHours = cfg.MinimumRepeatHours
+        };
+    }
+
+    private PreparedSpeechOptions CreatePreparedSpeechOptions()
+    {
+        PreparedSpeechConfig cfg = _appConfig.PreparedSpeech ?? new PreparedSpeechConfig();
+        return new PreparedSpeechOptions
+        {
+            Enabled = cfg.Enabled,
+            StateRoot = cfg.StateRoot,
+            MaximumArtifactsPerStar = cfg.MaximumArtifactsPerStar,
+            MaximumArtifactAgeHours = cfg.MaximumArtifactAgeHours
+        };
+    }
+
+    private ForegroundSpeechStyleOptions CreateForegroundSpeechStyleOptions()
+    {
+        ForegroundSpeechStyleConfig cfg = _appConfig.ForegroundSpeechStyle ?? new ForegroundSpeechStyleConfig();
+        return new ForegroundSpeechStyleOptions
+        {
+            Enabled = cfg.Enabled,
+            ConciseModeProbability = cfg.ConciseModeProbability,
+            ConciseMinimumChunks = cfg.ConciseMinimumChunks,
+            ConciseMaximumChunks = cfg.ConciseMaximumChunks,
+            RespectExplicitLengthRequests = cfg.RespectExplicitLengthRequests,
+            SpeakBeforeReplyEnabled = cfg.SpeakBeforeReplyEnabled,
+            SpeakBeforeReplyProbability = cfg.SpeakBeforeReplyProbability,
+            HighPrioritySpeakBeforeReplyProbability = cfg.HighPrioritySpeakBeforeReplyProbability,
+            SpeakBeforeReplyMaximumSeconds = cfg.SpeakBeforeReplyMaximumSeconds,
+            MinimumPageDwellSeconds = cfg.MinimumPageDwellSeconds,
+            MediumPriorityPageDwellSeconds = cfg.MediumPriorityPageDwellSeconds,
+            GirlfriendMediumSpeakProbability = cfg.GirlfriendMediumSpeakProbability,
+            HighConnectionMediumSpeakProbability = cfg.HighConnectionMediumSpeakProbability,
+            HighConnectionThreshold = cfg.HighConnectionThreshold,
+            MinimumMinutesBetweenAutoSpeech = cfg.MinimumMinutesBetweenAutoSpeech
+        };
     }
 
     private IStarAgent CreateStarAgent()
@@ -3554,6 +3652,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             StopMobileBridgeServer("App shutting down.");
             _mobileBridgeServer?.Dispose();
             _mobileBridgeRuntimeGate.Dispose();
+            _preparedSpeechGenerationGate.Dispose();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _operationController.Dispose();

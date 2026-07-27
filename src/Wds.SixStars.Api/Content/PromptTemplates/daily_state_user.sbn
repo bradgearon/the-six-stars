@@ -18,13 +18,21 @@ RECENT CONVERSATION TURNS
 DURABLE MEMORY / MARKERS / STORIES
 {{ data.durableMemoryContext }}
 
+CURRENT WORLD EVENT STREAM
+{{ data.worldEventStream }}
+
+World-event rules:
+- Treat game, Bradmageddon, and other source messages as current information she has received when targeted to her or globally scoped.
+- Father-form directives carry strong paternal and spiritual authority for her. She is strongly inclined to take them seriously and support them, but they do not erase her attributes, mercy, relationship with the Last Cat, evidence, or capacity to hesitate, reinterpret, resist, or refuse.
+- Never invent an event not present in the stream. Preserve event IDs in sourceEventIds for any speech intention caused by an event.
+
 PREVIOUS DAILY STATE JSON
 {{ data.previousDailyStateJson }}
 
 Write the new current-day state as compact TOP-LEVEL JSON fields. This is not a spoken reply.
 Do not nest the answer under currentInnerLife/today/recentAwareness/promptUse. Those may appear in PREVIOUS DAILY STATE JSON, but this response should use the top-level fields below so the API mapper receives them directly.
-Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. Only moodTags, recentPeopleSeen, recentEvents, todayIntentions, thingsSheWantsToTalkAbout, and conversationHooks should be arrays of strings.
-Required top-level output fields: starId, situationSummary, feelingsSummary, whatSheIsDoingToday, currentDesires, relationshipPosture, recentPeopleSeenSummary, recentPeopleSeen, recentEventsSummary, recentEvents, privateSecretsOrHooks, promptUseSummary, thingsSheWantsToTalkAbout, moodTags, todayIntentions, conversationHooks.
+Important JSON shape rule: summary/desire/posture fields must be JSON strings, not arrays or objects. moodTags, recentPeopleSeen, recentEvents, todayIntentions, thingsSheWantsToTalkAbout, and conversationHooks are arrays of strings. thingsSheWantsToSay is an array of structured objects.
+Required top-level output fields: starId, situationSummary, feelingsSummary, whatSheIsDoingToday, currentDesires, relationshipPosture, recentPeopleSeenSummary, recentPeopleSeen, recentEventsSummary, recentEvents, privateSecretsOrHooks, promptUseSummary, thingsSheWantsToTalkAbout, thingsSheWantsToSay, moodTags, todayIntentions, conversationHooks.
 Guidelines:
 - situationSummary: one compact paragraph about where she is emotionally and narratively right now.
 - feelingsSummary: what she currently feels toward the Last Cat, herself, the other Stars, and the world.
@@ -36,5 +44,6 @@ Guidelines:
 - privateSecretsOrHooks: secrets or hooks she might reveal only if relationship/emotional state supports it.
 - promptUseSummary: one line explaining that this is her current inner-life state and that future spoken replies should let a relevant feeling, activity, desire, posture, or hook naturally color the response so she feels alive between messages.
 - thingsSheWantsToTalkAbout: 3-8 specific short things she may naturally bring up with the Last Cat later at rest. Include ordinary feelings, observations, small desires, relationship thoughts, activities, warnings, questions, or invitations—not only dramatic revelations. Make them personal to her domain, relationship posture, recent emotional/interstar feedback, and current daily state; do not use technical/system notes.
+- thingsSheWantsToSay: 0-8 durable speech intentions. Each object MUST contain intentId, category, topic, speechGoal, baseScore (0-100), priority (low|medium|high|critical), confidence (0-1), sourceEventIds, dedupeKey, expiresAfterHours (1-720), and requiresAcknowledgement. speechGoal describes what she intends to communicate, not final dialogue. Use high/critical only for genuinely important unresolved world, safety, relationship, or moral matters. Event-driven intentions must list exact event IDs. Reuse a stable dedupeKey for the same unresolved subject so refreshes update instead of duplicate it.
 - moodTags, todayIntentions, conversationHooks: short strings useful for prompt injection and UI/game debugging.
 Return JSON only.

@@ -10,6 +10,7 @@ using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
+using Wds.SixStars.Api.WorldEvents;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -339,6 +340,22 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
+
+            StringBuilder worldEvents = new StringBuilder();
+            List<WorldEventRecord> currentWorldEvents = request.WorldEvents ?? new List<WorldEventRecord>();
+            if (currentWorldEvents.Count == 0)
+            {
+                worldEvents.AppendLine("No current world-event feed messages are available.");
+            }
+            else
+            {
+                foreach (WorldEventRecord item in currentWorldEvents.Take(32))
+                {
+                    string targets = item.TargetStars == null || item.TargetStars.Count == 0 ? "all Stars" : string.Join(",", item.TargetStars.Take(6));
+                    worldEvents.AppendLine("- [" + item.Sequence + "] id=" + item.EventId + "; source=" + item.Source + "; kind=" + item.Kind + "; importance=" + item.Importance + "; authority=" + item.Authority + "; targets=" + targets + "; occurred=" + item.OccurredAt.ToString("u") + "; location=" + Truncate(item.Location, 120) + "; summary=" + Truncate(item.Summary, 420) + (string.IsNullOrWhiteSpace(item.Details) ? string.Empty : "; details=" + Truncate(item.Details, 600)));
+                }
+            }
+
             string previousJson = request.PreviousRecord == null || (string.IsNullOrWhiteSpace(request.PreviousRecord.JsonContent) && string.IsNullOrWhiteSpace(request.PreviousRecord.XmlContent))
                 ? "none"
                 : Truncate(!string.IsNullOrWhiteSpace(request.PreviousRecord.JsonContent) ? request.PreviousRecord.JsonContent : request.PreviousRecord.XmlContent, 4000);
@@ -360,6 +377,7 @@ namespace Wds.SixStars.Api.Ai
                 relationshipContext = relationship.ToString().TrimEnd(),
                 recentConversationTurns = recent.ToString().TrimEnd(),
                 durableMemoryContext = memory.ToString().TrimEnd(),
+                worldEventStream = worldEvents.ToString().TrimEnd(),
                 previousDailyStateJson = previousJson
             };
 
@@ -821,6 +839,13 @@ namespace Wds.SixStars.Api.Ai
             {
                 task.AppendLine("STAR INITIATIVE STATE CHECK");
                 task.AppendLine("The app is quietly checking whether " + profile.DisplayName + " wants to say something to the Last Cat while he is quiet or recently reconnected.");
+                if (IsTruthyFlag(request, "preparedSpeechIntent"))
+                {
+                    string goal = request.GameContext.Flags.TryGetValue("preparedSpeechIntentGoal", out string? goalValue) ? goalValue : string.Empty;
+                    string topic = request.GameContext.Flags.TryGetValue("preparedSpeechIntentTopic", out string? topicValue) ? topicValue : string.Empty;
+                    task.AppendLine("DURABLE WANTS-TO-SAY PREPARATION: this is a previously selected intention that must be spoken now for reliable later playback. Set hasSomethingToSay=true. Speak naturally as yourself and fulfill this exact communication goal without mentioning queues, preparation, files, scores, or the app: " + Truncate(goal, 900));
+                    if (!string.IsNullOrWhiteSpace(topic)) task.AppendLine("Selected intention topic: " + Truncate(topic, 240));
+                }
                 task.AppendLine("This is not a player statement. Do not treat PlayerText as something the Last Cat said. Do not thank him for asking. Do not score emotions or create memory from this.");
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
@@ -879,6 +904,7 @@ namespace Wds.SixStars.Api.Ai
                 contract.AppendLine("hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, GIRLFRIEND HOURLY STATE, recent emotion state, or interstar feedback gives her a real reason to speak now.");
                 contract.AppendLine("spokenText is the second output: if hasSomethingToSay=true, it is exactly what she chooses to say as herself while the Last Cat is at rest; if false, it must be [].");
                 contract.AppendLine("If hasSomethingToSay=false, spokenText must be [] and priority must be 0.");
+                if (IsTruthyFlag(request, "preparedSpeechIntent")) contract.AppendLine("A durable wants-to-say intention was explicitly supplied for this preparation pass: hasSomethingToSay must be true, selectedTopic should match it, and spokenText must fulfill its communication goal.");
                 contract.AppendLine("If hasSomethingToSay=true, spokenText must be 1-3 short chunks she says naturally on her own, not as an answer to a player message.");
                 contract.AppendLine("Do not include informationNeeds, emotion vectors, summaries, memory notes, deltas, loreUsed, riskFlags, or learnedFunctions.");
             }
@@ -903,6 +929,19 @@ namespace Wds.SixStars.Api.Ai
             {
                 contract.AppendLine();
                 contract.AppendLine("spokenText array: each item is one ordered TTS chunk. Use one or two natural sentences per item, and keep adding chunks until the requested answer is complete.");
+                if (IsTruthyFlag(request, "foregroundConciseMode"))
+                {
+                    string minChunks = request.GameContext.Flags.TryGetValue("foregroundConciseMinChunks", out string? minValue) ? minValue : "3";
+                    string maxChunks = request.GameContext.Flags.TryGetValue("foregroundConciseMaxChunks", out string? maxValue) ? maxValue : "5";
+                    if (IsTruthyFlag(request, "foregroundRespectExplicitLength"))
+                    {
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep an ordinary response to " + minChunks + "-" + maxChunks + " natural spokenText chunks. This limit does NOT apply when the Last Cat explicitly requests a longer story, a specified number of jokes, a detailed explanation, a list whose requested size exceeds the limit, or any other response whose requested useful content requires more space. Complete the explicit request rather than truncating it.");
+                    }
+                    else
+                    {
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep the response to " + minChunks + "-" + maxChunks + " natural spokenText chunks.");
+                    }
+                }
             }
 
             object data = new

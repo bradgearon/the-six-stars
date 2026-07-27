@@ -15,6 +15,9 @@ using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.State;
+using Wds.SixStars.Api.WorldEvents;
+using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.PreparedSpeech;
 
 namespace Wds.SixStars.Api.Engine
 {
@@ -32,6 +35,13 @@ namespace Wds.SixStars.Api.Engine
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
         private readonly StarDailyStateService? _dailyStateService;
+        private readonly WorldEventService _worldEventService;
+        private readonly StarSpeechIntentService _speechIntentService;
+        private readonly PreparedSpeechArtifactStore _preparedSpeechStore;
+        private readonly ForegroundSpeechStyleOptions _foregroundSpeechStyleOptions;
+        private readonly object _worldEventRefreshGate = new object();
+        private readonly Dictionary<string, CancellationTokenSource> _worldEventRefreshDebounces = new Dictionary<string, CancellationTokenSource>(StringComparer.OrdinalIgnoreCase);
+        private string _dailyStateSessionId = "local-dev";
         private readonly object _interstarGate = new object();
         private CancellationTokenSource? _interstarCycleCts;
         private readonly SemaphoreSlim _interstarUpdateQueue = new SemaphoreSlim(1, 1);
@@ -45,6 +55,8 @@ namespace Wds.SixStars.Api.Engine
         private readonly TimeSpan _girlfriendHourlyStateInterval = ResolveGirlfriendHourlyStateInterval();
         private static readonly object StoryRandomGate = new object();
         private static readonly Random StoryRandom = new Random();
+        private static readonly object ForegroundRandomGate = new object();
+        private static readonly Random ForegroundRandom = new Random();
         private readonly ConversationDebugLogRecorder _conversationDebugLogRecorder = new ConversationDebugLogRecorder();
 
         public event EventHandler<StarInteractionResponse>? BackgroundAnalysisCompleted;
@@ -62,6 +74,10 @@ namespace Wds.SixStars.Api.Engine
         public event EventHandler<BackgroundAiRequestStatusEventArgs>? BackgroundAiRequestStatusChanged;
         public event EventHandler<StarGirlfriendHourlyStateUpdatedEventArgs>? GirlfriendHourlyStateUpdated;
         public event EventHandler<Exception>? GirlfriendHourlyStateUpdateFailed;
+        public event EventHandler<WorldEventAddedEventArgs>? WorldEventAdded;
+        public event EventHandler<Exception>? WorldEventFeedFailed;
+        public event EventHandler<StarSpeechIntentChangedEventArgs>? SpeechIntentChanged;
+        public event EventHandler<PreparedSpeechArtifactReadyEventArgs>? PreparedSpeechReady;
 
         public string ConversationDebugLogDirectory => _conversationDebugLogRecorder.LogDirectory;
         public string LatestConversationDebugLogPath => _conversationDebugLogRecorder.LatestLogPath;
@@ -87,7 +103,11 @@ namespace Wds.SixStars.Api.Engine
             int maxMemoryLogEntries = 160,
             int maxImportantQuotes = 80,
             int maxMemoryNotes = 160,
-            DailyStarStateOptions? dailyStateOptions = null)
+            DailyStarStateOptions? dailyStateOptions = null,
+            WorldEventOptions? worldEventOptions = null,
+            StarSpeechIntentOptions? speechIntentOptions = null,
+            PreparedSpeechOptions? preparedSpeechOptions = null,
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
             : this(
                 profileProvider,
                 agent,
@@ -103,7 +123,11 @@ namespace Wds.SixStars.Api.Engine
                 screenContextStore,
                 recentScreenCount,
                 recentHistoryCount,
-                dailyStateOptions)
+                dailyStateOptions,
+                worldEventOptions,
+                speechIntentOptions,
+                preparedSpeechOptions,
+                foregroundSpeechStyleOptions)
         {
         }
 
@@ -115,7 +139,11 @@ namespace Wds.SixStars.Api.Engine
             IScreenContextStore? screenContextStore = null,
             int recentScreenCount = 5,
             int recentHistoryCount = 10,
-            DailyStarStateOptions? dailyStateOptions = null)
+            DailyStarStateOptions? dailyStateOptions = null,
+            WorldEventOptions? worldEventOptions = null,
+            StarSpeechIntentOptions? speechIntentOptions = null,
+            PreparedSpeechOptions? preparedSpeechOptions = null,
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
         {
             _profileProvider = profileProvider;
             _agent = agent;
@@ -125,6 +153,14 @@ namespace Wds.SixStars.Api.Engine
             _recentScreenCount = Math.Max(1, recentScreenCount);
             _recentHistoryCount = Math.Max(1, recentHistoryCount);
             _backgroundDispatcher.StatusChanged += (_, args) => BackgroundAiRequestStatusChanged?.Invoke(this, args);
+            _worldEventService = new WorldEventService(worldEventOptions ?? new WorldEventOptions());
+            _speechIntentService = new StarSpeechIntentService(speechIntentOptions ?? new StarSpeechIntentOptions());
+            _preparedSpeechStore = new PreparedSpeechArtifactStore(preparedSpeechOptions ?? new PreparedSpeechOptions());
+            _foregroundSpeechStyleOptions = foregroundSpeechStyleOptions ?? new ForegroundSpeechStyleOptions();
+            _worldEventService.EventAdded += OnWorldEventAdded;
+            _worldEventService.FeedFailed += (_, ex) => WorldEventFeedFailed?.Invoke(this, ex);
+            _speechIntentService.IntentChanged += (_, args) => SpeechIntentChanged?.Invoke(this, args);
+            _preparedSpeechStore.ArtifactReady += (_, args) => PreparedSpeechReady?.Invoke(this, args);
 
             DailyStarStateOptions dailyOptions = dailyStateOptions ?? new DailyStarStateOptions();
             if (dailyOptions.Enabled && agent is IStarDailyStateGenerator dailyGenerator)
@@ -135,12 +171,55 @@ namespace Wds.SixStars.Api.Engine
                     dailyGenerator,
                     new StarDailyStateFileStore(dailyOptions.StateRoot),
                     dailyOptions,
-                    _backgroundDispatcher);
+                    _backgroundDispatcher,
+                    _worldEventService,
+                    _speechIntentService);
                 _dailyStateService.DailyStateUpdated += (_, args) => DailyStateUpdated?.Invoke(this, args);
                 _dailyStateService.DailyStateUpdateFailed += (_, ex) => DailyStateUpdateFailed?.Invoke(this, ex);
             }
         }
 
+
+        private void OnWorldEventAdded(object? sender, WorldEventAddedEventArgs args)
+        {
+            WorldEventAdded?.Invoke(this, args);
+            WorldEventRecord item = args?.Event ?? new WorldEventRecord();
+            if (!item.RequiresStateRefresh || _dailyStateService == null) return;
+            List<string> affected = item.TargetStars == null || item.TargetStars.Count == 0
+                ? _profileProvider.GetAllProfiles().Select(x => x.StarId).ToList()
+                : item.TargetStars.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (string starId in affected) DebounceWorldEventRefresh(starId, item);
+        }
+
+        private void DebounceWorldEventRefresh(string starId, WorldEventRecord item)
+        {
+            CancellationTokenSource source;
+            lock (_worldEventRefreshGate)
+            {
+                if (_worldEventRefreshDebounces.TryGetValue(starId, out CancellationTokenSource? old)) { try { old.Cancel(); } catch { } }
+                source = new CancellationTokenSource();
+                _worldEventRefreshDebounces[starId] = source;
+            }
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    int seconds = Math.Max(1, Math.Min(60, _worldEventService.Options.RefreshDebounceSeconds));
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), source.Token).ConfigureAwait(false);
+                    await _dailyStateService!.QueueForcedRefreshAsync(_dailyStateSessionId, starId, "world event " + item.EventId + " from " + item.Source, source.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { DailyStateUpdateFailed?.Invoke(this, ex); }
+                finally
+                {
+                    lock (_worldEventRefreshGate)
+                    {
+                        if (_worldEventRefreshDebounces.TryGetValue(starId, out CancellationTokenSource? current) && ReferenceEquals(current, source)) _worldEventRefreshDebounces.Remove(starId);
+                    }
+                    source.Dispose();
+                }
+            }, CancellationToken.None);
+        }
 
         private static TimeSpan ResolveInterstarSettleDelay()
         {
@@ -211,6 +290,70 @@ namespace Wds.SixStars.Api.Engine
             return _memoryApi.GetStarInteractionHistoryAsync(sessionId, starId, skip, take, cancellationToken);
         }
 
+        public Task<WorldEventInsertResult> AddWorldEventsAsync(IEnumerable<WorldEventRecord> events, CancellationToken cancellationToken)
+            => _worldEventService.AddAsync(events, cancellationToken);
+
+        public Task<WorldEventBatch> GetWorldEventsAsync(long afterSequence, int max, string? starId, CancellationToken cancellationToken)
+            => _worldEventService.GetAfterAsync(afterSequence, max, starId, cancellationToken);
+
+        public async Task TriggerDailyStateRefreshAsync(string sessionId, IEnumerable<string>? starIds, string reason, CancellationToken cancellationToken)
+        {
+            if (_dailyStateService == null) return;
+            List<string> ids = (starIds ?? Enumerable.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (ids.Count == 0) ids = _profileProvider.GetAllProfiles().Select(x => x.StarId).ToList();
+            foreach (string starId in ids)
+            {
+                await _dailyStateService.QueueForcedRefreshAsync(string.IsNullOrWhiteSpace(sessionId) ? _dailyStateSessionId : sessionId, starId, reason, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        public Task<StarSpeechIntentManifest> GetSpeechIntentManifestAsync(string? starId, CancellationToken cancellationToken)
+            => _speechIntentService.GetManifestAsync(starId, cancellationToken);
+
+        public Task<StarSpeechIntent?> GetNextSpeechIntentToPrepareAsync(string starId, CancellationToken cancellationToken)
+            => _speechIntentService.GetNextToPrepareAsync(starId, cancellationToken);
+
+        public Task<StarSpeechIntent?> MarkSpeechIntentPreparingAsync(string intentId, CancellationToken cancellationToken)
+            => _speechIntentService.MarkPreparingAsync(intentId, cancellationToken);
+
+        public Task<StarSpeechIntent?> MarkSpeechIntentReadyAsync(string intentId, string artifactId, CancellationToken cancellationToken)
+            => _speechIntentService.MarkReadyAsync(intentId, artifactId, cancellationToken);
+
+        public Task<StarSpeechIntent?> MarkSpeechIntentFailedAsync(string intentId, string error, CancellationToken cancellationToken)
+            => _speechIntentService.MarkFailedAsync(intentId, error, cancellationToken);
+
+        public Task<StarSpeechIntent?> LeaseSpeechIntentAsync(string intentId, CancellationToken cancellationToken)
+            => _speechIntentService.LeaseAsync(intentId, cancellationToken);
+
+        public Task<StarSpeechIntent?> MarkSpeechIntentPlaybackStartedAsync(string intentId, CancellationToken cancellationToken)
+            => _speechIntentService.MarkPlaybackStartedAsync(intentId, cancellationToken);
+
+        public async Task<StarSpeechIntent?> MarkSpeechIntentSpokenAsync(string intentId, CancellationToken cancellationToken)
+        {
+            StarSpeechIntent? result = await _speechIntentService.MarkSpokenAsync(intentId, cancellationToken).ConfigureAwait(false);
+            if (result != null) await _preparedSpeechStore.DeleteByIntentAsync(intentId, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+
+        public async Task<StarSpeechIntent?> DismissSpeechIntentAsync(string intentId, CancellationToken cancellationToken)
+        {
+            StarSpeechIntent? result = await _speechIntentService.DismissAsync(intentId, cancellationToken).ConfigureAwait(false);
+            if (result != null) await _preparedSpeechStore.DeleteByIntentAsync(intentId, cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+
+        public Task<PreparedSpeechManifest> GetPreparedSpeechManifestAsync(string? starId, CancellationToken cancellationToken)
+            => _preparedSpeechStore.GetManifestAsync(starId, cancellationToken);
+
+        public Task<byte[]?> ReadPreparedSpeechChunkAsync(string artifactId, int chunkIndex, CancellationToken cancellationToken)
+            => _preparedSpeechStore.ReadChunkAsync(artifactId, chunkIndex, cancellationToken);
+
+        public Task<PreparedSpeechArtifact> SavePreparedSpeechAsync(string intentId, string starId, string spokenText, string voiceVersion, IEnumerable<PreparedSpeechChunkData> chunks, CancellationToken cancellationToken)
+            => _preparedSpeechStore.SaveAsync(intentId, starId, spokenText, voiceVersion, chunks, cancellationToken);
+
+        public ForegroundSpeechStyleOptions ForegroundSpeechStyle => _foregroundSpeechStyleOptions;
+        public StarSpeechIntentOptions SpeechIntentOptions => _speechIntentService.Options;
+
         public bool HasPendingOrRunningBackgroundAnalysis
         {
             get
@@ -225,13 +368,21 @@ namespace Wds.SixStars.Api.Engine
         public void StartDailyStateBackgroundUpdates(string sessionId)
         {
             string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            _dailyStateSessionId = normalizedSessionId;
             _dailyStateService?.Start(normalizedSessionId);
+            _worldEventService.StartFeedPolling();
             StartGirlfriendHourlyStateBackgroundUpdates(normalizedSessionId);
         }
 
         public void StopDailyStateBackgroundUpdates()
         {
             _dailyStateService?.Stop();
+            _worldEventService.StopFeedPolling();
+            lock (_worldEventRefreshGate)
+            {
+                foreach (CancellationTokenSource source in _worldEventRefreshDebounces.Values) { try { source.Cancel(); } catch { } }
+                _worldEventRefreshDebounces.Clear();
+            }
             StopGirlfriendHourlyStateBackgroundUpdates();
         }
 
@@ -601,6 +752,24 @@ namespace Wds.SixStars.Api.Engine
             return await completion.Task.ConfigureAwait(false);
         }
 
+        private void ApplyForegroundSpeechStyle(StarInteractionRequest request)
+        {
+            if (request == null || request.GameContext == null || request.GameContext.Flags == null) return;
+            if (!_foregroundSpeechStyleOptions.Enabled || request.RequestType == RequestType.Story || request.RequestType == RequestType.StarInitiative)
+            {
+                request.GameContext.Flags["foregroundConciseMode"] = "false";
+                return;
+            }
+            double roll;
+            lock (ForegroundRandomGate) roll = ForegroundRandom.NextDouble();
+            bool concise = roll < Math.Max(0, Math.Min(1, _foregroundSpeechStyleOptions.ConciseModeProbability));
+            request.GameContext.Flags["foregroundConciseRoll"] = roll.ToString("0.000", CultureInfo.InvariantCulture);
+            request.GameContext.Flags["foregroundConciseMode"] = concise ? "true" : "false";
+            request.GameContext.Flags["foregroundConciseMinChunks"] = Math.Max(1, _foregroundSpeechStyleOptions.ConciseMinimumChunks).ToString(CultureInfo.InvariantCulture);
+            request.GameContext.Flags["foregroundConciseMaxChunks"] = Math.Max(_foregroundSpeechStyleOptions.ConciseMinimumChunks, _foregroundSpeechStyleOptions.ConciseMaximumChunks).ToString(CultureInfo.InvariantCulture);
+            request.GameContext.Flags["foregroundRespectExplicitLength"] = _foregroundSpeechStyleOptions.RespectExplicitLengthRequests ? "true" : "false";
+        }
+
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
             bool isStarInitiativeRequest = request != null && request.RequestType == RequestType.StarInitiative;
@@ -613,20 +782,28 @@ namespace Wds.SixStars.Api.Engine
                 : null;
             try
             {
-            if (!isStarInitiativeRequest)
-            {
-                CancelPendingInterstarCycle("New Star conversation request started for " + request.StarId + ".");
-                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ConversationStarted", "Conversation with " + request.StarId + " started; any pending interstar ripple timer was cancelled.", 0, 0);
-            }
-            else
-            {
-                NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeCheckStarted", "Checking state to see whether " + request.StarId + " has something to say at rest. This does not affect relationship/emotion state.", 0, 0);
-            }
+                if (!isBackgroundWorkerRequest)
+                {
+                    ApplyForegroundSpeechStyle(request);
+                }
+                else if (request?.GameContext?.Flags != null)
+                {
+                    request.GameContext.Flags["foregroundConciseMode"] = "false";
+                }
+                if (!isStarInitiativeRequest)
+                {
+                    CancelPendingInterstarCycle("New Star conversation request started for " + request.StarId + ".");
+                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ConversationStarted", "Conversation with " + request.StarId + " started; any pending interstar ripple timer was cancelled.", 0, 0);
+                }
+                else
+                {
+                    NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "StarInitiativeCheckStarted", "Checking state to see whether " + request.StarId + " has something to say at rest. This does not affect relationship/emotion state.", 0, 0);
+                }
 
-            if (_screenContextStore != null && request.RecentScreenCaptures.Count == 0)
-            {
-                request.RecentScreenCaptures.AddRange(await _screenContextStore.GetRecentAsync(request.SessionId, _recentScreenCount, cancellationToken).ConfigureAwait(false));
-            }
+                if (_screenContextStore != null && request.RecentScreenCaptures.Count == 0)
+                {
+                    request.RecentScreenCaptures.AddRange(await _screenContextStore.GetRecentAsync(request.SessionId, _recentScreenCount, cancellationToken).ConfigureAwait(false));
+                }
 
             StarProfile profile = _profileProvider.GetProfile(request.StarId);
             await PopulateKnownStarContextAsync(request, cancellationToken).ConfigureAwait(false);
@@ -1252,6 +1429,14 @@ namespace Wds.SixStars.Api.Engine
                             Reason = reason ?? string.Empty,
                             State = context
                         });
+                        if (_dailyStateService != null)
+                        {
+                            await _dailyStateService.QueueForcedRefreshAsync(
+                                normalizedSessionId,
+                                normalizedStarId,
+                                "girlfriend wants-to-say state updated",
+                                workToken).ConfigureAwait(false);
+                        }
                     }
                     catch (OperationCanceledException)
                     {

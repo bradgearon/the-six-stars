@@ -8,7 +8,7 @@ namespace Wds.SixStars.Api.DailyState
         public bool GenerateForAllStars { get; set; } = true;
         public bool RefreshSelectedStarOnRequest { get; set; } = true;
         public string StateRoot { get; set; } = "state/daily-star-state";
-        public int PollSeconds { get; set; } = 180;
+        public int PollSeconds { get; set; } = 60;
         public int MaxJsonCharsForPrompt { get; set; } = 12000;
         /// <summary>Legacy alias for older config files; daily state is now JSON.</summary>
         public int MaxXmlCharsForPrompt { get; set; } = 12000;
@@ -19,9 +19,10 @@ namespace Wds.SixStars.Api.DailyState
         {
             return new List<DailyStarStateScheduleSlot>
             {
-                new DailyStarStateScheduleSlot { SlotId = "slot_00_08", StartsAt = "00:00", RefreshBefore = "08:00" },
-                new DailyStarStateScheduleSlot { SlotId = "slot_08_16", StartsAt = "08:00", RefreshBefore = "16:00" },
-                new DailyStarStateScheduleSlot { SlotId = "slot_16_24", StartsAt = "16:00", RefreshBefore = "00:00" }
+                new DailyStarStateScheduleSlot { SlotId = "overnight", StartsAt = "00:00", RefreshBefore = "06:00" },
+                new DailyStarStateScheduleSlot { SlotId = "morning", StartsAt = "06:00", RefreshBefore = "12:00" },
+                new DailyStarStateScheduleSlot { SlotId = "afternoon", StartsAt = "12:00", RefreshBefore = "18:00" },
+                new DailyStarStateScheduleSlot { SlotId = "evening", StartsAt = "18:00", RefreshBefore = "00:00" }
             };
         }
     }

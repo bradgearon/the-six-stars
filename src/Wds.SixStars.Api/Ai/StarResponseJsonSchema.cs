@@ -80,7 +80,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "situationSummary", "feelingsSummary", "whatSheIsDoingToday", "currentDesires",
                         "relationshipPosture", "recentPeopleSeenSummary", "recentEventsSummary", "privateSecretsOrHooks",
-                        "promptUseSummary", "moodTags", "recentPeopleSeen", "recentEvents", "todayIntentions", "thingsSheWantsToTalkAbout", "conversationHooks"
+                        "promptUseSummary", "moodTags", "recentPeopleSeen", "recentEvents", "todayIntentions", "thingsSheWantsToTalkAbout", "thingsSheWantsToSay", "conversationHooks"
                     }
                 },
                 { "properties", new Dictionary<string, object>
@@ -100,6 +100,7 @@ namespace Wds.SixStars.Api.Ai
                         { "recentEvents", StringArray(12) },
                         { "todayIntentions", StringArray(12) },
                         { "thingsSheWantsToTalkAbout", StringArray(12) },
+                        { "thingsSheWantsToSay", SpeechIntentCandidateArray(12) },
                         { "conversationHooks", StringArray(12) }
                     }
                 }
@@ -482,6 +483,38 @@ namespace Wds.SixStars.Api.Ai
                                 { "positiveEmotionVector", EmotionEffectVectorProperty() },
                                 { "negativeEmotionVector", NegativeEmotionVectorProperty() },
                                 { "reason", StringProperty(420) }
+                            }
+                        }
+                    }
+                }
+            };
+            if (maxItems > 0) array["maxItems"] = maxItems;
+            return array;
+        }
+
+        private static Dictionary<string, object> SpeechIntentCandidateArray(int maxItems = 0)
+        {
+            Dictionary<string, object> array = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "items", new Dictionary<string, object>
+                    {
+                        { "type", "object" },
+                        { "additionalProperties", false },
+                        { "required", new[] { "intentId", "category", "topic", "speechGoal", "baseScore", "priority", "confidence", "sourceEventIds", "dedupeKey", "expiresAfterHours", "requiresAcknowledgement" } },
+                        { "properties", new Dictionary<string, object>
+                            {
+                                { "intentId", StringProperty(160) },
+                                { "category", StringProperty(80) },
+                                { "topic", StringProperty(240) },
+                                { "speechGoal", StringProperty(900) },
+                                { "baseScore", NumberProperty(0, 100) },
+                                { "priority", new Dictionary<string, object> { { "type", "string" }, { "enum", new[] { "low", "medium", "high", "critical" } } } },
+                                { "confidence", NumberProperty(0, 1) },
+                                { "sourceEventIds", StringArray(16) },
+                                { "dedupeKey", StringProperty(200) },
+                                { "expiresAfterHours", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 1 }, { "maximum", 720 } } },
+                                { "requiresAcknowledgement", new Dictionary<string, object> { { "type", "boolean" } } }
                             }
                         }
                     }

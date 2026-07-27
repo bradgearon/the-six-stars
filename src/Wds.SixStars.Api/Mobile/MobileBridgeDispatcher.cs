@@ -157,6 +157,8 @@ public sealed class MobileBridgeDispatcher
         if (compact.Equals("SetGirlfriendCuteMode", StringComparison.OrdinalIgnoreCase) || compact.Equals("GirlfriendCuteMode", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetCuteMode", StringComparison.OrdinalIgnoreCase) || compact.Equals("CuteMode", StringComparison.OrdinalIgnoreCase)) return "SetGirlfriendCuteMode";
         if (compact.Equals("CuteNow", StringComparison.OrdinalIgnoreCase) || compact.Equals("ActivateCuteModeNow", StringComparison.OrdinalIgnoreCase) || compact.Equals("GirlfriendCuteNow", StringComparison.OrdinalIgnoreCase)) return "ActivateCuteModeNow";
         if (compact.Equals("BreakupGirlfriend", StringComparison.OrdinalIgnoreCase) || compact.Equals("BreakUpGirlfriend", StringComparison.OrdinalIgnoreCase)) return "BreakupGirlfriend";
+        if (compact.Equals("SetSpeechPlaybackPaused", StringComparison.OrdinalIgnoreCase) || compact.Equals("PauseSpeech", StringComparison.OrdinalIgnoreCase)) return "SetSpeechPlaybackPaused";
+        if (compact.Equals("ResumeSpeech", StringComparison.OrdinalIgnoreCase)) return "ResumeSpeech";
         if (compact.Equals("Refresh", StringComparison.OrdinalIgnoreCase) || compact.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)) return "RefreshState";
         return value.Trim();
     }
@@ -172,6 +174,7 @@ public sealed class MobileBridgeDispatchCommand
     public bool? IsMet { get; set; }
     public bool? IsAlly { get; set; }
     public bool? CuteModeEnabled { get; set; }
+    public bool? PlaybackPaused { get; set; }
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public string PlayerText { get; set; } = string.Empty;
@@ -201,6 +204,7 @@ public sealed class MobileBridgeDispatchResult
     public bool IsGirlfriend { get; set; }
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
+    public bool PlaybackPaused { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
@@ -327,6 +331,7 @@ public sealed class MobileBridgeDispatchEvent
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
+    public bool PlaybackPaused { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
     public string Transcript { get; set; } = string.Empty;
@@ -338,6 +343,11 @@ public sealed class MobileBridgeDispatchEvent
     public bool StoryIsFinished { get; set; }
     public int StoryChunkCount { get; set; }
     public string SpokenText { get; set; } = string.Empty;
+    public string SpeechIntentId { get; set; } = string.Empty;
+    public string PreparedArtifactId { get; set; } = string.Empty;
+    public string SpeechIntentPriority { get; set; } = string.Empty;
+    public double SpeechIntentEffectiveScore { get; set; }
+    public string SpeechIntentStatus { get; set; } = string.Empty;
     public bool InitiativeShouldSpeak { get; set; } = true;
     public bool InitiativeSkippedBeforeLlm { get; set; }
     public double InitiativeStateScore { get; set; }
@@ -411,6 +421,7 @@ public sealed class MobileBridgeDispatchEvent
             GirlfriendCuteModeEnabled = state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = (state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled) && (state?.GirlfriendHourlyState?.CuteModeActive ?? result.GirlfriendCuteModeActive),
             GirlfriendCuteModeSignature = !string.IsNullOrWhiteSpace(result.GirlfriendCuteModeSignature) ? result.GirlfriendCuteModeSignature : (state?.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty),
+            PlaybackPaused = result.PlaybackPaused,
             Heart = state?.Heart ?? 0,
             Trust = state?.Trust ?? 0,
             Romance = state?.Romance ?? 0,

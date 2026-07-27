@@ -9,6 +9,8 @@ using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.State;
+using Wds.SixStars.Api.WorldEvents;
+using Wds.SixStars.Api.SpeechIntents;
 
 namespace Wds.SixStars.Api.DailyState
 {
@@ -24,6 +26,8 @@ namespace Wds.SixStars.Api.DailyState
         private readonly StarDailyStateFileStore _store;
         private readonly DailyStarStateOptions _options;
         private readonly BackgroundAiRequestDispatcher? _dispatcher;
+        private readonly WorldEventService? _worldEventService;
+        private readonly StarSpeechIntentService? _speechIntentService;
         private readonly Dictionary<string, SemaphoreSlim> _starGates = new Dictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _pendingBackgroundRefreshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object _gate = new object();
@@ -39,7 +43,9 @@ namespace Wds.SixStars.Api.DailyState
             IStarDailyStateGenerator generator,
             StarDailyStateFileStore store,
             DailyStarStateOptions options,
-            BackgroundAiRequestDispatcher? dispatcher = null)
+            BackgroundAiRequestDispatcher? dispatcher = null,
+            WorldEventService? worldEventService = null,
+            StarSpeechIntentService? speechIntentService = null)
         {
             _profileProvider = profileProvider ?? throw new ArgumentNullException(nameof(profileProvider));
             _memoryApi = memoryApi ?? throw new ArgumentNullException(nameof(memoryApi));
@@ -47,6 +53,8 @@ namespace Wds.SixStars.Api.DailyState
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _options = options ?? new DailyStarStateOptions();
             _dispatcher = dispatcher;
+            _worldEventService = worldEventService;
+            _speechIntentService = speechIntentService;
             if (_options.RefreshSlots == null || _options.RefreshSlots.Count == 0) _options.RefreshSlots = DailyStarStateOptions.CreateDefaultSlots();
         }
 
@@ -105,6 +113,25 @@ namespace Wds.SixStars.Api.DailyState
         public async Task<StarDailyStateRecord?> ReadCurrentAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             return await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>Queues an event-driven refresh even when the current clock slot is otherwise fresh.</summary>
+        public async Task QueueForcedRefreshAsync(string sessionId, string starId, string reason, CancellationToken cancellationToken)
+        {
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+            DailyStarStateScheduleSlot slot = GetCurrentSlot(DateTimeOffset.Now) ?? CreateRollingSlot(DateTimeOffset.Now);
+            StarState state = await _memoryApi.GetStarStateAsync(normalizedSessionId, normalizedStarId, cancellationToken).ConfigureAwait(false);
+            await QueueBackgroundRefreshAsync(normalizedSessionId, normalizedStarId, state, slot, string.IsNullOrWhiteSpace(reason) ? "forced state refresh" : reason, cancellationToken, true).ConfigureAwait(false);
+        }
+
+        public async Task<StarDailyStateRecord> ForceRefreshAsync(string sessionId, string starId, string reason, CancellationToken cancellationToken)
+        {
+            string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
+            string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
+            DailyStarStateScheduleSlot slot = GetCurrentSlot(DateTimeOffset.Now) ?? CreateRollingSlot(DateTimeOffset.Now);
+            StarState state = await _memoryApi.GetStarStateAsync(normalizedSessionId, normalizedStarId, cancellationToken).ConfigureAwait(false);
+            return await RefreshAsync(normalizedSessionId, normalizedStarId, state, slot, string.IsNullOrWhiteSpace(reason) ? "forced state refresh" : reason, cancellationToken, true).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -190,7 +217,7 @@ namespace Wds.SixStars.Api.DailyState
                     DailyStateUpdateFailed?.Invoke(this, ex);
                 }
 
-                int seconds = Math.Max(30, _options.PollSeconds <= 0 ? 180 : _options.PollSeconds);
+                int seconds = Math.Max(30, _options.PollSeconds <= 0 ? 60 : _options.PollSeconds);
                 try
                 {
                     await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken).ConfigureAwait(false);
@@ -244,17 +271,17 @@ namespace Wds.SixStars.Api.DailyState
         }
 
 
-        private async Task QueueBackgroundRefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken)
+        private async Task QueueBackgroundRefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken, bool force = false)
         {
             if (_dispatcher == null)
             {
-                await RefreshAsync(sessionId, starId, state, slot, reason, cancellationToken).ConfigureAwait(false);
+                await RefreshAsync(sessionId, starId, state, slot, reason, cancellationToken, force).ConfigureAwait(false);
                 return;
             }
 
             string normalizedSessionId = string.IsNullOrWhiteSpace(sessionId) ? "local-dev" : sessionId;
             string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "Elusiaa" : starId;
-            string pendingKey = normalizedSessionId + ":" + normalizedStarId + ":" + (slot.SlotId ?? string.Empty);
+            string pendingKey = normalizedSessionId + ":" + normalizedStarId + ":" + (slot.SlotId ?? string.Empty) + (force ? ":force" : string.Empty);
             lock (_pendingBackgroundRefreshes)
             {
                 if (_pendingBackgroundRefreshes.Contains(pendingKey)) return;
@@ -271,7 +298,7 @@ namespace Wds.SixStars.Api.DailyState
                     {
                         DailyStarStateScheduleSlot currentSlot = GetCurrentSlot(DateTimeOffset.Now) ?? slot;
                         StarState latest = await _memoryApi.GetStarStateAsync(normalizedSessionId, normalizedStarId, workToken).ConfigureAwait(false);
-                        await RefreshAsync(normalizedSessionId, normalizedStarId, latest, currentSlot, reason, workToken).ConfigureAwait(false);
+                        await RefreshAsync(normalizedSessionId, normalizedStarId, latest, currentSlot, reason, workToken, force).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -284,7 +311,7 @@ namespace Wds.SixStars.Api.DailyState
                 cancellationToken);
         }
 
-        private async Task<StarDailyStateRecord> RefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken)
+        private async Task<StarDailyStateRecord> RefreshAsync(string sessionId, string starId, StarState state, DailyStarStateScheduleSlot slot, string reason, CancellationToken cancellationToken, bool force = false)
         {
             SemaphoreSlim starGate = GetStarGate(sessionId, starId);
             await starGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -293,10 +320,14 @@ namespace Wds.SixStars.Api.DailyState
                 // Check again after acquiring the per-star gate; another request may have generated it.
                 string localDate = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 StarDailyStateRecord? current = await _store.ReadCurrentAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                if (IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
+                if (!force && IsCurrentRecordUsableForState(current, localDate, slot.SlotId, state))
                 {
                     return current;
                 }
+
+                List<WorldEventRecord> worldEvents = _worldEventService == null
+                    ? new List<WorldEventRecord>()
+                    : await _worldEventService.GetPromptEventsAsync(starId, cancellationToken).ConfigureAwait(false);
 
                 StarProfile profile = _profileProvider.GetProfile(starId);
                 StarDailyStateModelResponse model = await _generator.GenerateDailyStateAsync(new StarDailyStateGenerationRequest
@@ -307,7 +338,8 @@ namespace Wds.SixStars.Api.DailyState
                     LocalDate = localDate,
                     SlotId = slot.SlotId,
                     LocalNow = DateTimeOffset.Now,
-                    PreviousRecord = current
+                    PreviousRecord = current,
+                    WorldEvents = worldEvents
                 }, cancellationToken).ConfigureAwait(false);
 
                 string json = BuildJson(profile, state, model, sessionId, localDate, slot.SlotId, DateTimeOffset.Now, reason);
@@ -324,7 +356,14 @@ namespace Wds.SixStars.Api.DailyState
 
                 record = await _store.WriteAsync(record, cancellationToken).ConfigureAwait(false);
                 await _memoryApi.SetStarDailyStateContextAsync(sessionId, profile.StarId, ToContext(record, (_options.MaxJsonCharsForPrompt > 0 ? _options.MaxJsonCharsForPrompt : _options.MaxXmlCharsForPrompt)), cancellationToken).ConfigureAwait(false);
-                await ClearFreshGirlfriendSpeechHooksAsync(sessionId, profile.StarId, state, cancellationToken).ConfigureAwait(false);
+                if (_speechIntentService != null)
+                {
+                    List<StarSpeechIntentCandidate> candidates = new List<StarSpeechIntentCandidate>();
+                    if (model.ThingsSheWantsToSay != null) candidates.AddRange(model.ThingsSheWantsToSay);
+                    candidates.AddRange(BuildGirlfriendSpeechIntentCandidates(state));
+                    ApplyWorldEventPriorityFloors(candidates, worldEvents);
+                    await _speechIntentService.UpsertCandidatesAsync(profile.StarId, candidates, record.GeneratedAt, cancellationToken).ConfigureAwait(false);
+                }
                 DailyStateUpdated?.Invoke(this, new StarDailyStateUpdatedEventArgs { Record = record, Generated = true, Reason = reason });
                 return record;
             }
@@ -334,36 +373,81 @@ namespace Wds.SixStars.Api.DailyState
             }
         }
 
-        private async Task ClearFreshGirlfriendSpeechHooksAsync(string sessionId, string starId, StarState state, CancellationToken cancellationToken)
+
+        private static void ApplyWorldEventPriorityFloors(List<StarSpeechIntentCandidate> candidates, List<WorldEventRecord> worldEvents)
         {
-            if (state == null || !state.IsGirlfriend || state.GirlfriendHourlyState == null || !state.GirlfriendHourlyState.IsAvailable) return;
+            if (candidates == null || candidates.Count == 0 || worldEvents == null || worldEvents.Count == 0) return;
+            Dictionary<string, WorldEventRecord> byId = worldEvents
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.EventId))
+                .GroupBy(x => x.EventId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.Sequence).First(), StringComparer.OrdinalIgnoreCase);
 
-            StarGirlfriendHourlyStateContext current = state.GirlfriendHourlyState;
-            bool hasSpeechHooks = (current.ThingsSheWantsToSay != null && current.ThingsSheWantsToSay.Any(x => !string.IsNullOrWhiteSpace(x)))
-                || (current.CuteThingsSheWantsToSay != null && current.CuteThingsSheWantsToSay.Any(x => !string.IsNullOrWhiteSpace(x)));
-            if (!hasSpeechHooks) return;
-
-            // First re-submit the current state so its hooks are durable before this daily refresh clears the live queue.
-            await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(sessionId, starId, current, cancellationToken).ConfigureAwait(false);
-
-            StarGirlfriendHourlyStateContext cleared = new StarGirlfriendHourlyStateContext
+            foreach (StarSpeechIntentCandidate candidate in candidates)
             {
-                StarId = string.IsNullOrWhiteSpace(current.StarId) ? starId : current.StarId,
-                GeneratedAt = current.GeneratedAt,
-                SlotId = current.SlotId,
-                Summary = current.Summary,
-                RelationshipPosture = current.RelationshipPosture,
-                NeedSummary = current.NeedSummary,
-                WantSummary = current.WantSummary,
-                OverallConfidence = current.OverallConfidence,
-                OverallScore = current.OverallScore,
-                NeedVector = current.NeedVector == null ? new List<GirlfriendVectorItem>() : current.NeedVector.ToList(),
-                WantVector = current.WantVector == null ? new List<GirlfriendVectorItem>() : current.WantVector.ToList(),
-                ThingsSheWantsToSay = new List<string>(),
-                CuteThingsSheWantsToSay = new List<string>()
-            };
+                if (candidate == null || candidate.SourceEventIds == null) continue;
+                List<WorldEventRecord> sources = candidate.SourceEventIds
+                    .Where(x => !string.IsNullOrWhiteSpace(x) && byId.ContainsKey(x))
+                    .Select(x => byId[x])
+                    .ToList();
+                if (sources.Count == 0) continue;
 
-            await _memoryApi.SetStarGirlfriendHourlyStateContextAsync(sessionId, starId, cleared, cancellationToken).ConfigureAwait(false);
+                int importance = sources.Max(x => Math.Max(0, Math.Min(100, x.Importance)));
+                int authority = sources.Max(x => Math.Max(0, Math.Min(100, x.Authority)));
+                candidate.BaseScore = Math.Max(candidate.BaseScore, importance);
+                if (importance >= 95)
+                {
+                    candidate.Priority = StarSpeechIntentPriorities.Critical;
+                }
+                else if (importance >= 75 || authority >= 85)
+                {
+                    candidate.Priority = StarSpeechIntentPriorities.High;
+                    candidate.BaseScore = Math.Max(candidate.BaseScore, 75);
+                }
+                else if (importance >= 50 || authority >= 55)
+                {
+                    if (StarSpeechIntentPriorities.Rank(candidate.Priority) < StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.Medium))
+                        candidate.Priority = StarSpeechIntentPriorities.Medium;
+                }
+            }
+        }
+
+        private static IEnumerable<StarSpeechIntentCandidate> BuildGirlfriendSpeechIntentCandidates(StarState state)
+        {
+            if (state == null || !state.IsGirlfriend || state.GirlfriendHourlyState == null || !state.GirlfriendHourlyState.IsAvailable)
+            {
+                return Enumerable.Empty<StarSpeechIntentCandidate>();
+            }
+            StarGirlfriendHourlyStateContext context = state.GirlfriendHourlyState;
+            List<StarSpeechIntentCandidate> result = new List<StarSpeechIntentCandidate>();
+            foreach (string text in (context.ThingsSheWantsToSay ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(8))
+            {
+                result.Add(new StarSpeechIntentCandidate
+                {
+                    Category = "girlfriend",
+                    Topic = "Girlfriend thought",
+                    SpeechGoal = text.Trim(),
+                    BaseScore = Math.Max(55, context.OverallScore),
+                    Priority = context.OverallScore >= 80 ? StarSpeechIntentPriorities.High : StarSpeechIntentPriorities.Medium,
+                    Confidence = context.OverallConfidence,
+                    ExpiresAfterHours = 8,
+                    RequiresAcknowledgement = true
+                });
+            }
+            foreach (string text in (context.CuteThingsSheWantsToSay ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(4))
+            {
+                result.Add(new StarSpeechIntentCandidate
+                {
+                    Category = "girlfriend_cute",
+                    Topic = "Cute girlfriend impulse",
+                    SpeechGoal = text.Trim(),
+                    BaseScore = Math.Max(50, context.OverallScore - 5),
+                    Priority = StarSpeechIntentPriorities.Medium,
+                    Confidence = context.OverallConfidence,
+                    ExpiresAfterHours = 6,
+                    RequiresAcknowledgement = true
+                });
+            }
+            return result;
         }
 
         private SemaphoreSlim GetStarGate(string sessionId, string starId)
@@ -398,6 +482,17 @@ namespace Wds.SixStars.Api.DailyState
                 }
             }
             return null;
+        }
+
+        private static DailyStarStateScheduleSlot CreateRollingSlot(DateTimeOffset now)
+        {
+            int hour = now.LocalDateTime.Hour;
+            return new DailyStarStateScheduleSlot
+            {
+                SlotId = "rolling_" + hour.ToString("00", CultureInfo.InvariantCulture),
+                StartsAt = hour.ToString("00", CultureInfo.InvariantCulture) + ":00",
+                RefreshBefore = ((hour + 1) % 24).ToString("00", CultureInfo.InvariantCulture) + ":00"
+            };
         }
 
         private static bool TryParseTime(string? value, out TimeSpan result)
@@ -499,6 +594,7 @@ namespace Wds.SixStars.Api.DailyState
                     whatSheIsDoing = model.WhatSheIsDoingToday ?? string.Empty,
                     intentions = (model.TodayIntentions ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
                     wantsToTalkAbout = (model.ThingsSheWantsToTalkAbout ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
+                    wantsToSay = (model.ThingsSheWantsToSay ?? new List<StarSpeechIntentCandidate>()).Where(x => x != null && !string.IsNullOrWhiteSpace(x.SpeechGoal)).Take(12).ToList(),
                     moodTags = (model.MoodTags ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList(),
                     conversationHooks = (model.ConversationHooks ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(12).ToList()
                 },

@@ -110,6 +110,19 @@
             android:textColor="#FFEEF6"
             android:textSize="14sp" />
 
+        <TextView
+            android:id="@+id/prod_prepared_speech_indicator"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingTop="2dp"
+            android:paddingBottom="5dp"
+            android:text=""
+            android:textColor="#9EE8F0"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/prod_voice_panel"
             android:layout_width="match_parent"

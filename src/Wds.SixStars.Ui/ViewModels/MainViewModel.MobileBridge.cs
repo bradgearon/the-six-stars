@@ -17,6 +17,8 @@ using Wds.SixStars.Api.Speech;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Voice;
+using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.PreparedSpeech;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
 using Wds.SixStars.Api.State;
@@ -152,7 +154,9 @@ public sealed partial class MainViewModel
             CreateConversationArchivePayloadAsync,
             ResolveConversationArchiveRoot(),
             _appConfig.ConversationArchive.PathPrefix,
-            _appConfig.ConversationArchive.Enabled);
+            _appConfig.ConversationArchive.Enabled,
+            _runtime,
+            FirstNonEmptyForMobile(Environment.GetEnvironmentVariable("SIX_STARS_WORLD_EVENT_API_KEY"), _appConfig.WorldEvents.ApiKey));
         _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
         {
             MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
@@ -514,6 +518,37 @@ public sealed partial class MainViewModel
                 StarState state = await _runtime.ActivateGirlfriendCuteModeNowAsync(sessionId, starId, string.IsNullOrWhiteSpace(command.Reason) ? "Android Cute Now button" : command.Reason, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " is in cute mode now."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " entered girlfriend cute mode now.");
+            }
+
+            case "SetSpeechPlaybackPaused":
+            case "ResumeSpeech":
+            {
+                bool paused = command.PlaybackPaused ?? !commandType.Equals("ResumeSpeech", StringComparison.OrdinalIgnoreCase);
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                MobileBridgeDispatchEvent playbackEvent = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "SetSpeechPlaybackPaused",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    PlaybackPaused = paused,
+                    Message = paused ? "Star speech playback paused." : "Star speech playback resumed."
+                });
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    PlaybackPaused = paused,
+                    State = state,
+                    Event = playbackEvent,
+                    Message = playbackEvent.Message,
+                    SuppressEventPublication = true
+                };
             }
 
             case "ClearHistory":
@@ -1827,6 +1862,16 @@ public sealed partial class MainViewModel
             }
             context.RecentEvents.Add("At-rest Star initiative state check from Android/desktop bridge; this is not a player message and will not change relationship/emotion state.");
         }
+        if (!string.IsNullOrWhiteSpace(request.SpeechIntentId) || !string.IsNullOrWhiteSpace(request.SpeechIntentGoal))
+        {
+            context.Flags["preparedSpeechIntent"] = "true";
+            context.Flags["preparedSpeechIntentId"] = request.SpeechIntentId ?? string.Empty;
+            context.Flags["preparedSpeechIntentGoal"] = request.SpeechIntentGoal ?? string.Empty;
+            context.Flags["preparedSpeechIntentTopic"] = request.SpeechIntentTopic ?? string.Empty;
+            context.Flags["preparedSpeechIntentPriority"] = request.SpeechIntentPriority ?? string.Empty;
+            context.Flags["preparedSpeechIntentScore"] = request.SpeechIntentScore.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+            context.RecentEvents.Add("A durable wants-to-say intention is being prepared for reliable later playback. She should speak the supplied goal naturally now without mentioning systems.");
+        }
         if (HasMobilePhoto(request))
         {
             context.Flags["androidPhotoAttached"] = "true";
@@ -2197,6 +2242,110 @@ public sealed partial class MainViewModel
                         ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
                         : "Phone voice was not requested."
         };
+    }
+
+    private async Task PrepareHighPrioritySpeechForStarAsync(string starId, string reason)
+    {
+        await _preparedSpeechGenerationGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            string normalizedStarId = ResolveDefaultStarId(starId);
+            for (int prepared = 0; prepared < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPreparedItemsPerStar); prepared++)
+            {
+                StarSpeechIntent? intent = await _runtime.GetNextSpeechIntentToPrepareAsync(normalizedStarId, CancellationToken.None).ConfigureAwait(false);
+                if (intent == null) return;
+                StarSpeechIntent? locked = await _runtime.MarkSpeechIntentPreparingAsync(intent.IntentId, CancellationToken.None).ConfigureAwait(false);
+                if (locked == null) return;
+                try
+                {
+                    MobileBridgeRequest request = new MobileBridgeRequest
+                    {
+                        SessionId = "android-phone-prod",
+                        StarId = normalizedStarId,
+                        RequestType = RequestType.StarInitiative.ToString(),
+                        PlayerText = string.Empty,
+                        Area = Area,
+                        Quest = "PreparedSpeechIntent",
+                        RomanceMode = true,
+                        SpeakOnDesktop = false,
+                        ReturnAudio = false,
+                        ReturnAudioInline = true,
+                        PrefetchForListen = true,
+                        ClientName = "PreparedSpeechBackground",
+                        Reason = "durable speech intent background preparation: " + reason,
+                        SpeechIntentId = intent.IntentId,
+                        SpeechIntentGoal = intent.SpeechGoal,
+                        SpeechIntentTopic = intent.Topic,
+                        SpeechIntentPriority = intent.Priority,
+                        SpeechIntentScore = intent.EffectiveScore
+                    };
+                    MobileBridgeResponse response = await ProcessMobileConversationAsync(request, string.Empty, CancellationToken.None).ConfigureAwait(false);
+                    if (!response.Ok || !response.InitiativeShouldSpeak || response.InlineVoiceChunks == null || response.InlineVoiceChunks.Count == 0)
+                    {
+                        string failure = FirstNonEmptyForMobile(response.VoiceError, response.InitiativeReason, "The Star did not produce prepared speech.");
+                        await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, failure, CancellationToken.None).ConfigureAwait(false);
+                        if (locked.PrepareAttempts < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPrepareAttempts))
+                        {
+                            string retryReason = response.InitiativeSkippedBeforeLlm
+                                ? "foreground work temporarily held the AI gate"
+                                : "prepared speech generation returned no playable audio";
+                            SchedulePreparedSpeechRetry(normalizedStarId, retryReason);
+                        }
+                        return;
+                    }
+
+                    List<PreparedSpeechChunkData> chunks = response.InlineVoiceChunks
+                        .Where(x => x != null && !string.IsNullOrWhiteSpace(x.AudioBase64))
+                        .Select(x => new PreparedSpeechChunkData
+                        {
+                            ChunkIndex = x.ChunkIndex,
+                            TotalChunks = x.TotalChunks,
+                            MimeType = x.MimeType,
+                            Audio = Convert.FromBase64String(x.AudioBase64),
+                            Sha256 = x.Sha256,
+                            SpeechActivitySegmentsMs = x.SpeechActivitySegmentsMs
+                        }).ToList();
+                    PreparedSpeechArtifact artifact = await _runtime.SavePreparedSpeechAsync(intent.IntentId, normalizedStarId, response.SpokenText, "qwen3-tts-current", chunks, CancellationToken.None).ConfigureAwait(false);
+                    StarSpeechIntent? ready = await _runtime.MarkSpeechIntentReadyAsync(intent.IntentId, artifact.ArtifactId, CancellationToken.None).ConfigureAwait(false);
+                    _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                    {
+                        EventType = "PreparedSpeechReady",
+                        SessionId = "android-phone-prod",
+                        StarId = normalizedStarId,
+                        SelectedStarId = SelectedStarId,
+                        Message = normalizedStarId + " has an important prepared thought ready to say.",
+                        SpeechIntentId = intent.IntentId,
+                        PreparedArtifactId = artifact.ArtifactId,
+                        SpeechIntentPriority = ready?.Priority ?? intent.Priority,
+                        SpeechIntentEffectiveScore = ready?.EffectiveScore ?? intent.EffectiveScore,
+                        SpeechIntentStatus = ready?.Status ?? StarSpeechIntentStatuses.Ready
+                    });
+                }
+                catch (Exception ex)
+                {
+                    await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, ex.Message, CancellationToken.None).ConfigureAwait(false);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Prepared speech generation failed", normalizedStarId + ": " + ex.Message));
+                    if (locked.PrepareAttempts < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPrepareAttempts))
+                    {
+                        SchedulePreparedSpeechRetry(normalizedStarId, "prepared speech generation failed");
+                    }
+                    return;
+                }
+            }
+        }
+        finally
+        {
+            _preparedSpeechGenerationGate.Release();
+        }
+    }
+
+    private void SchedulePreparedSpeechRetry(string starId, string reason)
+    {
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, _appConfig.StarSpeechIntents.PrepareRetryDelaySeconds))).ConfigureAwait(false);
+            await PrepareHighPrioritySpeechForStarAsync(starId, "retry after " + reason).ConfigureAwait(false);
+        });
     }
 
     private async Task<List<MobileInlineVoiceChunk>> GenerateMobileInlineVoiceChunksAsync(StarInteractionResponse starResponse, CancellationToken cancellationToken)

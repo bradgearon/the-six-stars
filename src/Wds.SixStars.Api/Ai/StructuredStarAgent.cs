@@ -11,6 +11,7 @@ using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.SpeechIntents;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -148,6 +149,7 @@ namespace Wds.SixStars.Api.Ai
             model.RecentEvents = CleanList(model.RecentEvents, 12);
             model.TodayIntentions = CleanList(model.TodayIntentions, 12);
             model.ThingsSheWantsToTalkAbout = CleanList(model.ThingsSheWantsToTalkAbout, 12);
+            model.ThingsSheWantsToSay = NormalizeSpeechIntentCandidates(model.ThingsSheWantsToSay, profile.StarId);
             model.ConversationHooks = CleanList(model.ConversationHooks, 12);
             return model;
         }
@@ -1439,6 +1441,40 @@ namespace Wds.SixStars.Api.Ai
                 .ThenByDescending(x => x.Confidence)
                 .Take(Math.Max(1, maxItems))
                 .ToList();
+        }
+
+        private static List<StarSpeechIntentCandidate> NormalizeSpeechIntentCandidates(IEnumerable<StarSpeechIntentCandidate>? values, string starId)
+        {
+            List<StarSpeechIntentCandidate> result = new List<StarSpeechIntentCandidate>();
+            foreach (StarSpeechIntentCandidate item in values ?? Enumerable.Empty<StarSpeechIntentCandidate>())
+            {
+                if (item == null) continue;
+                string goal = CleanOneLine(item.SpeechGoal, 900);
+                if (string.IsNullOrWhiteSpace(goal)) continue;
+                string topic = CleanOneLine(item.Topic, 240);
+                string category = CleanOneLine(item.Category, 80);
+                string dedupeKey = CleanOneLine(item.DedupeKey, 200);
+                if (string.IsNullOrWhiteSpace(dedupeKey))
+                {
+                    dedupeKey = (starId + ":" + category + ":" + topic).Trim(':').ToLowerInvariant().Replace(' ', '-');
+                }
+                result.Add(new StarSpeechIntentCandidate
+                {
+                    IntentId = CleanOneLine(item.IntentId, 160),
+                    Category = string.IsNullOrWhiteSpace(category) ? "daily_state" : category,
+                    Topic = topic,
+                    SpeechGoal = goal,
+                    BaseScore = ClampScore(item.BaseScore),
+                    Priority = StarSpeechIntentPriorities.Normalize(item.Priority),
+                    Confidence = Clamp01(item.Confidence),
+                    SourceEventIds = CleanList(item.SourceEventIds, 16),
+                    DedupeKey = dedupeKey,
+                    ExpiresAfterHours = Math.Max(1, Math.Min(720, item.ExpiresAfterHours <= 0 ? 24 : item.ExpiresAfterHours)),
+                    RequiresAcknowledgement = item.RequiresAcknowledgement
+                });
+                if (result.Count >= 12) break;
+            }
+            return result;
         }
 
         private static bool IsInformationNeedSubject(string? value)

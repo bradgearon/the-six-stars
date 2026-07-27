@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Wds.SixStars.Api.SpeechIntents;
 
 namespace Wds.SixStars.Api.Models
 {
@@ -24,6 +25,8 @@ namespace Wds.SixStars.Api.Models
         public List<string> TodayIntentions { get; set; } = new List<string>();
         /// <summary>Specific optional topics or questions this Star wants to bring up with the Last Cat during at-rest initiative checks.</summary>
         public List<string> ThingsSheWantsToTalkAbout { get; set; } = new List<string>();
+        /// <summary>Structured durable speech intentions ranked independently of the daily-state JSON.</summary>
+        public List<StarSpeechIntentCandidate> ThingsSheWantsToSay { get; set; } = new List<StarSpeechIntentCandidate>();
         public List<string> ConversationHooks { get; set; } = new List<string>();
     }
 }

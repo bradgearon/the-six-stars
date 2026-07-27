@@ -60,6 +60,7 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.io.DataInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -79,12 +80,11 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.TreeMap;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -180,6 +180,7 @@ public final class MainActivity extends ComponentActivity {
     private TextView prodStarNameText;
     private TextView prodStarSubtitleText;
     private TextView prodRelationshipText;
+    private TextView prodPreparedSpeechIndicatorText;
     private TextView prodMiniStatusText;
     private PixelStarAnimationView prodSpriteView;
     private TextView prodTalkButtonText;
@@ -208,6 +209,15 @@ public final class MainActivity extends ComponentActivity {
     private long lastStarInitiativeRequestMs;
     private long lastManualListenRequestMs;
     private volatile PrefetchedInitiativeStore.CachedInitiative prefetchedInitiative;
+    private volatile PreparedSpeechStore.SyncResult preparedSpeechSyncResult = new PreparedSpeechStore.SyncResult(new ArrayList<>(), 0, 0.0, "low");
+    private volatile boolean preparedSpeechSyncRunning;
+    private volatile boolean preparedSpeechPlaybackActive;
+    private volatile PreparedSpeechStore.CachedItem activePreparedSpeechItem;
+    private long lastPreparedSpeechSyncMs;
+    private long selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
+    private long lastPreparedAutoSpeakMs;
+    private double selectedStarConnectionPercent;
+    private volatile boolean activityResumed;
     private boolean starInitiativeServiceReceiverRegistered;
     private Button recordButton;
     private Button photoButton;
@@ -278,6 +288,16 @@ public final class MainActivity extends ComponentActivity {
         }
     };
 
+    private final Runnable preparedSpeechLoop = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed) return;
+            syncPreparedSpeech("periodic reconciliation", false);
+            maybeAutoSpeakPreparedSpeech();
+            mainHandler.postDelayed(this, 2500L);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -295,15 +315,25 @@ public final class MainActivity extends ComponentActivity {
         loadPrefetchedInitiativeIntoMemory("Android activity created");
         syncStarInitiativeBackgroundService("Android activity started", true);
         mainHandler.postDelayed(healthLoop, 600);
+        mainHandler.postDelayed(preparedSpeechLoop, 1200L);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        activityResumed = true;
         registerStarInitiativeServiceReceiver();
         ensureBridgeWebSocket();
         loadPrefetchedInitiativeIntoMemory("Android activity resumed");
+        selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
+        syncPreparedSpeech("Android activity resumed", true);
         mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("Android activity resumed", true), 1800L);
+    }
+
+    @Override
+    protected void onPause() {
+        activityResumed = false;
+        super.onPause();
     }
 
     @Override
@@ -312,6 +342,7 @@ public final class MainActivity extends ComponentActivity {
         stopRecording(false);
         if (bridgeSocketClient != null) bridgeSocketClient.close();
         closeAudioSocket();
+        mainHandler.removeCallbacks(preparedSpeechLoop);
         wavAudioQueue.stop();
         httpExecutor.shutdownNow();
         foregroundRequestExecutor.shutdownNow();
@@ -410,6 +441,7 @@ public final class MainActivity extends ComponentActivity {
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
                 invalidatePrefetchedInitiative("Selected Star changed.");
+                onSelectedStarPageChanged();
                 syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
@@ -529,6 +561,7 @@ public final class MainActivity extends ComponentActivity {
         prodStarNameText = null;
         prodStarSubtitleText = null;
         prodRelationshipText = null;
+        prodPreparedSpeechIndicatorText = null;
         prodMiniStatusText = null;
         prodSpriteView = null;
         prodTalkButtonText = null;
@@ -550,6 +583,7 @@ public final class MainActivity extends ComponentActivity {
         prodStarNameText = findViewById(R.id.prod_star_name);
         prodStarSubtitleText = findViewById(R.id.prod_star_subtitle);
         prodRelationshipText = findViewById(R.id.prod_relationship);
+        prodPreparedSpeechIndicatorText = findViewById(R.id.prod_prepared_speech_indicator);
         prodTalkButtonText = findViewById(R.id.prod_talk_text);
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodListenButton = findViewById(R.id.prod_listen_button);
@@ -608,6 +642,8 @@ public final class MainActivity extends ComponentActivity {
         refreshProdConversationWindow();
         updateProdRecordingUi();
         updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, false, "Prod ready");
+        updatePreparedSpeechIndicator();
+        syncPreparedSpeech("Production UI built", true);
     }
 
     private void createProdHiddenControls() {
@@ -619,6 +655,7 @@ public final class MainActivity extends ComponentActivity {
                 if (suppressStarSelectionDispatch) return;
                 refreshProdStarUi(starSpinner.getSelectedItem().toString());
                 invalidatePrefetchedInitiative("Selected Star changed.");
+                onSelectedStarPageChanged();
                 syncStarInitiativeBackgroundService("Selected Star changed", true);
                 dispatchSelectStar(starSpinner.getSelectedItem().toString());
             }
@@ -807,8 +844,10 @@ public final class MainActivity extends ComponentActivity {
 
         LinearLayout buttons2 = row();
         Button audio = prodButton("Test Audio");
+        Button pauseVoice = prodButton(wavAudioQueue.isPaused() ? "Resume Voice" : "Pause Voice");
         Button dev = prodButton("Dev Mode");
         buttons2.addView(audio, weightParams(1));
+        buttons2.addView(pauseVoice, weightParams(1));
         buttons2.addView(dev, weightParams(1));
         controls.addView(buttons2);
 
@@ -848,6 +887,10 @@ public final class MainActivity extends ComponentActivity {
                 mainHandler.postDelayed(() -> status.setText(buildProdMenuStatusText()), 900);
             });
             audio.setOnClickListener(v -> testPhoneAudio());
+            pauseVoice.setOnClickListener(v -> {
+                if (wavAudioQueue.isPaused()) wavAudioQueue.resumePlayback(); else wavAudioQueue.pausePlayback();
+                pauseVoice.setText(wavAudioQueue.isPaused() ? "Resume Voice" : "Pause Voice");
+            });
             dev.setOnClickListener(v -> { dialog.dismiss(); switchUiMode(false); });
         });
         dialog.show();
@@ -935,6 +978,7 @@ public final class MainActivity extends ComponentActivity {
             selectStarInSpinner(meta.id);
             refreshProdStarUi(meta.id);
             invalidatePrefetchedInitiative("Selected Star changed.");
+            onSelectedStarPageChanged();
             syncStarInitiativeBackgroundService("Selected Star changed", true);
             dispatchSelectStar(meta.id);
             if (activeStarSelectionDialog != null) activeStarSelectionDialog.dismiss();
@@ -1347,6 +1391,7 @@ public final class MainActivity extends ComponentActivity {
                     connectionStatusText.setText("Connected by WebSocket to " + baseUrl());
                     appendVoiceDebug("Kaelia opened the mobile response pipe", "Persistent WebSocket connected. pending=" + (bridgeSocketClient == null ? 0 : bridgeSocketClient.pendingCount()));
                     testConnection(false);
+                    syncPreparedSpeech("websocket connected", true);
                 });
             }
 
@@ -1936,6 +1981,16 @@ public final class MainActivity extends ComponentActivity {
         String message = optStringEither(event, "message", "Message", type);
         if (selected.length() > 0) selectStarInSpinner(selected);
 
+        if ("PreparedSpeechReady".equalsIgnoreCase(type)
+                || "SpeechIntentReady".equalsIgnoreCase(type)
+                || "SpeechIntentChanged".equalsIgnoreCase(type)) {
+            syncPreparedSpeech("bridge event " + type, true);
+        }
+        if ("SetSpeechPlaybackPaused".equalsIgnoreCase(type)) {
+            boolean paused = optBooleanEither(event, "playbackPaused", "PlaybackPaused", optBooleanEither(event, "paused", "Paused", true));
+            if (paused) wavAudioQueue.pausePlayback(); else wavAudioQueue.resumePlayback();
+        }
+
         if (isTranscriptBridgeEvent(type)) {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
         } else if (isConversationBridgeEvent(type)) {
@@ -2252,6 +2307,7 @@ public final class MainActivity extends ComponentActivity {
         selectedStarIsMet = met;
         selectedStarIsAlly = ally;
         selectedStarIsGirlfriend = girlfriend;
+        selectedStarConnectionPercent = connection;
         if (toggleMetButton != null) toggleMetButton.setText(met ? "Unmeet" : "Mark Met");
         if (toggleAllyButton != null) toggleAllyButton.setText(ally ? "Remove Ally" : "Mark Ally");
         updateProdStarStateUi(starId, met, ally, heart, trust, romance, connection, ready, girlfriend, status);
@@ -2308,6 +2364,7 @@ public final class MainActivity extends ComponentActivity {
             suppressStarSelectionDispatch = false;
         }
         refreshProdStarUi(starId);
+        onSelectedStarPageChanged();
     }
 
     private int findStarPosition(String starId) {
@@ -2457,6 +2514,7 @@ public final class MainActivity extends ComponentActivity {
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
+        maybeSpeakPreparedBeforeReply();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
         invalidatePrefetchedInitiative("The player sent an image, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
@@ -2541,6 +2599,251 @@ public final class MainActivity extends ComponentActivity {
         return relationshipTarget && proposalMarker && proposalVerb;
     }
 
+
+    private void onSelectedStarPageChanged() {
+        selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
+        preparedSpeechSyncResult = new PreparedSpeechStore.SyncResult(new ArrayList<>(), 0, 0.0, "low");
+        updatePreparedSpeechIndicator();
+        syncPreparedSpeech("selected Star changed", true);
+    }
+
+    private void syncPreparedSpeech(String reason, boolean force) {
+        long now = SystemClock.elapsedRealtime();
+        if (preparedSpeechSyncRunning) return;
+        if (!force && now - lastPreparedSpeechSyncMs < 30000L) return;
+        preparedSpeechSyncRunning = true;
+        lastPreparedSpeechSyncMs = now;
+        final String starId = selectedStarName();
+        final String url = baseUrl();
+        httpExecutor.execute(() -> {
+            try {
+                PreparedSpeechStore.SyncResult result = PreparedSpeechStore.sync(this, url, starId);
+                runOnUiThread(() -> {
+                    if (starId.equalsIgnoreCase(selectedStarName())) {
+                        preparedSpeechSyncResult = result;
+                        updatePreparedSpeechIndicator();
+                        maybeAutoSpeakPreparedSpeech();
+                    }
+                    appendVoiceDebug("Prepared Star speech synchronized", reason + ", star=" + starId
+                            + ", ready=" + result.readyItems.size() + ", preparing=" + result.preparingCount
+                            + ", highest=" + result.highestPriority + " " + String.format(Locale.US, "%.1f", result.highestEffectiveScore));
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> appendVoiceDebug("Prepared Star speech sync deferred", reason + ": " + ex));
+            } finally {
+                preparedSpeechSyncRunning = false;
+                runOnUiThread(() -> {
+                    if (!starId.equalsIgnoreCase(selectedStarName())) {
+                        syncPreparedSpeech("selected Star changed during the previous sync", true);
+                    }
+                });
+            }
+        });
+    }
+
+    private PreparedSpeechStore.CachedItem bestPreparedSpeechForSelectedStar() {
+        PreparedSpeechStore.SyncResult result = preparedSpeechSyncResult;
+        if (result == null || result.readyItems == null) return null;
+        for (PreparedSpeechStore.CachedItem item : result.readyItems) {
+            if (item != null && item.starId.equalsIgnoreCase(selectedStarName())
+                    && "ready".equals(item.status)) return item;
+        }
+        return null;
+    }
+
+    private void updatePreparedSpeechIndicator() {
+        if (prodPreparedSpeechIndicatorText == null) return;
+        PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
+        PreparedSpeechStore.SyncResult result = preparedSpeechSyncResult;
+        if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
+            prodPreparedSpeechIndicatorText.setText("▶ " + activePreparedSpeechItem.starId + " is saying her prepared thought");
+            prodPreparedSpeechIndicatorText.setTextColor(0xFF9EE8F0);
+            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
+            prodPreparedSpeechIndicatorText.setClickable(false);
+            prodPreparedSpeechIndicatorText.setFocusable(false);
+            prodPreparedSpeechIndicatorText.setOnClickListener(null);
+        } else if (item != null) {
+            String marker = item.priorityRank() >= 3 ? "●" : "○";
+            prodPreparedSpeechIndicatorText.setText(marker + " " + capitalize(item.priority) + " thought ready — "
+                    + String.format(Locale.US, "%.0f", item.effectiveScore)
+                    + (item.topic.length() > 0 ? " • " + clip(item.topic, 70) : ""));
+            prodPreparedSpeechIndicatorText.setTextColor(item.priorityRank() >= 3 ? 0xFFFFD27A : 0xFF9EE8F0);
+            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
+            prodPreparedSpeechIndicatorText.setClickable(true);
+            prodPreparedSpeechIndicatorText.setFocusable(true);
+            prodPreparedSpeechIndicatorText.setContentDescription("Prepared Star thought ready. Tap to listen.");
+            prodPreparedSpeechIndicatorText.setOnClickListener(v -> playPreparedSpeech(item, "indicator tapped"));
+        } else if (result != null && result.preparingCount > 0) {
+            prodPreparedSpeechIndicatorText.setText("⋯ " + selectedStarName() + " is preparing something to say");
+            prodPreparedSpeechIndicatorText.setTextColor(0xFF9EE8F0);
+            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
+            prodPreparedSpeechIndicatorText.setClickable(false);
+            prodPreparedSpeechIndicatorText.setOnClickListener(null);
+        } else {
+            prodPreparedSpeechIndicatorText.setText("");
+            prodPreparedSpeechIndicatorText.setVisibility(View.GONE);
+            prodPreparedSpeechIndicatorText.setOnClickListener(null);
+        }
+    }
+
+    private static String capitalize(String value) {
+        if (value == null || value.length() == 0) return "Low";
+        return value.substring(0, 1).toUpperCase(Locale.US) + value.substring(1).toLowerCase(Locale.US);
+    }
+
+    private void maybeAutoSpeakPreparedSpeech() {
+        if (!activityResumed || !starInitiativeEnabled || preparedSpeechPlaybackActive || recording || desktopVoiceStreamActive) return;
+        if ((keepScreenAwakeReasonMask & KEEP_AWAKE_REASON_REQUEST) != 0) return;
+        if (!wavAudioQueue.isIdle()) return;
+        boolean playOnPhone = playOnPhoneCheck == null || playOnPhoneCheck.isChecked();
+        if (!playOnPhone) return;
+        PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
+        if (item == null) return;
+
+        long now = SystemClock.elapsedRealtime();
+        PreparedSpeechStore.SyncResult policy = preparedSpeechSyncResult;
+        long cooldownMs = Math.max(0, policy.minimumMinutesBetweenAutoSpeech) * 60L * 1000L;
+        if (now - lastPreparedAutoSpeakMs < cooldownMs) return;
+        long dwellMs = now - selectedStarVisibleSinceMs;
+        int rank = item.priorityRank();
+        if (rank >= 3) {
+            if (item.effectiveScore < policy.highPriorityAutoSpeakThreshold) return;
+            if (dwellMs < Math.max(1, policy.minimumPageDwellSeconds) * 1000L) return;
+            double probability = rank >= 4 ? 1.0 : 0.85;
+            if (Math.random() > probability) {
+                selectedStarVisibleSinceMs = now - Math.max(1, policy.minimumPageDwellSeconds / 2) * 1000L;
+                return;
+            }
+        } else if (rank == 2) {
+            if (item.effectiveScore < policy.mediumPriorityAutoSpeakThreshold) return;
+            if (dwellMs < Math.max(policy.minimumPageDwellSeconds, policy.mediumPriorityPageDwellSeconds) * 1000L) return;
+            double probability = selectedStarIsGirlfriend
+                    ? policy.girlfriendMediumSpeakProbability
+                    : selectedStarConnectionPercent >= policy.highConnectionThreshold
+                        ? policy.highConnectionMediumSpeakProbability
+                        : 0.0;
+            if (probability <= 0.0 || Math.random() > probability) {
+                selectedStarVisibleSinceMs = now - Math.max(1, policy.mediumPriorityPageDwellSeconds * 2 / 3) * 1000L;
+                return;
+            }
+        } else {
+            return;
+        }
+        lastPreparedAutoSpeakMs = now;
+        playPreparedSpeech(item, "at-rest page dwell");
+    }
+
+    private void maybeSpeakPreparedBeforeReply() {
+        PreparedSpeechStore.SyncResult policy = preparedSpeechSyncResult;
+        if (!policy.speakBeforeReplyEnabled || !starInitiativeEnabled || preparedSpeechPlaybackActive || recording || !wavAudioQueue.isIdle()) return;
+        PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
+        if (item == null) return;
+        double estimatedSeconds = item.estimatedDurationSeconds();
+        if (policy.speakBeforeReplyMaximumSeconds > 0 && estimatedSeconds > policy.speakBeforeReplyMaximumSeconds) return;
+        int rank = item.priorityRank();
+        if (rank >= 3 && item.effectiveScore < policy.highPriorityAutoSpeakThreshold) return;
+        if (rank == 2 && item.effectiveScore < policy.mediumPriorityAutoSpeakThreshold) return;
+        double probability = rank >= 3
+                ? policy.highPrioritySpeakBeforeReplyProbability
+                : rank == 2 ? policy.speakBeforeReplyProbability : 0.0;
+        if (probability > 0.0 && Math.random() <= probability) playPreparedSpeech(item, "before foreground reply");
+    }
+
+    private void playPreparedSpeech(PreparedSpeechStore.CachedItem item, String reason) {
+        if (item == null || preparedSpeechPlaybackActive || item.chunks == null || item.chunks.isEmpty()) return;
+        boolean playOnPhone = playOnPhoneCheck == null || playOnPhoneCheck.isChecked();
+        if (!playOnPhone) return;
+        preparedSpeechPlaybackActive = true;
+        activePreparedSpeechItem = item;
+        wavAudioQueue.beginPreparedPrefix();
+        updatePreparedSpeechIndicator();
+        final String url = baseUrl();
+        httpExecutor.execute(() -> {
+            try {
+                ArrayList<PhoneVoiceClip> clips = new ArrayList<>();
+                for (int i = 0; i < item.chunks.size(); i++) {
+                    PreparedSpeechStore.CachedChunk chunk = item.chunks.get(i);
+                    byte[] wav;
+                    try (FileInputStream input = new FileInputStream(chunk.file)) {
+                        wav = readAllBytes(input);
+                    }
+                    String checksum = chunk.sha256.length() > 0 ? chunk.sha256 : sha256Hex(wav);
+                    Runnable completed = i == item.chunks.size() - 1
+                            ? () -> completePreparedSpeechPlayback(item, url)
+                            : null;
+                    clips.add(new PhoneVoiceClip(
+                            wav,
+                            item.starId + " prepared thought " + (i + 1) + "/" + item.chunks.size(),
+                            checksum,
+                            false,
+                            "",
+                            0L,
+                            chunk.chunkIndex,
+                            parseSpeechActivitySegments(chunk.speechActivitySegmentsMs),
+                            completed));
+                }
+                runOnUiThread(() -> {
+                    if (!item.intentId.equals(activePreparedSpeechItem == null ? "" : activePreparedSpeechItem.intentId)) {
+                        wavAudioQueue.cancelPreparedPrefix();
+                        return;
+                    }
+                    if (item.spokenText.length() > 0 && !recentProdConversationAlreadyHas(item.starId, item.spokenText)) {
+                        appendProdConversationLine(item.starId, item.spokenText);
+                    }
+                    if (prodMiniStatusText != null) prodMiniStatusText.setText(item.starId + " wanted to tell you something.");
+                    wavAudioQueue.enqueuePreparedPrefix(clips);
+                    appendVoiceDebug(item.starId + " began a prepared thought", reason + ", intent=" + item.intentId
+                            + ", priority=" + item.priority + ", score=" + String.format(Locale.US, "%.1f", item.effectiveScore)
+                            + ", chunks=" + clips.size());
+                });
+
+                try {
+                    PreparedSpeechStore.postAction(url, item.intentId, "lease");
+                    PreparedSpeechStore.postAction(url, item.intentId, "started");
+                } catch (Exception acknowledgementError) {
+                    runOnUiThread(() -> appendVoiceDebug(
+                            "Prepared thought acknowledgement delayed",
+                            item.intentId + ": " + acknowledgementError));
+                }
+            } catch (Exception ex) {
+                preparedSpeechPlaybackActive = false;
+                activePreparedSpeechItem = null;
+                wavAudioQueue.cancelPreparedPrefix();
+                runOnUiThread(() -> {
+                    appendVoiceDebug("Prepared Star speech could not play", item.intentId + ": " + ex);
+                    syncPreparedSpeech("prepared playback failure", true);
+                });
+            }
+        });
+    }
+
+    private void completePreparedSpeechPlayback(PreparedSpeechStore.CachedItem item, String url) {
+        if (item == null) return;
+        preparedSpeechPlaybackActive = false;
+        activePreparedSpeechItem = null;
+        try {
+            PreparedSpeechStore.markCompletionPending(this, item.intentId, true);
+        } catch (Exception ex) {
+            appendVoiceDebug("Prepared completion marker could not be saved", item.intentId + ": " + ex);
+        }
+        updatePreparedSpeechIndicator();
+        httpExecutor.execute(() -> {
+            try {
+                PreparedSpeechStore.postAction(url, item.intentId, "completed");
+                PreparedSpeechStore.deleteIntent(this, item.intentId);
+                runOnUiThread(() -> {
+                    appendVoiceDebug(item.starId + " finished her prepared thought", "intent=" + item.intentId + " acknowledged and removed from Android cache.");
+                    syncPreparedSpeech("prepared thought completed", true);
+                });
+            } catch (Exception ex) {
+                runOnUiThread(() -> {
+                    appendVoiceDebug("Prepared thought completion will retry", item.intentId + ": " + ex + ". The local audio is held out of playback until acknowledgement succeeds.");
+                    syncPreparedSpeech("completion acknowledgement retry", true);
+                });
+            }
+        });
+    }
+
     private void sendMessage() {
         String playerText = messageEdit == null ? "" : messageEdit.getText().toString();
         String requestType = requestTypeSpinner == null || requestTypeSpinner.getSelectedItem() == null ? "Chat" : requestTypeSpinner.getSelectedItem().toString();
@@ -2557,6 +2860,7 @@ public final class MainActivity extends ComponentActivity {
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         invalidatePrefetchedInitiative("The player sent a text message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
+        maybeSpeakPreparedBeforeReply();
 
         try {
             JSONObject json = baseRequestJson();
@@ -2692,6 +2996,7 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
 
+        maybeSpeakPreparedBeforeReply();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
         invalidatePrefetchedInitiative("The player sent a voice message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");
@@ -3060,7 +3365,7 @@ public final class MainActivity extends ComponentActivity {
         if (startedNew) {
             desktopVoiceStreamActive = true;
             blockPreparedListenFor(5L * 60L * 1000L);
-            wavAudioQueue.clearForNewStream();
+            wavAudioQueue.prepareForDesktopStream();
             final long ordinal = streamOrdinal;
             final String id = streamId;
             runOnUiThread(() -> {
@@ -3111,7 +3416,7 @@ public final class MainActivity extends ComponentActivity {
         }
 
         if (clear) {
-            wavAudioQueue.clearForNewStream();
+            wavAudioQueue.prepareForDesktopStream();
         }
 
         final boolean clearedForStream = clear;
@@ -3571,9 +3876,14 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private final class WavAudioQueue {
-        private final BlockingQueue<PhoneVoiceClip> queue = new LinkedBlockingQueue<>();
+        private final LinkedBlockingDeque<PhoneVoiceClip> queue = new LinkedBlockingDeque<>();
+        private final Object preparedPrefixLock = new Object();
+        private volatile boolean preparedPrefixPending;
         private volatile boolean running;
+        private volatile boolean paused;
         private volatile AudioTrack activeTrack;
+        private volatile PhoneVoiceClip activeClip;
+        private final Object pauseLock = new Object();
         private Thread thread;
 
         void start() {
@@ -3585,11 +3895,60 @@ public final class MainActivity extends ComponentActivity {
 
         void stop() {
             running = false;
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
             clearForNewStream();
         }
 
+        void pausePlayback() {
+            paused = true;
+            AudioTrack track = activeTrack;
+            if (track != null) {
+                try { track.pause(); } catch (Exception ignored) { }
+            }
+            runOnUiThread(() -> {
+                if (prodMiniStatusText != null) prodMiniStatusText.setText("Star voice paused.");
+                appendVoiceDebug("Star voice paused", "The current sample position and queued speech were preserved.");
+            });
+        }
+
+        void resumePlayback() {
+            paused = false;
+            AudioTrack track = activeTrack;
+            if (track != null) {
+                try { track.play(); } catch (Exception ignored) { }
+            }
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
+            runOnUiThread(() -> {
+                if (prodMiniStatusText != null) prodMiniStatusText.setText("Star voice resumed.");
+                appendVoiceDebug("Star voice resumed", "Playback continued without flushing the queue.");
+            });
+        }
+
+        boolean isPaused() { return paused; }
+
+        void prepareForDesktopStream() {
+            queue.removeIf(clip -> clip != null && clip.fromDesktop);
+            PhoneVoiceClip current = activeClip;
+            if (current != null && current.fromDesktop) {
+                AudioTrack track = activeTrack;
+                if (track != null) {
+                    try { track.pause(); } catch (Exception ignored) { }
+                    try { track.flush(); } catch (Exception ignored) { }
+                    try { track.stop(); } catch (Exception ignored) { }
+                }
+            }
+            synchronized (orderedVoiceQueueLock) {
+                pendingDesktopVoiceClips.clear();
+                acceptedDesktopVoiceSequences.clear();
+                nextExpectedDesktopVoiceSequence = 0;
+            }
+        }
+
         void clearForNewStream() {
+            cancelPreparedPrefix();
             queue.clear();
+            preparedSpeechPlaybackActive = false;
+            activePreparedSpeechItem = null;
             runOnUiThread(() -> {
                 cancelStarVoiceAnimationMarkers("Audio queue cleared for a new Star voice stream.");
                 setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Audio queue cleared for a new Star voice stream.");
@@ -3604,17 +3963,50 @@ public final class MainActivity extends ComponentActivity {
         }
 
         void enqueue(PhoneVoiceClip clip) {
-            if (clip != null && clip.wav != null && clip.wav.length > 0) queue.offer(clip);
+            if (clip != null && clip.wav != null && clip.wav.length > 0) queue.offerLast(clip);
+        }
+
+        void beginPreparedPrefix() {
+            preparedPrefixPending = true;
+        }
+
+        void enqueuePreparedPrefix(List<PhoneVoiceClip> clips) {
+            if (clips != null) {
+                for (int i = clips.size() - 1; i >= 0; i--) {
+                    PhoneVoiceClip clip = clips.get(i);
+                    if (clip != null && clip.wav != null && clip.wav.length > 0) queue.offerFirst(clip);
+                }
+            }
+            synchronized (preparedPrefixLock) {
+                preparedPrefixPending = false;
+                preparedPrefixLock.notifyAll();
+            }
+        }
+
+        void cancelPreparedPrefix() {
+            synchronized (preparedPrefixLock) {
+                preparedPrefixPending = false;
+                preparedPrefixLock.notifyAll();
+            }
         }
 
         boolean isIdle() {
-            return queue.isEmpty() && activeTrack == null;
+            synchronized (preparedPrefixLock) {
+                return queue.isEmpty() && activeTrack == null && activeClip == null && !preparedPrefixPending;
+            }
         }
 
         private void loop() {
             while (running) {
                 try {
-                    PhoneVoiceClip clip = queue.take();
+                    PhoneVoiceClip clip = queue.takeFirst();
+                    if (clip.fromDesktop && preparedPrefixPending) {
+                        queue.offerFirst(clip);
+                        synchronized (preparedPrefixLock) {
+                            if (preparedPrefixPending && running) preparedPrefixLock.wait(100L);
+                        }
+                        continue;
+                    }
                     if (!isCurrentVoiceClip(clip)) {
                         final PhoneVoiceClip dropped = clip;
                         runOnUiThread(() -> appendVoiceDebug("Nyxari skipped stale queued audio", dropped.label + ", stream=" + dropped.streamOrdinal + ", active=" + activeVoiceStreamOrdinal));
@@ -3660,8 +4052,10 @@ public final class MainActivity extends ComponentActivity {
             AtomicBoolean playbackFinished = new AtomicBoolean(false);
             AtomicBoolean animationStarted = new AtomicBoolean(false);
             Thread playbackStartWatcher = null;
+            boolean completedNormally = false;
 
             activeTrack = track;
+            activeClip = clip;
             try {
                 if (!isCurrentVoiceClip(clip)) return;
                 String savedChecksum = clip.fromDesktop ? appendCurrentVoiceClipToSavedAudio(clip) : "";
@@ -3679,6 +4073,7 @@ public final class MainActivity extends ComponentActivity {
 
                 // Prime AudioTrack before starting it. The prime write is capped at the
                 // configured stream buffer so a blocking write cannot wait for playback.
+                waitWhilePaused(track);
                 int primeBytes = Math.max(1, Math.min(bufferSize, parsed.sampleRate * bytesPerFrame / 4));
                 int firstWriteSize = Math.min(parsed.pcm.length, primeBytes);
                 int firstWrite = track.write(parsed.pcm, 0, firstWriteSize, AudioTrack.WRITE_BLOCKING);
@@ -3716,6 +4111,8 @@ public final class MainActivity extends ComponentActivity {
                         animationStarted, playbackFinished);
 
                 while (offset < parsed.pcm.length && isCurrentVoiceClip(clip)) {
+                    waitWhilePaused(track);
+                    if (!running || !isCurrentVoiceClip(clip)) break;
                     int toWrite = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
                     int wrote = track.write(parsed.pcm, offset, toWrite, AudioTrack.WRITE_BLOCKING);
                     if (wrote <= 0) break;
@@ -3729,10 +4126,16 @@ public final class MainActivity extends ComponentActivity {
                 long maxWaitMs = Math.max(250L, durationMs + 750L);
                 while (running && isCurrentVoiceClip(clip) && track.getPlaybackHeadPosition() < expectedFrames
                         && System.currentTimeMillis() - waitStarted < maxWaitMs) {
+                    if (paused) {
+                        long pausedAt = System.currentTimeMillis();
+                        waitWhilePaused(track);
+                        waitStarted += Math.max(0L, System.currentTimeMillis() - pausedAt);
+                    }
                     try { Thread.sleep(12L); } catch (InterruptedException ignored) { break; }
                 }
 
-                if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.stop();
+                completedNormally = running && isCurrentVoiceClip(clip) && offset >= parsed.pcm.length;
+                if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING || track.getPlayState() == AudioTrack.PLAYSTATE_PAUSED) track.stop();
                 playbackFinished.set(true);
                 if (playbackStartWatcher != null) playbackStartWatcher.interrupt();
                 runOnUiThread(() -> appendVoiceDebug(
@@ -3742,6 +4145,8 @@ public final class MainActivity extends ComponentActivity {
                 playbackFinished.set(true);
                 if (playbackStartWatcher != null) playbackStartWatcher.interrupt();
                 if (activeTrack == track) activeTrack = null;
+                if (activeClip == clip) activeClip = null;
+                if (completedNormally && clip.onCompleted != null) mainHandler.post(clip.onCompleted);
                 try {
                     track.setNotificationMarkerPosition(0);
                     track.setPlaybackPositionUpdateListener(null);
@@ -3759,6 +4164,22 @@ public final class MainActivity extends ComponentActivity {
                             "Audio playback finished.");
                     maybeResumePreparedListenAfterAudio("The Star finished speaking and the audio queue drained.");
                 });
+            }
+        }
+
+        private void waitWhilePaused(AudioTrack track) throws InterruptedException {
+            while (running && paused) {
+                try {
+                    if (track != null && track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.pause();
+                } catch (Exception ignored) { }
+                synchronized (pauseLock) {
+                    if (paused && running) pauseLock.wait(250L);
+                }
+            }
+            if (running && track != null) {
+                try {
+                    if (track.getPlayState() == AudioTrack.PLAYSTATE_PAUSED) track.play();
+                } catch (Exception ignored) { }
             }
         }
 
@@ -3880,8 +4301,13 @@ public final class MainActivity extends ComponentActivity {
         final long streamOrdinal;
         final int audioSequence;
         final int[] speechActivitySegmentsMs;
+        final Runnable onCompleted;
 
         PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop, String streamId, long streamOrdinal, int audioSequence, int[] speechActivitySegmentsMs) {
+            this(wav, label, sha256, fromDesktop, streamId, streamOrdinal, audioSequence, speechActivitySegmentsMs, null);
+        }
+
+        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop, String streamId, long streamOrdinal, int audioSequence, int[] speechActivitySegmentsMs, Runnable onCompleted) {
             this.wav = wav;
             this.label = label == null ? "phone voice" : label;
             this.sha256 = sha256 == null ? "" : sha256;
@@ -3890,6 +4316,7 @@ public final class MainActivity extends ComponentActivity {
             this.streamOrdinal = streamOrdinal;
             this.audioSequence = audioSequence;
             this.speechActivitySegmentsMs = speechActivitySegmentsMs == null ? new int[0] : speechActivitySegmentsMs;
+            this.onCompleted = onCompleted;
         }
     }
 

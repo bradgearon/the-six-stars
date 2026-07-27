@@ -11,6 +11,10 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Mobile;
+using Wds.SixStars.Api.Engine;
+using Wds.SixStars.Api.WorldEvents;
+using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.PreparedSpeech;
 
 namespace Wds.SixStars.Ui.Networking;
 
@@ -27,6 +31,8 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly string _conversationArchivePrefix;
     private readonly bool _conversationArchiveEnabled;
     private readonly MobileBridgeDispatcher _dispatcher;
+    private readonly SixStarsRuntime? _runtime;
+    private readonly string _worldEventApiKey;
     private readonly JsonSerializerOptions _jsonOptions;
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -55,7 +61,9 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Func<string, int, CancellationToken, Task<object>>? conversationArchiveFactory = null,
         string? conversationArchiveRoot = null,
         string? conversationArchivePrefix = null,
-        bool conversationArchiveEnabled = true)
+        bool conversationArchiveEnabled = true,
+        SixStarsRuntime? runtime = null,
+        string? worldEventApiKey = null)
     {
         Port = port;
         _messageHandler = messageHandler;
@@ -70,6 +78,8 @@ public sealed class MobileBridgeHttpServer : IDisposable
             : Path.GetFullPath(conversationArchiveRoot.Trim());
         _conversationArchivePrefix = NormalizePrefix(conversationArchivePrefix);
         _conversationArchiveEnabled = conversationArchiveEnabled;
+        _runtime = runtime;
+        _worldEventApiKey = worldEventApiKey ?? string.Empty;
         _dispatcher = dispatcher;
         _dispatcher.EventPublished += OnDispatcherEventPublished;
         _jsonOptions = new JsonSerializerOptions
@@ -270,6 +280,123 @@ public sealed class MobileBridgeHttpServer : IDisposable
                         response.StartTransportFailureCleanup();
                         throw;
                     }
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "GET" && request.Path == "/api/world-events")
+                {
+                    long after = 0;
+                    int max = 100;
+                    string starId = request.Query.TryGetValue("starId", out string? starValue) ? starValue : string.Empty;
+                    if (request.Query.TryGetValue("afterSequence", out string? afterValue)) long.TryParse(afterValue, out after);
+                    if (request.Query.TryGetValue("max", out string? maxValue)) int.TryParse(maxValue, out max);
+                    await WriteJsonAsync(stream, 200, await _runtime.GetWorldEventsAsync(after, max, starId, serverToken).ConfigureAwait(false), serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "POST" && (request.Path == "/api/world-events" || request.Path == "/api/world-events/batch"))
+                {
+                    if (!IsAuthorizedWorldEventRequest(request))
+                    {
+                        await WriteJsonAsync(stream, 401, new { ok = false, error = "Invalid world-event API key." }, serverToken).ConfigureAwait(false);
+                        return;
+                    }
+                    List<WorldEventRecord> events = ParseWorldEvents(request.Body);
+                    WorldEventInsertResult result = await _runtime.AddWorldEventsAsync(events, serverToken).ConfigureAwait(false);
+                    result.StateRefreshQueued = result.AcceptedEvents.Any(x => x.RequiresStateRefresh);
+                    result.AffectedStars = result.AcceptedEvents.SelectMany(x => x.TargetStars ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                    await WriteJsonAsync(stream, result.Ok ? 200 : 500, result, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "POST"
+                    && (request.Path.Equals("/api/star-state/refresh", StringComparison.OrdinalIgnoreCase)
+                        || request.Path.StartsWith("/api/star-state/refresh/", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (!IsAuthorizedWorldEventRequest(request))
+                    {
+                        await WriteJsonAsync(stream, 401, new { ok = false, error = "Invalid world-event API key." }, serverToken).ConfigureAwait(false);
+                        return;
+                    }
+                    StateRefreshRequest refresh = ParseStateRefreshRequest(request);
+                    await _runtime.TriggerDailyStateRefreshAsync(refresh.SessionId, refresh.StarIds, refresh.Reason, serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, 200, new { ok = true, stateRefreshQueued = true, refresh.SessionId, refresh.StarIds, refresh.Reason }, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "GET" && request.Path == "/api/speech-intents/manifest")
+                {
+                    string starId = request.Query.TryGetValue("starId", out string? value) ? value : string.Empty;
+                    await WriteJsonAsync(stream, 200, await _runtime.GetSpeechIntentManifestAsync(starId, serverToken).ConfigureAwait(false), serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "GET" && request.Path == "/api/prepared-speech/manifest")
+                {
+                    string starId = request.Query.TryGetValue("starId", out string? value) ? value : string.Empty;
+                    PreparedSpeechManifest prepared = await _runtime.GetPreparedSpeechManifestAsync(starId, serverToken).ConfigureAwait(false);
+                    StarSpeechIntentManifest intents = await _runtime.GetSpeechIntentManifestAsync(starId, serverToken).ConfigureAwait(false);
+                    Dictionary<string, string> currentArtifactsByIntent = intents.Intents
+                        .Where(x => !string.IsNullOrWhiteSpace(x.IntentId) && !string.IsNullOrWhiteSpace(x.PreparedArtifactId))
+                        .GroupBy(x => x.IntentId, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(x => x.Key, x => x.First().PreparedArtifactId, StringComparer.OrdinalIgnoreCase);
+                    List<PreparedSpeechArtifact> currentArtifacts = prepared.Artifacts
+                        .Where(x => !string.IsNullOrWhiteSpace(x.IntentId)
+                            && currentArtifactsByIntent.TryGetValue(x.IntentId, out string? expectedArtifactId)
+                            && string.Equals(expectedArtifactId, x.ArtifactId, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    var policy = _runtime.ForegroundSpeechStyle;
+                    var intentPolicy = _runtime.SpeechIntentOptions;
+                    await WriteJsonAsync(stream, 200, new
+                    {
+                        ok = prepared.Ok && intents.Ok,
+                        generatedAt = DateTimeOffset.UtcNow,
+                        artifacts = currentArtifacts,
+                        intents = intents.Intents,
+                        highestEffectiveScore = intents.HighestEffectiveScore,
+                        highestPriority = intents.HighestPriority,
+                        clientPolicy = new
+                        {
+                            policy.SpeakBeforeReplyEnabled,
+                            policy.SpeakBeforeReplyProbability,
+                            policy.HighPrioritySpeakBeforeReplyProbability,
+                            policy.SpeakBeforeReplyMaximumSeconds,
+                            policy.MinimumPageDwellSeconds,
+                            policy.MediumPriorityPageDwellSeconds,
+                            policy.GirlfriendMediumSpeakProbability,
+                            policy.HighConnectionMediumSpeakProbability,
+                            policy.HighConnectionThreshold,
+                            policy.MinimumMinutesBetweenAutoSpeech,
+                            intentPolicy.HighPriorityAutoSpeakThreshold,
+                            intentPolicy.MediumPriorityAutoSpeakThreshold
+                        }
+                    }, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "GET" && TryParsePreparedSpeechChunkPath(request.Path, out string artifactId, out int chunkIndex))
+                {
+                    byte[]? bytes = await _runtime.ReadPreparedSpeechChunkAsync(artifactId, chunkIndex, serverToken).ConfigureAwait(false);
+                    if (bytes == null)
+                    {
+                        await WriteJsonAsync(stream, 404, new { ok = false, error = "Prepared speech chunk not found.", artifactId, chunkIndex }, serverToken).ConfigureAwait(false);
+                        return;
+                    }
+                    await WriteBytesAsync(stream, 200, "audio/wav", bytes, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (_runtime != null && request.Method == "POST" && TryParsePreparedSpeechActionPath(request.Path, out string intentId, out string action))
+                {
+                    StarSpeechIntent? intent = action switch
+                    {
+                        "lease" => await _runtime.LeaseSpeechIntentAsync(intentId, serverToken).ConfigureAwait(false),
+                        "started" => await _runtime.MarkSpeechIntentPlaybackStartedAsync(intentId, serverToken).ConfigureAwait(false),
+                        "completed" => await _runtime.MarkSpeechIntentSpokenAsync(intentId, serverToken).ConfigureAwait(false),
+                        "dismissed" => await _runtime.DismissSpeechIntentAsync(intentId, serverToken).ConfigureAwait(false),
+                        _ => null
+                    };
+                    await WriteJsonAsync(stream, intent == null ? 404 : 200, new { ok = intent != null, intent, action }, serverToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -716,10 +843,99 @@ public sealed class MobileBridgeHttpServer : IDisposable
         return buffer;
     }
 
+    private bool IsAuthorizedWorldEventRequest(HttpRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(_worldEventApiKey)) return true;
+        if (request.Headers.TryGetValue("Authorization", out string? authorization)
+            && string.Equals(authorization.Trim(), "Bearer " + _worldEventApiKey.Trim(), StringComparison.Ordinal)) return true;
+        return request.Headers.TryGetValue("X-Six-Stars-Key", out string? key)
+            && string.Equals(key.Trim(), _worldEventApiKey.Trim(), StringComparison.Ordinal);
+    }
+
+    private List<WorldEventRecord> ParseWorldEvents(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return new List<WorldEventRecord>();
+        using JsonDocument doc = JsonDocument.Parse(body);
+        JsonElement root = doc.RootElement;
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            return JsonSerializer.Deserialize<List<WorldEventRecord>>(root.GetRawText(), _jsonOptions) ?? new List<WorldEventRecord>();
+        }
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty property in root.EnumerateObject())
+            {
+                if (string.Equals(property.Name, "events", StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<List<WorldEventRecord>>(property.Value.GetRawText(), _jsonOptions) ?? new List<WorldEventRecord>();
+                }
+            }
+        }
+        WorldEventRecord? single = JsonSerializer.Deserialize<WorldEventRecord>(root.GetRawText(), _jsonOptions);
+        return single == null ? new List<WorldEventRecord>() : new List<WorldEventRecord> { single };
+    }
+
+    private StateRefreshRequest ParseStateRefreshRequest(HttpRequest request)
+    {
+        StateRefreshRequest result = string.IsNullOrWhiteSpace(request.Body)
+            ? new StateRefreshRequest()
+            : JsonSerializer.Deserialize<StateRefreshRequest>(request.Body, _jsonOptions) ?? new StateRefreshRequest();
+        string prefix = "/api/star-state/refresh/";
+        if (request.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && request.Path.Length > prefix.Length)
+        {
+            result.StarIds = new List<string> { Uri.UnescapeDataString(request.Path.Substring(prefix.Length)) };
+        }
+        if (string.IsNullOrWhiteSpace(result.SessionId)) result.SessionId = "android-phone-prod";
+        if (string.IsNullOrWhiteSpace(result.Reason)) result.Reason = "API-triggered current Star state refresh";
+        return result;
+    }
+
+    private static bool TryParsePreparedSpeechChunkPath(string path, out string artifactId, out int chunkIndex)
+    {
+        artifactId = string.Empty;
+        chunkIndex = -1;
+        string prefix = "/api/prepared-speech/";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        string[] parts = path.Substring(prefix.Length).Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 || !string.Equals(parts[1], "chunks", StringComparison.OrdinalIgnoreCase) || !int.TryParse(parts[2], out chunkIndex)) return false;
+        artifactId = Uri.UnescapeDataString(parts[0]);
+        return !string.IsNullOrWhiteSpace(artifactId) && chunkIndex >= 0;
+    }
+
+    private static bool TryParsePreparedSpeechActionPath(string path, out string intentId, out string action)
+    {
+        intentId = string.Empty;
+        action = string.Empty;
+        string prefix = "/api/prepared-speech/";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        string[] parts = path.Substring(prefix.Length).Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2) return false;
+        string candidate = parts[1].ToLowerInvariant();
+        if (candidate != "lease" && candidate != "started" && candidate != "completed" && candidate != "dismissed") return false;
+        intentId = Uri.UnescapeDataString(parts[0]);
+        action = candidate;
+        return !string.IsNullOrWhiteSpace(intentId);
+    }
+
+    private static async Task WriteBytesAsync(NetworkStream stream, int statusCode, string contentType, byte[] body, CancellationToken cancellationToken)
+    {
+        byte[] bytes = body ?? Array.Empty<byte>();
+        string header = "HTTP/1.1 " + statusCode + " OK\r\n"
+            + "Content-Type: " + contentType + "\r\n"
+            + "Access-Control-Allow-Origin: *\r\n"
+            + "Cache-Control: no-store\r\n"
+            + "Connection: close\r\n"
+            + "Content-Length: " + bytes.Length + "\r\n\r\n";
+        byte[] headerBytes = Encoding.ASCII.GetBytes(header);
+        await stream.WriteAsync(headerBytes, 0, headerBytes.Length, cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(bytes, 0, bytes.Length, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task WriteJsonAsync(NetworkStream stream, int statusCode, object value, CancellationToken cancellationToken)
     {
         byte[] body = JsonSerializer.SerializeToUtf8Bytes(value, _jsonOptions);
-        string statusText = statusCode == 200 ? "OK" : statusCode == 404 ? "Not Found" : "Error";
+        string statusText = statusCode == 200 ? "OK" : statusCode == 404 ? "Not Found" : statusCode == 401 ? "Unauthorized" : "Error";
         string header = "HTTP/1.1 " + statusCode + " " + statusText + "\r\n"
             + "Content-Type: application/json; charset=utf-8\r\n"
             + "Access-Control-Allow-Origin: *\r\n"
@@ -813,6 +1029,13 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Stop();
         // In-flight event broadcasts may still be unwinding after their sockets are closed. Leave
         // the lightweight semaphore for GC rather than racing a pending Release().
+    }
+
+    private sealed class StateRefreshRequest
+    {
+        public string SessionId { get; set; } = "android-phone-prod";
+        public List<string> StarIds { get; set; } = new List<string>();
+        public string Reason { get; set; } = string.Empty;
     }
 
     private sealed class HttpRequest
