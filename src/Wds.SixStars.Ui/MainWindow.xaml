@@ -59,6 +59,10 @@
                     <Button Content="Send Message" Command="{Binding SendMessageCommand}" Margin="0,0,0,8" Height="36" />
                     <CheckBox Content="Auto Star at-rest lines" IsChecked="{Binding StarInitiativeEnabled, Mode=TwoWay}" Margin="0,0,0,6" />
                     <Button Content="Ask Star If She Wants To Speak" Command="{Binding AskStarInitiativeNowCommand}" Margin="0,0,0,8" Height="34" />
+                    <Button Content="Enqueue State Updates (All Stars)"
+                            Command="{Binding EnqueueAllStarStateUpdatesCommand}"
+                            ToolTip="Queue fresh current-state generation for all six Stars. Foreground conversations remain higher priority."
+                            Margin="0,0,0,8" Height="34" />
                     <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />

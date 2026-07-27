@@ -402,6 +402,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         OpenLatestConversationDebugLogCommand = new RelayCommand(_ => OpenLatestConversationDebugLog());
         OpenLlmExchangeLogFolderCommand = new RelayCommand(_ => OpenLlmExchangeLogFolder());
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
+        EnqueueAllStarStateUpdatesCommand = new RelayCommand(async _ => await EnqueueAllStarStateUpdatesAsync());
         InitializeMobileBridgeCommandsAndMaybeStart();
         _ = RunStarInitiativeLoopAsync(_starInitiativeLoopCts.Token);
 
@@ -436,6 +437,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand OpenLatestConversationDebugLogCommand { get; }
     public ICommand OpenLlmExchangeLogFolderCommand { get; }
     public ICommand AskStarInitiativeNowCommand { get; }
+    public ICommand EnqueueAllStarStateUpdatesCommand { get; }
 
     public string SelectedStarId
     {
@@ -2684,6 +2686,40 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task AskStarInitiativeNowAsync()
     {
         await TrySpeakStarInitiativeAsync("manual desktop button", force: true).ConfigureAwait(false);
+    }
+
+    private async Task EnqueueAllStarStateUpdatesAsync()
+    {
+        List<string> starIds = StarIds.ToList();
+        try
+        {
+            OnUiThread(() => Status = "Enqueuing current-state updates for all Stars...");
+            await _runtime.TriggerDailyStateRefreshAsync(
+                DefaultSessionId,
+                starIds,
+                "manual desktop all-Star state update",
+                CancellationToken.None).ConfigureAwait(false);
+
+            OnUiThread(() =>
+            {
+                Status = "Queued current-state updates for " + starIds.Count + " Stars. They will run behind foreground requests.";
+                DebugJson = JsonSerializer.Serialize(new
+                {
+                    action = "enqueue_all_star_state_updates",
+                    sessionId = DefaultSessionId,
+                    starIds,
+                    queuedAt = DateTimeOffset.UtcNow
+                }, _jsonOptions);
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                Status = "Could not enqueue all Star state updates: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
     }
 
     private async Task RunStarInitiativeLoopAsync(CancellationToken cancellationToken)
