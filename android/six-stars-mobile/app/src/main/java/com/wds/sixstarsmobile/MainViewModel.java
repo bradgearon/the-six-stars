@@ -11,6 +11,7 @@ import androidx.lifecycle.MutableLiveData;
 
 import org.json.JSONObject;
 
+import java.net.URL;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -104,9 +105,52 @@ public final class MainViewModel extends AndroidViewModel {
         if (!bridgeEventsPrimed) {
             bridgeEventsPrimed = true;
             lastBridgeEventSequence = Math.max(lastBridgeEventSequence, latestSequence);
+        } else {
+            bridge.subscribeAfter(lastBridgeEventSequence);
+        }
+
+        // The phone voice transport is a separate TCP socket. Before the UI-service refactor,
+        // MainActivity called testConnection(false) from the control WebSocket onConnected
+        // callback; that health request discovered audioPort and opened this socket. Keeping only
+        // the control WebSocket connected leaves the desktop with zero phone-audio clients, so it
+        // returns text but cannot deliver any WAV chunks. Bootstrap the voice socket here instead,
+        // where connection lifecycle now belongs.
+        connectPhoneVoiceAfterBridgeConnected();
+    }
+
+    private void connectPhoneVoiceAfterBridgeConnected() {
+        if (!settings.playOnPhone()) {
+            phoneVoice.disconnect();
             return;
         }
-        bridge.subscribeAfter(lastBridgeEventSequence);
+
+        bridge.request("health", new JSONObject(), 10000L).whenComplete((health, error) -> {
+            if (error != null) {
+                protocolDebug.postValue("Phone voice bootstrap health request failed: " + error.getMessage());
+                return;
+            }
+
+            try {
+                String bridgeUrl = settings.bridgeUrl();
+                String host = new URL(bridgeUrl).getHost();
+                int audioPort = health == null
+                        ? defaultAudioPort(bridgeUrl)
+                        : health.optInt("audioPort", defaultAudioPort(bridgeUrl));
+                phoneVoice.connect(host, audioPort);
+            } catch (Exception ex) {
+                protocolDebug.postValue("Phone voice bootstrap failed: " + ex.getMessage());
+            }
+        });
+    }
+
+    private static int defaultAudioPort(String bridgeUrl) {
+        try {
+            URL url = new URL(bridgeUrl);
+            int port = url.getPort() > 0 ? url.getPort() : 8066;
+            return port >= 65535 ? port - 1 : port + 1;
+        } catch (Exception ignored) {
+            return 8067;
+        }
     }
 
     private void handleBridgeEvent(JSONObject payload) {
@@ -135,8 +179,8 @@ public final class MainViewModel extends AndroidViewModel {
     synchronized void initialize() {
         if (initialized) return;
         initialized = true;
-        bridge.start();
         phoneVoice.start();
+        bridge.start();
         if (settings.isStarInitiativeEnabled()) initiatives.start("Android view model initialized", true);
     }
 
