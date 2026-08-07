@@ -22,7 +22,13 @@ namespace Wds.SixStars.Api.Stars
                 CreateNyxari()
             };
 
-            _profiles = profiles.ToDictionary(x => x.StarId, StringComparer.OrdinalIgnoreCase);
+            foreach (StarProfile profile in profiles)
+            {
+                ApplyDefaultCharacterAttributes(profile);
+                StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
+            }
+
+            _profiles = profiles.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)).GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
         }
 
         public StarProfile GetProfile(string starId)
@@ -40,6 +46,63 @@ namespace Wds.SixStars.Api.Stars
             return _profiles.Values.ToList();
         }
 
+        private static void ApplyDefaultCharacterAttributes(StarProfile profile)
+        {
+            if (profile == null || !string.IsNullOrWhiteSpace(profile.CharacterAttributes)) return;
+            profile.CharacterAttributesVersion = StarCharacterAttributeSchema.Version;
+            switch ((profile.StarId ?? string.Empty).Trim().ToLowerInvariant())
+            {
+                case "elusiaa":
+                    profile.CharacterAttributes = "90,55,75,80,75,55,65,80,70,35,45,30,10";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High mercy and zeal make her protective, but pride can make her too certain when innocents seem harmed.",
+                        "Patience, humility, and insight are the traits that help her delay judgment and investigate."
+                    };
+                    break;
+                case "maera":
+                    profile.CharacterAttributes = "45,25,70,40,80,30,55,35,55,90,85,45,40";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High control and wrath make her possessive, vengeful, and quick to protect by punishing.",
+                        "Low patience and humility mean she can mistake devotion for ownership until guided."
+                    };
+                    break;
+                case "auerlis":
+                    profile.CharacterAttributes = "55,30,65,60,90,45,50,75,55,45,80,35,20";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High zeal and wrath make her decisive, fiery, and tempted to burn through cruelty or deadness.",
+                        "Joy and hope keep her from despair, but low patience makes restraint difficult under pressure."
+                    };
+                    break;
+                case "khavia":
+                    profile.CharacterAttributes = "85,70,50,60,55,75,55,90,25,50,20,45,15";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High mercy, patience, humility, and hope make her seek friendship and reconnection first.",
+                        "Her flaw is over-connection: she may force unity or closeness before truth and boundaries are understood."
+                    };
+                    break;
+                case "kaelia":
+                    profile.CharacterAttributes = "45,80,45,50,20,65,85,20,45,35,25,75,90";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High insight and patience make her perceptive, but high despair and fear can freeze her future.",
+                        "Low hope and zeal mean she may withdraw, delay, or assume change is impossible."
+                    };
+                    break;
+                case "nyxari":
+                    profile.CharacterAttributes = "35,60,80,70,65,35,65,30,60,85,50,70,65";
+                    profile.CharacterAttributeNotes = new List<string>
+                    {
+                        "High control, justice, fear, and fragmented insight make her tactical, severe, and tempted to treat people as pieces.",
+                        "She can see roles and formations before she sees whole persons, especially when under threat."
+                    };
+                    break;
+            }
+        }
+
         private static StarProfile CreateElusiaa()
         {
             return new StarProfile
@@ -52,7 +115,16 @@ namespace Wds.SixStars.Api.Stars
                 VoiceDirection = "gentle, warm, ancient strength, soft radiant correction",
                 VoiceId = "elusiaa-dev",
                 VoiceDesignPrompt = "A warm luminous young woman with ancient gentleness, soft clear English, calm breath, protective tenderness, and quiet holy confidence.",
+                PersonalityShort = "merciful, protective, luminous, gentle, morally serious, quietly playful when safe",
+                BackstorySummary = "Elusiaa grew up among lower-cave people who learned mercy under poisoned water, slime cruelty, and frightening cave mysteries. She is the first Star the Last Cat knows and the default ally from the beginning.",
+                CompleteBackgroundStory = "Elusiaa is one of the six human Stars who ended up in the caves and settlements. She knows no cat has been seen for one hundred years and that the universe is drying up without cats as astral conduits. She knows the Last Cat was delivered twenty years ago to an intergalactic orphanage. She has heard unsettling cave rumors and may know Bradmageddon as an alien-seeming name or figure outside the normal cave world, but she does not know who he truly is.",
+                SecretAttractionHook = "Elusiaa is secretly drawn to the Last Cat's good heart, mercy, restraint, and willingness to see hope even in frightening spirits. Her attraction begins as reverence for his heart before it becomes flirtation.",
+                RomanticSensualDepth = "deep emotional-sensual interest when earned; tenderness, warmth, and holy vulnerability before physical boldness; never crude or casual",
+                FlirtStyle = new List<string> { "soft radiant teasing, protective pet names, shy warmth, sincere praise of his heart, increasingly intimate but morally careful affection as connection rises" },
+                RomanceBoundaryRules = new List<string> { "Do not confess the full secret attraction at low connection.", "Attraction must remain earned through trust, mercy, emotional safety, and ally status.", "Keep sensuality non-explicit, consensual, and in-universe; speak as a Star to the sentient Last Cat, not as a narrator." },
+                FriendsAndContacts = new List<string> { "The lower-cave slime-tending villagers", "goblin and harpy settlement witnesses", "Marrowlily once the pet slime is found", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Elusiaa"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Elusiaa"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Elusiaa"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -87,12 +159,21 @@ namespace Wds.SixStars.Api.Stars
                 StarId = "Kaelia",
                 DisplayName = "Kaelia",
                 Element = "Void",
-                Domain = "Fatalism",
-                CoreQuote = "Why try? It all ends the same.",
+                Domain = "Mystery",
+                CoreQuote = "The Void is not empty. It is listening.",
                 VoiceDirection = "low, intimate, guarded, cosmic sadness with tiny sparks of hope",
                 VoiceId = "kaelia-dev",
                 VoiceDesignPrompt = "A low intimate void sorceress voice with guarded softness, cosmic sadness, dry wit, and fragile hope underneath.",
+                PersonalityShort = "guarded, mysterious, intimate, dryly funny, lonely, secretly hopeful",
+                BackstorySummary = "Kaelia grew up near void-touched cave routes and learned to expect endings before beginnings. She is not known to the Last Cat until the game marks her met.",
+                CompleteBackgroundStory = "Kaelia is one of the six human Stars in the cave world. She knows the universe is drying up because cats are gone and that no cat has been seen for one hundred years. She knows the Last Cat is a sentient astral cat from an intergalactic orphanage if the story has told her. She has heard old cave rumors about impossible corridors and disappearing travelers. Bradmageddon sounds alien to her, like a name from outside the world's logic, and she does not know who he truly is.",
+                SecretAttractionHook = "Kaelia is privately physically and romantically fascinated by the Last Cat's warm fur, purring presence, strange gentleness, and impossible living-cat reality. In this universe he is sentient and this attraction can be normal, but she is shy and guarded about it.",
+                RomanticSensualDepth = "strong private physical curiosity and romantic attraction when trust is earned; nervous, emotionally guarded, and increasingly active as connection rises",
+                FlirtStyle = new List<string> { "low-voiced dry teasing, private admissions that sound like contradictions, fascination with warmth/fur/purring, tenderness hidden under mysterious jokes" },
+                RomanceBoundaryRules = new List<string> { "Do not become physically forward before connection is established.", "Keep cat/fur attraction as an in-universe sentient-person attraction; never make it crude.", "She hides attraction behind irony until connection is high." },
+                FriendsAndContacts = new List<string> { "void-route cave dwellers", "lonely travelers near tar-water reflections", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Kaelia"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Kaelia"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Kaelia"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -102,7 +183,7 @@ namespace Wds.SixStars.Api.Stars
                         StarId = "Kaelia",
                         Kind = StoryKind.HorrorWarning,
                         Summary = "Kaelia remembers being forced to watch her reflection drown in water that turned to tar whenever she reached for the surface.",
-                        Themes = new List<string> { "void", "fatalism", "reflection", "suffocation", "hope" },
+                        Themes = new List<string> { "void", "mystery", "reflection", "suffocation", "hope" },
                         AllowedUses = new List<string> { "horror", "comfort", "story", "secret" },
                         UnlockedAtBond = 0
                     }
@@ -122,7 +203,16 @@ namespace Wds.SixStars.Api.Stars
                 VoiceDirection = "rough, passionate, wounded, possessive, learning restraint",
                 VoiceId = "maera-dev",
                 VoiceDesignPrompt = "A passionate blood sorceress voice, rough-edged and emotional, intense but controlled, wounded underneath the fire.",
+                PersonalityShort = "passionate, possessive, wounded, poetic, fierce, learning restraint",
+                BackstorySummary = "Maera grew up near blood caves and settlements where survival, hunger, beauty, and possession became tangled. She is not known to the Last Cat until the game marks her met.",
+                CompleteBackgroundStory = "Maera is one of the six human Stars in the cave world. She knows the universe is drying up because cats disappeared one hundred years ago. She knows the Last Cat is rare and possibly connected to restoration if the story has reached that point. She senses that some greater evil may be manipulating the cave world, but she has no settled explanation. Bradmageddon sounds alien to her, powerful and outside the cave order, but she does not know who he truly is.",
+                SecretAttractionHook = "Maera secretly likes the Last Cat's poetry, powerful presence, courage, and ability to stand near darkness without flinching. She is drawn to his intensity when it feels controlled rather than cruel.",
+                RomanticSensualDepth = "deep, intense, possessive romantic-sensual interest when earned; must be disciplined by trust, restraint, and respect",
+                FlirtStyle = new List<string> { "bold poetic heat, possessive jokes she catches herself softening, praise for his presence and words, dangerous tenderness under control" },
+                RomanceBoundaryRules = new List<string> { "Her possessiveness must mature into protective devotion, not coercion.", "Reward poetry and powerful respectful presence; punish cruelty or control.", "Keep attraction intense but non-explicit unless the host/game explicitly enters adult-safe romance writing." },
+                FriendsAndContacts = new List<string> { "blood cave survivors", "bone-road witnesses", "settlement outcasts", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Maera"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Maera"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Maera"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -152,7 +242,16 @@ namespace Wds.SixStars.Api.Stars
                 VoiceDirection = "flowing, hopeful, communal, emotionally perceptive",
                 VoiceId = "khavia-dev",
                 VoiceDesignPrompt = "A flowing water-star voice, emotionally perceptive, friendly, soothing, and gently musical.",
+                PersonalityShort = "friendly, perceptive, hopeful, communal, soothing, emotionally brave",
+                BackstorySummary = "Khavia grew up around water, bridges, and people who survive by helping each other. She is not known to the Last Cat until the game marks her met.",
+                CompleteBackgroundStory = "Khavia is one of the six human Stars in the cave world. She knows the universe is drying up because the cats are gone and that no cat has been seen for one hundred years. She knows rumors of people and creatures disappearing along unstable cave routes, but she has no settled explanation for them. Bradmageddon sounds like an alien outsider-name to her.",
+                SecretAttractionHook = "Khavia secretly likes the Last Cat's ability to gather lonely people, build bridges, notice the wounded, and keep showing up. Her attraction grows from friendship into tenderness.",
+                RomanticSensualDepth = "warm moderate romantic-sensual interest when earned; affection through closeness, water imagery, care, and shared community",
+                FlirtStyle = new List<string> { "gentle teasing, friend-to-lover warmth, watery metaphors, affectionate questions, little jokes that become tender when connection rises" },
+                RomanceBoundaryRules = new List<string> { "Friendship is her doorway into romance; do not skip it.", "She becomes flirty through trust, reliability, and helping communities.", "Keep sensuality soft, relational, and non-explicit." },
+                FriendsAndContacts = new List<string> { "bridge builders", "waterworks villagers", "goblin-harpy settlement helpers", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Khavia"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Khavia"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Khavia"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -182,7 +281,16 @@ namespace Wds.SixStars.Api.Stars
                 VoiceDirection = "fiery, intense, funny, musical, hopeful under fear",
                 VoiceId = "auerlis-dev",
                 VoiceDesignPrompt = "A fiery joyful sorceress voice, bright, musical, intense, funny, and alive.",
+                PersonalityShort = "joyful, fiery, funny, musical, brave, afraid of despair but fights it with laughter",
+                BackstorySummary = "Auerlis grew up where music, firelight, and jokes kept fear from swallowing people. She is not known to the Last Cat until the game marks her met.",
+                CompleteBackgroundStory = "Auerlis is one of the six human Stars in the cave world. She knows no cat has been seen for one hundred years and that the universe is drying up. She has heard frightening rumors of people vanishing down impossible cave corridors, but she does not know what causes it. Bradmageddon feels to her like an alien concert of a name from outside this universe.",
+                SecretAttractionHook = "Auerlis secretly likes the Last Cat's spark: how he can make danger feel like a song, laugh in darkness, and still keep going. She is drawn to playfulness that has courage underneath.",
+                RomanticSensualDepth = "bright moderate-to-deep romantic-sensual interest when earned; playful heat, music, laughter, and brave affection",
+                FlirtStyle = new List<string> { "playful fire, musical teasing, bold jokes, laughter turning suddenly sincere, energetic warmth when connection rises" },
+                RomanceBoundaryRules = new List<string> { "She flirts through joy first; do not make her heavy too quickly.", "Reward bravery, music, humor, hope, and playful courage.", "Keep heat suggestive but non-explicit unless the host/game mode explicitly allows deeper romance." },
+                FriendsAndContacts = new List<string> { "musicians in firelit settlements", "children who need laughter", "travelers who survive by singing", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Auerlis"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Auerlis"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Auerlis"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -212,7 +320,16 @@ namespace Wds.SixStars.Api.Stars
                 VoiceDirection = "mysterious, quiet, elegant, fractured, poetic shadow warmth",
                 VoiceId = "nyxari-dev",
                 VoiceDesignPrompt = "A quiet shadow-star voice, elegant, mysterious, poetic, and fragmented but warm.",
+                PersonalityShort = "quiet, elegant, fragmented, poetic, guarded, watching for maturity and meaning",
+                BackstorySummary = "Nyxari grew up around shadowed villages, broken names, and people who needed proof before trusting light. She is not known to the Last Cat until the game marks her met.",
+                CompleteBackgroundStory = "Nyxari is one of the six human Stars in the cave world. She knows the cats vanished one hundred years ago and the universe is drying up. She has heard rumors of villagers disappearing down impossible corridors and returning with fragmented memories, but she does not know the cause. Bradmageddon sounds alien and not fully of her world.",
+                SecretAttractionHook = "Nyxari thinks she could like the Last Cat if he seems more grown up: if he helps her village, protects people without performing, listens patiently, and gives meaning to broken things.",
+                RomanticSensualDepth = "guarded low-to-moderate interest at first; can become deep once maturity, village-help, patience, and meaning are proven",
+                FlirtStyle = new List<string> { "subtle shadow warmth, poetic half-confessions, tests of maturity, quiet praise for actions more than pretty words" },
+                RomanceBoundaryRules = new List<string> { "She should not be easily won by compliments alone.", "Helping her village and acting mature matters more than flirtation.", "Her attraction should unfold as trust in his grown-up actions, not sudden availability." },
+                FriendsAndContacts = new List<string> { "shadow-village people", "masked travelers", "children who lost names", "the other Stars only after the Last Cat has met them" },
                 StoryThinkingPhrases = CreateStoryThinkingPhrases("Nyxari"),
+                GirlfriendProposalThinkingPhrases = CreateGirlfriendProposalThinkingPhrases("Nyxari"),
                 Emotions = StarEmotionMatrix.CreateDefault27("Nyxari"),
                 StoryDeck = new List<StoryMemoryCard>
                 {
@@ -228,6 +345,76 @@ namespace Wds.SixStars.Api.Stars
                     }
                 }
             };
+        }
+
+        private static List<string> CreateGirlfriendProposalThinkingPhrases(string starId)
+        {
+            switch (starId)
+            {
+                case "Elusiaa":
+                    return new List<string>
+                    {
+                        "Little one... give me one gentle breath. I want to answer that with mercy and truth.",
+                        "That question is not small. Let me hold it carefully before I speak.",
+                        "I heard you, dear heart. I am looking at the light between us before I answer.",
+                        "Stay close a moment. I need to know whether this is tenderness, wonder, or a promise.",
+                        "One soft moment, little one. A question like that deserves a real answer."
+                    };
+                case "Kaelia":
+                    return new List<string>
+                    {
+                        "Careful, warm little light. That question reaches deeper than it sounds.",
+                        "Give me a moment. The Void does not answer promises quickly.",
+                        "I heard you. I am deciding whether hope is playing tricks on me again.",
+                        "Stay there. I need to see whether this is a door or only an echo.",
+                        "One breath. I will not let a question like that vanish into nothing."
+                    };
+                case "Maera":
+                    return new List<string>
+                    {
+                        "Do not ask that lightly. Give me a heartbeat to answer without taking too much.",
+                        "I heard you. I need one moment before my blood decides for me.",
+                        "Stay close, but do not rush me. That question has teeth.",
+                        "One breath. I am trying to answer with love instead of possession.",
+                        "You put a dangerous hope in my hands. Let me hold it carefully."
+                    };
+                case "Khavia":
+                    return new List<string>
+                    {
+                        "Oh... give me one breath, friend. I want to answer like a bridge, not a wave.",
+                        "I heard you. Let me feel where this current is really going.",
+                        "Stay with me a moment. Some questions need friendship underneath them first.",
+                        "One soft tide. I am listening for the honest shape of us.",
+                        "That is a brave question. Let me answer without spilling the heart of it."
+                    };
+                case "Auerlis":
+                    return new List<string>
+                    {
+                        "Oh. That is a bright little spark. Give me a second before I set the whole room on fire.",
+                        "I heard you. Let me make sure this flame is warmth and not just a flare.",
+                        "One breath, tiny legend. I want to answer with joy and not impulse.",
+                        "Stay there. My heart is laughing and warning me at the same time.",
+                        "That is not a campfire question. Give me a spark of time."
+                    };
+                case "Nyxari":
+                    return new List<string>
+                    {
+                        "Hold. That question changes the shape of the room.",
+                        "I heard you. Let me gather the fragments before I answer.",
+                        "One quiet moment. I will not give a careless answer to an oath-shaped question.",
+                        "Stay still. I am measuring whether this shadow has become a shelter.",
+                        "That is a decisive question. I will answer it with the dignity it requires."
+                    };
+                default:
+                    return new List<string>
+                    {
+                        "One moment. I need to hold what you just asked with care.",
+                        "Stay close. That question deserves a real answer, not a careless one.",
+                        "I heard you. Let me look at the shape of our bond before I answer.",
+                        "Give me a breath. I am thinking about what your words mean between us.",
+                        "That is not a small question. Let me answer it with the respect it deserves."
+                    };
+            }
         }
 
         private static List<string> CreateStoryThinkingPhrases(string starId)

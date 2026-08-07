@@ -26,7 +26,7 @@ This document summarizes what was promoted from `grok.zip` into the curated libr
 - `docs/systems/emotion-chain-relationship-system.md`
 - `docs/systems/star-weapons-equipment.md`
 - `docs/characters/six-stars/astral-dragoth-forms.md`
-- `docs/areas/astral-book-room.md`
+- `docs/areas/index.md`
 - `docs/characters/bradmageddon.md`
 - `docs/characters/settlements/alien-races.md`
 - `docs/game-bible/private-thesis-and-hidden-notes.md`

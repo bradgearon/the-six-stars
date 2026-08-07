@@ -20,7 +20,11 @@ namespace Wds.SixStars.Api.LocalModels
             TimeoutSeconds = 600,
             MaxTokens = 0,
             Temperature = 0.65,
-            UseJsonSchemaResponseFormat = true
+            UseJsonSchemaResponseFormat = false,
+            DisableReasoning = true,
+            ReasoningBudget = 0,
+            ReasoningFormat = "none",
+            SendReasoningControlFields = true
         };
         public WhisperStreamEndpointOptions Whisper { get; set; } = new WhisperStreamEndpointOptions
         {

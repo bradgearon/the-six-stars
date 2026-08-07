@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/prod_shell"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:background="@drawable/ui_prod_background">
+
+    <LinearLayout
+        android:id="@+id/prod_root"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="10dp"
+        android:paddingTop="10dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="16dp">
+
+        <LinearLayout
+            android:id="@+id/prod_header"
+            android:layout_width="match_parent"
+            android:layout_height="74dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/prod_avatar_frame"
+                android:layout_width="70dp"
+                android:layout_height="70dp"
+                android:background="@drawable/ui_avatar_frame"
+                android:clickable="true"
+                android:contentDescription="Open companion menu"
+                android:focusable="true"
+                android:foreground="?android:attr/selectableItemBackground">
+
+                <ImageView
+                    android:id="@+id/prod_cat_avatar"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:layout_gravity="center"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/ui_cat_avatar" />
+            </FrameLayout>
+
+            <LinearLayout
+                android:id="@+id/prod_star_title_panel"
+                android:layout_width="0dp"
+                android:layout_height="70dp"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:background="@drawable/prod_title_panel"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?android:attr/selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp">
+
+                <TextView
+                    android:id="@+id/prod_star_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="Star"
+                    android:textColor="#EAF7FF"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/prod_star_subtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="Tap to choose a Star"
+                    android:textColor="#9EE8F0"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/prod_stage"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:layout_weight="1"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:background="@drawable/ui_character_frame">
+
+            <com.wds.sixstarsmobile.PixelStarAnimationView
+                android:id="@+id/prod_sprite_view"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:padding="0dp" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/prod_relationship"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingTop="2dp"
+            android:paddingBottom="4dp"
+            android:text="Heart 0   Trust 0   Romance 0"
+            android:textColor="#FFEEF6"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/prod_prepared_speech_indicator"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:paddingTop="2dp"
+            android:paddingBottom="5dp"
+            android:text=""
+            android:textColor="#9EE8F0"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/prod_voice_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginBottom="8dp"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/prod_primary_action_row"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/prod_talk_button"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/prod_talk_panel"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?android:attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:paddingStart="18dp"
+                    android:paddingEnd="18dp">
+
+                    <ImageView
+                        android:id="@+id/prod_talk_icon"
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:adjustViewBounds="true"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ui_mic_pixel" />
+
+                    <TextView
+                        android:id="@+id/prod_talk_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="14dp"
+                        android:fontFamily="monospace"
+                        android:text="Talk"
+                        android:textColor="#ECE9FF"
+                        android:textSize="28sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <FrameLayout
+                    android:id="@+id/prod_listen_button"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/prod_text_panel"
+                    android:clickable="true"
+                    android:contentDescription="Ask the selected Star if she has something to say"
+                    android:focusable="true"
+                    android:foreground="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_gravity="center"
+                        android:adjustViewBounds="true"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ui_listen_pixel" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/prod_photo_button"
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:background="@drawable/prod_text_panel"
+                    android:clickable="true"
+                    android:contentDescription="Send image"
+                    android:focusable="true"
+                    android:foreground="?android:attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:layout_gravity="center"
+                        android:adjustViewBounds="true"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/ui_photo_pixel" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/prod_voice_actions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <Button
+                    android:id="@+id/prod_cancel_voice_button"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/prod_button_secondary"
+                    android:fontFamily="monospace"
+                    android:text="Cancel"
+                    android:textAllCaps="false"
+                    android:textColor="#EAF7FF" />
+
+                <Button
+                    android:id="@+id/prod_send_voice_button"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="5dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/prod_button_secondary"
+                    android:fontFamily="monospace"
+                    android:text="Send Voice"
+                    android:textAllCaps="false"
+                    android:textColor="#EAF7FF" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/prod_text_toggle_button"
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:layout_marginStart="24dp"
+            android:layout_marginEnd="24dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/prod_text_panel"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ui_pencil_pixel" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="9dp"
+                android:fontFamily="monospace"
+                android:text="Text"
+                android:textColor="#D7D4FF"
+                android:textSize="19sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/prod_text_composer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/prod_history_panel"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/prod_message_edit"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@android:color/transparent"
+                android:fontFamily="monospace"
+                android:hint="Type a message to the selected Star..."
+                android:inputType="textMultiLine|textCapSentences"
+                android:minLines="2"
+                android:padding="8dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#7DD3FC"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/prod_send_text_button"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/prod_button_secondary"
+                android:fontFamily="monospace"
+                android:text="Send Text"
+                android:textAllCaps="false"
+                android:textColor="#EAF7FF" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/prod_conversation_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="104dp"
+            android:background="@drawable/prod_history_panel"
+            android:fillViewport="true"
+            android:padding="8dp">
+
+            <TextView
+                android:id="@+id/prod_conversation_text"
+                android:textIsSelectable="true"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:text="No conversation yet. Tap Talk or open Text."
+                android:textColor="#F6E7D2"
+                android:textSize="13sp" />
+        </ScrollView>
+    </LinearLayout>
+</FrameLayout>

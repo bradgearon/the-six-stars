@@ -1,0 +1,20 @@
+{{ data.currentTimeContext }}
+
+ORIGIN STAR
+{{ data.originProfileContext }}
+
+TARGET STAR
+{{ data.targetProfileContext }}
+
+LATEST CONVERSATION WITH THE LAST CAT
+Player said:
+{{ data.playerTextBlock }}
+Origin Star answered:
+{{ data.originReplyBlock }}
+Origin emotional vectors: good={{ data.goodVector }} bad={{ data.badVector }}
+Origin deterministic summary: {{ data.deterministicSummary }}
+Known top emotions: {{ data.topEmotions }}
+
+Interstar rule context: {{ data.ruleContext }}
+{{ if data.topicTags != "" }}Rule topic tags: {{ data.topicTags }}.
+{{ end }}Now decide whether {{ data.originDisplayName }} would tell {{ data.targetDisplayName }} anything, and what she would tell her.

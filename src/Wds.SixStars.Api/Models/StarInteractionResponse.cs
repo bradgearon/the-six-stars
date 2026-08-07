@@ -60,6 +60,50 @@ namespace Wds.SixStars.Api.Models
         public List<string> CanonSourcesUsed { get; set; } = new List<string>();
         public string EmotionalPurpose { get; set; } = string.Empty;
 
+        /// <summary>At-rest initiative only: true when the Star has a state-backed thing she wants to say now. False means no speech should be displayed or played.</summary>
+        public bool InitiativeShouldSpeak { get; set; } = true;
+
+        /// <summary>At-rest initiative only: 0-1 priority returned by the LLM for the selected state-backed topic.</summary>
+        public double InitiativePriority { get; set; }
+
+        /// <summary>At-rest initiative only: one score/confidence item for the single speak-now option.</summary>
+        public List<GirlfriendVectorItem> InitiativeSpeechDecisionVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>At-rest initiative only: randomized runtime threshold used to accept or suppress the LLM speak-now option.</summary>
+        public double InitiativeSpeechAcceptThreshold { get; set; }
+
+        /// <summary>At-rest initiative only: effective runtime score after confidence and girlfriend-state bias are applied.</summary>
+        public double InitiativeSpeechEffectiveScore { get; set; }
+
+        /// <summary>At-rest initiative only: whether the randomized score/confidence gate accepted the line after the LLM returned it.</summary>
+        public bool InitiativeSpeechScoreAccepted { get; set; }
+
+        /// <summary>At-rest initiative only: short state-backed topic or hook the Star chose.</summary>
+        public string InitiativeTopic { get; set; } = string.Empty;
+
+        /// <summary>At-rest initiative only: why she did or did not choose to speak.</summary>
+        public string InitiativeReason { get; set; } = string.Empty;
+
+        /// <summary>True when the runtime skipped the LLM because daily/emotion/interstar state did not contain enough reason to ask.</summary>
+        public bool InitiativeSkippedBeforeLlm { get; set; }
+
+        /// <summary>Debug score from the deterministic state pre-check that decides whether asking the initiative LLM is worthwhile.</summary>
+        public double InitiativeStateScore { get; set; }
+
+        /// <summary>True when the foreground Star says she needs old history, quotes, markers, lore, bestiary, character, or world data.</summary>
+        public bool NeedsMoreInformation { get; set; }
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
+        public bool InformationFollowupAttempted { get; set; }
+        public bool InformationFollowupSucceeded { get; set; }
+        public string InformationFollowupContextSummary { get; set; } = string.Empty;
+
+        /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+
+        /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
+        public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
+        public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();
+
         /// <summary>
         /// Compact emotion hint returned by the fast foreground LLM pass for experimentation.
         /// Format: confidence:score;confidence:score;... in the canonical StarEmotionMatrix.StandardEmotionIds order.
@@ -80,6 +124,9 @@ namespace Wds.SixStars.Api.Models
         public List<string> AcceptedNegativeEmotionSignals { get; set; } = new List<string>();
         public List<string> AcceptedRelationshipCombos { get; set; } = new List<string>();
 
+        /// <summary>Top three strongest entries from the latest emotion vectors after deterministic background scoring.</summary>
+        public List<TopAffectedEmotion> TopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> DetectedCombos { get; set; } = new List<string>();
@@ -93,6 +140,18 @@ namespace Wds.SixStars.Api.Models
 
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar target reaction only: how this Star feels toward the source Star who told her the relay.</summary>
+        public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
+        public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
+
+        /// <summary>Interstar mode only: one or more per-Star vectors used to update durable Star-to-Star Heart/Trust state.</summary>
+        public List<InterstarEmotionVectorResult> InterstarEmotionVectors { get; set; } = new List<InterstarEmotionVectorResult>();
+
+        /// <summary>Interstar mode only: deterministic deltas applied to Star-to-Star relationships.</summary>
+        public List<InterstarRelationshipDeltaResult> InterstarRelationshipDeltas { get; set; } = new List<InterstarRelationshipDeltaResult>();
+
+        /// <summary>Interstar mode only: one sentence this Star would say back to the source Star.</summary>
+        public string InterstarReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
@@ -103,6 +162,15 @@ namespace Wds.SixStars.Api.Models
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public string GirlfriendCoupleActivitySummary { get; set; } = string.Empty;
+        public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendCoupleActivityItems { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>True when the latest player message asked the Star to show her breasts or remove her shirt/top.</summary>
+        public bool RequestToShowBoobs { get; set; }
 
         /// <summary>
         /// Runtime coordination id for the deferred background emotion/memory review.

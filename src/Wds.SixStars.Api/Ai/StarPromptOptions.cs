@@ -19,5 +19,17 @@ namespace Wds.SixStars.Api.Ai
         public int SecretStateCount { get; set; } = 30;
         public int RelationshipComboCount { get; set; } = 20;
         public int ScreenCaptureCount { get; set; } = 5;
+
+        /// <summary>When connection reaches this percent, foreground prompts encourage occasional active flirting even outside committed girlfriend mode.</summary>
+        public double ActiveFlirtConnectionPercent { get; set; } = 65;
+
+        /// <summary>When Romance reaches this score, foreground prompts encourage occasional active flirting even outside committed girlfriend mode.</summary>
+        public int ActiveFlirtRomanceScore { get; set; } = 10;
+
+        /// <summary>When connection reaches this percent, foreground prompts encourage stronger active flirting and magic/domain acting-out.</summary>
+        public double StrongActiveFlirtConnectionPercent { get; set; } = 85;
+
+        /// <summary>When Romance reaches this score, foreground prompts encourage stronger active flirting and magic/domain acting-out.</summary>
+        public int StrongActiveFlirtRomanceScore { get; set; } = 25;
     }
 }

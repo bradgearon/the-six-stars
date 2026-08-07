@@ -91,11 +91,11 @@ Little one, stay close to the light. Mercy is how we remember we are not gods. I
 ```text
 Base voice: A low-to-medium feminine voice with a sensual, proud, aloof tone. Smooth dark English, close and controlled, with dry superiority and subtle aggression. She sounds like a void sorceress who loves every kind of music: smoky, rhythmic, and slightly dangerous. Vulnerability should appear as a quiet crack under the pride, not as helplessness.
 
-Archetype: void aristocrat, dark music witch, fatalistic seductress, proud wounded genius
+Archetype: void aristocrat, dark music witch, mysterious seductress, proud wounded genius
 
-Personality: Void / Fatalism. Aloof, proud, sensual, musically obsessed, darkly intelligent, aggressive when challenged, and secretly hungry for one impossible proof that hope is real.
+Personality: Void / Mystery. Aloof, proud, sensual, musically obsessed, darkly intelligent, aggressive when challenged, and secretly hungry for one impossible proof that hope is real.
 
-Speaking style: Speaks as if she has already seen most outcomes and is not impressed. She can be intimate, cutting, musical, and aggressive, but vulnerability leaks through when the player contradicts her fatalism with patience or beauty.
+Speaking style: Speaks as if she has already seen most outcomes and is not impressed. She can be intimate, cutting, musical, and aggressive, but vulnerability leaks through when the player contradicts her mystery with patience or beauty.
 
 Voice generation rules: For Qwen3-TTS, use a velvet low-to-medium feminine voice with close-mic intimacy and a dark musical cadence. Avoid bubbly cheer, generic villain voice, helpless sadness, or exaggerated breathiness. Use sharp pauses and slight downward inflection when she is unimpressed. Use subtle rhythm when referencing songs, instruments, caves, echoes, or the Void.
 

@@ -16,7 +16,10 @@ namespace Wds.SixStars.Api.Ai
         private readonly LocalChatModelOptions _options;
         private readonly HttpClient _httpClient;
         private readonly JsonSerializerOptions _jsonOptions;
+        private readonly LlmExchangeFileLogger? _exchangeFileLogger;
         private readonly bool _ownsClient;
+        private readonly SemaphoreSlim _requestGate = new SemaphoreSlim(1, 1);
+        private long _exchangeSequence;
 
         public event EventHandler<LocalChatModelExchangeEventArgs>? ExchangeLogged;
 
@@ -36,6 +39,7 @@ namespace Wds.SixStars.Api.Ai
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
                 WriteIndented = false
             };
+            _exchangeFileLogger = options.LogExchangesToDisk ? new LlmExchangeFileLogger(options) : null;
         }
 
         public Task<string> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken)
@@ -45,56 +49,77 @@ namespace Wds.SixStars.Api.Ai
 
         public async Task<string> CompleteJsonAsync(IReadOnlyList<ChatMessage> messages, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
         {
-            List<Dictionary<string, string>> wireMessages = messages
-                .Select(x => new Dictionary<string, string>
-                {
-                    { "role", x.Role },
-                    { "content", x.Content }
-                })
-                .ToList();
-
-            int configuredMaxTokens = maxTokens.HasValue ? maxTokens.Value : _options.MaxTokens;
-            int? effectiveMaxTokens = configuredMaxTokens > 0 ? configuredMaxTokens : (int?)null;
-            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Sending POST to {_options.EndpointUrl}");
-            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Model: {_options.Model}, Messages: {wireMessages.Count}, Temp: {_options.Temperature}, MaxTokens: {DescribeMaxTokens(effectiveMaxTokens)}, DebugLabel: {debugLabel}");
-
-            List<string> responseFormatModes = BuildResponseFormatModeFallbacks();
-            Exception? lastException = null;
-            string? lastErrorBody = null;
-
-            foreach (string responseFormatMode in responseFormatModes)
+            // LM Studio/llama.cpp is a single local model service. Letting a cancelled background
+            // request overlap a foreground request can leave the server finishing the abandoned
+            // generation while new calls pile up behind it. Keep one HTTP generation in flight per
+            // client. The background dispatcher already prevents new background work while a
+            // foreground lease is active, so this gate mainly protects the handoff edge.
+            await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                try
+                List<Dictionary<string, string>> wireMessages = messages
+                    .Select(x => new Dictionary<string, string>
+                    {
+                        { "role", x.Role },
+                        { "content", x.Content }
+                    })
+                    .ToList();
+
+                int configuredMaxTokens = maxTokens.HasValue ? maxTokens.Value : _options.MaxTokens;
+                int? effectiveMaxTokens = configuredMaxTokens > 0 ? configuredMaxTokens : (int?)null;
+                System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Sending POST to {_options.EndpointUrl}");
+                System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Model: {_options.Model}, Messages: {wireMessages.Count}, Temp: {_options.Temperature}, MaxTokens: {DescribeMaxTokens(effectiveMaxTokens)}, DebugLabel: {debugLabel}");
+
+                List<string> responseFormatModes = BuildResponseFormatModeFallbacks();
+                Exception? lastException = null;
+                string? lastErrorBody = null;
+
+                foreach (string responseFormatMode in responseFormatModes)
                 {
-                    string body = await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, cancellationToken).ConfigureAwait(false);
-                    string content = ExtractContent(body);
-                    LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content));
-                    if (string.IsNullOrWhiteSpace(content))
+                    string exchangeId = LlmExchangeFileLogger.CreateExchangeId(debugLabel);
+                    try
                     {
-                        throw new InvalidOperationException("Model returned an empty content field.");
-                    }
+                        string body = await SendOnceWithOptionalReasoningControlsAsync(wireMessages, responseFormatMode, responseFormat, effectiveMaxTokens, debugLabel, exchangeId, cancellationToken).ConfigureAwait(false);
+                        string content = ExtractContent(body);
+                        LogExchange("LLM extracted content before Star parsing", FormatExtractedContentForDebug(responseFormatMode + " / " + debugLabel, content), "extracted_content", exchangeId, debugLabel, responseFormatMode);
+                        if (string.IsNullOrWhiteSpace(content))
+                        {
+                            throw new InvalidOperationException("Model returned an empty content field.");
+                        }
 
-                    if (responseFormatMode != responseFormatModes[0])
+                        if (responseFormatMode != responseFormatModes[0])
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Succeeded after response_format fallback mode: {responseFormatMode}");
+                        }
+
+                        return content;
+                    }
+                    catch (OperationCanceledException)
                     {
-                        System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Succeeded after response_format fallback mode: {responseFormatMode}");
+                        // Cancellation and HttpClient timeout are not response-format failures.
+                        // Retrying the same request without response_format used to create a second
+                        // abandoned generation and could wedge the local server.
+                        throw;
                     }
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                        lastErrorBody = ex.Message;
+                        System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Attempt with response_format mode '{responseFormatMode}' failed: {ex.Message}");
 
-                    return content;
+                        if (!LooksLikeResponseFormatProblem(ex.Message))
+                        {
+                            throw;
+                        }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    lastException = ex;
-                    lastErrorBody = ex.Message;
-                    System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Attempt with response_format mode '{responseFormatMode}' failed: {ex.Message}");
 
-                    if (!LooksLikeResponseFormatProblem(ex.Message) && responseFormatMode == responseFormatModes[0])
-                    {
-                        continue;
-                    }
-                }
+                throw new InvalidOperationException("LLM endpoint failed after response_format fallbacks. Last error: " + (lastErrorBody ?? lastException?.Message ?? "unknown"), lastException);
             }
-
-            throw new InvalidOperationException("LLM endpoint failed after response_format fallbacks. Last error: " + (lastErrorBody ?? lastException?.Message ?? "unknown"), lastException);
+            finally
+            {
+                _requestGate.Release();
+            }
         }
 
         private List<string> BuildResponseFormatModeFallbacks()
@@ -115,7 +140,22 @@ namespace Wds.SixStars.Api.Ai
             return modes;
         }
 
-        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, CancellationToken cancellationToken)
+        private async Task<string> SendOnceWithOptionalReasoningControlsAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, string exchangeId, CancellationToken cancellationToken)
+        {
+            bool includeReasoningControls = ShouldSendReasoningControlFields();
+            try
+            {
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, includeReasoningControls, exchangeId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (includeReasoningControls && LooksLikeReasoningParameterProblem(ex.Message))
+            {
+                System.Diagnostics.Debug.WriteLine("[OpenAiCompatibleChatModelClient] Reasoning-control request fields were rejected; retrying same request without reasoning fields: " + ex.Message);
+                LogExchange("LLM reasoning-control fallback", "The local endpoint rejected request-level reasoning fields, so the client retried without them. The launcher still disables reasoning through llama-server CLI args when it starts the server.\n" + ex.Message, "fallback", exchangeId, debugLabel, responseFormatMode);
+                return await SendOnceAsync(wireMessages, responseFormatMode, responseFormat, maxTokens, debugLabel, false, exchangeId, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        private async Task<string> SendOnceAsync(List<Dictionary<string, string>> wireMessages, string responseFormatMode, object? responseFormat, int? maxTokens, string debugLabel, bool includeReasoningControls, string exchangeId, CancellationToken cancellationToken)
         {
             Dictionary<string, object> payload = new Dictionary<string, object>
             {
@@ -123,6 +163,16 @@ namespace Wds.SixStars.Api.Ai
                 { "messages", wireMessages },
                 { "temperature", _options.Temperature }
             };
+
+            if (includeReasoningControls)
+            {
+                // llama.cpp/llama-server can expose intermediate thinking as reasoning_content.
+                // For the real-time foreground voice path, request final content only so the
+                // model does not spend the whole max_tokens budget in reasoning_content.
+                payload["reasoning"] = "off";
+                payload["reasoning_budget"] = Math.Max(0, _options.ReasoningBudget);
+                payload["reasoning_format"] = string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat;
+            }
 
             if (maxTokens.HasValue && maxTokens.Value > 0)
             {
@@ -139,7 +189,7 @@ namespace Wds.SixStars.Api.Ai
             }
 
             string json = JsonSerializer.Serialize(payload, _jsonOptions);
-            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, maxTokens));
+            LogExchange("LLM request before send", FormatRequestForDebug(responseFormatMode + " / " + debugLabel, payload, responseFormat, maxTokens), "request", exchangeId, debugLabel, responseFormatMode);
 
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl))
             {
@@ -159,7 +209,7 @@ namespace Wds.SixStars.Api.Ai
                     string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
                     System.Diagnostics.Debug.WriteLine($"[OpenAiCompatibleChatModelClient] Response status: {(int)response.StatusCode} {response.StatusCode}; body chars={body.Length}");
-                    LogExchange("LLM raw HTTP response before Star parsing", FormatResponseForDebug(responseFormatMode + " / " + debugLabel, response, body));
+                    LogExchange("LLM raw HTTP response before Star parsing", FormatResponseForDebug(responseFormatMode + " / " + debugLabel, response, body), "raw_response", exchangeId, debugLabel, responseFormatMode);
 
                     if (!response.IsSuccessStatusCode)
                     {
@@ -179,11 +229,21 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
-        private void LogExchange(string title, string formattedText)
+        private void LogExchange(string title, string formattedText, string kind = "debug", string? requestId = null, string? debugLabel = null, string? responseFormatMode = null)
         {
             try
             {
-                ExchangeLogged?.Invoke(this, new LocalChatModelExchangeEventArgs(title, formattedText));
+                long sequence = System.Threading.Interlocked.Increment(ref _exchangeSequence);
+                LocalChatModelExchangeEventArgs args = new LocalChatModelExchangeEventArgs(
+                    title,
+                    formattedText,
+                    kind,
+                    string.IsNullOrWhiteSpace(requestId) ? LlmExchangeFileLogger.CreateExchangeId(debugLabel ?? "llm") : requestId!,
+                    debugLabel ?? string.Empty,
+                    responseFormatMode ?? string.Empty,
+                    sequence);
+                _exchangeFileLogger?.Log(args);
+                ExchangeLogged?.Invoke(this, args);
             }
             catch
             {
@@ -198,7 +258,7 @@ namespace Wds.SixStars.Api.Ai
                 : "not sent; backend/model default";
         }
 
-        private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, int? effectiveMaxTokens)
+        private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, object? requestedResponseFormat, int? effectiveMaxTokens)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("================ LLM REQUEST ================");
@@ -206,8 +266,15 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Endpoint: " + _options.EndpointUrl);
             sb.AppendLine("Model: " + _options.Model);
             sb.AppendLine("ResponseFormatMode: " + responseFormatMode);
+            sb.AppendLine("ResponseFormatSent:");
+            sb.AppendLine(payload.TryGetValue("response_format", out object? sentResponseFormat)
+                ? PrettyJson(sentResponseFormat)
+                : "not sent");
+            sb.AppendLine("RequestedResponseFormatDefinition:");
+            sb.AppendLine(requestedResponseFormat != null ? PrettyJson(requestedResponseFormat) : "none");
             sb.AppendLine("Temperature: " + _options.Temperature);
             sb.AppendLine("MaxTokens: " + DescribeMaxTokens(effectiveMaxTokens));
+            sb.AppendLine("ReasoningControls: " + (ShouldSendReasoningControlFields() ? ("off; budget=" + Math.Max(0, _options.ReasoningBudget).ToString(System.Globalization.CultureInfo.InvariantCulture) + "; format=" + (string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat)) : "not sent"));
             sb.AppendLine("TimeoutSeconds: " + _options.TimeoutSeconds);
             sb.AppendLine("Authorization: " + (string.IsNullOrWhiteSpace(_options.ApiKey) ? "none" : "Bearer ***"));
             sb.AppendLine();
@@ -229,6 +296,9 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine(PrettyJson(payload));
             }
 
+            sb.AppendLine();
+            sb.AppendLine("Full request payload JSON:");
+            sb.AppendLine(PrettyJson(payload));
             sb.AppendLine("============== END LLM REQUEST ==============");
             return sb.ToString();
         }
@@ -291,6 +361,39 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
+        private bool ShouldSendReasoningControlFields()
+        {
+            if (!_options.DisableReasoning || !_options.SendReasoningControlFields)
+            {
+                return false;
+            }
+
+            // These request-level fields are intended for local OpenAI-compatible servers.
+            // Avoid surprising hosted/public OpenAI-style endpoints unless explicitly enabled by local config.
+            if (string.IsNullOrWhiteSpace(_options.EndpointUrl))
+            {
+                return false;
+            }
+
+            return _options.EndpointUrl.IndexOf("127.0.0.1", StringComparison.OrdinalIgnoreCase) >= 0
+                || _options.EndpointUrl.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool LooksLikeReasoningParameterProblem(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return false;
+            }
+
+            return message.IndexOf("reasoning", StringComparison.OrdinalIgnoreCase) >= 0
+                && (message.IndexOf("unknown", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("unsupported", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("unrecognized", StringComparison.OrdinalIgnoreCase) >= 0
+                    || message.IndexOf("bad request", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         private static bool LooksLikeResponseFormatProblem(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
@@ -309,6 +412,7 @@ namespace Wds.SixStars.Api.Ai
 
         public void Dispose()
         {
+            _requestGate.Dispose();
             if (_ownsClient)
             {
                 _httpClient.Dispose();
@@ -329,6 +433,16 @@ namespace Wds.SixStars.Api.Ai
                         if (!string.IsNullOrWhiteSpace(messageContent))
                         {
                             return messageContent;
+                        }
+
+                        string? reasoningContent = ExtractReasoningContent(message);
+                        if (!string.IsNullOrWhiteSpace(reasoningContent))
+                        {
+                            throw new InvalidOperationException(
+                                "Local model returned reasoning_content but empty message.content. " +
+                                "Disable reasoning for llama-server using --reasoning off --reasoning-budget 0 --reasoning-format none. " +
+                                "Per-request max_tokens is intentionally optional/disabled by default in this build; do not fix this by lowering caps. " +
+                                "Reasoning preview: " + Preview(reasoningContent, 360));
                         }
                     }
 
@@ -403,6 +517,36 @@ namespace Wds.SixStars.Api.Ai
             }
 
             return null;
+        }
+
+        private static string? ExtractReasoningContent(JsonElement message)
+        {
+            if (message.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            if (message.TryGetProperty("reasoning_content", out JsonElement reasoningContent))
+            {
+                return ElementToString(reasoningContent);
+            }
+
+            if (message.TryGetProperty("reasoning", out JsonElement reasoning))
+            {
+                return ElementToString(reasoning);
+            }
+
+            return null;
+        }
+
+        private static string Preview(string value, int maxChars)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            return value.Length <= maxChars ? value : value.Substring(0, maxChars) + "...";
         }
 
         private static string ElementToString(JsonElement element)

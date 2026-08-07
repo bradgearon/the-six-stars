@@ -112,3 +112,32 @@ _package_staging/
 Thumbs.db
 Desktop.ini
 /state/
+
+# -----------------------------------------------------------------------------
+# Android / Gradle
+# -----------------------------------------------------------------------------
+android/**/.gradle/
+android/**/build/
+android/**/local.properties
+android/**/*.apk
+
+# -----------------------------------------------------------------------------
+# AI engine / PyInstaller / redist build outputs
+# -----------------------------------------------------------------------------
+/engines/
+/redist/engines/
+/redist/ai-runtime/
+/redist/python/
+/redist/models/
+/redist/state/
+/redist/logs/
+/redist/**/*.exe
+/redist/**/*.dll
+/redist/**/*.pyd
+/redist/**/*.so
+/redist/**/*.dylib
+/redist/**/*.pyz
+/redist/**/*.manifest
+/redist/**/*.spec
+/redist/**/__pycache__/
+**/*.spec

@@ -1,0 +1,10 @@
+{{ if data.hasState }}situationSummary: {{ data.situationSummary }}
+feelingsSummary: {{ data.feelingsSummary }}
+desires: {{ data.desires }}
+privateSecretsOrHooks: {{ data.privateSecretsOrHooks }}
+whatSheIsDoing: {{ data.whatSheIsDoing }}
+moodTags:
+{{ if data.moodTags.size > 0 }}{{ for tag in data.moodTags }}- {{ tag }}
+{{ end }}{{ else }}- none
+{{ end }}{{ else }}No generated Star state is available.
+{{ end }}

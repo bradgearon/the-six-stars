@@ -8,11 +8,13 @@
     <RootNamespace>Wds.SixStars.Api</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <PackageReference Include="Scriban" Version="7.2.5" />
+    <PackageReference Include="System.Text.Json" Version="10.0.9" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Content\**\*.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Content\VoiceClones\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Content\LoreLibrary\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Content\PromptTemplates\**\*.sbn" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

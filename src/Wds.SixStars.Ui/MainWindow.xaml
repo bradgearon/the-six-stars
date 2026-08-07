@@ -4,14 +4,14 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Six Stars Dev Harness" Height="900" Width="1320"
+        Title="Six Stars Dev Harness" Height="980" Width="1420"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="14">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="2.15*" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="3*" />
+            <RowDefinition Height="180" />
+            <RowDefinition Height="3.15*" />
         </Grid.RowDefinitions>
 
         <Border Grid.Row="0" Padding="12" BorderBrush="#DDD" BorderThickness="1" CornerRadius="8">
@@ -22,7 +22,8 @@
                     <TextBlock Text="Request" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox ItemsSource="{Binding RequestTypes}" SelectedItem="{Binding SelectedRequestType}" Width="140" Margin="0,0,16,0" />
                     <CheckBox Content="Romance Mode" IsChecked="{Binding RomanceMode}" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <CheckBox Content="Selected Star Is Ally" IsChecked="{Binding SelectedStarIsAlly}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                    <CheckBox Content="Met" IsChecked="{Binding SelectedStarIsMet}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <CheckBox Content="Ally" IsChecked="{Binding SelectedStarIsAlly}" VerticalAlignment="Center" Margin="0,0,16,0" />
                     <TextBlock Text="Area" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <TextBox Text="{Binding Area, UpdateSourceTrigger=PropertyChanged}" Width="170" Margin="0,0,16,0" />
                     <TextBlock Text="Quest" VerticalAlignment="Center" Margin="0,0,6,0" />
@@ -38,55 +39,66 @@
                 <ColumnDefinition Width="1.15*" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="1*" />
-                    <RowDefinition Height="10" />
-                    <RowDefinition Height="0.9*" />
-                </Grid.RowDefinitions>
-
-                <GroupBox Grid.Row="0" Header="Message To Selected Star — default companion mode">
-                    <DockPanel Margin="8">
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="Type normal chat here: hi, work banter, poetry about her eyes, moral questions, romance tests, or anything the Last Cat says. Click Send Message for plain chat."
-                                   TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
-                        <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="True" TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontSize="15"
-                                 Padding="10" />
-                    </DockPanel>
-                </GroupBox>
-
-                <GroupBox Grid.Row="2" Header="Optional Story Suggestion">
-                    <DockPanel Margin="8">
-                        <TextBlock DockPanel.Dock="Top"
-                                   Text="When you click Tell Me A Story, this optional seed is sent as StoryOptions.PlayerSuggestion. Leave it blank and she chooses her own story."
-                                   TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
-                        <TextBox Text="{Binding StorySuggestion, UpdateSourceTrigger=PropertyChanged}"
-                                 AcceptsReturn="True" TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 FontSize="14"
-                                 Padding="10" />
-                    </DockPanel>
-                </GroupBox>
-            </Grid>
+            <GroupBox Grid.Column="0" Header="Message To Selected Star — normal conversation">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="Type any request here, including long answers or stories. Everything is handled as normal Chat, displayed in full, and spoken in order. This box clears after the request is queued."
+                               TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
+                    <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontSize="15"
+                             Padding="10" />
+                </DockPanel>
+            </GroupBox>
 
             <GroupBox Grid.Column="2" Header="Quick Actions / Test Buttons">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="8">
                     <TextBlock Text="Primary" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Send Message" Command="{Binding SendMessageCommand}" Margin="0,0,0,8" Height="36" />
-                    <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Margin="0,0,0,8" Height="36" />
-                    <Button Content="Interrupt Story" Command="{Binding InterruptStoryCommand}" Margin="0,0,0,8" Height="34" />
+                    <CheckBox Content="Auto Star at-rest lines" IsChecked="{Binding StarInitiativeEnabled, Mode=TwoWay}" Margin="0,0,0,6" />
+                    <Button Content="Ask Star If She Wants To Speak" Command="{Binding AskStarInitiativeNowCommand}" Margin="0,0,0,8" Height="34" />
+                    <Button Content="Enqueue State Updates (All Stars)"
+                            Command="{Binding EnqueueAllStarStateUpdatesCommand}"
+                            ToolTip="Queue fresh current-state generation for all six Stars. Foreground conversations remain higher priority."
+                            Margin="0,0,0,8" Height="34" />
+                    <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
-                    <TextBlock Text="Send Message keeps RequestType=Chat. Tell Me A Story sets RequestType=Story and sends the optional story suggestion above. Interrupt Story stops local cached story autoplay. Clear Selected Star History resets the local memory/relationship state for the selected Star." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />
+                    <TextBlock Text="Send Message always uses normal Chat. Ask for a long answer or a story directly in the message box; every spokenText chunk is displayed and spoken in order. Open LLM Exchange Log Folder shows the durable daily .log prompt logs. Clear Selected Star History resets one Star. Clear All Star Data resets the single shared Star state used by desktop and Android." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Separator Margin="0,8,0,8" />
                     <TextBlock Text="Scenario Tests" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Button Content="Goblin / Harpy Discernment" Command="{Binding GoblinHarpiesCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Cruel Escalation Test" Command="{Binding CruelEscalationCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Kind Company Test" Command="{Binding KindCompanyCommand}" Margin="0,0,0,8" Height="34" />
                     <Separator Margin="0,8,0,8" />
+                    <TextBlock Text="Android Phone Bridge" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <Border BorderBrush="#D9E3F0" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8" Background="#FAFCFF">
+                        <StackPanel>
+                            <TextBlock Text="Host a tiny LAN server so the Android app can send text or recorded voice to this desktop runtime. Spoken Star WAV chunks stream back to the phone over a lightweight TCP audio socket on the next port. The same host also serves the cute conversation archive website at /archive. The phone defaults to http://grasshoppah:8066." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="Host" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox Text="{Binding MobileBridgeHostName, UpdateSourceTrigger=PropertyChanged}" Width="96" Margin="0,0,8,0" />
+                                <TextBlock Text="Port" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox Text="{Binding MobileBridgePort, UpdateSourceTrigger=PropertyChanged}" Width="58" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding MobileBridgeUrl}" FontFamily="Consolas" Foreground="#333" Margin="0,0,0,2" />
+                            <TextBlock Text="{Binding MobileBridgeAudioUrl}" FontFamily="Consolas" Foreground="#555" Margin="0,0,0,2" />
+                            <TextBlock Text="{Binding ConversationArchiveUrl}" FontFamily="Consolas" Foreground="#7A4BD8" Margin="0,0,0,8" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Button Content="Start Host" Command="{Binding StartMobileBridgeCommand}" Width="92" Height="30" Margin="0,0,6,0" />
+                                <Button Content="Stop" Command="{Binding StopMobileBridgeCommand}" Width="64" Height="30" Margin="0,0,6,0" />
+                                <Button Content="Open Archive" Command="{Binding OpenConversationArchiveCommand}" Width="102" Height="30" />
+                            </StackPanel>
+                            <CheckBox Content="Mobile bridge running" IsChecked="{Binding MobileBridgeEnabled}" IsEnabled="False" Margin="0,0,0,6" />
+                            <TextBlock Text="{Binding MobileBridgeStatus}" TextWrapping="Wrap" Foreground="#555" Margin="0,0,0,6" />
+                            <TextBlock Text="Last phone request" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding MobileBridgeLastRequest}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="86" Margin="0,2,0,6" />
+                            <TextBlock Text="Phone voice stream" FontWeight="SemiBold" />
+                            <TextBox Text="{Binding MobileBridgeVoiceDebugLog}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="72" MaxHeight="140" FontFamily="Consolas" FontSize="11" Margin="0,2,0,0" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock Text="Voice Input / Whisper" FontWeight="SemiBold" Margin="0,0,0,6" />
                     <Border BorderBrush="#D9E3F0" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8" Background="#FAFCFF">
                         <StackPanel>
@@ -142,12 +154,30 @@
             </GroupBox>
         </Grid>
 
-        <DockPanel Grid.Row="2" Margin="0,0,0,12">
-            <Button Content="Send Current Request" Command="{Binding SendCommand}" Width="150" Height="38" DockPanel.Dock="Left" />
-            <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
-            <Button Content="Tell Me A Story" Command="{Binding TellStoryCommand}" Width="140" Height="38" Margin="8,0,0,0" DockPanel.Dock="Left" />
-            <TextBlock Text="{Binding Status}" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
-        </DockPanel>
+        <Grid Grid.Row="2" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="Send Current Request" Command="{Binding SendCommand}" Width="150" Height="38" />
+                <Button Content="Send Message" Command="{Binding SendMessageCommand}" Width="130" Height="38" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <Border Grid.Column="2" Padding="8" BorderBrush="#DDD" BorderThickness="1" CornerRadius="8" Background="#FAFAFA" MinHeight="160">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="Runtime Status / Daily State" FontWeight="SemiBold" Foreground="#333" Margin="0,0,0,5" />
+                        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#555" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding TopAffectedEmotionsText}" TextWrapping="Wrap" Foreground="#664A7A" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding InterstarStatusText}" TextWrapping="Wrap" Foreground="#5B4B8A" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <TextBlock Text="{Binding TodayStarStateText}" TextWrapping="Wrap" Foreground="#3C6F66" FontWeight="SemiBold" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
 
         <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
@@ -156,26 +186,50 @@
                 <ColumnDefinition Width="1*" />
             </Grid.ColumnDefinitions>
 
-            <GroupBox Grid.Column="0" Header="Star Spoken Output">
-                <TextBox Text="{Binding StarOutput}"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         FontSize="15"
-                         Padding="10" />
-            </GroupBox>
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="1.7*" />
+                    <RowDefinition Height="10" />
+                    <RowDefinition Height="0.8*" />
+                </Grid.RowDefinitions>
+                <GroupBox Grid.Row="0" Header="Star Spoken Output">
+                    <TextBox Text="{Binding StarOutput}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontSize="15"
+                             Padding="10" />
+                </GroupBox>
+                <GroupBox Grid.Row="2" Header="Last Emotional Vectors">
+                    <TextBox Text="{Binding LastEmotionVectorsText}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Padding="10" />
+                </GroupBox>
+            </Grid>
 
-            <GroupBox Grid.Column="2" Header="Debug JSON / Unity Payload">
-                <TextBox Text="{Binding DebugJson}"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="NoWrap"
-                         HorizontalScrollBarVisibility="Auto"
-                         VerticalScrollBarVisibility="Auto"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         Padding="10" />
+            <GroupBox Grid.Column="2" Header="Debug JSON / Unity Payload / Conversation Trace">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="6,4,6,6">
+                        <Button Content="Load Latest Conversation Log" Command="{Binding LoadLatestConversationDebugLogCommand}" Height="28" Margin="0,0,6,0" />
+                        <Button Content="Copy Log" Command="{Binding CopyLatestConversationDebugLogCommand}" Height="28" Margin="0,0,6,0" />
+                        <Button Content="Open In Notepad" Command="{Binding OpenLatestConversationDebugLogCommand}" Height="28" />
+                    </StackPanel>
+                    <TextBox Text="{Binding DebugJson}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             HorizontalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Padding="10" />
+                </DockPanel>
             </GroupBox>
         </Grid>
     </Grid>

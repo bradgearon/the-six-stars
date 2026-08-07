@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "gpuPolicy": {
+    "requireCuda": true,
+    "allowCpuFallback": false,
+    "hostedServiceMessage": "CUDA/GPU is required for local Six Stars ASR/TTS/LLM. CPU fallback is intentionally disabled. Configure the NVIDIA CUDA engine packs or use a hosted service option."
+  },
+  "ports": {
+    "llm": 8080,
+    "asr": 8000,
+    "tts": 8100
+  },
+  "selectionOrder": {
+    "llm": [
+      "llama-cpp-dynamic-nvidia"
+    ],
+    "asr": [
+      "faster-whisper-nvidia-cu12"
+    ],
+    "tts": [
+      "qwen3-tts-nvidia-cu12"
+    ]
+  },
+  "packs": [
+    {
+      "id": "llama-cpp-dynamic-nvidia",
+      "kind": "llm",
+      "vendor": "nvidia",
+      "path": "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe",
+      "workingDirectory": "engines/llm/llama-cpp-dynamic-win-x64",
+      "args": "--host 127.0.0.1 --port 8080 --ctx-size 16384 --predict -1 --n-gpu-layers 999 --jinja --reasoning off --reasoning-budget 0 --reasoning-format none",
+      "healthUrl": "http://127.0.0.1:8080/health",
+      "openAiChatUrl": "http://127.0.0.1:8080/v1/chat/completions"
+    },
+    {
+      "id": "faster-whisper-nvidia-cu12",
+      "kind": "asr",
+      "vendor": "nvidia",
+      "path": "engines/asr/faster-whisper-nvidia-cu12-win-x64/faster_whisper_openai_server.exe",
+      "workingDirectory": "engines/asr/faster-whisper-nvidia-cu12-win-x64",
+      "args": "",
+      "healthUrl": "http://127.0.0.1:8000/health"
+    },
+    {
+      "id": "qwen3-tts-nvidia-cu12",
+      "kind": "tts",
+      "vendor": "nvidia",
+      "path": "engines/tts/qwen3-tts-nvidia-cu12-win-x64/websocket_tts_server.exe",
+      "workingDirectory": "engines/tts/qwen3-tts-nvidia-cu12-win-x64",
+      "args": "",
+      "healthUrl": "ws://127.0.0.1:8100/tts/stream"
+    }
+  ]
+}

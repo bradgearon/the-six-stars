@@ -5,7 +5,7 @@ Namespaces are intentionally unchanged so existing code keeps working.
 
 ## Facades
 
-- `SixStarsConversationApi` — UI/Unity-friendly facade for text, speech transcripts, screen summaries, Star state, history, and save import/export.
+- `SixStarsConversationApi` — UI/Unity-friendly facade for text, speech transcripts, screen summaries, Star state, decision impulse scoring, history, and save import/export.
 
 ## Interfaces
 
@@ -15,6 +15,7 @@ These are host-swappable seams:
 - `Audio/ISpeechActivityDetector` — voice activity detector.
 - `Audio/IWakeWordDetector` — text wake alias detector.
 - `Engine/IStarAgent` — Star brain implementation.
+- `Engine/IStarDecisionScorer` — optional LLM scoring seam that returns impulse scores for deterministic game decision resolution.
 - `Engine/IRelationshipDeltaCalculator` — deterministic relationship delta rules.
 - `Engine/IStarStateStore` — state persistence backend.
 - `Screen/IScreenContextStore` — recent screen-summary store.

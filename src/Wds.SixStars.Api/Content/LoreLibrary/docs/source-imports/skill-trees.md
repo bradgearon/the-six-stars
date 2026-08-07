@@ -870,7 +870,7 @@ Stardust Version: Costs 85 Stardust
 
 ## KAELIA – VOID DOMAIN
 
-“Why try? It all ends the same.”
+“The Void is not empty. It is listening.”
 
 Weapon: Void Lute, Void-infused claws/sword
 

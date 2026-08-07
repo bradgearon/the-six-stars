@@ -48,7 +48,7 @@ This file preserves important guide, teaser, Star, guardian, and thesis quotes f
 
 ## Kaelia
 
-> “Why try? It all ends the same.”
+> “The Void is not empty. It is listening.”
 
 > “Be careful, little cat. The dark angels don’t just attack the body. They attack the hope that anything good was ever meant for you.”
 

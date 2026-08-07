@@ -15,8 +15,139 @@ namespace Wds.SixStars.Ui.Configuration
         public CompanionConfig Companion { get; set; } = new CompanionConfig();
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
         public ScreenLlmConfig ScreenLLM { get; set; } = new ScreenLlmConfig();
+        public MobileBridgeConfig MobileBridge { get; set; } = new MobileBridgeConfig();
+        public ConversationArchiveConfig ConversationArchive { get; set; } = new ConversationArchiveConfig();
+        public DailyStarStateConfig DailyStarState { get; set; } = new DailyStarStateConfig();
+        public WorldEventsConfig WorldEvents { get; set; } = new WorldEventsConfig();
+        public StarSpeechIntentConfig StarSpeechIntents { get; set; } = new StarSpeechIntentConfig();
+        public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
+        public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
     }
 
+
+    public sealed class MobileBridgeConfig
+    {
+        /// <summary>Starts the LAN bridge when the WPF app opens so the Android client can connect.</summary>
+        public bool EnabledOnStartup { get; set; } = true;
+
+        /// <summary>Friendly Windows/network name the Android client defaults to. Change to your PC name or use the phone app URL field.</summary>
+        public string HostName { get; set; } = "grasshoppah";
+
+        /// <summary>TCP port listened on all local interfaces. Open Windows Firewall for this port for phone access.</summary>
+        public int Port { get; set; } = 8066;
+
+        /// <summary>When true, Android requests also play the Star response through the desktop TTS/audio pipeline.</summary>
+        public bool SpeakResponsesOnDesktop { get; set; } = false;
+    }
+
+
+    public sealed class ConversationArchiveConfig
+    {
+        /// <summary>When true, the desktop LAN host also serves the local relationship/conversation review website.</summary>
+        public bool Enabled { get; set; } = true;
+
+        /// <summary>URL prefix for the static archive website. Defaults to /archive on the same port as the Android bridge.</summary>
+        public string PathPrefix { get; set; } = "/archive";
+
+        /// <summary>Default session shown when the archive opens. Use android-phone-prod for the phone companion history.</summary>
+        public string DefaultSessionId { get; set; } = "android-phone-prod";
+
+        /// <summary>Maximum markdown trace files returned to the browser in one refresh.</summary>
+        public int MaxLogs { get; set; } = 160;
+    }
+
+    public sealed class WorldEventsConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public string StateRoot { get; set; } = "state/world-events";
+        public int MaximumStoredEvents { get; set; } = 2000;
+        public int PromptEventCount { get; set; } = 32;
+        public int RefreshDebounceSeconds { get; set; } = 8;
+        public string ApiKey { get; set; } = string.Empty;
+        public List<WorldEventFeedConfig> Feeds { get; set; } = new List<WorldEventFeedConfig>();
+    }
+
+    public sealed class WorldEventFeedConfig
+    {
+        public string FeedId { get; set; } = string.Empty;
+        public string Url { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+        public int PollSeconds { get; set; } = 20;
+        public string ApiKey { get; set; } = string.Empty;
+    }
+
+    public sealed class StarSpeechIntentConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public string StateRoot { get; set; } = "state/star-speech-intents";
+        public int MaximumStoredIntents { get; set; } = 800;
+        public double AgingPointsPerHour { get; set; } = 1.5;
+        public double MaximumAgeBoost { get; set; } = 18;
+        public double HighPriorityPreparationThreshold { get; set; } = 75;
+        public double MediumPriorityPreparationThreshold { get; set; } = 55;
+        public double HighPriorityAutoSpeakThreshold { get; set; } = 78;
+        public double MediumPriorityAutoSpeakThreshold { get; set; } = 55;
+        public int MaximumPreparedItemsPerStar { get; set; } = 2;
+        public int MaximumPrepareAttempts { get; set; } = 5;
+        public int PreparationTimeoutMinutes { get; set; } = 10;
+        public int PrepareRetryDelaySeconds { get; set; } = 15;
+        public int LeaseMinutes { get; set; } = 5;
+        public int SpokenArchiveDays { get; set; } = 30;
+        public double MinimumRepeatHours { get; set; } = 12;
+    }
+
+    public sealed class PreparedSpeechConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public string StateRoot { get; set; } = "state/prepared-star-speech";
+        public int MaximumArtifactsPerStar { get; set; } = 3;
+        public int MaximumArtifactAgeHours { get; set; } = 72;
+    }
+
+    public sealed class ForegroundSpeechStyleConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public double ConciseModeProbability { get; set; } = 0.50;
+        public int ConciseMinimumChunks { get; set; } = 3;
+        public int ConciseMaximumChunks { get; set; } = 5;
+        public bool RespectExplicitLengthRequests { get; set; } = true;
+        public bool SpeakBeforeReplyEnabled { get; set; } = true;
+        public double SpeakBeforeReplyProbability { get; set; } = 0.30;
+        public double HighPrioritySpeakBeforeReplyProbability { get; set; } = 0.80;
+        public int SpeakBeforeReplyMaximumSeconds { get; set; } = 12;
+        public int MinimumPageDwellSeconds { get; set; } = 8;
+        public int MediumPriorityPageDwellSeconds { get; set; } = 18;
+        public double GirlfriendMediumSpeakProbability { get; set; } = 0.55;
+        public double HighConnectionMediumSpeakProbability { get; set; } = 0.30;
+        public double HighConnectionThreshold { get; set; } = 70;
+        public int MinimumMinutesBetweenAutoSpeech { get; set; } = 8;
+    }
+
+    public sealed class DailyStarStateConfig
+    {
+        public bool Enabled { get; set; } = true;
+        public bool GenerateForAllStars { get; set; } = true;
+        public bool RefreshSelectedStarOnRequest { get; set; } = true;
+        public string StateRoot { get; set; } = "state/daily-star-state";
+        public int PollSeconds { get; set; } = 60;
+        public int MaxXmlCharsForPrompt { get; set; } = 12000;
+        public int MaxJsonCharsForPrompt { get; set; } = 12000;
+        public List<string> StarIds { get; set; } = new List<string>();
+        public List<DailyStarStateSlotConfig> RefreshSlots { get; set; } = new List<DailyStarStateSlotConfig>
+        {
+            new DailyStarStateSlotConfig { SlotId = "overnight", StartsAt = "00:00", RefreshBefore = "06:00" },
+            new DailyStarStateSlotConfig { SlotId = "morning", StartsAt = "06:00", RefreshBefore = "12:00" },
+            new DailyStarStateSlotConfig { SlotId = "afternoon", StartsAt = "12:00", RefreshBefore = "18:00" },
+            new DailyStarStateSlotConfig { SlotId = "evening", StartsAt = "18:00", RefreshBefore = "00:00" }
+        };
+    }
+
+    public sealed class DailyStarStateSlotConfig
+    {
+        public string SlotId { get; set; } = string.Empty;
+        public string StartsAt { get; set; } = string.Empty;
+        public string RefreshBefore { get; set; } = string.Empty;
+    }
 
     public sealed class LocalModelsConfig
     {
@@ -76,7 +207,11 @@ namespace Wds.SixStars.Ui.Configuration
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
-        public bool UseJsonSchemaResponseFormat { get; set; } = true;
+        public bool UseJsonSchemaResponseFormat { get; set; } = false;
+        public bool DisableReasoning { get; set; } = true;
+        public int ReasoningBudget { get; set; } = 0;
+        public string ReasoningFormat { get; set; } = "none";
+        public bool SendReasoningControlFields { get; set; } = true;
 
         /// <summary>
         /// Local models can take a while after the backend reports 100% generation because
@@ -85,12 +220,17 @@ namespace Wds.SixStars.Ui.Configuration
         /// </summary>
         public int TimeoutSeconds { get; set; } = 600;
 
-        /// <summary>0 means do not send max_tokens; let the local backend/model limit apply. Override with SIX_STARS_LLM_MAX_TOKENS.</summary>
+        /// <summary>Default chat max_tokens sent to the local backend. Override with SIX_STARS_LLM_MAX_TOKENS. 0 means do not send max_tokens.</summary>
         public int MaxTokens { get; set; } = 0;
 
-        /// <summary>0 means do not send per-pass max_tokens. The schema/prompt controls output size instead.</summary>
+        /// <summary>Per-pass max_tokens for the fast spoken pass and background review. Override with SIX_STARS_LLM_SPEECH_MAX_TOKENS / SIX_STARS_LLM_REVIEW_MAX_TOKENS. 0 means not sent.</summary>
         public int SpeechMaxTokens { get; set; } = 0;
         public int ReviewMaxTokens { get; set; } = 0;
+
+        /// <summary>When true, every local LLM request and response is written to JSONL/text files for prompt analysis.</summary>
+        public bool LogExchangesToDisk { get; set; } = true;
+        public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
+        public int ExchangeLogMaxTextChars { get; set; } = 2000000;
 
         public double Temperature { get; set; } = 0.65;
     }
@@ -182,13 +322,28 @@ namespace Wds.SixStars.Ui.Configuration
         public int SecretStatesForPrompt { get; set; } = 30;
         public int RelationshipCombosForPrompt { get; set; } = 20;
         public int ScreenCapturesForPrompt { get; set; } = 5;
+        public double ActiveFlirtConnectionPercent { get; set; } = 65;
+        public int ActiveFlirtRomanceScore { get; set; } = 10;
+        public double StrongActiveFlirtConnectionPercent { get; set; } = 85;
+        public int StrongActiveFlirtRomanceScore { get; set; } = 25;
     }
 
     public sealed class ScreenLlmConfig
     {
+        public bool Enabled { get; set; } = true;
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
         public string Model { get; set; } = "local-model";
         public string? ApiKey { get; set; }
-        public bool UseJsonSchemaResponseFormat { get; set; } = true;
+        public bool UseJsonSchemaResponseFormat { get; set; } = false;
+        public bool DisableReasoning { get; set; } = true;
+        public int ReasoningBudget { get; set; } = 0;
+        public string ReasoningFormat { get; set; } = "none";
+        public bool SendReasoningControlFields { get; set; } = true;
+        public int MaxTokens { get; set; } = 0;
+        public int TimeoutSeconds { get; set; } = 120;
+        public bool LogExchangesToDisk { get; set; } = true;
+        public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
+        public int ExchangeLogMaxTextChars { get; set; } = 2000000;
+        public string PayloadShape { get; set; } = "OpenAiImageUrl";
     }
 }

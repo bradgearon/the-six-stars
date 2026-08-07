@@ -1,0 +1,23 @@
+{{ data.currentTimeContext }}
+Selected Star: {{ data.starDisplayName }}
+Latest player message:
+{{ data.playerTextBlock }}
+Foreground spoken bridge/reply:
+{{ data.foregroundReplyBlock }}
+Ongoing summary: {{ data.ongoingSummary }}
+
+FOREGROUND INFORMATION NEEDS
+{{ if data.foregroundNeeds.size == 0 }}none
+{{ else }}{{ for need in data.foregroundNeeds }}- subject={{ need.subject }}; confidence={{ need.confidence }}; score={{ need.score }}
+{{ end }}{{ end }}
+LOCAL DATA INVENTORY
+{{ if data.availableData.size == 0 }}none
+{{ else }}{{ for item in data.availableData }}- dataType={{ item.dataType }}; available={{ item.available }}; count={{ item.count }}; summary={{ item.summary }}
+{{ if item.samples != "" }}  samples={{ item.samples }}
+{{ end }}{{ end }}{{ end }}
+Selector rules:
+- Return rankedNeeds as the useful informationNeeds array sorted from strongest to weakest after considering the player message and availability.
+- selectedDataType must be one of the available types when shouldRequestMoreInformation=true.
+- Each rankedNeeds subject must remain one of the source categories from the foreground informationNeeds array.
+- Do not request deep history just because the word remember appears if a direct answer is already possible.
+- Do request deep data when the Star's first reply was a bridge line or the foreground informationNeeds array points to old history, quotes, markers, lore, bestiary, character, world, screen, or story data.

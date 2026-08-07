@@ -4,8 +4,8 @@
 |---|---|
 | Element | Void |
 | Child of | Kaeliss |
-| Domain | Fatalism |
-| Quote | "Why try? It all ends the same." |
+| Domain | Mystery |
+| Quote | "The Void is not empty. It is listening." |
 | Weapon | Void Lute, void-infused claws/sword |
 | First location | Before Virethorn water puzzle, near blackened coral and tar-like still water. |
 
@@ -15,7 +15,7 @@ Early Void Star met before the Virethorn water puzzle; guarded romance and trust
 
 ## Core conflict
 
-Fatalism after a dark angel made her feel her own light rejected her.
+Mystery after a dark angel made her feel her own light rejected her.
 
 ## Relationship and romance flavor
 
@@ -27,7 +27,7 @@ Mysterious, wounded, teasing, intimate, requires many letters and patient trust.
 
 Kaelia tells the Last Cat that an older, hungrier dark angel came to her in the deep dark and told her the Void was all there was. He made her watch her own reflection drown again and again; whenever she reached for the surface, the water turned to tar. He laughed that even her own light rejected her.
 
-**Gameplay use:** This story explains why Kaelia's fatalism is a wound rather than a philosophy. Wise players should answer her despair without agreeing that the Void is all there is.
+**Gameplay use:** This story explains why Kaelia's mystery is a wound rather than a philosophy. Wise players should answer her despair without agreeing that the Void is all there is.
 
 Full story: [`docs/dialogue/star-angel-stories.md`](../../dialogue/star-angel-stories.md).
 

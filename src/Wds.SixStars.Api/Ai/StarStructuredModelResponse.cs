@@ -31,7 +31,11 @@ namespace Wds.SixStars.Api.Ai
         public int StoryPartIndex { get; set; }
         public List<string> CanonSourcesUsed { get; set; } = new List<string>();
         public string EmotionalPurpose { get; set; } = string.Empty;
+        public string EmotionalEffectVector { get; set; } = string.Empty;
         public string NegativeEmotionVector { get; set; } = string.Empty;
+        public bool NeedsMoreInformation { get; set; }
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]
@@ -40,6 +44,15 @@ namespace Wds.SixStars.Api.Ai
         public RelationshipDelta SuggestedStateDeltas { get; set; } = RelationshipDelta.Zero();
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        /// <summary>Interstar target reaction only: how this Star feels toward the source Star after hearing the relay from her.</summary>
+        public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
+        public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
+
+        /// <summary>Interstar mode only: one or more per-Star vectors for Star-to-Star relationship updates.</summary>
+        public List<InterstarEmotionVectorResult> InterstarEmotionVectors { get; set; } = new List<InterstarEmotionVectorResult>();
+
+        /// <summary>Interstar mode only: what this Star would say back to the source Star after hearing the relay.</summary>
+        public string ReplyToSourceStar { get; set; } = string.Empty;
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
@@ -50,6 +63,13 @@ namespace Wds.SixStars.Api.Ai
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();
+        public string GirlfriendCoupleActivitySummary { get; set; } = string.Empty;
+        public string GirlfriendCoupleActivityVector { get; set; } = string.Empty;
+        [JsonPropertyName("requestToShowBoobs")]
+        public bool RequestToShowBoobs { get; set; }
         public List<string> LoreUsed { get; set; } = new List<string>();
         public List<string> RiskFlags { get; set; } = new List<string>();
         public double WisdomScore { get; set; }

@@ -15,8 +15,24 @@ namespace Wds.SixStars.Api.Models
         public int Romance { get; set; }
         public int BenaveilInfluence { get; set; }
 
-        /// <summary>True once the game/story has made this Star an active ally. Elusiaa defaults true; other Stars default false until unlocked by story/gameplay.</summary>
+        /// <summary>One-way Star-to-Star relationship state from this Star toward every other Star.
+        /// Prompt format: StarName:isMet:isAlly:isGirlfriend:trustScore:heartScore.</summary>
+        public List<InterstarRelationshipState> OtherStars { get; set; } = new List<InterstarRelationshipState>();
+
+        /// <summary>True once the game/story has introduced this Star to the player. Elusiaa defaults true; other Stars default false until met in-game.</summary>
+        public bool IsMet { get; set; }
+
+        /// <summary>True once the game/story has made this Star an active ally. Ally status normally implies met. Elusiaa defaults true; other Stars default false until unlocked by story/gameplay.</summary>
         public bool IsAlly { get; set; }
+
+        /// <summary>Deterministic gameplay modifiers currently changing relationship state updates over time.</summary>
+        public List<StarRelationshipEffector> ActiveEffectors { get; set; } = new List<StarRelationshipEffector>();
+
+        /// <summary>Authored game dialogue lines or beats this Star has finished, newest first.</summary>
+        public List<StarDialogueMemoryEntry> GameDialogueHistory { get; set; } = new List<StarDialogueMemoryEntry>();
+
+        /// <summary>Current authored dialogue/script progress if Unity wants the Star to know exactly where she is in written dialogue.</summary>
+        public StarDialogueProgressState CurrentDialogueState { get; set; } = new StarDialogueProgressState();
 
         /// <summary>How strict the deterministic romance/connection gate should be for this Star.</summary>
         public string EmotionalConnectionSkillLevel { get; set; } = "interested_private_potential_partner";
@@ -37,12 +53,33 @@ namespace Wds.SixStars.Api.Models
         public string LastNegativeEmotionVector { get; set; } = string.Empty;
         public string LastDeterministicEmotionSummary { get; set; } = string.Empty;
 
+        /// <summary>Current generated daily JSON state pointer used to answer questions like what she is doing today.</summary>
+        public StarDailyStateContext TodayState { get; set; } = new StarDailyStateContext();
+
+        /// <summary>Current generated girlfriend-hourly state for the exclusive girlfriend path: needs, wants, cute lines, and spontaneous speech hooks.</summary>
+        public StarGirlfriendHourlyStateContext GirlfriendHourlyState { get; set; } = new StarGirlfriendHourlyStateContext();
+
+        /// <summary>When the durable Star relationship/memory state last changed and could influence the next scheduled daily state refresh.</summary>
+        public DateTimeOffset? LastDailyStateSourceUpdateAt { get; set; }
+
+        /// <summary>Strongest nonzero emotion vector entries from the last settled background update.</summary>
+        public List<TopAffectedEmotion> LastTopAffectedEmotions { get; set; } = new List<TopAffectedEmotion>();
+
         public int InteractionCount { get; set; }
         public DateTimeOffset? LastInteractionAt { get; set; }
         public string CurrentConversationId { get; set; } = string.Empty;
         public string ConversationSummary { get; set; } = string.Empty;
+
+        /// <summary>Small distilled prompt-facing quote list. Keep this bounded so the ongoing conversation context never grows huge.</summary>
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
+
+        /// <summary>Durable source archive of important player quotes for nostalgia / old-memory retrieval. The prompt only receives selected slices.</summary>
+        public List<StarImportantQuoteRecord> AllImportantPlayerQuotes { get; set; } = new List<StarImportantQuoteRecord>();
+
         public List<string> MemoryNotes { get; set; } = new List<string>();
+
+        /// <summary>Durable facts, reported events, preferences, plans, and game-world suggestions the Star has explicitly learned from the Last Cat.</summary>
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
         /// <summary>Exact things the player explicitly asked this Star to remember: coordinates, location markers, descriptions, and named points of interest.</summary>
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
@@ -55,9 +92,46 @@ namespace Wds.SixStars.Api.Models
 
         public bool IsGirlfriend { get; set; }
         public DateTimeOffset? GirlfriendSince { get; set; }
+
+        /// <summary>Player/UI preference for whether girlfriend cute-mode behavior is allowed. Defaults true; if false, hourly cute-mode rolls are suppressed.</summary>
+        public bool GirlfriendCuteModeEnabled { get; set; } = true;
+
         public List<string> GirlfriendHistory { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+
+        /// <summary>Durable girlfriend-mode archive of generated needs/wants and spontaneous things she wanted to say.</summary>
+        public List<GirlfriendVectorHistoryEntry> GirlfriendDesiredStateHistory { get; set; } = new List<GirlfriendVectorHistoryEntry>();
+
+        /// <summary>Durable girlfriend-mode archive of wants/needs the player's turns appear to have met.</summary>
+        public List<GirlfriendNeedFulfillmentHistoryEntry> GirlfriendNeedsMetHistory { get; set; } = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+
+        /// <summary>Compact durable history of generated girlfriend need vectors. Format: timestamp|slot|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendDesiredNeedVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of generated girlfriend want vectors. Format: timestamp|slot|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendDesiredWantVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of girlfriend needs met by player turns. Format: timestamp|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendMetNeedVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Compact durable history of girlfriend wants met by player turns. Format: timestamp|itemId:score:confidence;...</summary>
+        public List<string> GirlfriendMetWantVectorHistory { get; set; } = new List<string>();
+
+        /// <summary>Accumulated girlfriend need-fulfillment performance vector since she became girlfriend.</summary>
+        public List<GirlfriendVectorItem> GirlfriendNeedsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>Accumulated girlfriend want-fulfillment performance vector since she became girlfriend.</summary>
+        public List<GirlfriendVectorItem> GirlfriendWantsMetPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        /// <summary>Durable girlfriend-mode running scores for couple activities such as hand-holding, kissing, cuddling, petting, and deeper romantic/textual intimacy.</summary>
+        public List<GirlfriendCoupleActivityScore> GirlfriendCoupleActivityScores { get; set; } = new List<GirlfriendCoupleActivityScore>();
+
+        /// <summary>Recent couple-activity detections from player text and Star speech, newest first.</summary>
+        public List<GirlfriendCoupleActivityHistoryEntry> GirlfriendCoupleActivityHistory { get; set; } = new List<GirlfriendCoupleActivityHistoryEntry>();
+
+        /// <summary>Highest-scoring Last Cat wording examples by couple activity so girlfriend mode can initiate from proven affection patterns.</summary>
+        public List<GirlfriendCoupleActivityBestExample> GirlfriendCoupleActivityBestExamples { get; set; } = new List<GirlfriendCoupleActivityBestExample>();
 
         public int PositiveSuccessionCount { get; set; }
         public int RomanticSuccessionCount { get; set; }
@@ -66,10 +140,26 @@ namespace Wds.SixStars.Api.Models
         public DateTimeOffset? LastRomanticInteractionAt { get; set; }
         public DateTimeOffset? LastHurtInteractionAt { get; set; }
 
+        /// <summary>Recent active conversation turns only. Older turns are moved to OldConversationArchives after the configured age window.</summary>
         public List<ConversationLogEntry> MemoryLog { get; set; } = new List<ConversationLogEntry>();
+
+        /// <summary>Summarized archived conversation blocks with source entries retained for explicit old-memory retrieval.</summary>
+        public List<StarConversationArchiveEntry> OldConversationArchives { get; set; } = new List<StarConversationArchiveEntry>();
 
         /// <summary>Recent deterministic emotion updates used to prevent repeated cheap scoring and to detect longer-term combos.</summary>
         public List<EmotionUpdateHistoryEntry> EmotionUpdateHistory { get; set; } = new List<EmotionUpdateHistoryEntry>();
+
+        /// <summary>Bounded full-vector relationship evidence used only by the deterministic scorer, not by the prompt.</summary>
+        public List<StarEmotionVectorHistoryEntry> EmotionVectorHistory { get; set; } = new List<StarEmotionVectorHistoryEntry>();
+
+        /// <summary>Durable Heart/Trust/Romance score remainders. These let varied high-certainty emotion evidence add up over time.</summary>
+        public List<StarRelationshipScoreAccumulator> RelationshipScoreAccumulators { get; set; } = new List<StarRelationshipScoreAccumulator>();
+
+        /// <summary>High-confidence positive emotion totals earned through deterministic emotion scoring.</summary>
+        public List<StarEmotionAccumulatedScore> PositiveEmotionTotals { get; set; } = new List<StarEmotionAccumulatedScore>();
+
+        /// <summary>High-confidence bad/boundary emotion totals earned through deterministic emotion scoring.</summary>
+        public List<StarEmotionAccumulatedScore> NegativeEmotionTotals { get; set; } = new List<StarEmotionAccumulatedScore>();
 
         /// <summary>
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.

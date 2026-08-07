@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Wds.SixStars.Api.Screen;
 
@@ -22,6 +23,7 @@ public sealed class DesktopScreenCaptureService : IScreenImageCaptureService
     private const int SM_CXVIRTUALSCREEN = 78;
     private const int SM_CYVIRTUALSCREEN = 79;
     private const int SRCCOPY = 0x00CC0020;
+    private const int MaxVisionImageWidth = 1024;
 
     public Task<ScreenImageCapture> CaptureAsync(CancellationToken cancellationToken)
     {
@@ -48,6 +50,16 @@ public sealed class DesktopScreenCaptureService : IScreenImageCaptureService
             BitmapSource source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, IntPtr.Zero, System.Windows.Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
             source.Freeze();
 
+            // Vision models do not need the full desktop resolution. Keeping the image compact
+            // avoids oversized OpenAI-compatible JSON posts and makes llama.cpp/mmproj vision faster.
+            if (source.PixelWidth > MaxVisionImageWidth)
+            {
+                double scale = MaxVisionImageWidth / (double)source.PixelWidth;
+                TransformedBitmap resized = new TransformedBitmap(source, new ScaleTransform(scale, scale));
+                resized.Freeze();
+                source = resized;
+            }
+
             JpegBitmapEncoder encoder = new JpegBitmapEncoder { QualityLevel = 70 };
             encoder.Frames.Add(BitmapFrame.Create(source));
             using MemoryStream stream = new MemoryStream();
@@ -59,8 +71,8 @@ public sealed class DesktopScreenCaptureService : IScreenImageCaptureService
                 ImageBytes = stream.ToArray(),
                 MimeType = "image/jpeg",
                 ImageReference = "desktop-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                Width = width,
-                Height = height,
+                Width = source.PixelWidth,
+                Height = source.PixelHeight,
                 ActiveApp = active.ProcessName,
                 ActiveProcessName = active.ProcessName,
                 ActiveWindowTitle = active.Title

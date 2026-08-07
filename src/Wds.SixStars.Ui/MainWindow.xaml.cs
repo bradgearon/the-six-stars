@@ -12,6 +12,11 @@ public partial class MainWindow : Window
     private const int HotkeyToggleRecord = 0x5E01;
     private const int HotkeyCancelAll = 0x5E02;
     private const int WM_HOTKEY = 0x0312;
+    private const int WM_POWERBROADCAST = 0x0218;
+    private const int PBT_APMSUSPEND = 0x0004;
+    private const int PBT_APMRESUMECRITICAL = 0x0006;
+    private const int PBT_APMRESUMESUSPEND = 0x0007;
+    private const int PBT_APMRESUMEAUTOMATIC = 0x0012;
     private const uint MOD_CONTROL = 0x0002;
     private const uint MOD_WIN = 0x0008;
     private HwndSource? _source;
@@ -36,21 +41,38 @@ public partial class MainWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg == WM_HOTKEY && DataContext is MainViewModel viewModel)
+        if (DataContext is MainViewModel viewModel)
         {
-            int id = wParam.ToInt32();
-            if (id == HotkeyToggleRecord)
+            if (msg == WM_HOTKEY)
             {
-                if (viewModel.ToggleRecordingCommand.CanExecute(null))
+                int id = wParam.ToInt32();
+                if (id == HotkeyToggleRecord)
                 {
-                    viewModel.ToggleRecordingCommand.Execute(null);
+                    if (viewModel.ToggleRecordingCommand.CanExecute(null))
+                    {
+                        viewModel.ToggleRecordingCommand.Execute(null);
+                    }
+                    handled = true;
                 }
-                handled = true;
+                else if (id == HotkeyCancelAll)
+                {
+                    viewModel.CancelAllRuntimeOperations("Win+Ctrl+C hotkey.");
+                    handled = true;
+                }
             }
-            else if (id == HotkeyCancelAll)
+            else if (msg == WM_POWERBROADCAST)
             {
-                viewModel.CancelAllRuntimeOperations("Win+Ctrl+C hotkey.");
-                handled = true;
+                int powerEvent = wParam.ToInt32();
+                if (powerEvent == PBT_APMSUSPEND)
+                {
+                    viewModel.HandleSystemSuspend();
+                }
+                else if (powerEvent == PBT_APMRESUMEAUTOMATIC
+                    || powerEvent == PBT_APMRESUMESUSPEND
+                    || powerEvent == PBT_APMRESUMECRITICAL)
+                {
+                    _ = viewModel.HandleSystemResumeAsync();
+                }
             }
         }
 

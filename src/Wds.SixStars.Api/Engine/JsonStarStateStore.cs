@@ -16,11 +16,13 @@ namespace Wds.SixStars.Api.Engine
     /// </summary>
     public sealed class JsonStarStateStore : IStarStateStore
     {
+        private const string CanonicalSessionId = "local-dev";
+        private const int CanonicalStateVersion = 2;
         private readonly string _filePath;
         public string FilePath => _filePath;
         private readonly SemaphoreSlim _gate = new SemaphoreSlim(1, 1);
         private readonly JsonSerializerOptions _jsonOptions;
-        private SixStarsSaveData? _cache;
+        private SixStarsSaveData? _cachedData;
 
         public JsonStarStateStore(string filePath)
         {
@@ -62,6 +64,11 @@ namespace Wds.SixStars.Api.Engine
             return Environment.CurrentDirectory;
         }
 
+        private static bool IsDefaultMet(string starId)
+        {
+            return string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsDefaultAlly(string starId)
         {
             return string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
@@ -72,9 +79,25 @@ namespace Wds.SixStars.Api.Engine
             return new StarState
             {
                 StarId = starId,
+                IsMet = IsDefaultMet(starId),
                 IsAlly = IsDefaultAlly(starId),
                 EmotionalConnectionSkillLevel = "interested_private_potential_partner",
                 EmotionalConnectionPercent = 0,
+                LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
+                TodayState = new StarDailyStateContext(),
+                GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
+                GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
+                GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendDesiredNeedVectorHistory = new List<string>(),
+                GirlfriendDesiredWantVectorHistory = new List<string>(),
+                GirlfriendMetNeedVectorHistory = new List<string>(),
+                GirlfriendMetWantVectorHistory = new List<string>(),
+                GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
+                GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>(),
+                GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>(),
+                OtherStars = new List<InterstarRelationshipState>(),
                 GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
             };
         }
@@ -99,6 +122,102 @@ namespace Wds.SixStars.Api.Engine
                 state.EmotionalConnectionPercent = 100;
                 changed = true;
             }
+            if (state.RelationshipEvents == null)
+            {
+                state.RelationshipEvents = new List<string>();
+                changed = true;
+            }
+            if (state.OtherStars == null)
+            {
+                state.OtherStars = new List<InterstarRelationshipState>();
+                changed = true;
+            }
+            foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
+            {
+                if (relation.History == null)
+                {
+                    relation.History = new List<InterstarRelationshipHistoryEntry>();
+                    changed = true;
+                }
+            }
+            if (state.GirlfriendHourlyState == null)
+            {
+                state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+                changed = true;
+            }
+            if (state.GirlfriendDesiredStateHistory == null)
+            {
+                state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendNeedsMetHistory == null)
+            {
+                state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendDesiredNeedVectorHistory == null) { state.GirlfriendDesiredNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendDesiredWantVectorHistory == null) { state.GirlfriendDesiredWantVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetNeedVectorHistory == null) { state.GirlfriendMetNeedVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendMetWantVectorHistory == null) { state.GirlfriendMetWantVectorHistory = new List<string>(); changed = true; }
+            if (state.GirlfriendNeedsMetPerformanceVector == null)
+            {
+                state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+                changed = true;
+            }
+            if (state.GirlfriendWantsMetPerformanceVector == null)
+            {
+                state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityScores == null)
+            {
+                state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityHistory == null)
+            {
+                state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
+                changed = true;
+            }
+            if (state.GirlfriendCoupleActivityBestExamples == null)
+            {
+                state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
+                changed = true;
+            }
+            if (state.ActiveEffectors == null)
+            {
+                state.ActiveEffectors = new List<StarRelationshipEffector>();
+                changed = true;
+            }
+            if (state.EmotionVectorHistory == null)
+            {
+                state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+                changed = true;
+            }
+            if (state.RelationshipScoreAccumulators == null)
+            {
+                state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
+                changed = true;
+            }
+            if (state.TodayState == null)
+            {
+                state.TodayState = new StarDailyStateContext();
+                changed = true;
+            }
+            if (state.IsAlly && !state.IsMet)
+            {
+                state.IsMet = true;
+                changed = true;
+            }
+            if (IsDefaultMet(state.StarId) && !state.IsMet)
+            {
+                bool explicitlyRemovedMet = state.RelationshipEvents.Any(x => x.IndexOf("Met flag removed", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!explicitlyRemovedMet)
+                {
+                    state.IsMet = true;
+                    changed = true;
+                }
+            }
             if (string.IsNullOrWhiteSpace(state.GirlfriendReadinessSummary))
             {
                 state.GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12.";
@@ -111,6 +230,7 @@ namespace Wds.SixStars.Api.Engine
             if (IsDefaultAlly(state.StarId) && !state.IsAlly && !explicitlyRemoved)
             {
                 state.IsAlly = true;
+                state.IsMet = true;
                 changed = true;
             }
             return changed;
@@ -179,12 +299,12 @@ namespace Wds.SixStars.Api.Engine
             {
                 SixStarsSaveData data = new SixStarsSaveData
                 {
-                    Version = 1,
-                    SessionId = sessionId,
+                    Version = CanonicalStateVersion,
+                    SessionId = CanonicalSessionId,
                     SavedAt = DateTimeOffset.UtcNow,
                     Stars = states.ToList()
                 };
-                _cache = data;
+                _cachedData = data;
                 await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
             }
             finally
@@ -214,39 +334,231 @@ namespace Wds.SixStars.Api.Engine
 
         private async Task<SixStarsSaveData> LoadAsync(string sessionId, CancellationToken cancellationToken)
         {
-            if (_cache != null)
+            // The transport still carries a session id for request correlation, but Star state is
+            // one canonical save shared by desktop, Android, and any future clients.
+            if (_cachedData != null)
             {
-                return _cache;
+                return _cachedData;
             }
 
-            if (!File.Exists(_filePath))
+            SixStarsSaveData? root = await TryLoadDataFileAsync(_filePath, cancellationToken).ConfigureAwait(false);
+            if (root != null && root.Version >= CanonicalStateVersion && string.Equals(NormalizeSessionId(root.SessionId), CanonicalSessionId, StringComparison.OrdinalIgnoreCase))
             {
-                _cache = new SixStarsSaveData { SessionId = sessionId };
-                return _cache;
+                root.SessionId = CanonicalSessionId;
+                if (root.Stars == null) root.Stars = new List<StarState>();
+                foreach (StarState state in root.Stars.Where(x => x != null)) NormalizeStateDefaults(state);
+                _cachedData = root;
+                return root;
             }
 
-            using (FileStream stream = File.OpenRead(_filePath))
+            SixStarsSaveData data = await MigrateLegacySessionStateAsync(root, cancellationToken).ConfigureAwait(false);
+            _cachedData = data;
+            await SaveFileAsync(data, cancellationToken).ConfigureAwait(false);
+            return data;
+        }
+
+        private async Task<SixStarsSaveData> MigrateLegacySessionStateAsync(SixStarsSaveData? root, CancellationToken cancellationToken)
+        {
+            List<LegacyStarCandidate> candidates = new List<LegacyStarCandidate>();
+            if (root != null) AddAggregateCandidates(candidates, root, _filePath);
+
+            string? stateDirectory = Path.GetDirectoryName(_filePath);
+            if (string.IsNullOrWhiteSpace(stateDirectory)) stateDirectory = Environment.CurrentDirectory;
+
+            string sessionsDirectory = Path.Combine(stateDirectory, "sessions");
+            if (Directory.Exists(sessionsDirectory))
             {
-                SixStarsSaveData? loaded = await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                _cache = loaded ?? new SixStarsSaveData { SessionId = sessionId };
-                if (string.IsNullOrWhiteSpace(_cache.SessionId)) _cache.SessionId = sessionId;
-                return _cache;
+                foreach (string path in Directory.EnumerateFiles(sessionsDirectory, "*.json", SearchOption.TopDirectoryOnly))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    SixStarsSaveData? legacy = await TryLoadDataFileAsync(path, cancellationToken).ConfigureAwait(false);
+                    if (legacy != null) AddAggregateCandidates(candidates, legacy, path);
+                }
             }
+
+            string starsDirectory = Path.Combine(stateDirectory, "stars");
+            if (Directory.Exists(starsDirectory))
+            {
+                foreach (string path in Directory.EnumerateFiles(starsDirectory, "*.json", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    StarState? state = await TryLoadStarFileAsync(path, cancellationToken).ConfigureAwait(false);
+                    if (state == null || string.IsNullOrWhiteSpace(state.StarId)) continue;
+                    candidates.Add(new LegacyStarCandidate(state, GetLastWriteTime(path)));
+                }
+            }
+
+            List<StarState> migratedStates = candidates
+                .Where(x => x.State != null && !string.IsNullOrWhiteSpace(x.State.StarId))
+                .GroupBy(x => x.State.StarId, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(GetMigrationPriority).First().State)
+                .ToList();
+
+            foreach (StarState state in migratedStates) NormalizeStateDefaults(state);
+
+            return new SixStarsSaveData
+            {
+                Version = Math.Max(CanonicalStateVersion, root?.Version ?? CanonicalStateVersion),
+                SessionId = CanonicalSessionId,
+                SavedAt = DateTimeOffset.UtcNow,
+                Stars = migratedStates
+            };
+        }
+
+        private static void AddAggregateCandidates(List<LegacyStarCandidate> candidates, SixStarsSaveData data, string path)
+        {
+            if (data?.Stars == null) return;
+            DateTimeOffset sourceTime = data.SavedAt > DateTimeOffset.MinValue ? data.SavedAt : GetLastWriteTime(path);
+            foreach (StarState state in data.Stars.Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId)))
+            {
+                candidates.Add(new LegacyStarCandidate(state, sourceTime));
+            }
+        }
+
+        private static MigrationPriority GetMigrationPriority(LegacyStarCandidate candidate)
+        {
+            StarState state = candidate.State;
+            int durableEvidenceCount =
+                (state.MemoryLog?.Count ?? 0) +
+                (state.OldConversationArchives?.Count ?? 0) +
+                (state.EmotionUpdateHistory?.Count ?? 0) +
+                (state.EmotionVectorHistory?.Count ?? 0) +
+                (state.RelationshipEvents?.Count ?? 0) +
+                (state.AllImportantPlayerQuotes?.Count ?? 0) +
+                (state.ThingsLearnedOrSuggestedByPlayer?.Count ?? 0);
+
+            int relationshipProgress = Math.Max(0, state.Heart) + Math.Max(0, state.Trust) + Math.Max(0, state.Romance);
+            DateTimeOffset activity = state.LastInteractionAt
+                ?? state.LastDailyStateSourceUpdateAt
+                ?? candidate.SourceTime;
+
+            // Prefer the state that contains the largest real interaction history. This avoids a
+            // newly-created zero-value session replacing the established relationship during the
+            // one-time migration. Timestamps resolve ties without treating a blank reset as richer.
+            return new MigrationPriority(
+                state.InteractionCount,
+                durableEvidenceCount,
+                relationshipProgress,
+                activity,
+                candidate.SourceTime);
+        }
+
+        private async Task<StarState?> TryLoadStarFileAsync(string path, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                {
+                    return await JsonSerializer.DeserializeAsync<StarState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (JsonException) { return null; }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+
+        private static DateTimeOffset GetLastWriteTime(string path)
+        {
+            try
+            {
+                return File.Exists(path) ? new DateTimeOffset(File.GetLastWriteTimeUtc(path)) : DateTimeOffset.MinValue;
+            }
+            catch (IOException) { return DateTimeOffset.MinValue; }
+            catch (UnauthorizedAccessException) { return DateTimeOffset.MinValue; }
+        }
+
+        private async Task<SixStarsSaveData?> TryLoadDataFileAsync(string path, CancellationToken cancellationToken)
+        {
+            if (!File.Exists(path)) return null;
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, true))
+                {
+                    return await JsonSerializer.DeserializeAsync<SixStarsSaveData>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (FileNotFoundException) { return null; }
+            catch (DirectoryNotFoundException) { return null; }
+            catch (JsonException) { return null; }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
         }
 
         private async Task SaveFileAsync(SixStarsSaveData data, CancellationToken cancellationToken)
         {
+            data.SessionId = CanonicalSessionId;
+            data.Version = Math.Max(CanonicalStateVersion, data.Version);
             data.SavedAt = DateTimeOffset.UtcNow;
-            string? directory = Path.GetDirectoryName(_filePath);
+            _cachedData = data;
+
+            // One canonical aggregate is the only relationship/memory state. Session identifiers
+            // remain transport metadata and never select a different save.
+            await WriteDataFileAsync(_filePath, data, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task WriteDataFileAsync(string path, SixStarsSaveData data, CancellationToken cancellationToken)
+        {
+            string? directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
-            string tempPath = _filePath + ".tmp";
+            string tempPath = path + ".tmp";
             using (FileStream stream = File.Create(tempPath))
             {
                 await JsonSerializer.SerializeAsync(stream, data, _jsonOptions, cancellationToken).ConfigureAwait(false);
             }
 
-            if (File.Exists(_filePath)) File.Delete(_filePath);
-            File.Move(tempPath, _filePath);
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(tempPath, path);
         }
+
+        private static string NormalizeSessionId(string? sessionId)
+        {
+            return string.IsNullOrWhiteSpace(sessionId) ? CanonicalSessionId : sessionId.Trim();
+        }
+
+        private sealed class LegacyStarCandidate
+        {
+            public LegacyStarCandidate(StarState state, DateTimeOffset sourceTime)
+            {
+                State = state;
+                SourceTime = sourceTime;
+            }
+
+            public StarState State { get; }
+            public DateTimeOffset SourceTime { get; }
+        }
+
+        private readonly struct MigrationPriority : IComparable<MigrationPriority>
+        {
+            public MigrationPriority(int interactionCount, int durableEvidenceCount, int relationshipProgress, DateTimeOffset activity, DateTimeOffset sourceTime)
+            {
+                InteractionCount = interactionCount;
+                DurableEvidenceCount = durableEvidenceCount;
+                RelationshipProgress = relationshipProgress;
+                Activity = activity;
+                SourceTime = sourceTime;
+            }
+
+            private int InteractionCount { get; }
+            private int DurableEvidenceCount { get; }
+            private int RelationshipProgress { get; }
+            private DateTimeOffset Activity { get; }
+            private DateTimeOffset SourceTime { get; }
+
+            public int CompareTo(MigrationPriority other)
+            {
+                int result = InteractionCount.CompareTo(other.InteractionCount);
+                if (result != 0) return result;
+                result = DurableEvidenceCount.CompareTo(other.DurableEvidenceCount);
+                if (result != 0) return result;
+                result = RelationshipProgress.CompareTo(other.RelationshipProgress);
+                if (result != 0) return result;
+                result = Activity.CompareTo(other.Activity);
+                if (result != 0) return result;
+                return SourceTime.CompareTo(other.SourceTime);
+            }
+        }
+
     }
 }

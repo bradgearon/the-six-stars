@@ -14,8 +14,9 @@ Optional environment variables:
     WHISPER_PORT=8000
     WHISPER_MODEL=tiny.en
     WHISPER_MODEL_PATH=C:/models/faster-whisper-medium
-    WHISPER_DEVICE=auto
-    WHISPER_COMPUTE_TYPE=auto
+    WHISPER_DEVICE=cuda
+    WHISPER_COMPUTE_TYPE=float16
+    SIX_STARS_REQUIRE_CUDA=true
     WHISPER_CPU_THREADS=0
     WHISPER_NUM_WORKERS=1
     WHISPER_BEAM_SIZE=5
@@ -67,8 +68,9 @@ HOST = os.environ.get("WHISPER_HOST", "0.0.0.0")
 PORT = parse_int(os.environ.get("WHISPER_PORT"), 8000)
 MODEL_ID = os.environ.get("WHISPER_MODEL", "tiny.en")
 MODEL_PATH = os.environ.get("WHISPER_MODEL_PATH", "").strip()
-DEVICE = os.environ.get("WHISPER_DEVICE", "auto")
-COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "auto")
+REQUIRE_CUDA = os.environ.get("SIX_STARS_REQUIRE_CUDA", "true").strip().lower() not in {"0", "false", "no", "off"}
+DEVICE = os.environ.get("WHISPER_DEVICE", "cuda").strip().lower() or "cuda"
+COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "float16").strip() or "float16"
 CPU_THREADS = parse_int(os.environ.get("WHISPER_CPU_THREADS"), 0)
 NUM_WORKERS = parse_int(os.environ.get("WHISPER_NUM_WORKERS"), 1)
 DEFAULT_LANGUAGE = os.environ.get("WHISPER_DEFAULT_LANGUAGE", "en").strip() or "en"
@@ -79,6 +81,33 @@ DOWNLOAD_ROOT = os.environ.get("WHISPER_DOWNLOAD_ROOT", str(MODELS_ROOT / "asr")
 API_KEY = os.environ.get("WHISPER_API_KEY", "").strip()
 
 _model: WhisperModel | None = None
+
+
+def require_cuda_runtime() -> None:
+    if not REQUIRE_CUDA:
+        return
+    if DEVICE.startswith("cpu") or DEVICE == "auto":
+        raise RuntimeError(
+            "Six Stars Whisper/ASR is configured for CPU/auto. This build requires CUDA/GPU. "
+            "Edit config/runtime-manifest.json to use faster-whisper-nvidia-cu12, "
+            "install the CUDA runtime, or use a hosted service option."
+        )
+    try:
+        import ctranslate2
+        cuda_count = int(getattr(ctranslate2, "get_cuda_device_count")())
+    except Exception as exc:
+        raise RuntimeError(
+            "Six Stars Whisper/ASR requires CUDA/GPU, but CTranslate2 CUDA support could not be verified. "
+            "Install the NVIDIA/CUDA faster-whisper runtime or use a hosted service option."
+        ) from exc
+    if cuda_count <= 0:
+        raise RuntimeError(
+            "Six Stars Whisper/ASR requires CUDA/GPU, but CTranslate2 reports no CUDA devices. "
+            "Check your NVIDIA driver/CUDA runtime or use a hosted service option."
+        )
+
+
+require_cuda_runtime()
 
 
 def configured_model_name() -> str:

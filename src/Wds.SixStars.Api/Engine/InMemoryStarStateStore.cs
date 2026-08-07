@@ -14,23 +14,20 @@ namespace Wds.SixStars.Api.Engine
 
         public Task<StarState> GetAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, starId);
-            StarState state = _states.GetOrAdd(key, _ => new StarState { StarId = starId });
+            StarState state = _states.GetOrAdd(starId, _ => CreateDefaultState(starId));
+            NormalizeState(state);
             return Task.FromResult(state);
         }
 
         public Task SaveAsync(string sessionId, StarState state, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, state.StarId);
-            _states[key] = state;
+            _states[state.StarId] = state;
             return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<StarState>> GetAllAsync(string sessionId, CancellationToken cancellationToken)
         {
-            string prefix = sessionId + ":";
             IReadOnlyList<StarState> states = _states
-                .Where(x => x.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 .Select(x => x.Value)
                 .ToList();
             return Task.FromResult(states);
@@ -38,15 +35,11 @@ namespace Wds.SixStars.Api.Engine
 
         public Task ReplaceSessionAsync(string sessionId, IEnumerable<StarState> states, CancellationToken cancellationToken)
         {
-            string prefix = sessionId + ":";
-            foreach (string key in _states.Keys.Where(x => x.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToList())
-            {
-                _states.TryRemove(key, out _);
-            }
+            _states.Clear();
 
             foreach (StarState state in states)
             {
-                _states[BuildKey(sessionId, state.StarId)] = state;
+                _states[state.StarId] = state;
             }
 
             return Task.CompletedTask;
@@ -55,14 +48,67 @@ namespace Wds.SixStars.Api.Engine
 
         public Task ResetStarAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
-            string key = BuildKey(sessionId, starId);
-            _states[key] = new StarState { StarId = starId };
+            _states[starId] = CreateDefaultState(starId);
             return Task.CompletedTask;
         }
 
-        private static string BuildKey(string sessionId, string starId)
+        private static StarState CreateDefaultState(string starId)
         {
-            return sessionId + ":" + starId;
+            bool elusiaa = string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase);
+            return new StarState
+            {
+                StarId = starId,
+                IsMet = elusiaa,
+                IsAlly = elusiaa,
+                LastDailyStateSourceUpdateAt = DateTimeOffset.UtcNow,
+                TodayState = new StarDailyStateContext(),
+                GirlfriendHourlyState = new StarGirlfriendHourlyStateContext(),
+                GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>(),
+                GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>(),
+                GirlfriendDesiredNeedVectorHistory = new List<string>(),
+                GirlfriendDesiredWantVectorHistory = new List<string>(),
+                GirlfriendMetNeedVectorHistory = new List<string>(),
+                GirlfriendMetWantVectorHistory = new List<string>(),
+                GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>(),
+                GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
+                GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>(),
+                GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>(),
+                OtherStars = new List<InterstarRelationshipState>()
+            };
         }
+
+        private static void NormalizeState(StarState state)
+        {
+            if (state.RelationshipEvents == null) state.RelationshipEvents = new List<string>();
+            if (state.OtherStars == null) state.OtherStars = new List<InterstarRelationshipState>();
+            foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
+            {
+                if (relation.History == null) relation.History = new List<InterstarRelationshipHistoryEntry>();
+            }
+            if (state.ActiveEffectors == null) state.ActiveEffectors = new List<StarRelationshipEffector>();
+            if (state.EmotionVectorHistory == null) state.EmotionVectorHistory = new List<StarEmotionVectorHistoryEntry>();
+            if (state.RelationshipScoreAccumulators == null) state.RelationshipScoreAccumulators = new List<StarRelationshipScoreAccumulator>();
+            if (state.TodayState == null) state.TodayState = new StarDailyStateContext();
+            if (state.GirlfriendHourlyState == null) state.GirlfriendHourlyState = new StarGirlfriendHourlyStateContext();
+            if (state.GirlfriendDesiredStateHistory == null) state.GirlfriendDesiredStateHistory = new List<GirlfriendVectorHistoryEntry>();
+            if (state.GirlfriendNeedsMetHistory == null) state.GirlfriendNeedsMetHistory = new List<GirlfriendNeedFulfillmentHistoryEntry>();
+            if (state.GirlfriendDesiredNeedVectorHistory == null) state.GirlfriendDesiredNeedVectorHistory = new List<string>();
+            if (state.GirlfriendDesiredWantVectorHistory == null) state.GirlfriendDesiredWantVectorHistory = new List<string>();
+            if (state.GirlfriendMetNeedVectorHistory == null) state.GirlfriendMetNeedVectorHistory = new List<string>();
+            if (state.GirlfriendMetWantVectorHistory == null) state.GirlfriendMetWantVectorHistory = new List<string>();
+            if (state.GirlfriendNeedsMetPerformanceVector == null) state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            if (state.GirlfriendWantsMetPerformanceVector == null) state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            if (state.GirlfriendCoupleActivityScores == null) state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
+            if (state.GirlfriendCoupleActivityHistory == null) state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
+            if (state.GirlfriendCoupleActivityBestExamples == null) state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
+            if (state.IsAlly) state.IsMet = true;
+            if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
+            {
+                state.IsMet = true;
+                state.IsAlly = true;
+            }
+        }
+
     }
 }

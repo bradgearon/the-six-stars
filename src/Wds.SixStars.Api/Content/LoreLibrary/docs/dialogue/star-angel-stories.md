@@ -28,7 +28,7 @@ Design rule: the player should be able to hear these stories, then later apply t
 
 **Type:** Dark angel warning  
 **Placement:** Before the Virethorn water puzzle, in a corrupted underwater garden with blackened coral.  
-**Theme:** Fatalism, suffocation, void, hope attacked.
+**Theme:** Mystery, suffocation, void, hope attacked.
 
 Kaelia steps out from behind a cluster of blackened coral, her robes drifting like liquid shadow in the water. She studies the Last Cat with intense, unblinking curiosity.
 
@@ -52,7 +52,7 @@ She stops circling and looks directly at the Last Cat.
 
 ### Design notes
 
-- This story teaches the player that Kaelia's fatalism is not laziness; it is a survival scar.
+- This story teaches the player that Kaelia's mystery is not laziness; it is a survival scar.
 - It should help wise players understand that when Kaelia says “why try,” she is asking whether hope itself is safe.
 - Good responses validate the harm without agreeing that the Void is all there is.
 - Romance route: patient light, humor, and brave honesty should open her gradually.

@@ -163,6 +163,28 @@ namespace Wds.SixStars.Api.Speech
             }
         }
 
+        /// <summary>
+        /// Clears any partial utterance and stale playback mute state after Windows recreates the
+        /// microphone device. The pipeline remains in its current listening mode so always-listening
+        /// and push-to-talk sessions can continue without rebuilding the whole UI runtime.
+        /// </summary>
+        public async Task ResetAfterAudioDeviceRecoveryAsync(string reason, CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ClearBuffersLocked(resetConversationIdle: true);
+                _isStarSpeaking = false;
+                SetIdleStatus(string.IsNullOrWhiteSpace(reason)
+                    ? "Audio input device recovered."
+                    : reason.Trim());
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
         public void EnterConversationMode(string starId)
         {
             CurrentConversationStarId = starId ?? string.Empty;

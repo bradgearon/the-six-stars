@@ -541,3 +541,44 @@ Expected response can be JSON:
 ```
 
 or simple plain text such as `Elusiaa`, `Kaelia`, or `none`.
+
+
+## Services launcher note
+
+`run-ai-companion.cmd` is the normal full companion launcher again: it uses the integrated/prebuilt engine launcher (`redist\six-stars-launcher.exe` when built, or the launcher project fallback) to start the local engine services and open the desktop app. Use `run-ai-services.cmd` when you want services-only with the prebuilt engine EXEs, then open the UI separately with `launch-ui-only.cmd`. Use `run-ai-source-services.cmd` or `python scripts\start_services.py` for the repo `.venv` Python debug flow.
+
+
+### Launcher split: prebuilt app vs venv services
+
+- `run-ai-companion.cmd` launches the normal integrated/prebuilt-engine companion app path. It calls `launch.cmd`, which prefers `redist\six-stars-launcher.exe` and falls back to the .NET launcher project for development builds.
+- `run-ai-services.cmd` is services-only and keeps the desktop app closed. It uses the prebuilt engine EXEs from `config/runtime-manifest.json` through `launch.cmd --skip-install --no-ui`.
+- `launch-ui-only.cmd` opens only the desktop UI after services are already running.
+- `run-ai-companion-with-ui.cmd` is the dev/source flow that starts `run-ai-source-services.cmd` in a second window and then opens the UI.
+
+
+## Launcher modes updated: prebuilt app vs source services
+
+- `run-ai-companion.cmd` is the normal full prebuilt companion launcher. It starts the integrated engine services and opens the desktop app.
+- `run-ai-services.cmd` is services-only for the prebuilt engine EXEs. It calls `launch.cmd --skip-install --no-ui` and does not launch the UI.
+- `launch-ui-only.cmd` opens the desktop UI after services are already running.
+- `run-ai-source-services.cmd` is the Python source/venv debug helper for ASR/TTS. It calls `start.cmd`, which activates `.venv` and then runs `python scripts\start_services.py`.
+- Manual Python debug flow is still supported: activate `.venv` yourself and run `python scripts\start_services.py`.
+
+## CUDA-only local AI policy
+
+This build is configured to use GPU/CUDA for local LLM, ASR, and TTS. CPU fallback is disabled in `config/runtime-manifest.json` under `gpuPolicy`. If CUDA is not available, services fail fast and tell you to configure NVIDIA CUDA engines or use a hosted service option.
+
+The Qwen TTS server has been restored to the previous parallel streaming behavior. Android and desktop clients subscribe for WAV chunks; they do not receive GPU/model objects.
+
+## Memory archive and information need vector
+
+The companion now keeps prompt context bounded while preserving source memory in the Unity-compatible Star state. Recent turns remain in `MemoryLog`; turns older than two hours move into `OldConversationArchives` with summaries and source entries. The prompt-facing `ImportantPlayerQuotes` list is capped at 128, while `AllImportantPlayerQuotes` keeps the durable source records.
+
+Fast chat responses include `needsMoreInformation` plus an `informationNeeds` vector. If a Star needs older conversation history, exact quotes, markers, lore, character data, bestiary/world data, or story history, the runtime builds a capped local archive slice and performs a second internal LLM pass before returning the final answer.
+
+Use **Clear All Star Data** in the desktop UI or Android app to reset all local Star states.
+
+
+## LLM exchange logs
+
+The desktop runtime now appends local LLM request/response/debug entries to one plain daily log file: `logs/llm-exchanges/YYYY-MM-DD.log`. Use **Open LLM Exchange Log Folder** in Quick Actions to inspect the day's `.log` file and trim unused prompt/context sections.

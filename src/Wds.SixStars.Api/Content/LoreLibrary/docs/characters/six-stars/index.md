@@ -8,7 +8,7 @@ The Six Stars are the early focus of The Last Cat: The Early Years. They are pow
 | [Khavia](khavia.md) | Water | Daughter of Chavera | Friendship | “Somebody helped me once.” | Tideweaver’s Codex |
 | [Auerlis](auerlis.md) | Fire | Daughter of Simchi | Joy | “Then at least they are laughing.” | Ember Eternal lantern |
 | [Maera](maera.md) | Blood | Daughter of Maerrow | Possession | “If I can’t have you, no one can.” | Sanguine Heart crystal |
-| [Kaelia](kaelia.md) | Void | Daughter of Kaeliss | Fatalism | “Why try? It all ends the same.” | Nullheart Orb |
+| [Kaelia](kaelia.md) | Void | Daughter of Kaeliss | Mystery | “The Void is not empty. It is listening.” | Nullheart Orb |
 | [Nyxari](nyxari.md) | Shadow | Daughter of Nyxara | Fragmentation | “If nothing matters, nothing can break.” | Eclipse Mirror |
 
 

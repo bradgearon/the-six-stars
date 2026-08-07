@@ -99,7 +99,7 @@ Astral Book quote:
 
 ### Kaelia — Void Star
 
-A guarded early ally and romance candidate. She is tied to fatalism, void, tar-like drowning imagery, and the idea that the dark attacks hope itself. She requires letters, trust, and wisdom to fully open.
+A guarded early ally and romance candidate. She is tied to mystery, void, tar-like drowning imagery, and the idea that the dark attacks hope itself. She requires letters, trust, and wisdom to fully open.
 
 ### Khavia — Water Star
 

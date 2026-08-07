@@ -1389,7 +1389,7 @@ Keep it
 optional and tasteful
 — subtle flirting, mutual crushes, deep emotional bonds rather than explicit content. Fade-to-black or implication for anything further.
 Tie it mechanically: Romance improves specific Star abilities when equipped, unlocks unique side stories in Virethorn (e.g., stargazing dates interrupted by glitches), and affects Benaveil’s jealousy/growth.
-Player agency guardrails: Stars can reject advances gracefully if the player pushes too hard, reinforcing consent and discernment.
+Player agency guardrails: Stars can reject advances gracefully if the player pushes too hard, reinforcing agency and discernment.
 Scope: Focus on 2–3 Stars (e.g., Elusiaa as primary) to avoid dilution.
 Overall Verdict
 This idea

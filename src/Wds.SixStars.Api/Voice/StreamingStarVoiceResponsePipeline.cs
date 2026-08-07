@@ -30,6 +30,7 @@ namespace Wds.SixStars.Api.Voice
         private int _chunksPlayed;
         private volatile bool _generationComplete;
         private volatile int _expectedTotalChunks;
+        private GenerationErrorEventArgs? _generationError;
 
         public StreamingStarVoiceResponsePipeline(
             IStreamingVoiceGenerator streamingGenerator,
@@ -72,6 +73,7 @@ namespace Wds.SixStars.Api.Voice
             _chunksPlayed = 0;
             _generationComplete = false;
             _expectedTotalChunks = 0;
+            _generationError = null;
             _playbackPause.Set();
             await _queueLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -129,6 +131,13 @@ namespace Wds.SixStars.Api.Voice
                     await _playbackTask.ConfigureAwait(false);
                 }
 
+                if (_generationError != null)
+                {
+                    throw new InvalidOperationException(
+                        "Streaming TTS generation failed: " + _generationError.ErrorMessage,
+                        _generationError.Exception);
+                }
+
                 Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Streaming speech complete: {_chunksPlayed} chunks consumed");
             }
             catch (OperationCanceledException)
@@ -144,6 +153,32 @@ namespace Wds.SixStars.Api.Voice
             }
             finally
             {
+                // GenerateStreamingAsync can fail before the server sends a completion event
+                // (for example while the Python TTS service is still starting). Always cancel
+                // and join the ordered consumer so an empty playback loop cannot survive forever.
+                try
+                {
+                    linkedCts.Cancel();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine("[StreamingStarVoiceResponsePipeline] Could not cancel the playback consumer during cleanup: " + ex.Message);
+                }
+                if (_playbackTask != null && !_playbackTask.IsCompleted)
+                {
+                    try
+                    {
+                        await _playbackTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected while unwinding a failed or replaced TTS request.
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine("[StreamingStarVoiceResponsePipeline] Playback consumer ended with an error during cleanup: " + ex.Message);
+                    }
+                }
                 outputKeepAlive?.Dispose();
                 _isPlayingChunks = false;
                 _playbackPause.Set();
@@ -182,19 +217,31 @@ namespace Wds.SixStars.Api.Voice
                 _expectedTotalChunks = e.TotalChunks;
             }
 
-            Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Audio chunk {e.ChunkIndex + 1}/{e.TotalChunks} received ({e.AudioData.Length} bytes)");
+            byte[] audioCopy = CopyBytes(e.AudioData);
+            AudioChunkEventArgs queuedChunk = new AudioChunkEventArgs
+            {
+                ChunkIndex = e.ChunkIndex,
+                TotalChunks = e.TotalChunks,
+                AudioData = audioCopy,
+                MimeType = e.MimeType,
+                Text = e.Text,
+                StarId = e.StarId,
+                VoiceId = e.VoiceId
+            };
+
+            Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Audio chunk {queuedChunk.ChunkIndex + 1}/{queuedChunk.TotalChunks} received ({queuedChunk.AudioData.Length} bytes, copied to owned buffer)");
 
             _queueLock.Wait();
             try
             {
-                _audioQueue[e.ChunkIndex] = e;
+                _audioQueue[queuedChunk.ChunkIndex] = queuedChunk;
             }
             finally
             {
                 _queueLock.Release();
             }
 
-            ChunkReceived?.Invoke(this, e);
+            ChunkReceived?.Invoke(this, queuedChunk);
         }
 
         private void OnGenerationComplete(object? sender, GenerationCompleteEventArgs e)
@@ -208,6 +255,8 @@ namespace Wds.SixStars.Api.Voice
         private void OnGenerationError(object? sender, GenerationErrorEventArgs e)
         {
             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Generation error: {e.ErrorMessage}");
+            _generationError = e;
+            _generationComplete = true;
             GenerationError?.Invoke(this, e);
         }
 
@@ -268,7 +317,7 @@ namespace Wds.SixStars.Api.Voice
                             {
                                 StarId = chunk.StarId,
                                 VoiceId = chunk.VoiceId,
-                                WavAudio = chunk.AudioData,
+                                WavAudio = CopyBytes(chunk.AudioData),
                                 MimeType = chunk.MimeType,
                                 Instructions = chunk.Text,
                                 Source = "streaming-websocket"
@@ -443,6 +492,18 @@ namespace Wds.SixStars.Api.Voice
             }
 
             return settings;
+        }
+
+        private static byte[] CopyBytes(byte[]? source)
+        {
+            if (source == null || source.Length == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            byte[] copy = new byte[source.Length];
+            Buffer.BlockCopy(source, 0, copy, 0, source.Length);
+            return copy;
         }
 
         public void Dispose()

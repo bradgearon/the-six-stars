@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
+using Wds.SixStars.Api.Models;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -18,11 +19,39 @@ namespace Wds.SixStars.Api.Ai
         public List<string> SpokenParts { get; set; } = new List<string>();
 
         public string? StoryTitle { get; set; }
+
+        [JsonPropertyName("hasSomethingToSay")]
+        public bool HasSomethingToSay { get; set; }
+
+        [JsonPropertyName("shouldSpeak")]
+        public bool ShouldSpeak { get; set; }
+
+        [JsonPropertyName("priority")]
+        public double Priority { get; set; }
+
+        [JsonPropertyName("speechDecisionVector")]
+        public List<GirlfriendVectorItem> SpeechDecisionVector { get; set; } = new List<GirlfriendVectorItem>();
+
+        [JsonPropertyName("selectedTopic")]
+        public string SelectedTopic { get; set; } = string.Empty;
+
+        [JsonPropertyName("reason")]
+        public string Reason { get; set; } = string.Empty;
         public string StoryId { get; set; } = string.Empty;
         public string StoryMarkdown { get; set; } = string.Empty;
         public string StorySummary { get; set; } = string.Empty;
         public bool StoryIsFinished { get; set; }
         public int StoryPartIndex { get; set; }
+
+        [JsonPropertyName("needsMoreInformation")]
+        public bool NeedsMoreInformation { get; set; }
+
+        [JsonPropertyName("informationNeeds")]
+        public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
+
+        /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat in this turn.</summary>
+        [JsonPropertyName("thingsLearnedOrSuggestedByPlayer")]
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
         /// <summary>
         /// Compact foreground emotion-vector hint for speed tests. Format is one entry per canonical

@@ -90,7 +90,7 @@ Even though the arcade is simple, each Star should feel different.
 | Star | Arcade Personality | Simple Attack Idea | Hidden Lesson |
 |---|---|---|---|
 | Elusiaa | Gentle but unavoidable | Slow holy beams and soft walls of light | Mercy can still confront. |
-| Kaelia | Patient, fatalistic | Void pauses, sudden lane cuts | Despair waits for rhythm mistakes. |
+| Kaelia | Patient, mysterious | Void pauses, sudden lane cuts | Despair waits for rhythm mistakes. |
 | Khavia | Flowing and connective | Water waves that push/pull lanes | Friendship changes positioning. |
 | Auerlis | Fast and joyful | Fire bursts, erratic rushes | Joy can become pressure. |
 | Maera | Possessive and heavy | Blood tethers, close-range traps | Ownership feels like gravity. |

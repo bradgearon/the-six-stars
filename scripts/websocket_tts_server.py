@@ -130,16 +130,20 @@ MODEL_PATH = resolve_model_ref(
     os.environ.get("QWEN_TTS_LOCAL_PATH", ""),
     aliases=["qwen3-tts-0.6b", "qwen3-tts-0.6b-base", "qwen3-tts-1.7b", "qwen3-tts-1.7b-base"],
 )
-DEVICE = os.environ.get(
-    "QWEN_TTS_DEVICE",
-    "cuda" if torch is not None and getattr(torch, "cuda", None) is not None and torch.cuda.is_available() else "cpu",
-)
+REQUIRE_CUDA = os.environ.get("SIX_STARS_REQUIRE_CUDA", "true").strip().lower() not in {"0", "false", "no", "off"}
+DEVICE = os.environ.get("QWEN_TTS_DEVICE", "cuda").strip().lower() or "cuda"
 DEFAULT_LANGUAGE = os.environ.get("QWEN_TTS_LANGUAGE", "English")
 DEFAULT_TASK_TYPE = os.environ.get("QWEN_TTS_TASK_TYPE", "VoiceClone")
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
 ATTN_IMPLEMENTATION = os.environ.get("QWEN_TTS_ATTN_IMPLEMENTATION", "sdpa")
 DTYPE_NAME = os.environ.get("QWEN_TTS_DTYPE", "bfloat16" if DEVICE.startswith("cuda") else "float32")
 USE_CUDA_GRAPHS = os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true").strip().lower() not in {"0", "false", "no"}
+# Load the Qwen generation model as soon as the service starts so the first
+# phone/desktop reply does not pay the full model-load and CUDA warmup cost.
+# The WebSocket listener still comes up immediately; a request that arrives
+# during preload waits on the same engine lock instead of starting a duplicate
+# model load.
+PRELOAD_MODEL = os.environ.get("QWEN_TTS_PRELOAD_MODEL", "true").strip().lower() not in {"0", "false", "no", "off"}
 # Voice Clone Studio gets its speed from faster_qwen3_tts when CUDA graphs are enabled.
 # Keep this on by default and fall back to qwen_tts only if the package is missing.
 USE_FASTER_QWEN3 = os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true").strip().lower() not in {"0", "false", "no"}
@@ -148,6 +152,30 @@ CUDA_GRAPH_WARMUP_RUNS = int(os.environ.get("QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS", "
 USE_CLONE_PROMPT_CACHE = os.environ.get("QWEN_TTS_CACHE_CLONE_PROMPTS", "true").strip().lower() not in {"0", "false", "no"}
 DIRECT_FALLBACK_ON_SILENCE = os.environ.get("QWEN_TTS_DIRECT_FALLBACK_ON_SILENCE", "true").strip().lower() not in {"0", "false", "no"}
 SILENCE_RMS_THRESHOLD = float(os.environ.get("QWEN_TTS_SILENCE_RMS_THRESHOLD", "0.0001"))
+
+
+def require_cuda_runtime() -> None:
+    if not REQUIRE_CUDA:
+        return
+    if DEVICE.startswith("cpu"):
+        raise RuntimeError(
+            "Six Stars Qwen TTS is configured for CPU. This build requires CUDA/GPU. "
+            "Edit config/runtime-manifest.json to use the qwen3-tts-nvidia-cu12 pack, "
+            "install a CUDA PyTorch runtime, or use a hosted service option."
+        )
+    if torch is None:
+        raise RuntimeError(
+            "Six Stars Qwen TTS requires CUDA/GPU, but PyTorch failed to import. "
+            "Install the CUDA PyTorch runtime or use a hosted service option."
+        )
+    if not getattr(torch, "cuda", None) or not torch.cuda.is_available():
+        raise RuntimeError(
+            "Six Stars Qwen TTS requires CUDA/GPU, but torch.cuda.is_available() is false. "
+            "Install the CUDA PyTorch runtime, check your NVIDIA driver, or use a hosted service option."
+        )
+
+
+require_cuda_runtime()
 
 DEBUG_OUTPUT_DIR = os.environ.get("QWEN_TTS_DEBUG_OUTPUT_DIR", "").strip()
 SAVE_SERVER_WAVS = os.environ.get("QWEN_TTS_SAVE_WAVS", "false").strip().lower() in {"1", "true", "yes"}
@@ -324,6 +352,8 @@ class QwenTtsEngine:
         # the shared voice-clone prompt cache so the same Star prompt is built once.
         self._cache_lock = threading.Lock()
         self._model_lock = asyncio.Lock()
+        self.model_loading = False
+        self.model_load_error = ""
         logger.info("Qwen TTS engine created")
 
     async def ensure_loaded(self) -> None:
@@ -332,7 +362,15 @@ class QwenTtsEngine:
         async with self._model_lock:
             if self.model_loaded:
                 return
-            await asyncio.to_thread(self._load_model_sync)
+            self.model_loading = True
+            self.model_load_error = ""
+            try:
+                await asyncio.to_thread(self._load_model_sync)
+            except Exception as exc:
+                self.model_load_error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                self.model_loading = False
 
     @staticmethod
     def _call_if_supported(target: Any, method_names: List[str], *args: Any, **kwargs: Any) -> bool:
@@ -505,7 +543,7 @@ class QwenTtsEngine:
             patch_transformers_check_model_inputs_for_qwen()
             from qwen_tts import Qwen3TTSModel
 
-            device_map = "cuda:0" if DEVICE.startswith("cuda") else "cpu"
+            device_map = "cuda:0"
 
             # Fallback path: official qwen_tts model. This is correct but usually much slower
             # because it does not use FasterQwen3TTS static-cache CUDA graph replay.
@@ -955,10 +993,32 @@ def audio_to_wav(wav: Any, sample_rate: int) -> bytes:
 
 
 def waveform_to_float32_numpy(wav: Any) -> np.ndarray:
+    """Materialize generated audio as an independent CPU float32 numpy array.
+
+    Qwen/FasterQwen can return tensors backed by CUDA storage. The rest of the
+    Six Stars audio path should never hold onto framework/GPU-owned buffers. As
+    soon as a chunk is generated, copy it to a fresh CPU array, then encode WAV
+    bytes from that copy. This keeps desktop playback and Android socket fan-out
+    simple: everyone receives ordinary bytes, not model-owned storage.
+    """
     if torch is not None and isinstance(wav, torch.Tensor):
-        wav = wav.detach().float().cpu().numpy()
+        if getattr(wav, "is_meta", False):
+            raise RuntimeError(
+                "Qwen3-TTS returned a meta tensor with no audio data. This is a model loading/device-map issue, "
+                "not an Android or speaker pipeline issue. Use a CUDA-loaded Qwen TTS model rather than a meta/CPU fallback."
+            )
+
+        # Make the ownership boundary explicit: detach from autograd, materialize
+        # as contiguous float32 CPU storage, convert to numpy, then copy again so
+        # the numpy array does not share storage with the torch tensor.
+        if wav.device.type == "cuda":
+            try:
+                torch.cuda.synchronize(wav.device)
+            except Exception:
+                pass
+        wav = wav.detach().to(device="cpu", dtype=torch.float32, copy=True).contiguous().numpy().copy()
     elif isinstance(wav, np.ndarray):
-        pass
+        wav = wav.astype(np.float32, copy=True)
     elif isinstance(wav, (list, tuple)):
         # Qwen generally returns a single ndarray/tensor. This handles nested chunks.
         if len(wav) == 0:
@@ -966,10 +1026,10 @@ def waveform_to_float32_numpy(wav: Any) -> np.ndarray:
         if len(wav) == 1:
             return waveform_to_float32_numpy(wav[0])
         pieces = [waveform_to_float32_numpy(x).reshape(-1) for x in wav]
-        return np.concatenate(pieces).astype(np.float32)
+        return np.concatenate(pieces).astype(np.float32, copy=True)
     else:
-        wav = np.asarray(wav)
-    return np.asarray(wav, dtype=np.float32)
+        wav = np.asarray(wav, dtype=np.float32).copy()
+    return np.asarray(wav, dtype=np.float32).copy()
 
 
 def wav_stats_from_bytes(wav_bytes: bytes) -> Dict[str, Any]:
@@ -1428,6 +1488,9 @@ async def handle_client(websocket: WebSocketServerProtocol, path: str) -> None:
             "backend": "qwen3-tts",
             "model": MODEL_PATH,
             "device": DEVICE,
+            "modelLoaded": ENGINE.model_loaded,
+            "modelLoading": ENGINE.model_loading,
+            "modelLoadError": ENGINE.model_load_error,
             "cudaGraphsRequested": USE_CUDA_GRAPHS,
             "cudaGraphsActive": ENGINE.cuda_graphs_active,
             "fasterBackend": ENGINE.using_faster_backend,
@@ -1476,9 +1539,44 @@ async def main() -> None:
         USE_FASTER_QWEN3,
         MODEL_PATH,
     )
-    logger.info("Model will lazy-load on first request. Press Ctrl+C to stop.")
+    logger.info(
+        "TTS startup preload: %s. The WebSocket listener opens immediately while model loading/warmup runs in the background.",
+        PRELOAD_MODEL,
+    )
+
+    async def preload_generation_model() -> None:
+        started = time.monotonic()
+        try:
+            logger.info("Preloading Qwen3-TTS generation model before the first spoken reply...")
+            await ENGINE.ensure_loaded()
+            logger.info(
+                "[READY] Qwen3-TTS generation model preloaded in %.2fs. First phone/desktop reply will reuse the warm model.",
+                time.monotonic() - started,
+            )
+        except Exception as exc:
+            # Keep the listener alive so clients receive the real generation error
+            # instead of a connection refusal. A later request may retry the load.
+            logger.error(
+                "Qwen3-TTS startup preload failed after %.2fs: %s: %s",
+                time.monotonic() - started,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+
     async with serve(handle_client, HOST, PORT, subprotocols=None, max_size=32 * 1024 * 1024):
-        await asyncio.Future()
+        preload_task: Optional[asyncio.Task[None]] = None
+        if PRELOAD_MODEL:
+            preload_task = asyncio.create_task(preload_generation_model(), name="qwen-tts-model-preload")
+        else:
+            logger.info("Model preload disabled; the first request will lazy-load Qwen3-TTS.")
+
+        try:
+            await asyncio.Future()
+        finally:
+            if preload_task is not None and not preload_task.done():
+                preload_task.cancel()
+                await asyncio.gather(preload_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

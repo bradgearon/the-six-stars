@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "models": {
+    "llm": {
+      "id": "gemma-4-e4b-it-gguf",
+      "preferredMode": "local-gguf",
+      "hfSpecifier": "ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M",
+      "localPath": "models/llm/gemma-4-E4B-it-Q6_K.gguf",
+      "openAiModelName": "local-model",
+      "notes": "Gemma 4 E4B is the default local multimodal model. Put your LM Studio GGUF here, or update localPath. The launcher disables reasoning by default for fast companion replies."
+    },
+    "asr": {
+      "id": "faster-whisper-large-v3-turbo",
+      "modelName": "large-v3-turbo",
+      "localPath": "models/asr/large-v3-turbo",
+      "liteModelName": "tiny.en",
+      "notes": "Use tiny/base/small for low-end machines; use large-v3-turbo for best quality on CUDA."
+    },
+    "tts": {
+      "id": "qwen3-tts-12hz-0.6b-base",
+      "modelName": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "localPath": "models/tts/qwen3-tts-0.6b-base",
+      "notes": "The WebSocket TTS server still uses your current faster-qwen3/Qwen adapter. CUDA pack uses faster-qwen3 when available."
+    },
+    "vision": {
+      "enabled": true,
+      "id": "gemma-4-e4b-it-mmproj",
+      "localPath": "models/llm/mmproj-gemma-4-E4B-it-Q8_0.gguf",
+      "openAiModelName": "local-model",
+      "notes": "Optional Gemma 4 E4B multimodal projector for llama.cpp screen vision. Download the matching mmproj GGUF here, or set enabled=false to disable screen vision. The launcher appends --mmproj only when this file exists."
+    }
+  }
+}

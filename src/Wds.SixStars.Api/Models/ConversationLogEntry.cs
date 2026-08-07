@@ -20,6 +20,7 @@ namespace Wds.SixStars.Api.Models
         public string DeterministicEmotionSummary { get; set; } = string.Empty;
         public double WisdomScore { get; set; }
         public List<string> ImportantQuotes { get; set; } = new List<string>();
+        public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
         public List<string> ReferencedMemoryMarkerIds { get; set; } = new List<string>();
         public List<string> Tags { get; set; } = new List<string>();
