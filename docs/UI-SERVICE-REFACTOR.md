@@ -31,7 +31,7 @@ This refactor moves device, transport, persistence, background scheduling, and m
 
 ## Desktop WPF
 
-`MainViewModel` remains the WPF binding façade and orchestrates view state. The service registry owns runtime lanes, audio devices, screen awareness, diagnostics, mobile transports, initiative scheduling, and story session state.
+`MainViewModel` remains the WPF binding faÃ§ade and orchestrates view state. The service registry owns runtime lanes, audio devices, screen awareness, diagnostics, mobile transports, initiative scheduling, and story session state.
 
 | Class | Responsibility | Main entry points |
 |---|---|---|

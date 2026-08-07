@@ -7,7 +7,7 @@ using Wds.SixStars.Ui.Networking;
 namespace Wds.SixStars.Ui.Services;
 
 /// <summary>
-/// Stable façade over the currently running phone-audio host. The ViewModel describes a voice
+/// Stable faÃ§ade over the currently running phone-audio host. The ViewModel describes a voice
 /// stream; this service owns the transport lookup and gracefully handles a stopped bridge.
 /// </summary>
 internal sealed class MobileVoiceDeliveryService

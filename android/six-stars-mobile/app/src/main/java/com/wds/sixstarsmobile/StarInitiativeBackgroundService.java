@@ -278,7 +278,8 @@ public final class StarInitiativeBackgroundService extends Service {
 
     private String postJson(String urlText, String json, int timeoutMs) throws Exception {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
+        URL url = new URL(urlText);
+        HttpURLConnection connection = new LocalNetworkBindingService(this).openHttpConnection(url);
         connection.setConnectTimeout(6000);
         connection.setReadTimeout(timeoutMs);
         connection.setRequestMethod("POST");

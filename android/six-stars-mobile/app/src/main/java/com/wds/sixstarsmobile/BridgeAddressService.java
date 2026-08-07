@@ -1,5 +1,6 @@
 package com.wds.sixstarsmobile;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.net.Inet6Address;
@@ -72,10 +73,27 @@ final class BridgeAddressService {
     }
 
     static String discoveredIpv6(JSONObject health) {
-        if (health == null || !health.optBoolean("localConnection", true)) return "";
-        String address = normalizeIpv6Address(health.optString("preferredIpv6Address", ""));
-        if (address.isEmpty()) address = normalizeIpv6Address(health.optString("preferredIpv6Host", ""));
-        return address;
+        List<String> candidates = discoveredIpv6Candidates(health);
+        return candidates.isEmpty() ? "" : candidates.get(0);
+    }
+
+    static List<String> discoveredIpv6Candidates(JSONObject health) {
+        ArrayList<String> result = new ArrayList<>();
+        if (health == null || !health.optBoolean("localConnection", true)) return result;
+        JSONArray supplied = health.optJSONArray("preferredIpv6Addresses");
+        if (supplied != null) {
+            for (int i = 0; i < supplied.length(); i++) {
+                String address = normalizeIpv6Address(supplied.optString(i, ""));
+                if (!address.isEmpty() && !result.contains(address)) result.add(address);
+            }
+        }
+        String preferred = normalizeIpv6Address(health.optString("preferredIpv6Address", ""));
+        if (preferred.isEmpty()) preferred = normalizeIpv6Address(health.optString("preferredIpv6Host", ""));
+        if (!preferred.isEmpty()) {
+            result.remove(preferred);
+            result.add(0, preferred);
+        }
+        return result;
     }
 
     static String normalizeBaseUrl(String value) {

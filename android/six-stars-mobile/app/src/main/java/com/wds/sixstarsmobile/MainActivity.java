@@ -287,6 +287,10 @@ public final class MainActivity extends ComponentActivity {
         starInitiativeEnabled = settingsService.isStarInitiativeEnabled();
         starInitiativeBackgroundEnabled = starInitiativeEnabled;
         buildUi();
+        // Restore the durable phone selection before syncStarInitiativeRuntimePrefs() copies the
+        // spinner value back into preferences. Without this, a newly built spinner defaults to the
+        // first Star and silently overwrites the saved selection during startup.
+        selectStarInSpinner(settingsService.selectedStarId());
         initializeViewModelServices();
         registerStarInitiativeServiceReceiver();
         syncStarInitiativeRuntimePrefs();
@@ -369,6 +373,9 @@ public final class MainActivity extends ComponentActivity {
         viewModel.uiState().observe(this, state -> {
             if (state == null) return;
             recording = state.recording;
+            if (state.selectedStarId != null && !state.selectedStarId.isEmpty()) {
+                selectStarInSpinner(state.selectedStarId);
+            }
             if (connectionStatusText != null && state.connectionStatus != null && !state.connectionStatus.isEmpty()) {
                 connectionStatusText.setText(state.connectionStatus);
             }
@@ -378,6 +385,9 @@ public final class MainActivity extends ComponentActivity {
         });
         viewModel.bridgeEvents().observe(this, event -> {
             if (event != null) handleBridgeEvent(event.payload);
+        });
+        viewModel.mobileStatePayload().observe(this, payload -> {
+            if (payload != null) applyMobileStatePayload(payload);
         });
         viewModel.protocolDebug().observe(this, message -> {
             if (message != null && !message.isEmpty()) appendVoiceDebug("Bridge protocol", message);
@@ -1977,7 +1987,13 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void applyMobileStatePayload(JSONObject json) {
-        String selected = optStringEither(json, "selectedStarId", "SelectedStarId", selectedStarName());
+        // Android's saved selection is authoritative for the phone. The desktop may still have a
+        // different Star selected from its own UI; replacing the phone selection with that value
+        // caused the preselected Star to render empty until the user switched away and back.
+        String selected = settingsService == null ? selectedStarName() : settingsService.selectedStarId();
+        if (selected == null || selected.trim().isEmpty()) {
+            selected = optStringEither(json, "selectedStarId", "SelectedStarId", selectedStarName());
+        }
         selectStarInSpinner(selected);
         JSONArray stars = json.optJSONArray("stars");
         if (stars != null) {
@@ -2803,8 +2819,8 @@ public final class MainActivity extends ComponentActivity {
                 });
 
                 try {
-                    PreparedSpeechStore.postAction(url, item.intentId, "lease");
-                    PreparedSpeechStore.postAction(url, item.intentId, "started");
+                    PreparedSpeechStore.postAction(this, url, item.intentId, "lease");
+                    PreparedSpeechStore.postAction(this, url, item.intentId, "started");
                 } catch (Exception acknowledgementError) {
                     runOnUiThread(() -> appendVoiceDebug(
                             "Prepared thought acknowledgement delayed",
@@ -2834,7 +2850,7 @@ public final class MainActivity extends ComponentActivity {
         updatePreparedSpeechIndicator();
         httpExecutor.execute(() -> {
             try {
-                PreparedSpeechStore.postAction(url, item.intentId, "completed");
+                PreparedSpeechStore.postAction(this, url, item.intentId, "completed");
                 PreparedSpeechStore.deleteIntent(this, item.intentId);
                 runOnUiThread(() -> {
                     appendVoiceDebug(item.starId + " finished her prepared thought", "intent=" + item.intentId + " acknowledged and removed from Android cache.");
@@ -3155,7 +3171,8 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private String get(String urlText, int timeoutMs) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
+        URL url = new URL(urlText);
+        HttpURLConnection connection = new LocalNetworkBindingService(this).openHttpConnection(url);
         connection.setConnectTimeout(timeoutMs);
         connection.setReadTimeout(timeoutMs);
         connection.setRequestMethod("GET");
@@ -3164,7 +3181,8 @@ public final class MainActivity extends ComponentActivity {
 
     private String postJson(String urlText, String json, int timeoutMs) throws Exception {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
+        URL url = new URL(urlText);
+        HttpURLConnection connection = new LocalNetworkBindingService(this).openHttpConnection(url);
         connection.setConnectTimeout(6000);
         connection.setReadTimeout(timeoutMs);
         connection.setRequestMethod("POST");

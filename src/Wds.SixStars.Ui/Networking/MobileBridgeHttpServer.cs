@@ -642,6 +642,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         payload["preferredIpv6Host"] = networkInfo.PreferredIpv6Host;
         payload["preferredIpv6AudioHost"] = networkInfo.PreferredIpv6Host;
         payload["preferredIpv6BridgeUrl"] = networkInfo.PreferredIpv6BridgeUrl;
+        payload["preferredIpv6Addresses"] = networkInfo.PreferredIpv6Addresses;
         payload["addressDiscoverySource"] = networkInfo.DiscoverySource;
         return payload;
     }

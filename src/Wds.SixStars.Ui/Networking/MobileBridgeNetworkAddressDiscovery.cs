@@ -24,6 +24,7 @@ internal sealed class MobileBridgeConnectionNetworkInfo
     public string PreferredIpv6Address { get; init; } = string.Empty;
     public string PreferredIpv6Host { get; init; } = string.Empty;
     public string PreferredIpv6BridgeUrl { get; init; } = string.Empty;
+    public IReadOnlyList<string> PreferredIpv6Addresses { get; init; } = Array.Empty<string>();
     public string DiscoverySource { get; init; } = "active-socket-adapter";
     public bool HasPreferredIpv6 => !string.IsNullOrWhiteSpace(PreferredIpv6Address);
 }
@@ -38,12 +39,10 @@ internal static class MobileBridgeNetworkAddressDiscovery
         IPAddress? remoteAddress = NormalizeAddress(remoteEndPoint?.Address);
         NetworkInterface? adapter = FindOwningAdapter(localAddress);
         bool isLocalConnection = IsPrivateOrLocal(remoteAddress) || IsOnSameAdapterSubnet(adapter, remoteAddress);
-        IPAddress? preferredIpv6 = null;
-        if (isLocalConnection)
-        {
-            preferredIpv6 = SelectPreferredIpv6(adapter, localAddress);
-        }
-
+        List<IPAddress> preferredIpv6Candidates = isLocalConnection
+            ? SelectPreferredIpv6Candidates(adapter, localAddress)
+            : new List<IPAddress>();
+        IPAddress? preferredIpv6 = preferredIpv6Candidates.FirstOrDefault();
         string ipv6Text = preferredIpv6?.ToString() ?? string.Empty;
         return new MobileBridgeConnectionNetworkInfo
         {
@@ -58,6 +57,7 @@ internal static class MobileBridgeNetworkAddressDiscovery
             PreferredIpv6BridgeUrl = string.IsNullOrWhiteSpace(ipv6Text)
                 ? string.Empty
                 : $"http://[{ipv6Text}]:{bridgePort}",
+            PreferredIpv6Addresses = preferredIpv6Candidates.Select(x => x.ToString()).ToArray(),
             DiscoverySource = adapter == null ? "active-socket-endpoint" : "active-socket-adapter"
         };
     }
@@ -85,43 +85,50 @@ internal static class MobileBridgeNetworkAddressDiscovery
             && networkInterface.NetworkInterfaceType != NetworkInterfaceType.Tunnel;
     }
 
-    private static IPAddress? SelectPreferredIpv6(NetworkInterface? adapter, IPAddress? activeLocalAddress)
+    private static List<IPAddress> SelectPreferredIpv6Candidates(NetworkInterface? adapter, IPAddress? activeLocalAddress)
     {
+        List<IPAddress> result = new List<IPAddress>();
         if (activeLocalAddress?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6
             && IsUsableAdvertisedIpv6(activeLocalAddress))
         {
-            return activeLocalAddress;
+            result.Add(activeLocalAddress);
         }
-        if (adapter == null) return null;
+        if (adapter == null) return result;
 
         try
         {
-            List<UnicastIPAddressInformation> candidates = adapter.GetIPProperties().UnicastAddresses
+            IEnumerable<IPAddress> candidates = adapter.GetIPProperties().UnicastAddresses
                 .Where(unicast => IsUsableAdvertisedIpv6(unicast.Address))
                 .OrderBy(ScoreIpv6Candidate)
                 .ThenBy(unicast => unicast.Address.ToString(), StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            return candidates.FirstOrDefault()?.Address;
+                .Select(unicast => unicast.Address);
+            foreach (IPAddress candidate in candidates)
+            {
+                if (!result.Contains(candidate)) result.Add(candidate);
+            }
         }
         catch
         {
-            return null;
         }
+        return result;
     }
 
     private static int ScoreIpv6Candidate(UnicastIPAddressInformation candidate)
     {
         IPAddress address = candidate.Address;
-        if (IsUniqueLocalIpv6(address)) return 0;
-        return candidate.SuffixOrigin switch
+        if (!IsUniqueLocalIpv6(address))
         {
-            SuffixOrigin.Manual => 1,
-            SuffixOrigin.OriginDhcp => 1,
-            SuffixOrigin.LinkLayerAddress => 2,
-            SuffixOrigin.WellKnown => 2,
-            SuffixOrigin.Random => 4,
-            _ => 3
-        };
+            return candidate.SuffixOrigin switch
+            {
+                SuffixOrigin.Manual => 0,
+                SuffixOrigin.OriginDhcp => 0,
+                SuffixOrigin.LinkLayerAddress => 1,
+                SuffixOrigin.WellKnown => 1,
+                SuffixOrigin.Random => 3,
+                _ => 2
+            };
+        }
+        return 2;
     }
 
     private static bool IsUsableAdvertisedIpv6(IPAddress? address)

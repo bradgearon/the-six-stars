@@ -136,6 +136,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     };
 
     private final Context context;
+    private final LocalNetworkBindingService localNetwork;
     private final Handler mainHandler;
     private volatile Listener listener = NO_OP_LISTENER;
     private final ExecutorService fileExecutor = Executors.newSingleThreadExecutor(r -> new Thread(r, "six-stars-phone-voice-files"));
@@ -161,8 +162,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private int savedSampleRate = 24000;
     private int savedChannels = 1;
 
-    PhoneVoicePlaybackService(Context context) {
+    PhoneVoicePlaybackService(Context context, LocalNetworkBindingService localNetwork) {
         this.context = context.getApplicationContext();
+        this.localNetwork = localNetwork;
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.lastVoiceFile = new File(this.context.getFilesDir(), "last-six-stars-phone-voice.wav");
     }
@@ -195,7 +197,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             closeSocketLocked();
             connectedHost = host;
             connectedPort = port;
-            listener.onDebug("Phone voice socket", "Connecting to " + host + ":" + port);
+            listener.onDebug("Phone voice socket", "Connecting to " + host + ":" + port
+                    + (localNetwork == null ? "" : " via " + localNetwork.routeDescription(host)));
             audioSocketThread = new Thread(() -> socketLoop(host, port), "six-stars-phone-audio-socket");
             audioSocketThread.start();
         }
@@ -204,7 +207,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private void socketLoop(String host, int port) {
         Socket socket = null;
         try {
-            socket = new Socket(host, port);
+            socket = localNetwork == null
+                    ? new Socket(host, port)
+                    : localNetwork.connectSocket(host, port, 6000);
             socket.setTcpNoDelay(true);
             synchronized (socketLock) {
                 if (closed || !host.equals(connectedHost) || port != connectedPort) {
