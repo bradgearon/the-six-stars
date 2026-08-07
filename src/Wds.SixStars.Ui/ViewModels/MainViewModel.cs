@@ -35,6 +35,7 @@ using Wds.SixStars.Ui.Audio;
 using Wds.SixStars.Ui.Configuration;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Screen;
+using Wds.SixStars.Ui.Services;
 
 namespace Wds.SixStars.Ui.ViewModels;
 
@@ -64,6 +65,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly StarStorySpeechAdapter _storySpeechAdapter = new StarStorySpeechAdapter();
     private readonly SemaphoreSlim _preparedSpeechGenerationGate = new SemaphoreSlim(1, 1);
     private readonly bool _useStreamingTts;
+    private readonly DesktopUiServiceRegistry _services;
     private readonly StringBuilder _llmDebugLog = new StringBuilder();
 
     private string _selectedStarId = "Elusiaa";
@@ -98,26 +100,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _voiceConversationLoopActive;
     private bool _savedRequireWakeWordBeforeManualRecording = true;
     private int _savedSilenceEndMs = 900;
-    private bool _activeStoryAutoContinue;
-    private string _activeStoryStarId = string.Empty;
-    private string _activeStoryId = string.Empty;
-    private string _activeStoryTitle = string.Empty;
-    private string _activeStoryMarkdown = string.Empty;
-    private string _activeStorySummary = string.Empty;
-    private StoryKind _activeStoryKind = StoryKind.None;
-    private VoiceDirective _activeStoryVoiceDirective = VoiceDirective.Empty();
-    private readonly StringBuilder _activeStoryProgress = new StringBuilder();
-    private string _lastStorySpokenText = string.Empty;
-    private int _nextStoryPartIndex;
-    private bool _suppressStoryContinuationOnce;
     private string _pendingBackgroundAnalysisId = string.Empty;
     private bool _selectedStarIsMet = true;
     private bool _selectedStarIsAlly = true;
     private bool _isLoadingSelectedStarState;
     private bool _suppressMobileBridgeSelectedStarBroadcast;
     private bool _starInitiativeEnabled;
-    private readonly CancellationTokenSource _starInitiativeLoopCts = new CancellationTokenSource();
-    private readonly Random _starInitiativeRandom = new Random();
     private DateTimeOffset _lastStarInitiativeAt = DateTimeOffset.MinValue;
     private int _systemResumeRecoveryActive;
     private DateTimeOffset _lastSystemResumeRecoveryAt = DateTimeOffset.MinValue;
@@ -174,7 +162,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
         _mobileBridgeDispatcher.EventPublished += (_, evt) => OnUiThread(() => AppendMobileBridgeVoiceDebug("Mobile bridge event", evt.EventType + " #" + evt.Sequence + " " + evt.StarId + " selected=" + evt.SelectedStarId + " met=" + evt.IsMet + " ally=" + evt.IsAlly));
-        _ = RefreshSelectedStarStateForUiAsync("startup");
 
         _speechRequireWakeWord = GetBooleanSetting(
             Environment.GetEnvironmentVariable("SIX_STARS_REQUIRE_WAKE_WORD"),
@@ -333,8 +320,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Status = "Daily Star state refresh failed: " + ex.Message;
         });
-        _runtime.StartDailyStateBackgroundUpdates(DefaultSessionId);
-
         _speechOptions = new SpeechToStarOptions
         {
             SessionId = DefaultSessionId,
@@ -360,6 +345,29 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 CaptureImmediatelyOnStart = true,
                 StoreRawImageBase64 = false
             });
+
+        var mobileBridgeHost = new MobileBridgeHostService();
+        _services = new DesktopUiServiceRegistry
+        {
+            Conversations = new DesktopConversationService(_runtime, _operationController),
+            SpeechInput = new DesktopSpeechInputService(_speechPipeline, _microphoneSpeechSource),
+            VoiceOutput = new DesktopVoiceOutputService(_useStreamingTts, _streamingVoiceResponsePipeline, _voiceResponsePipeline, _playbackEndpoint),
+            ScreenAwareness = new DesktopScreenAwarenessService(_screenAwarenessLoop),
+            Diagnostics = new DesktopDiagnosticsService(_runtime, _appConfig),
+            StarState = new DesktopStarStateService(_runtime),
+            StorySession = new DesktopStorySessionService(),
+            MobileBridgeHost = mobileBridgeHost,
+            MobileConversation = new MobileConversationService(_runtime),
+            MobileVoice = new MobileVoiceDeliveryService(() => mobileBridgeHost.AudioHost),
+            StarInitiative = new DesktopStarInitiativeService(() => StarInitiativeEnabled, TrySpeakStarInitiativeAsync)
+        };
+        _services.MobileBridgeHost.StatusChanged += (_, message) => OnUiThread(() =>
+        {
+            MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
+            AppendMobileBridgeVoiceDebug("Mobile bridge service", message);
+        });
+        _runtime.StartDailyStateBackgroundUpdates(DefaultSessionId);
+        _ = RefreshSelectedStarStateForUiAsync("startup");
 
         WireSpeechEvents();
         WireVoiceEvents();
@@ -404,7 +412,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         EnqueueAllStarStateUpdatesCommand = new RelayCommand(async _ => await EnqueueAllStarStateUpdatesAsync());
         InitializeMobileBridgeCommandsAndMaybeStart();
-        _ = RunStarInitiativeLoopAsync(_starInitiativeLoopCts.Token);
+        _services.StarInitiative.Start();
 
         if (GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_ALWAYS_LISTENING"), _appConfig.VoiceInput.AlwaysListeningOnStartup))
         {
@@ -447,7 +455,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             string normalized = ResolveDefaultStarId(value);
             if (SetProperty(ref _selectedStarId, normalized))
             {
-                if (_activeStoryAutoContinue && !string.Equals(_activeStoryStarId, _selectedStarId, StringComparison.OrdinalIgnoreCase))
+                if (_services.StorySession.AutoContinue && !string.Equals(_services.StorySession.StarId, _selectedStarId, StringComparison.OrdinalIgnoreCase))
                 {
                     InterruptStory("Selected Star changed.");
                 }
@@ -682,94 +690,47 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void LoadLatestConversationDebugLog()
     {
-        string text = _runtime.ReadLatestConversationDebugLogText();
-        if (string.IsNullOrWhiteSpace(text))
+        DesktopDiagnosticsService.ActionResult result = _services.Diagnostics.LoadLatestConversationLog();
+        if (result.Ok)
+        {
+            LatestConversationDebugLogText = result.Text;
+            DebugJson = result.Text;
+        }
+        else
         {
             LatestConversationDebugLogText = "No settled conversation emotion trace exists yet. Send a message and wait for the background review/interstar cycle to settle.";
-            Status = "No latest conversation emotion trace file yet. Log folder: " + _runtime.ConversationDebugLogDirectory;
-            return;
         }
-        LatestConversationDebugLogText = text;
-        DebugJson = text;
-        Status = "Loaded latest conversation emotion trace: " + _runtime.LatestConversationDebugLogPath;
+        Status = result.Message;
     }
 
     private void CopyLatestConversationDebugLog()
     {
-        string text = _runtime.ReadLatestConversationDebugLogText();
-        if (string.IsNullOrWhiteSpace(text)) text = LatestConversationDebugLogText ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            Status = "No conversation emotion trace text to copy yet.";
-            return;
-        }
-        Clipboard.SetText(text);
-        Status = "Copied latest conversation emotion trace to clipboard.";
+        DesktopDiagnosticsService.ActionResult result = _services.Diagnostics.CopyLatestConversationLog(LatestConversationDebugLogText);
+        Status = result.Message;
     }
 
 
     private void OpenLatestConversationDebugLog()
     {
-        string path = _runtime.LatestConversationDebugLogPath;
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        DesktopDiagnosticsService.ActionResult result = _services.Diagnostics.OpenLatestConversationLog();
+        if (!result.Ok)
         {
             LoadLatestConversationDebugLog();
-            path = _runtime.LatestConversationDebugLogPath;
+            result = _services.Diagnostics.OpenLatestConversationLog();
         }
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            Status = "No latest conversation emotion trace file exists yet. Log folder: " + _runtime.ConversationDebugLogDirectory;
-            return;
-        }
-
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "notepad.exe",
-                Arguments = "\"" + path + "\"",
-                UseShellExecute = true
-            });
-            Status = "Opened latest conversation emotion trace: " + path;
-        }
-        catch (Exception ex)
-        {
-            Status = "Could not open latest conversation emotion trace: " + ex.Message;
-        }
+        Status = result.Message;
     }
 
 
     private void OpenLlmExchangeLogFolder()
     {
-        try
-        {
-            string folder = ResolveLlmExchangeLogDirectory();
-            Directory.CreateDirectory(folder);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = folder,
-                UseShellExecute = true
-            });
-            Status = "Opened LLM exchange log folder: " + folder;
-        }
-        catch (Exception ex)
-        {
-            Status = "Could not open LLM exchange log folder: " + ex.Message;
-        }
+        DesktopDiagnosticsService.ActionResult result = _services.Diagnostics.OpenLlmExchangeLogFolder();
+        Status = result.Message;
     }
 
     private string ResolveLlmExchangeLogDirectory()
     {
-        string? configured = Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR")
-            ?? _appConfig.LLM.ExchangeLogDirectory;
-        if (string.IsNullOrWhiteSpace(configured))
-        {
-            configured = "logs/llm-exchanges";
-        }
-
-        return Path.IsPathRooted(configured)
-            ? Path.GetFullPath(configured)
-            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, configured));
+        return _services.Diagnostics.ResolveLlmExchangeLogDirectory();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -1357,7 +1318,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void WireMicrophoneEvents()
     {
-        _microphoneSpeechSource.StatusChanged += (_, message) => OnUiThread(() =>
+        _services.SpeechInput.StatusChanged += (_, message) => OnUiThread(() =>
         {
             MicrophoneCaptureStatus = message;
             SpeechStatus = message;
@@ -1366,8 +1327,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void WireScreenEvents()
     {
-        _screenAwarenessLoop.StatusChanged += (_, message) => OnUiThread(() => ScreenStatus = message);
-        _screenAwarenessLoop.CaptureStored += (_, summary) => OnUiThread(() =>
+        _services.ScreenAwareness.StatusChanged += (_, message) => OnUiThread(() => ScreenStatus = message);
+        _services.ScreenAwareness.CaptureStored += (_, summary) => OnUiThread(() =>
         {
             ScreenStatus = "Captured " + summary.ActivityType + ": " + summary.CompanionSafeSummary;
         });
@@ -1529,23 +1490,30 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 completedNormally = true;
                 OnUiThread(() => Status = "Story autoplay complete.");
             }
-            else if (_useStreamingTts && _streamingVoiceResponsePipeline != null)
-            {
-                System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Starting streaming speech for: '{response.SpokenText?.Substring(0, System.Math.Min(50, response.SpokenText?.Length ?? 0))}...'");
-                await _streamingVoiceResponsePipeline.SpeakStreamingAsync(DefaultSessionId, response, cancellationToken);
-                completedNormally = true;
-                OnUiThread(() => Status = "Streaming voice playback complete.");
-            }
-            else if (_voiceResponsePipeline != null)
-            {
-                VoiceSynthesisResult voice = await _voiceResponsePipeline.SpeakAsync(DefaultSessionId, response, cancellationToken);
-                completedNormally = true;
-                OnUiThread(() => Status = "Voice WAV played. " + voice.WavAudio.Length + " bytes from " + voice.Source + ".");
-            }
             else
             {
+                DesktopVoiceOutputService.Result voiceResult = await _services.VoiceOutput
+                    .SpeakAsync(DefaultSessionId, response, cancellationToken)
+                    .ConfigureAwait(false);
                 completedNormally = true;
-                OnUiThread(() => Status = "No voice pipeline configured.");
+                OnUiThread(() =>
+                {
+                    if (!voiceResult.Configured)
+                    {
+                        Status = "No voice pipeline configured.";
+                    }
+                    else if (voiceResult.Streaming)
+                    {
+                        Status = "Streaming voice playback complete.";
+                    }
+                    else
+                    {
+                        VoiceSynthesisResult? voice = voiceResult.Voice;
+                        Status = voice == null
+                            ? "Voice playback complete."
+                            : "Voice WAV played. " + voice.WavAudio.Length + " bytes from " + voice.Source + ".";
+                    }
+                });
             }
         }
         catch (System.OperationCanceledException)
@@ -1628,7 +1596,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             StarInteractionResponse? nextResponse = null;
             Task<List<VoiceSynthesisResult>>? nextVoiceTask = null;
-            string markdown = string.IsNullOrWhiteSpace(_activeStoryMarkdown) ? currentResponse.StoryMarkdown : _activeStoryMarkdown;
+            string markdown = string.IsNullOrWhiteSpace(_services.StorySession.Markdown) ? currentResponse.StoryMarkdown : _services.StorySession.Markdown;
             int startChunkIndex = Math.Max(0, currentResponse.StoryPartIndex + 1);
 
             if (_storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(markdown, startChunkIndex, out int actualChunkIndex, out string nextChunk))
@@ -1649,9 +1617,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 OnUiThread(() =>
                 {
-                    _activeStoryAutoContinue = false;
+                    _services.StorySession.AutoContinue = false;
                     SelectedRequestType = RequestType.Chat;
-                    Status = "Story finished: " + (string.IsNullOrWhiteSpace(_activeStoryTitle) ? "active story" : _activeStoryTitle);
+                    Status = "Story finished: " + (string.IsNullOrWhiteSpace(_services.StorySession.Title) ? "active story" : _services.StorySession.Title);
                     SpeechStatus = "Story autoplay finished.";
                 });
                 return;
@@ -2066,7 +2034,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            if (_activeStoryAutoContinue && IsStoryInterruptCommand(transcript.Text))
+            if (_services.StorySession.AutoContinue && IsStoryInterruptCommand(transcript.Text))
             {
                 InterruptStory("Voice command interrupted the story.");
                 OnUiThread(() =>
@@ -2078,7 +2046,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            if (_activeStoryAutoContinue)
+            if (_services.StorySession.AutoContinue)
             {
                 InterruptStory("Incoming speech command interrupted the story.", cancelRuntime: false);
             }
@@ -2104,7 +2072,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void HandleSystemSuspend()
     {
-        if (!_microphoneSpeechSource.WantsToRun)
+        if (!_services.SpeechInput.WantsToRun)
         {
             return;
         }
@@ -2118,7 +2086,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task HandleSystemResumeAsync()
     {
-        if (!_microphoneSpeechSource.WantsToRun)
+        if (!_services.SpeechInput.WantsToRun)
         {
             return;
         }
@@ -2144,8 +2112,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 VoiceInputStatus = "Voice input is recovering after sleep.";
             });
 
-            bool recovered = await _microphoneSpeechSource
-                .RecoverAfterSystemResumeAsync(CancellationToken.None)
+            bool recovered = await _services.SpeechInput
+                .RecoverAfterResumeAsync(CancellationToken.None)
                 .ConfigureAwait(false);
 
             if (!recovered)
@@ -2192,8 +2160,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateSpeechOptions();
             SelectedRequestType = RequestType.Chat;
             _voiceCaptureSettings.RequireHotwordWhenIdle = false;
-            await _speechPipeline.StartListeningAsync(CancellationToken.None);
-            await _microphoneSpeechSource.StartAsync(CancellationToken.None);
+            await _services.SpeechInput.StartAsync(CancellationToken.None);
             VoiceInputStatus = SpeechRequireWakeWord
                 ? "Always-listening VAD is on. Whisper will transcribe utterances, then text wake-name filtering is applied."
                 : "Always-listening VAD is on. Any detected utterance will be transcribed and sent to the selected Star.";
@@ -2207,8 +2174,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task StopListeningAsync()
     {
-        await _microphoneSpeechSource.StopAsync(CancellationToken.None);
-        await _speechPipeline.StopListeningAsync(CancellationToken.None);
+        await _services.SpeechInput.StopAsync(CancellationToken.None);
         OnUiThread(() =>
         {
             IncomingVoiceLevelPercent = 0;
@@ -2220,8 +2186,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            await _microphoneSpeechSource.StopAsync(CancellationToken.None).ConfigureAwait(false);
-            await _speechPipeline.CancelListeningAsync(CancellationToken.None).ConfigureAwait(false);
+            await _services.SpeechInput.CancelAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -2257,10 +2222,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _voiceCaptureSettings.RequireHotwordWhenIdle = false;
             _voiceCaptureSettings.SilenceEndMs = 60 * 60 * 1000; // Push-to-talk: keep audio until Done/Submit.
             UpdateSpeechOptions();
-            _speechPipeline.EnterConversationMode(SelectedStarId);
-
-            await _speechPipeline.StartListeningAsync(_operationController.CurrentToken).ConfigureAwait(false);
-            await _microphoneSpeechSource.StartAsync(_operationController.CurrentToken).ConfigureAwait(false);
+            await _services.SpeechInput
+                .StartConversationCaptureAsync(SelectedStarId, _operationController.CurrentToken)
+                .ConfigureAwait(false);
 
             OnUiThread(() =>
             {
@@ -2303,8 +2267,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _voiceCaptureSettings.RequireHotwordWhenIdle = false;
             UpdateSpeechOptions();
 
-            await _microphoneSpeechSource.StopAsync(CancellationToken.None).ConfigureAwait(false);
-            await _speechPipeline.StopListeningAsync(CancellationToken.None).ConfigureAwait(false);
+            await _services.SpeechInput.StopAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -2334,7 +2297,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task<StarState> ResetStarEverywhereAsync(string starId, string? primarySessionId, CancellationToken cancellationToken)
     {
         string requestSessionId = string.IsNullOrWhiteSpace(primarySessionId) ? DefaultSessionId : primarySessionId!.Trim();
-        StarState reset = await _runtime.ResetStarMemoryAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
+        StarState reset = await _services.StarState.ResetAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
         await _runtime.ClearDailyStateAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
         return reset;
     }
@@ -2391,7 +2354,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear the shared local state for " + star + ".");
             }
 
-            StarState selectedState = await _runtime.GetStarStateAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
+            StarState selectedState = await _services.StarState.LoadAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -2446,12 +2409,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task StartScreenAwarenessAsync()
     {
         ScreenStatus = "Starting screen awareness...";
-        await _screenAwarenessLoop.StartAsync(default);
+        await _services.ScreenAwareness.StartAsync(default);
     }
 
     private async Task StopScreenAwarenessAsync()
     {
-        await _screenAwarenessLoop.StopAsync(default);
+        await _services.ScreenAwareness.StopAsync(default);
     }
 
     private async Task CaptureScreenNowAsync()
@@ -2459,7 +2422,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             ScreenStatus = "Capturing screen now...";
-            ScreenCaptureSummary summary = await _screenAwarenessLoop.CaptureOnceAsync(default);
+            ScreenCaptureSummary summary = await _services.ScreenAwareness.CaptureNowAsync(default);
             DebugJson = JsonSerializer.Serialize(new { screenCapture = summary }, _jsonOptions);
         }
         catch (Exception ex)
@@ -2557,7 +2520,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            if (!automaticStoryContinuation && _activeStoryAutoContinue)
+            if (!automaticStoryContinuation && _services.StorySession.AutoContinue)
             {
                 if (IsStoryInterruptCommand(PlayerText))
                 {
@@ -2615,7 +2578,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             IsProcessingRuntime = true;
             CancellationToken runtimeToken = _operationController.BeginNewOperation("typed message to " + request.StarId);
-            StarInteractionResponse response = await _runtime.ProcessAsync(request, runtimeToken);
+            StarInteractionResponse response = await _services.Conversations.ProcessAsync(request, runtimeToken);
 
             // Check if response came from real LLM or mock
             bool usedRealLlm = !response.Debug.RiskFlags.Contains("llm_primary_failed");
@@ -2685,7 +2648,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task AskStarInitiativeNowAsync()
     {
-        await TrySpeakStarInitiativeAsync("manual desktop button", force: true).ConfigureAwait(false);
+        await _services.StarInitiative.RequestNowAsync("manual desktop button").ConfigureAwait(false);
     }
 
     private async Task EnqueueAllStarStateUpdatesAsync()
@@ -2694,7 +2657,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             OnUiThread(() => Status = "Enqueuing current-state updates for all Stars...");
-            await _runtime.TriggerDailyStateRefreshAsync(
+            await _services.Conversations.TriggerDailyStateRefreshAsync(
                 DefaultSessionId,
                 starIds,
                 "manual desktop all-Star state update",
@@ -2722,36 +2685,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private async Task RunStarInitiativeLoopAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                int delaySeconds;
-                lock (_starInitiativeRandom)
-                {
-                    delaySeconds = _starInitiativeRandom.Next(110, 290);
-                }
-                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken).ConfigureAwait(false);
-                if (StarInitiativeEnabled)
-                {
-                    await TrySpeakStarInitiativeAsync("desktop at-rest timer", force: false).ConfigureAwait(false);
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // App is shutting down.
-        }
-    }
-
     private async Task TrySpeakStarInitiativeAsync(string reason, bool force)
     {
         if (!force && !StarInitiativeEnabled) return;
         if (!force && DateTimeOffset.Now - _lastStarInitiativeAt < TimeSpan.FromMinutes(2)) return;
-        if (_isProcessingRuntime || _isRecording || _activeStoryAutoContinue)
+        if (_isProcessingRuntime || _isRecording || _services.StorySession.AutoContinue)
         {
             if (force) Status = "Star initiative waited because the runtime is already busy.";
             return;
@@ -2778,7 +2716,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             IsProcessingRuntime = true;
             Status = "Asking " + SelectedStarId + " if she wants to say something at rest...";
             CancellationToken runtimeToken = _operationController.BeginNewOperation("star initiative to " + request.StarId);
-            StarInteractionResponse response = await _runtime.ProcessAsync(request, runtimeToken).ConfigureAwait(false);
+            StarInteractionResponse response = await _services.Conversations.ProcessAsync(request, runtimeToken).ConfigureAwait(false);
             _lastStarInitiativeAt = DateTimeOffset.Now;
             if (!response.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(response.SpokenText))
             {
@@ -2835,26 +2773,26 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task<bool> TryContinueActiveStoryAsync(CancellationToken cancellationToken)
     {
-        if (!_activeStoryAutoContinue || _suppressStoryContinuationOnce || string.IsNullOrWhiteSpace(_activeStoryMarkdown))
+        if (!_services.StorySession.AutoContinue || _services.StorySession.SuppressContinuationOnce || string.IsNullOrWhiteSpace(_services.StorySession.Markdown))
         {
-            _suppressStoryContinuationOnce = false;
+            _services.StorySession.SuppressContinuationOnce = false;
             return false;
         }
 
-        if (!_storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int actualChunkIndex, out string nextChunk))
+        if (!_storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_services.StorySession.Markdown, _services.StorySession.NextPartIndex, out int actualChunkIndex, out string nextChunk))
         {
             OnUiThread(() =>
             {
-                _activeStoryAutoContinue = false;
+                _services.StorySession.AutoContinue = false;
                 SelectedRequestType = RequestType.Chat;
-                Status = "Story finished: " + (string.IsNullOrWhiteSpace(_activeStoryTitle) ? "active story" : _activeStoryTitle);
+                Status = "Story finished: " + (string.IsNullOrWhiteSpace(_services.StorySession.Title) ? "active story" : _services.StorySession.Title);
             });
             return false;
         }
 
-        if (actualChunkIndex != _nextStoryPartIndex)
+        if (actualChunkIndex != _services.StorySession.NextPartIndex)
         {
-            System.Diagnostics.Debug.WriteLine($"[StoryAutoplay] Skipped empty story chunks from {_nextStoryPartIndex} to {actualChunkIndex - 1}; continuing with chunk {actualChunkIndex}.");
+            System.Diagnostics.Debug.WriteLine($"[StoryAutoplay] Skipped empty story chunks from {_services.StorySession.NextPartIndex} to {actualChunkIndex - 1}; continuing with chunk {actualChunkIndex}.");
         }
 
         try
@@ -2892,13 +2830,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         StarInteractionResponse source = new StarInteractionResponse
         {
-            StarId = string.IsNullOrWhiteSpace(_activeStoryStarId) ? SelectedStarId : _activeStoryStarId,
-            StoryId = _activeStoryId,
-            StoryTitle = _activeStoryTitle,
-            StoryKind = _activeStoryKind,
-            StoryMarkdown = _activeStoryMarkdown,
-            StorySummary = _activeStorySummary,
-            VoiceDirective = CloneVoiceDirective(_activeStoryVoiceDirective)
+            StarId = string.IsNullOrWhiteSpace(_services.StorySession.StarId) ? SelectedStarId : _services.StorySession.StarId,
+            StoryId = _services.StorySession.StoryId,
+            StoryTitle = _services.StorySession.Title,
+            StoryKind = _services.StorySession.Kind,
+            StoryMarkdown = _services.StorySession.Markdown,
+            StorySummary = _services.StorySession.Summary,
+            VoiceDirective = CloneVoiceDirective(_services.StorySession.VoiceDirective)
         };
         return _storySpeechAdapter.CreateLocalStoryChunkResponse(source, markdownChunk, chunkIndex);
     }
@@ -3057,38 +2995,38 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             || response.StoryPartIndex > 0;
         if (!hasStory) return;
 
-        _activeStoryStarId = response.StarId;
-        if (!string.IsNullOrWhiteSpace(response.StoryId)) _activeStoryId = response.StoryId;
-        if (!string.IsNullOrWhiteSpace(response.StoryTitle)) _activeStoryTitle = response.StoryTitle ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(response.StoryMarkdown)) _activeStoryMarkdown = response.StoryMarkdown;
-        if (!string.IsNullOrWhiteSpace(response.StorySummary)) _activeStorySummary = response.StorySummary;
-        if (response.StoryKind != StoryKind.None) _activeStoryKind = response.StoryKind;
-        if (response.VoiceDirective != null) _activeStoryVoiceDirective = CloneVoiceDirective(response.VoiceDirective);
-        if (response.StoryPartIndex >= 0) _nextStoryPartIndex = Math.Max(_nextStoryPartIndex + 1, response.StoryPartIndex + 1);
-        bool hasNextCachedChunk = _storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_activeStoryMarkdown, _nextStoryPartIndex, out int nextNonEmptyIndex, out _);
-        if (hasNextCachedChunk && nextNonEmptyIndex != _nextStoryPartIndex)
+        _services.StorySession.StarId = response.StarId;
+        if (!string.IsNullOrWhiteSpace(response.StoryId)) _services.StorySession.StoryId = response.StoryId;
+        if (!string.IsNullOrWhiteSpace(response.StoryTitle)) _services.StorySession.Title = response.StoryTitle ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(response.StoryMarkdown)) _services.StorySession.Markdown = response.StoryMarkdown;
+        if (!string.IsNullOrWhiteSpace(response.StorySummary)) _services.StorySession.Summary = response.StorySummary;
+        if (response.StoryKind != StoryKind.None) _services.StorySession.Kind = response.StoryKind;
+        if (response.VoiceDirective != null) _services.StorySession.VoiceDirective = CloneVoiceDirective(response.VoiceDirective);
+        if (response.StoryPartIndex >= 0) _services.StorySession.NextPartIndex = Math.Max(_services.StorySession.NextPartIndex + 1, response.StoryPartIndex + 1);
+        bool hasNextCachedChunk = _storySpeechAdapter.TryGetNextNonEmptyStoryChunkFromMarkdown(_services.StorySession.Markdown, _services.StorySession.NextPartIndex, out int nextNonEmptyIndex, out _);
+        if (hasNextCachedChunk && nextNonEmptyIndex != _services.StorySession.NextPartIndex)
         {
-            System.Diagnostics.Debug.WriteLine($"[StoryAutoplay] Next cached story passage is chunk {nextNonEmptyIndex}; chunk {_nextStoryPartIndex} or later empty chunks will be skipped.");
+            System.Diagnostics.Debug.WriteLine($"[StoryAutoplay] Next cached story passage is chunk {nextNonEmptyIndex}; chunk {_services.StorySession.NextPartIndex} or later empty chunks will be skipped.");
         }
-        _activeStoryAutoContinue = hasNextCachedChunk || (!response.StoryIsFinished && !string.IsNullOrWhiteSpace(_activeStoryMarkdown));
+        _services.StorySession.AutoContinue = hasNextCachedChunk || (!response.StoryIsFinished && !string.IsNullOrWhiteSpace(_services.StorySession.Markdown));
 
-        _lastStorySpokenText = response.SpokenText ?? string.Empty;
-        if (!string.IsNullOrWhiteSpace(_lastStorySpokenText))
+        _services.StorySession.LastSpokenText = response.SpokenText ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(_services.StorySession.LastSpokenText))
         {
-            if (_activeStoryProgress.Length > 0) _activeStoryProgress.AppendLine().AppendLine();
-            _activeStoryProgress.Append(_lastStorySpokenText.Trim());
+            if (_services.StorySession.Progress.Length > 0) _services.StorySession.Progress.AppendLine().AppendLine();
+            _services.StorySession.Progress.Append(_services.StorySession.LastSpokenText.Trim());
             const int maxProgressChars = 12000;
-            if (_activeStoryProgress.Length > maxProgressChars)
+            if (_services.StorySession.Progress.Length > maxProgressChars)
             {
-                _activeStoryProgress.Remove(0, _activeStoryProgress.Length - maxProgressChars);
-                _activeStoryProgress.Insert(0, "[earlier spoken story progress omitted]\n");
+                _services.StorySession.Progress.Remove(0, _services.StorySession.Progress.Length - maxProgressChars);
+                _services.StorySession.Progress.Insert(0, "[earlier spoken story progress omitted]\n");
             }
         }
 
-        if (response.StoryIsFinished && !_activeStoryAutoContinue)
+        if (response.StoryIsFinished && !_services.StorySession.AutoContinue)
         {
             SelectedRequestType = RequestType.Chat;
-            Status = "Story finished: " + _activeStoryTitle;
+            Status = "Story finished: " + _services.StorySession.Title;
         }
     }
 
@@ -3118,9 +3056,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void InterruptStory(string reason, bool cancelRuntime = true)
     {
-        bool hadStory = _activeStoryAutoContinue || !string.IsNullOrWhiteSpace(_activeStoryMarkdown);
+        bool hadStory = _services.StorySession.AutoContinue || !string.IsNullOrWhiteSpace(_services.StorySession.Markdown);
         StopActiveStoryState();
-        _suppressStoryContinuationOnce = true;
+        _services.StorySession.SuppressContinuationOnce = true;
         if (cancelRuntime)
         {
             _operationController.CancelAllRuntimeOperations(reason);
@@ -3134,17 +3072,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void StopActiveStoryState()
     {
-        _activeStoryAutoContinue = false;
-        _activeStoryStarId = string.Empty;
-        _activeStoryId = string.Empty;
-        _activeStoryTitle = string.Empty;
-        _activeStoryMarkdown = string.Empty;
-        _activeStorySummary = string.Empty;
-        _activeStoryKind = StoryKind.None;
-        _activeStoryVoiceDirective = VoiceDirective.Empty();
-        _activeStoryProgress.Clear();
-        _lastStorySpokenText = string.Empty;
-        _nextStoryPartIndex = 0;
+        _services.StorySession.Reset();
         SelectedRequestType = RequestType.Chat;
     }
 
@@ -3189,7 +3117,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
-            StarState state = await _runtime.GetStarStateAsync(DefaultSessionId, starId, CancellationToken.None);
+            StarState state = await _services.StarState.LoadAsync(DefaultSessionId, starId, CancellationToken.None);
             string todayStateText = await ResolveTodayStarStateTextForUiAsync(starId, state, CancellationToken.None).ConfigureAwait(false);
             OnUiThread(() =>
             {
@@ -3220,7 +3148,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
-            StarState state = await _runtime.SetStarMetAsync(DefaultSessionId, starId, isMet, CancellationToken.None);
+            StarState state = await _services.StarState.SetMetAsync(DefaultSessionId, starId, isMet, CancellationToken.None);
             PublishMobileBridgeStateEventFromDesktop("StarStateChanged", state, starId + " met flag changed from the desktop UI.");
             OnUiThread(() =>
             {
@@ -3253,14 +3181,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
-            StarState state = await _runtime.SetStarWorldStateAsync(new StarWorldStateUpdateRequest
-            {
-                SessionId = DefaultSessionId,
-                StarId = starId,
-                IsAlly = isAlly,
-                IsMet = isAlly ? true : (bool?)null,
-                Reason = "desktop UI checkbox"
-            }, CancellationToken.None);
+            StarState state = await _services.StarState.SetAllyAsync(
+                DefaultSessionId,
+                starId,
+                isAlly,
+                "desktop UI checkbox",
+                CancellationToken.None);
             PublishMobileBridgeStateEventFromDesktop("StarStateChanged", state, starId + " ally flag changed from the desktop UI.");
             OnUiThread(() =>
             {
@@ -3681,16 +3607,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            _starInitiativeLoopCts.Cancel();
-            _starInitiativeLoopCts.Dispose();
-            _microphoneSpeechSource.Dispose();
-            _screenAwarenessLoop.Dispose();
-            StopMobileBridgeServer("App shutting down.");
-            _mobileBridgeServer?.Dispose();
-            _mobileBridgeRuntimeGate.Dispose();
-            _preparedSpeechGenerationGate.Dispose();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
+            _services.Dispose();
+            _preparedSpeechGenerationGate.Dispose();
             _operationController.Dispose();
             _interruptionManager.Dispose();
             _storyAutoplayPrefetchStreamingGenerator?.Dispose();

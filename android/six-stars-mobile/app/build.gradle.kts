@@ -30,5 +30,7 @@ android {
 dependencies {
     implementation("androidx.activity:activity:1.12.4")
     implementation("androidx.core:core:1.17.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-livedata:2.8.7")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
 }
