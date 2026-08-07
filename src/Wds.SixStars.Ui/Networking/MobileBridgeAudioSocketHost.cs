@@ -89,10 +89,28 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         if (_listener != null) return;
         Port = port;
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, port);
+        _listener = CreateDualStackListener(port);
         _listener.Start();
         _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
         PublishStatus("Phone audio socket listening on port " + port + ".");
+    }
+
+    private static TcpListener CreateDualStackListener(int port)
+    {
+        try
+        {
+            TcpListener listener = new TcpListener(IPAddress.IPv6Any, port);
+            listener.Server.DualMode = true;
+            return listener;
+        }
+        catch (SocketException)
+        {
+            return new TcpListener(IPAddress.Any, port);
+        }
+        catch (NotSupportedException)
+        {
+            return new TcpListener(IPAddress.Any, port);
+        }
     }
 
     public void Stop()

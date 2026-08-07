@@ -30,7 +30,17 @@ final class PreparedSpeechCoordinator {
         syncing = true;
         return CompletableFuture.supplyAsync(() -> {
             try {
-                PreparedSpeechStore.SyncResult result = PreparedSpeechStore.sync(context, settings.bridgeUrl(), starId);
+                String primaryUrl = settings.preferredBridgeUrl();
+                PreparedSpeechStore.SyncResult result;
+                try {
+                    result = PreparedSpeechStore.sync(context, primaryUrl, starId);
+                } catch (Exception primaryError) {
+                    String fallbackUrl = settings.bridgeUrl();
+                    if (BridgeAddressService.normalizeBaseUrl(primaryUrl).equalsIgnoreCase(BridgeAddressService.normalizeBaseUrl(fallbackUrl))) {
+                        throw primaryError;
+                    }
+                    result = PreparedSpeechStore.sync(context, fallbackUrl, starId);
+                }
                 latest = result;
                 lastSyncElapsedMs = SystemClock.elapsedRealtime();
                 return result;

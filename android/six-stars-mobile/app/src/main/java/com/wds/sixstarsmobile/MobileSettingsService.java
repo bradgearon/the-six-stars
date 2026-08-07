@@ -10,6 +10,9 @@ final class MobileSettingsService {
     static final String PREF_STAR_INITIATIVE_ENABLED = "starInitiativeEnabled";
     static final String PREF_STAR_INITIATIVE_BACKGROUND_ENABLED = "starInitiativeBackgroundServiceEnabled";
     static final String PREF_BRIDGE_URL = "bridgeUrl";
+    static final String PREF_PREFERRED_IPV6_ADDRESS = "preferredIpv6Address";
+    static final String PREF_USE_IPV6_PRIMARY = "useIpv6Primary";
+    static final String PREF_IPV6_DISCOVERED_AT_MS = "ipv6DiscoveredAtMs";
     static final String PREF_SELECTED_STAR_ID = "selectedStarId";
     static final String PREF_ROMANCE_MODE = "romanceMode";
     static final String PREF_PLAY_ON_PHONE = "playOnPhone";
@@ -48,6 +51,31 @@ final class MobileSettingsService {
     void setBridgeUrl(String value) {
         String normalized = value == null ? "" : value.trim();
         prefs.edit().putString(PREF_BRIDGE_URL, normalized.isEmpty() ? DEFAULT_BRIDGE_URL : normalized).apply();
+    }
+    String preferredIpv6Address() {
+        return BridgeAddressService.normalizeIpv6Address(prefs.getString(PREF_PREFERRED_IPV6_ADDRESS, ""));
+    }
+    boolean setPreferredIpv6Address(String value) {
+        String normalized = BridgeAddressService.normalizeIpv6Address(value);
+        String before = preferredIpv6Address();
+        SharedPreferences.Editor editor = prefs.edit().putString(PREF_PREFERRED_IPV6_ADDRESS, normalized);
+        if (!normalized.isEmpty()) editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, System.currentTimeMillis());
+        else editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L);
+        editor.apply();
+        return !before.equalsIgnoreCase(normalized);
+    }
+    boolean rememberDiscoveredIpv6(String value) {
+        String normalized = BridgeAddressService.normalizeIpv6Address(value);
+        if (normalized.isEmpty()) return false;
+        return setPreferredIpv6Address(normalized);
+    }
+    boolean useIpv6Primary() { return prefs.getBoolean(PREF_USE_IPV6_PRIMARY, true); }
+    void setUseIpv6Primary(boolean value) { prefs.edit().putBoolean(PREF_USE_IPV6_PRIMARY, value).apply(); }
+    long ipv6DiscoveredAtMs() { return prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L); }
+    String preferredBridgeUrl() {
+        if (!useIpv6Primary()) return bridgeUrl();
+        String value = BridgeAddressService.ipv6BridgeUrl(preferredIpv6Address(), BridgeAddressService.bridgePort(bridgeUrl()));
+        return value.isEmpty() ? bridgeUrl() : value;
     }
     String selectedStarId() { return nonEmpty(prefs.getString(PREF_SELECTED_STAR_ID, "Elusiaa"), "Elusiaa"); }
     void setSelectedStarId(String value) { prefs.edit().putString(PREF_SELECTED_STAR_ID, nonEmpty(value, "Elusiaa")).apply(); }

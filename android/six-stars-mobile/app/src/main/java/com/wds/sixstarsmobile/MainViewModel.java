@@ -11,7 +11,7 @@ import androidx.lifecycle.MutableLiveData;
 
 import org.json.JSONObject;
 
-import java.net.URL;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -82,7 +82,7 @@ public final class MainViewModel extends AndroidViewModel {
         super(application);
         settings = new MobileSettingsService(application);
         eventService = new MobileBridgeEventService();
-        UiState initial = new UiState(false, false, false, false, settings.selectedStarId(), "Connecting…", "");
+        UiState initial = new UiState(false, false, false, false, settings.selectedStarId(), "Connectingï¿½", "");
         uiState.setValue(initial);
         bridge = new BridgeConnectionService(settings, new BridgeConnectionService.Listener() {
             @Override public void onConnected(long latestSequence) { handleBridgeConnected(latestSequence); }
@@ -131,11 +131,14 @@ public final class MainViewModel extends AndroidViewModel {
             }
 
             try {
-                String bridgeUrl = settings.bridgeUrl();
-                String host = new URL(bridgeUrl).getHost();
+                boolean promoted = acceptHealthNetworkInfo(health, true);
+                if (promoted) return; // The IPv6 socket will request health again after it connects.
+
+                String activeUrl = bridge.activeBaseUrl();
+                String host = BridgeAddressService.hostFromBaseUrl(activeUrl);
                 int audioPort = health == null
-                        ? defaultAudioPort(bridgeUrl)
-                        : health.optInt("audioPort", defaultAudioPort(bridgeUrl));
+                        ? defaultAudioPort(activeUrl)
+                        : health.optInt("audioPort", defaultAudioPort(activeUrl));
                 phoneVoice.connect(host, audioPort);
             } catch (Exception ex) {
                 protocolDebug.postValue("Phone voice bootstrap failed: " + ex.getMessage());
@@ -144,14 +147,59 @@ public final class MainViewModel extends AndroidViewModel {
     }
 
     private static int defaultAudioPort(String bridgeUrl) {
-        try {
-            URL url = new URL(bridgeUrl);
-            int port = url.getPort() > 0 ? url.getPort() : 8066;
-            return port >= 65535 ? port - 1 : port + 1;
-        } catch (Exception ignored) {
-            return 8067;
-        }
+        return BridgeAddressService.audioPort(bridgeUrl);
     }
+
+    /** Saves the IPv6 address advertised by the active desktop socket and optionally promotes it. */
+    boolean acceptHealthNetworkInfo(JSONObject health, boolean promote) {
+        String discovered = BridgeAddressService.discoveredIpv6(health);
+        if (discovered.isEmpty()) {
+            if (health != null && health.optBoolean("localConnection", false)
+                    && health.has("ipv6Available") && !health.optBoolean("ipv6Available", false)) {
+                boolean cleared = settings.setPreferredIpv6Address("");
+                if (cleared) protocolDebug.postValue("Cleared the saved desktop IPv6 because the active local adapter no longer exposes one.");
+            }
+            return false;
+        }
+        boolean changed = settings.rememberDiscoveredIpv6(discovered);
+        if (changed) {
+            protocolDebug.postValue("Saved desktop IPv6 from active local socket: " + discovered
+                    + " (adapter=" + health.optString("localAdapterName", "unknown") + ").");
+        }
+        return promote && settings.useIpv6Primary() && bridge.promoteToPreferredIpv6();
+    }
+
+    CompletableFuture<String> refreshPreferredIpv6(boolean promote) {
+        CompletableFuture<String> result = new CompletableFuture<>();
+        bridge.request("health", new JSONObject(), 10000L).whenComplete((health, error) -> {
+            if (error != null) {
+                result.completeExceptionally(error);
+                return;
+            }
+            String discovered = BridgeAddressService.discoveredIpv6(health);
+            if (discovered.isEmpty()) {
+                result.completeExceptionally(new IllegalStateException(
+                        "The active desktop adapter did not expose a routable local IPv6 address."));
+                return;
+            }
+            settings.rememberDiscoveredIpv6(discovered);
+            if (promote && settings.useIpv6Primary()) bridge.promoteToPreferredIpv6();
+            result.complete(discovered);
+        });
+        return result;
+    }
+
+    boolean updatePreferredIpv6Settings(String address, boolean useAsPrimary) {
+        String raw = address == null ? "" : address.trim();
+        String normalized = BridgeAddressService.normalizeIpv6Address(raw);
+        if (!raw.isEmpty() && normalized.isEmpty()) return false;
+        settings.setPreferredIpv6Address(normalized);
+        settings.setUseIpv6Primary(useAsPrimary);
+        bridge.reconnectPreferred();
+        return true;
+    }
+
+    String activeBridgeUrl() { return bridge.activeBaseUrl(); }
 
     private void handleBridgeEvent(JSONObject payload) {
         MobileBridgeEventService.Event event = eventService.parse(payload);
