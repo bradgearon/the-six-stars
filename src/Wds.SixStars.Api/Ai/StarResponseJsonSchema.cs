@@ -107,19 +107,9 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new Dictionary<string, object>
-                {
-                    { "type", "array" },
-                    { "minItems", 54 },
-                    { "maxItems", 54 },
-                    { "items", new Dictionary<string, object>
-                        {
-                            { "type", "integer" },
-                            { "minimum", 0 },
-                            { "maximum", 100 }
-                        }
-                    }
-                };
+                // One compact vector string per writing minimizes completion tokens while
+                // preserving the on-disk score:confidence;... representation unchanged.
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(1800);
             }
 
             Dictionary<string, object> schema = new Dictionary<string, object>

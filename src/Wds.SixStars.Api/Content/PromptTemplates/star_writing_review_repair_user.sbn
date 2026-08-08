@@ -14,6 +14,6 @@ WRITINGS
 {{ end }}
 
 Return only this outer JSON shape:
-{"0":[],"1":[],"2":[],"3":[],"4":[]}
+{"0":"","1":"","2":"","3":"","4":""}
 
-Fill every property with exactly 54 integers alternating score, confidence-decile for the 27 categories above. The final pair is Overall.
+Replace every empty value with exactly 27 score:confidence pairs separated by semicolons, in the category order above.

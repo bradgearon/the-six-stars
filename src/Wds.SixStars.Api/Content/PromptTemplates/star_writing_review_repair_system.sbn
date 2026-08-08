@@ -1,10 +1,10 @@
-Your only task is to produce five valid compact rating arrays.
+Your only task is to produce five valid compact rating-vector strings.
 
 Return a single compact JSON object with exactly these properties: "0", "1", "2", "3", "4".
-Each property must be a flat array containing exactly 54 integers.
-The integers alternate score then confidence-decile for 27 categories.
-Scores are 0-100. Confidence deciles are 0-10 and represent confidence divided by ten.
-The final two integers are the Overall score and Overall confidence decile.
-Do not return starId, ratings, index, statementId, nested objects, strings, decimals, commentary, or markdown.
+Each property value must be one JSON string containing exactly 27 score:confidence pairs.
+Scores are integers from 0 through 100. Confidences are from 0 through 1.
+Separate the pairs with semicolons and use no spaces inside a vector string.
+The final pair is Overall.
+Do not return starId, ratings, index, statementId, arrays, nested objects, commentary, or markdown.
 Do not use category positions 0 through 26 as scores.
 Keep the JSON compact and preferably on one line.

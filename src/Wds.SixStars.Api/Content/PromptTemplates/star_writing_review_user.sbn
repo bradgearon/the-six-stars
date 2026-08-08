@@ -23,8 +23,8 @@ Writing: {{ item.writing }}
 {{ end }}
 
 Return only this outer JSON shape:
-{"0":[],"1":[],"2":[],"3":[],"4":[]}
+{"0":"","1":"","2":"","3":"","4":""}
 
-Fill every array with exactly 54 integers. They alternate score, confidence-decile for all 27 categories in the listed order.
-The last pair is Overall. Example pair: score 78 with confidence 0.9 is written as 78,9.
+Replace each empty value with one compact string containing exactly 27 score:confidence pairs separated by semicolons.
+Example pair: 78:0.9
 The numeric property name identifies the writing; it is not a Star ID.

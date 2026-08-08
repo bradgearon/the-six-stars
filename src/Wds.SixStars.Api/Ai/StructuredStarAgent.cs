@@ -164,7 +164,7 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                1500,
+                1100,
                 "star-writing-rate",
                 cancellationToken).ConfigureAwait(false);
             StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
@@ -179,7 +179,7 @@ namespace Wds.SixStars.Api.Ai
                 string repairJson = await _client.CompleteJsonAsync(
                     repairMessages,
                     StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                    1500,
+                    1100,
                     "star-writing-rate-repair",
                     cancellationToken).ConfigureAwait(false);
                 StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
@@ -418,27 +418,72 @@ namespace Wds.SixStars.Api.Ai
 
         private static string CompleteNearExpectedWritingVector(string raw)
         {
-            List<string> pairs = (raw ?? string.Empty)
-                .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(x => x.Trim())
-                .Where(x => x.Length > 0)
-                .ToList();
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+            List<string> pairs = new List<string>();
+            string[] separated = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (separated.Length > 1)
+            {
+                foreach (string item in separated)
+                {
+                    if (!TryNormalizeWritingPair(item, out string pair)) return string.Empty;
+                    pairs.Add(pair);
+                }
+            }
+            else
+            {
+                // Compatibility for models that omit semicolons and emit one colon chain.
+                // Accept the observed 26/27/28-pair shapes and normalize them below.
+                string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+                if (tokens.Length < 52 || tokens.Length % 2 != 0) return string.Empty;
+                for (int i = 0; i + 1 < tokens.Length; i += 2)
+                {
+                    if (!TryNormalizeWritingPair(tokens[i] + ":" + tokens[i + 1], out string pair))
+                    {
+                        return string.Empty;
+                    }
+                    pairs.Add(pair);
+                }
+            }
 
             // Gemma was observed returning 26 entries for every Kaelia candidate, omitting
             // only the final Overall category. Derive Overall from the core quality categories
-            // rather than spending another 10-12 seconds on a repair request.
+            // rather than spending another full repair request.
             if (pairs.Count == 26)
             {
                 pairs.Add(DeriveOverallWritingPair(pairs));
             }
             else if (pairs.Count > 27)
             {
-                // A second observed failure returned 28 complete pairs. The response has no
-                // labels that identify the extra entry, so retain the requested first 27.
+                // An observed failure returned 28 complete pairs. With no labels for the
+                // extra value, retain the requested first 27.
                 pairs = pairs.Take(27).ToList();
             }
 
-            return string.Join(";", pairs);
+            return pairs.Count == 27 ? string.Join(";", pairs) : string.Empty;
+        }
+
+        private static bool TryNormalizeWritingPair(string raw, out string normalized)
+        {
+            normalized = string.Empty;
+            string[] values = (raw ?? string.Empty).Trim().Split(':');
+            if (values.Length != 2) return false;
+            if (!double.TryParse(values[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
+            if (!double.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) return false;
+            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
+            if (double.IsNaN(confidence) || double.IsInfinity(confidence) || confidence < 0) return false;
+
+            // Retain compatibility with the brief confidence-decile wire format used by the
+            // previous revision and with occasional percentage confidence output.
+            if (confidence > 1 && confidence <= 10) confidence /= 10.0;
+            else if (confidence > 10 && confidence <= 100) confidence /= 100.0;
+            if (confidence > 1) return false;
+
+            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                + ":"
+                + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return true;
         }
 
         private static string DeriveOverallWritingPair(IReadOnlyList<string> pairs)

@@ -3,12 +3,14 @@ Rate each supplied writing independently. Judge the writing itself while using t
 
 Return one compact JSON object with exactly five properties named "0", "1", "2", "3", and "4".
 Property "0" rates candidate [0], property "1" rates candidate [1], and so on.
-Do not return starId, ratings, index, statementId, nested rating objects, strings, markdown, or commentary.
+Do not return starId, ratings, index, statementId, arrays, nested objects, markdown, or commentary.
 
-Each property value must be one flat JSON array containing exactly 54 integers: 27 alternating score and confidence-decile values in the exact category order supplied by the user.
-For every category append two integers in this order:
-1. score: 0-100;
-2. confidence decile: 0-10, where 0 means 0.0 confidence, 7 means 0.7, and 10 means 1.0.
-The final two integers are always the Overall score and Overall confidence decile.
+Each property value must be one JSON string containing exactly 27 score:confidence pairs in the exact category order supplied by the user.
+- score is an integer from 0 through 100;
+- confidence is from 0 through 1;
+- use one colon inside each pair;
+- separate pairs with semicolons;
+- do not put spaces inside the vector string.
+The final pair is always Overall score and Overall confidence.
 Do not use category positions 0 through 26 as scores.
-Use no decimals and no quoted numbers. Keep the JSON compact and preferably on one line.
+Keep the JSON compact and preferably on one line.
