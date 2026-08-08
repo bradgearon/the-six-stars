@@ -107,7 +107,13 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(1600);
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new Dictionary<string, object>
+                {
+                    { "type", "array" },
+                    { "minItems", 27 },
+                    { "maxItems", 27 },
+                    { "items", StringProperty(32) }
+                };
             }
 
             Dictionary<string, object> schema = new Dictionary<string, object>

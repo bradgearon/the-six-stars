@@ -13,4 +13,7 @@ WRITINGS
 [{{ item.index }}] {{ item.writing }}
 {{ end }}
 
-Rate all five writings now. Output only the five-key JSON object.
+Return only one JSON object with this exact outer shape:
+{"0":[],"1":[],"2":[],"3":[],"4":[]}
+
+Fill every array with exactly 27 "score:confidence" strings in the category order above.

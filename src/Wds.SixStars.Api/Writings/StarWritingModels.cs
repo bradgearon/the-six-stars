@@ -192,7 +192,28 @@ namespace Wds.SixStars.Api.Writings
             out Dictionary<string, StarWritingEmotionValue> values)
         {
             if (!TryNormalizeComplete(raw, out normalized, out values)) return false;
-            return values.Values.Count(x => x.Confidence > 0.001) >= 20;
+            if (values.Values.Count(x => x.Confidence > 0.001) < 20) return false;
+
+            // A local model was observed returning the category positions 0..26 as the
+            // score values. That response has the right length and numeric ranges, but it
+            // is not a literary rating vector and must be repaired instead of persisted.
+            int categoryIndexScores = 0;
+            for (int i = 0; i < Categories.Length; i++)
+            {
+                if (values.TryGetValue(Categories[i], out StarWritingEmotionValue value)
+                    && Math.Abs(value.Score - i) < 0.0001)
+                {
+                    categoryIndexScores++;
+                }
+            }
+
+            if (categoryIndexScores >= 20) return false;
+
+            // Reversed or placeholder output commonly produces almost all scores in the
+            // 0..1 confidence range. Real 0-100 literary scores should not look like this.
+            if (values.Values.Count(x => x.Score <= 1.0) >= 24) return false;
+
+            return true;
         }
 
         public static string Normalize(string? raw, out Dictionary<string, StarWritingEmotionValue> values)

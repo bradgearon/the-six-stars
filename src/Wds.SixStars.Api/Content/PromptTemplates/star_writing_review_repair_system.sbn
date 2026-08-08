@@ -1,8 +1,8 @@
-Your only task is to produce five valid compact rating vectors.
+Your only task is to produce five valid rating arrays.
 
-Return a single JSON object with exactly these five string keys: "0", "1", "2", "3", "4".
-Do not return any other key or any nested object.
-Each string must contain exactly 27 numeric score:confidence pairs.
-Use one colon inside each pair and one semicolon between pairs.
-Each vector must contain exactly 27 colons and 26 semicolons.
+Return a single JSON object with exactly these five properties: "0", "1", "2", "3", "4".
+Each property must be a JSON array containing exactly 27 strings.
+Each string must contain exactly one numeric score:confidence pair.
 Scores are 0-100. Confidences are 0-1.
+Do not return starId, ratings, index, statementId, nested objects, commentary, or markdown.
+Do not use the category positions 0 through 26 as the scores.

@@ -286,23 +286,24 @@ namespace Wds.SixStars.Api.Ai
         private static void AddWritingRating(JsonElement item, int fallbackIndex, List<StarWritingRating> ratings)
         {
             int index = fallbackIndex;
-            string vector = string.Empty;
+            string vector = ReadWritingVector(item);
 
-            if (item.ValueKind == JsonValueKind.String)
-            {
-                vector = item.GetString() ?? string.Empty;
-            }
-            else if (item.ValueKind == JsonValueKind.Object)
+            if (item.ValueKind == JsonValueKind.Object)
             {
                 if (TryGetPropertyIgnoreCase(item, "index", out JsonElement indexElement)
                     && TryReadJsonInt(indexElement, out int explicitIndex))
                 {
                     index = explicitIndex;
                 }
+                else if (TryGetPropertyIgnoreCase(item, "statementId", out JsonElement statementIdElement)
+                    && TryReadJsonInt(statementIdElement, out int statementIndex))
+                {
+                    index = statementIndex;
+                }
                 else if (TryGetPropertyIgnoreCase(item, "starId", out JsonElement legacyIndexElement)
                     && TryReadJsonInt(legacyIndexElement, out int legacyIndex))
                 {
-                    // Older local-model output confused the rating index with starId.
+                    // Older local-model output confused the zero-based writing index with starId.
                     index = legacyIndex;
                 }
 
@@ -310,10 +311,7 @@ namespace Wds.SixStars.Api.Ai
                     || TryGetPropertyIgnoreCase(item, "vector", out vectorElement)
                     || TryGetPropertyIgnoreCase(item, "value", out vectorElement))
                 {
-                    if (vectorElement.ValueKind == JsonValueKind.String)
-                    {
-                        vector = vectorElement.GetString() ?? string.Empty;
-                    }
+                    vector = ReadWritingVector(vectorElement);
                 }
             }
 
@@ -325,6 +323,62 @@ namespace Wds.SixStars.Api.Ai
                     EmotionalVector = vector.Trim()
                 });
             }
+        }
+
+        private static string ReadWritingVector(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return element.GetString() ?? string.Empty;
+            }
+
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                return string.Empty;
+            }
+
+            List<string> pairs = new List<string>();
+            foreach (JsonElement entry in element.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.String)
+                {
+                    string pair = entry.GetString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(pair)) pairs.Add(pair.Trim());
+                    continue;
+                }
+
+                if (entry.ValueKind == JsonValueKind.Array)
+                {
+                    JsonElement[] numbers = entry.EnumerateArray().Take(2).ToArray();
+                    if (numbers.Length == 2
+                        && TryReadJsonDouble(numbers[0], out double score)
+                        && TryReadJsonDouble(numbers[1], out double confidence))
+                    {
+                        pairs.Add(
+                            score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                            + ":"
+                            + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+
+            return string.Join(";", pairs);
+        }
+
+        private static bool TryReadJsonDouble(JsonElement element, out double value)
+        {
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out value)) return true;
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return double.TryParse(
+                    element.GetString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value);
+            }
+
+            value = 0;
+            return false;
         }
 
         private static bool TryReadJsonInt(JsonElement element, out int value)
