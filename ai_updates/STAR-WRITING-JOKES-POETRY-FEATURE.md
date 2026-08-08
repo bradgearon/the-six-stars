@@ -32,7 +32,7 @@ The Tell button is disabled when `pendingWritingCount` is zero. The popup also d
 
 The first request receives:
 
-- the complete selected `StarProfile` JSON;
+- a Scriban-rendered creative-writing character card containing only writing-relevant identity, personality, backstory, voice, attributes, imagery, quotes, and canon details;
 - the last ten individual writings;
 - the complete historical list of chosen words.
 
@@ -54,9 +54,11 @@ Structured response:
 
 The schema requires exactly five joke/writing strings and exactly five matching two-word arrays. `jokes[i]` is always paired with `usedWords[i]`. The service converts those parallel arrays into internal candidate records before the review request.
 
+The generator prompt is rendered from `star_writing_generate_system.sbn` and `star_writing_generate_user.sbn`. It deliberately excludes romance mode, girlfriend mode, relationship statistics, inter-Star scoring rules, emotion matrices, story decks, TTS clone configuration, and other unrelated profile data. The last ten writings are rendered as compact prose lines, while the complete used-word history is rendered as a simple word list rather than serializing the entire writing state.
+
 ### 2. Rate all five writings
 
-A separate critic request receives the complete character profile and the five candidates. Persistence thresholds are deliberately removed from both creative/evaluator prompt copies of the profile, so the model cannot aim at or inflate a save threshold; the deterministic service applies those rules afterward. It returns exactly five zero-based rating entries.
+A separate critic request receives a smaller Scriban-rendered evaluator card and the five candidates. Persistence thresholds are deliberately removed from both creative/evaluator prompt copies of the profile, so the model cannot aim at or inflate a save threshold; the deterministic service applies those rules afterward. It returns exactly five zero-based rating entries.
 
 Each `emotionalVector` contains 27 entries in this fixed order:
 
@@ -111,13 +113,13 @@ Example response:
 }
 ```
 
-The service normalizes malformed, missing, or out-of-range vector entries before using them.
+The service normalizes malformed, missing, or out-of-range vector entries before using them. The category dictionary is created only in memory while applying persistence rules or selecting a voice emotion; it is never written into the notes JSON.
 
 ### 3. Perform best/latest pending writing
 
 The third request receives:
 
-- the complete Star profile;
+- a compact Scriban-rendered performance character card;
 - the entire persisted writing collection, including generation date, persistence date, ratings, and told status;
 - the exact IDs currently eligible to be told.
 
@@ -155,11 +157,35 @@ Each Star has a separate file containing:
 - `allUsedWords` — complete case-insensitive historical word list;
 - `persistedWritings` — durable pieces that passed at least one Star-specific rule;
 - generation/persistence/told timestamps;
-- normalized emotional vectors and expanded category values;
+- normalized emotional vectors stored only as compact strings;
 - persistence rule IDs that accepted each piece;
 - told count and pending status.
 
 Clearing a Star's history clears that Star's writing-notes file. **Clear All Star Data** clears all six writing-notes files.
+
+## Prompt Context and Storage Revision
+
+The writing pipeline uses six Scriban templates:
+
+- `star_writing_generate_system.sbn`
+- `star_writing_generate_user.sbn`
+- `star_writing_review_system.sbn`
+- `star_writing_review_user.sbn`
+- `star_writing_performance_system.sbn`
+- `star_writing_performance_user.sbn`
+
+The generation prompt includes only the following Star fields:
+
+- identity: display name, Star ID, element, domain, core quote;
+- personality: short personality, deep personality, backstory summary, compact relevant background;
+- writing voice: voice archetype, speaking style, general delivery direction;
+- character pressure: named 0-100 attribute values and their notes;
+- creative identity: behaviors, storytelling rules, representative quotes, selected Star secrets and canon notes;
+- continuity: the rolling last ten writings and the complete historical used-word list.
+
+It excludes romance/girlfriend settings, attraction hooks, flirt rules, relationship state/scoring, emotion influence maps, combo/inter-Star rules, voice-clone files, skill trees, people/contact lists, and unrelated story data.
+
+Writing-notes schema version 2 stores `EmotionalVector` as the sole rating representation. Existing version-1 files containing `EmotionalValues` remain readable because unknown legacy JSON fields are ignored. The next save rewrites the file in version-2 form without the expanded object.
 
 ## Per-Star Persistence Rules
 

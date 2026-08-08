@@ -52,7 +52,6 @@ namespace Wds.SixStars.Api.Writings
     {
         public int Index { get; set; }
         public string EmotionalVector { get; set; } = string.Empty;
-        public Dictionary<string, StarWritingEmotionValue> Values { get; set; } = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
     }
 
     public sealed class StarWritingReviewResult
@@ -71,7 +70,6 @@ namespace Wds.SixStars.Api.Writings
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
         public string EmotionalVector { get; set; } = string.Empty;
-        public Dictionary<string, StarWritingEmotionValue> EmotionalValues { get; set; } = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
         public bool Persisted { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
     }
@@ -90,7 +88,6 @@ namespace Wds.SixStars.Api.Writings
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
         public string EmotionalVector { get; set; } = string.Empty;
-        public Dictionary<string, StarWritingEmotionValue> EmotionalValues { get; set; } = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
         public DateTimeOffset GeneratedAt { get; set; }
         public DateTimeOffset PersistedAt { get; set; }
@@ -101,7 +98,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -164,12 +161,17 @@ namespace Wds.SixStars.Api.Writings
                 values[Categories[i]] = new StarWritingEmotionValue { Score = score, Confidence = confidence };
             }
 
-            return string.Join(";", Categories.Select(category =>
+            return string.Join(";", Categories.Select(ReadScore(values)));
+        }
+
+        private static Func<string, string> ReadScore(Dictionary<string, StarWritingEmotionValue> values)
+        {
+            return category =>
             {
                 StarWritingEmotionValue value = values[category];
                 return value.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ":" +
                     value.Confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-            }));
+            };
         }
 
         private static double Clamp(double value, double min, double max)

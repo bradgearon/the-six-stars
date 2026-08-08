@@ -56,7 +56,6 @@ namespace Wds.SixStars.Api.Writings
                     StarWritingCandidate candidate = generation.Items[i];
                     StarWritingRating rating = review.Ratings.FirstOrDefault(x => x.Index == i) ?? review.Ratings.ElementAtOrDefault(i) ?? CreateZeroRating(i);
                     rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
-                    rating.Values = values;
                     List<string> matchedRules = GetMatchedRuleIds(profile, values);
                     string itemId = "writing-" + Guid.NewGuid().ToString("N");
                     StarWritingHistoryItem historyItem = new StarWritingHistoryItem
@@ -68,7 +67,6 @@ namespace Wds.SixStars.Api.Writings
                         WordsUsed = candidate.WordsUsed.ToList(),
                         Writing = candidate.Writing,
                         EmotionalVector = rating.EmotionalVector,
-                        EmotionalValues = CloneValues(values),
                         Persisted = matchedRules.Count > 0,
                         MatchedPersistenceRuleIds = matchedRules
                     };
@@ -83,7 +81,6 @@ namespace Wds.SixStars.Api.Writings
                             WordsUsed = historyItem.WordsUsed.ToList(),
                             Writing = historyItem.Writing,
                             EmotionalVector = historyItem.EmotionalVector,
-                            EmotionalValues = CloneValues(historyItem.EmotionalValues),
                             MatchedPersistenceRuleIds = matchedRules.ToList(),
                             GeneratedAt = now,
                             PersistedAt = now,
@@ -247,8 +244,7 @@ namespace Wds.SixStars.Api.Writings
             {
                 StarWritingRating rating = review.Ratings.FirstOrDefault(x => x.Index == i) ?? review.Ratings.ElementAtOrDefault(i) ?? CreateZeroRating(i);
                 rating.Index = i;
-                rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
-                rating.Values = values;
+                rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out _);
                 normalized.Add(rating);
             }
             review.Ratings = normalized;
@@ -256,8 +252,8 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingRating CreateZeroRating(int index)
         {
-            string vector = StarWritingEmotionVector.Normalize(string.Empty, out Dictionary<string, StarWritingEmotionValue> values);
-            return new StarWritingRating { Index = index, EmotionalVector = vector, Values = values };
+            string vector = StarWritingEmotionVector.Normalize(string.Empty, out _);
+            return new StarWritingRating { Index = index, EmotionalVector = vector };
         }
 
         private static void AddUsedWords(StarWritingNotesState state, IEnumerable<string> words)
@@ -302,9 +298,10 @@ namespace Wds.SixStars.Api.Writings
             return matched;
         }
 
-        private static Dictionary<string, StarWritingEmotionValue> CloneValues(IReadOnlyDictionary<string, StarWritingEmotionValue> source)
+        private static IEnumerable<KeyValuePair<string, StarWritingEmotionValue>> ReadEmotionValues(PersistedStarWriting writing)
         {
-            return source.ToDictionary(x => x.Key, x => new StarWritingEmotionValue { Score = x.Value.Score, Confidence = x.Value.Confidence }, StringComparer.OrdinalIgnoreCase);
+            StarWritingEmotionVector.Normalize(writing?.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
+            return values;
         }
 
         private static VoiceDirective CreateVoiceDirective(StarProfile profile, IReadOnlyList<PersistedStarWriting> selected)
@@ -318,7 +315,8 @@ namespace Wds.SixStars.Api.Writings
                     "Funny", "Deep", "Intrigued", "Interested", "Playful", "Surprising",
                     "Mysterious", "Haunting", "Melancholy", "Hopeful", "Romantic", "Moving"
                 }, StringComparer.OrdinalIgnoreCase);
-                var strongest = selected.SelectMany(x => x.EmotionalValues)
+                var strongest = selected
+                    .SelectMany(ReadEmotionValues)
                     .Where(x => speakableEmotions.Contains(x.Key))
                     .OrderByDescending(x => x.Value.Score * x.Value.Confidence)
                     .FirstOrDefault();

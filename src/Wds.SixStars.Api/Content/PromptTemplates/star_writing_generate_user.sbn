@@ -1,0 +1,63 @@
+CREATE FIVE NEW WRITINGS
+
+CHARACTER IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY AND INNER WORLD
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory summary: {{ data.backstorySummary }}
+Relevant background: {{ data.completeBackgroundStory }}
+
+WRITING VOICE
+Voice archetype: {{ data.voiceArchetype }}
+Speaking style: {{ data.speakingStyle }}
+Writing delivery: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for note in data.characterAttributeNotes }}
+- {{ note }}
+{{ end }}
+
+SIGNATURE IMAGERY AND BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORY / POETRY INSTINCTS
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+REPRESENTATIVE LINES
+{{ for quote in data.quotes }}
+- {{ quote }}
+{{ end }}
+
+RELEVANT PRIVATE OR CANON DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+LAST TEN WRITINGS
+These are continuity references, not pieces to repeat.
+{{ if data.recentWritings.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.recentWritings }}
+[{{ item.generatedAt }}] Words: {{ item.words }}
+Writing: {{ item.writing }}
+{{ end }}
+{{ end }}
+
+COMPLETE HISTORICAL USED-WORD LIST
+{{ if data.allUsedWordsText == "" }}
+(none yet)
+{{ else }}
+{{ data.allUsedWordsText }}
+{{ end }}
+
+Now choose five fresh pairs and write five finished pieces. Return only JSON with starId, jokes, and usedWords.

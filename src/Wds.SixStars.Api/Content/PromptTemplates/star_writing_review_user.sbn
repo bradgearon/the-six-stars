@@ -1,0 +1,25 @@
+RATE FIVE WRITINGS
+
+COMPACT CHARACTER CARD
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Speaking style: {{ data.speakingStyle }}
+Signature imagery / behavior:
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+EXACT VECTOR CATEGORY ORDER (27)
+{{ data.vectorOrder }}
+
+CANDIDATES
+{{ for item in data.candidates }}
+[{{ item.index }}] Words: {{ item.words }}
+Writing: {{ item.writing }}
+{{ end }}
+
+Rate all five. Each emotionalVector must contain exactly 27 score:confidence pairs in the exact order above. Return only JSON with starId and ratings.

@@ -59,8 +59,8 @@ namespace Wds.SixStars.Api.Agents
                     pairs.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":0.88");
                 }
                 string vector = string.Join(";", pairs);
-                vector = StarWritingEmotionVector.Normalize(vector, out Dictionary<string, StarWritingEmotionValue> values);
-                result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector, Values = values });
+                vector = StarWritingEmotionVector.Normalize(vector, out _);
+                result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector });
             }
             return Task.FromResult(result);
         }
