@@ -51,14 +51,14 @@ namespace Wds.SixStars.Api.Agents
             StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
             for (int i = 0; i < 5; i++)
             {
-                List<string> pairs = new List<string>();
+                List<string> scores = new List<string>();
                 for (int category = 0; category < StarWritingEmotionVector.Categories.Length; category++)
                 {
                     string name = StarWritingEmotionVector.Categories[category];
                     double score = name == "Funny" ? 72 + i : name == "Poetic" || name == "Characterful" || name == "Overall" ? 86 + Math.Min(i, 4) : 78;
-                    pairs.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":0.88");
+                    scores.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 }
-                string vector = string.Join(";", pairs);
+                string vector = string.Join(";", scores);
                 vector = StarWritingEmotionVector.Normalize(vector, out _);
                 result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector });
             }

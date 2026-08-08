@@ -4,12 +4,11 @@ using System.Linq;
 
 namespace Wds.SixStars.Api.Writings
 {
-    /// <summary>One score/confidence threshold used by a Star's writing persistence rules.</summary>
+    /// <summary>One score threshold used by a Star's writing persistence rules.</summary>
     public sealed class StarWritingPersistenceRequirement
     {
         public string Category { get; set; } = string.Empty;
         public double MinimumScore { get; set; }
-        public double MinimumConfidence { get; set; }
     }
 
     /// <summary>
@@ -45,7 +44,6 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingEmotionValue
     {
         public double Score { get; set; }
-        public double Confidence { get; set; }
     }
 
     public sealed class StarWritingRating
@@ -98,7 +96,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 2;
+        public int Version { get; set; } = 3;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -143,6 +141,11 @@ namespace Wds.SixStars.Api.Writings
 
         public static string CategoryOrder => string.Join(",", Categories);
 
+        /// <summary>
+        /// Normalizes the current score-only format while still accepting the former
+        /// score:confidence representation so existing writing-note files migrate without
+        /// another LLM request. The normalized value always contains only 27 scores.
+        /// </summary>
         public static bool TryNormalizeComplete(
             string? raw,
             out string normalized,
@@ -150,36 +153,55 @@ namespace Wds.SixStars.Api.Writings
         {
             normalized = string.Empty;
             values = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
-            string text = (raw ?? string.Empty).Trim().Trim('"');
+            string text = (raw ?? string.Empty).Trim().Trim('"').Trim('[', ']');
             if (string.IsNullOrWhiteSpace(text)) return false;
 
-            List<StarWritingEmotionValue> parsed = new List<StarWritingEmotionValue>();
-            string[] semicolonParts = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            if (semicolonParts.Length == Categories.Length)
+            List<double> parsed = new List<double>();
+            string[] separated = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (separated.Length == 1)
             {
-                foreach (string part in semicolonParts)
+                separated = text.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            }
+
+            if (separated.Length == Categories.Length)
+            {
+                foreach (string item in separated)
                 {
-                    if (!TryParsePair(part, out StarWritingEmotionValue value)) return false;
-                    parsed.Add(value);
+                    if (!TryParseScore(item, out double score)) return false;
+                    parsed.Add(score);
                 }
             }
             else
             {
-                // Some local models ignore the requested semicolons but still return all 54
-                // alternating score/confidence numbers. Recover that exact shape without
-                // inventing missing confidences.
                 string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
-                if (tokens.Length != Categories.Length * 2) return false;
-                for (int i = 0; i < Categories.Length; i++)
+                if (tokens.Length == Categories.Length)
                 {
-                    if (!TryParseNumbers(tokens[i * 2], tokens[(i * 2) + 1], out StarWritingEmotionValue value)) return false;
-                    parsed.Add(value);
+                    // Defensive compatibility if a model uses colons between score-only items.
+                    foreach (string token in tokens)
+                    {
+                        if (!TryParseScore(token, out double score)) return false;
+                        parsed.Add(score);
+                    }
+                }
+                else if (tokens.Length == Categories.Length * 2)
+                {
+                    // Legacy compatibility for malformed old output that omitted semicolons
+                    // and returned alternating score/confidence values in one colon chain.
+                    for (int i = 0; i < Categories.Length; i++)
+                    {
+                        if (!TryParseScore(tokens[i * 2], out double score)) return false;
+                        parsed.Add(score);
+                    }
+                }
+                else
+                {
+                    return false;
                 }
             }
 
             for (int i = 0; i < Categories.Length; i++)
             {
-                values[Categories[i]] = parsed[i];
+                values[Categories[i]] = new StarWritingEmotionValue { Score = parsed[i] };
             }
 
             normalized = Format(values);
@@ -192,11 +214,9 @@ namespace Wds.SixStars.Api.Writings
             out Dictionary<string, StarWritingEmotionValue> values)
         {
             if (!TryNormalizeComplete(raw, out normalized, out values)) return false;
-            if (values.Values.Count(x => x.Confidence > 0.001) < 20) return false;
 
-            // A local model was observed returning the category positions 0..26 as the
-            // score values. That response has the right length and numeric ranges, but it
-            // is not a literary rating vector and must be repaired instead of persisted.
+            // A local model was observed returning category positions 0..26 as scores.
+            // That has the correct length but is not a literary rating vector.
             int categoryIndexScores = 0;
             for (int i = 0; i < Categories.Length; i++)
             {
@@ -206,11 +226,9 @@ namespace Wds.SixStars.Api.Writings
                     categoryIndexScores++;
                 }
             }
-
             if (categoryIndexScores >= 20) return false;
 
-            // Reversed or placeholder output commonly produces almost all scores in the
-            // 0..1 confidence range. Real 0-100 literary scores should not look like this.
+            // Real 0-100 ratings should not consist almost entirely of 0..1 placeholders.
             if (values.Values.Count(x => x.Score <= 1.0) >= 24) return false;
 
             return true;
@@ -223,54 +241,40 @@ namespace Wds.SixStars.Api.Writings
                 return normalized;
             }
 
-            // Lenient legacy path used while reading old files. New LLM review results are
-            // validated with TryNormalizeUsable before they are ever persisted.
+            // Lenient legacy path used while reading old or partially damaged files.
             values = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
-            string[] parts = (raw ?? string.Empty).Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            string text = (raw ?? string.Empty).Trim().Trim('"').Trim('[', ']');
+            string[] parts = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 1) parts = text.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < Categories.Length; i++)
             {
                 double score = 0;
-                double confidence = 0;
-                if (i < parts.Length)
-                {
-                    string[] pair = parts[i].Trim().Split(':');
-                    if (pair.Length > 0) double.TryParse(pair[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out score);
-                    if (pair.Length > 1) double.TryParse(pair[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out confidence);
-                }
-                score = Clamp(score, 0, 100);
-                confidence = Clamp(confidence, 0, 1);
-                values[Categories[i]] = new StarWritingEmotionValue { Score = score, Confidence = confidence };
+                if (i < parts.Length) TryParseScore(parts[i], out score);
+                values[Categories[i]] = new StarWritingEmotionValue { Score = Clamp(score, 0, 100) };
             }
 
             return Format(values);
         }
 
-        private static bool TryParsePair(string raw, out StarWritingEmotionValue value)
+        private static bool TryParseScore(string raw, out double score)
         {
-            value = new StarWritingEmotionValue();
-            string[] pair = (raw ?? string.Empty).Trim().Split(':');
-            return pair.Length == 2 && TryParseNumbers(pair[0], pair[1], out value);
-        }
+            score = 0;
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(text)) return false;
 
-        private static bool TryParseNumbers(string rawScore, string rawConfidence, out StarWritingEmotionValue value)
-        {
-            value = new StarWritingEmotionValue();
-            if (!double.TryParse(rawScore.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
-            if (!double.TryParse(rawConfidence.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) return false;
+            // Former files store score:confidence. Keep only the score during migration.
+            int colon = text.IndexOf(':');
+            if (colon >= 0) text = text.Substring(0, colon).Trim();
+
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out score)) return false;
             if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
-            if (double.IsNaN(confidence) || double.IsInfinity(confidence) || confidence < 0 || confidence > 1) return false;
-            value = new StarWritingEmotionValue { Score = score, Confidence = confidence };
             return true;
         }
 
         private static string Format(IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
             return string.Join(";", Categories.Select(category =>
-            {
-                StarWritingEmotionValue value = values[category];
-                return value.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ":" +
-                    value.Confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-            }));
+                values[category].Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
         }
 
         private static double Clamp(double value, double min, double max)

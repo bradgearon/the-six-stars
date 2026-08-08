@@ -107,9 +107,9 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                // One compact vector string per writing minimizes completion tokens while
-                // preserving the on-disk score:confidence;... representation unchanged.
-                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(1800);
+                // One compact score-only vector string per writing minimizes completion tokens.
+                // Each value contains exactly 27 semicolon-delimited scores.
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
             }
 
             Dictionary<string, object> schema = new Dictionary<string, object>

@@ -954,13 +954,11 @@
       "requirements": [
         {
           "category": "Deep",
-          "minimumScore": 78,
-          "minimumConfidence": 0.7
+          "minimumScore": 78
         },
         {
           "category": "Melancholy",
-          "minimumScore": 72,
-          "minimumConfidence": 0.66
+          "minimumScore": 72
         }
       ]
     },
@@ -970,13 +968,11 @@
       "requirements": [
         {
           "category": "Haunting",
-          "minimumScore": 78,
-          "minimumConfidence": 0.7
+          "minimumScore": 78
         },
         {
           "category": "Poetic",
-          "minimumScore": 78,
-          "minimumConfidence": 0.7
+          "minimumScore": 78
         }
       ]
     },
@@ -986,13 +982,11 @@
       "requirements": [
         {
           "category": "Clever",
-          "minimumScore": 82,
-          "minimumConfidence": 0.74
+          "minimumScore": 82
         },
         {
           "category": "Original",
-          "minimumScore": 74,
-          "minimumConfidence": 0.68
+          "minimumScore": 74
         }
       ]
     }

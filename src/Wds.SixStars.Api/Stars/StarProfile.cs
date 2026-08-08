@@ -77,7 +77,7 @@ namespace Wds.SixStars.Api.Stars
         /// <summary>Rules controlling which other Stars may receive delayed emotional ripple updates from this Star.</summary>
         public List<StarInterstarInfluenceRule> InterstarRules { get; set; } = new List<StarInterstarInfluenceRule>();
 
-        /// <summary>Per-Star score/confidence rules deciding which generated jokes and poetic writings become durable.</summary>
+        /// <summary>Per-Star score rules deciding which generated jokes and poetic writings become durable.</summary>
         public List<StarWritingPersistenceRule> WritingPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
 
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();

@@ -25,6 +25,6 @@ Writing: {{ item.writing }}
 Return only this outer JSON shape:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace each empty value with one compact string containing exactly 27 score:confidence pairs separated by semicolons.
-Example pair: 78:0.9
+Replace each empty value with one compact string containing exactly 27 integer scores separated by semicolons.
+Example beginning: 35;72;68;...
 The numeric property name identifies the writing; it is not a Star ID.

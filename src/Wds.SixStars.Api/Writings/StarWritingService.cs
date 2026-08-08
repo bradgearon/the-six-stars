@@ -394,7 +394,7 @@ namespace Wds.SixStars.Api.Writings
                     out _))
                 {
                     throw new InvalidOperationException(
-                        "Writing review rating " + i + " did not contain 27 valid score:confidence pairs with usable confidence coverage.");
+                        "Writing review rating " + i + " did not contain 27 valid scores in category order.");
                 }
 
                 rating.Index = i;
@@ -426,7 +426,7 @@ namespace Wds.SixStars.Api.Writings
                         Id = "default-overall",
                         Requirements = new List<StarWritingPersistenceRequirement>
                         {
-                            new StarWritingPersistenceRequirement { Category = "Overall", MinimumScore = 75, MinimumConfidence = 0.70 }
+                            new StarWritingPersistenceRequirement { Category = "Overall", MinimumScore = 75 }
                         }
                     }
                 };
@@ -438,7 +438,7 @@ namespace Wds.SixStars.Api.Writings
                 IEnumerable<bool> checks = rule.Requirements.Select(requirement =>
                 {
                     if (!values.TryGetValue(requirement.Category ?? string.Empty, out StarWritingEmotionValue? value)) return false;
-                    return value.Score >= requirement.MinimumScore && value.Confidence >= requirement.MinimumConfidence;
+                    return value.Score >= requirement.MinimumScore;
                 });
                 bool isAny = string.Equals(rule.MatchMode, "any", StringComparison.OrdinalIgnoreCase);
                 bool qualifies = isAny ? checks.Any(x => x) : checks.All(x => x);
@@ -467,7 +467,7 @@ namespace Wds.SixStars.Api.Writings
                 var strongest = selected
                     .SelectMany(ReadEmotionValues)
                     .Where(x => speakableEmotions.Contains(x.Key))
-                    .OrderByDescending(x => x.Value.Score * x.Value.Confidence)
+                    .OrderByDescending(x => x.Value.Score)
                     .FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(strongest.Key))
                 {

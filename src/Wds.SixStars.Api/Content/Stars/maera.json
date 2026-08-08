@@ -931,13 +931,11 @@
       "requirements": [
         {
           "category": "Moving",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         },
         {
           "category": "EmotionallyResonant",
-          "minimumScore": 80,
-          "minimumConfidence": 0.72
+          "minimumScore": 80
         }
       ]
     },
@@ -947,13 +945,11 @@
       "requirements": [
         {
           "category": "Deep",
-          "minimumScore": 80,
-          "minimumConfidence": 0.72
+          "minimumScore": 80
         },
         {
           "category": "Haunting",
-          "minimumScore": 72,
-          "minimumConfidence": 0.66
+          "minimumScore": 72
         }
       ]
     },
@@ -963,13 +959,11 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         },
         {
           "category": "Witty",
-          "minimumScore": 78,
-          "minimumConfidence": 0.7
+          "minimumScore": 78
         }
       ]
     }

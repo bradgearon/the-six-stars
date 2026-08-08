@@ -190,7 +190,7 @@ namespace Wds.SixStars.Api.Ai
             if (!HasCompleteWritingReview(result))
             {
                 throw new InvalidOperationException(
-                    "Writing review did not return five usable 27-entry score:confidence vectors. " +
+                    "Writing review did not return five usable 27-entry score vectors. " +
                     "No new writing batch was saved; try the generation again.");
             }
 
@@ -339,176 +339,166 @@ namespace Wds.SixStars.Api.Ai
 
             JsonElement[] entries = element.EnumerateArray().ToArray();
 
-            // Fast wire format: 54 integers alternating score, confidence-decile.
-            // Example: [70,9,55,8,...] becomes 70:0.9;55:0.8;...
-            // Keeping the persisted representation as one vector string remains unchanged.
-            bool flatNumericWireVector = entries.Length > 0;
-            foreach (JsonElement entry in entries)
+            // Compatibility with numeric-array output. The current score-only shape is 27
+            // numbers. Older revisions used 54 alternating score/confidence numbers; keep
+            // only every score so old model responses remain readable.
+            bool flatNumericVector = entries.Length > 0 && entries.All(x => TryReadJsonDouble(x, out _));
+            if (flatNumericVector)
             {
-                if (entry.ValueKind == JsonValueKind.String
-                    && (entry.GetString() ?? string.Empty).IndexOf(':') >= 0)
+                List<string> scores = new List<string>();
+                if (entries.Length >= 26 && entries.Length <= 28)
                 {
-                    flatNumericWireVector = false;
-                    break;
-                }
-
-                if (!TryReadJsonDouble(entry, out _))
-                {
-                    flatNumericWireVector = false;
-                    break;
-                }
-            }
-
-            if (flatNumericWireVector)
-            {
-                List<string> numericPairs = new List<string>();
-                int usableNumberCount = entries.Length;
-                if (usableNumberCount == 52) usableNumberCount = 52;       // 26 pairs; derive Overall below.
-                else if (usableNumberCount >= 54) usableNumberCount = 54;  // Ignore a model-added 28th pair.
-                else return string.Empty;
-
-                for (int i = 0; i + 1 < usableNumberCount; i += 2)
-                {
-                    if (!TryReadJsonDouble(entries[i], out double score)
-                        || !TryReadJsonDouble(entries[i + 1], out double rawConfidence))
+                    foreach (JsonElement entry in entries)
                     {
-                        return string.Empty;
+                        if (!TryReadJsonDouble(entry, out double score)
+                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        {
+                            return string.Empty;
+                        }
+                        scores.Add(normalizedScore);
                     }
-
-                    double confidence = rawConfidence <= 10
-                        ? rawConfidence / 10.0
-                        : rawConfidence / 100.0;
-                    numericPairs.Add(
-                        score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
-                        + ":"
-                        + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else if (entries.Length >= 52 && entries.Length <= 56 && entries.Length % 2 == 0)
+                {
+                    for (int i = 0; i < entries.Length; i += 2)
+                    {
+                        if (!TryReadJsonDouble(entries[i], out double score)
+                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        {
+                            return string.Empty;
+                        }
+                        scores.Add(normalizedScore);
+                    }
+                }
+                else
+                {
+                    return string.Empty;
                 }
 
-                return CompleteNearExpectedWritingVector(string.Join(";", numericPairs));
+                return CompleteNearExpectedWritingVector(string.Join(";", scores));
             }
 
-            // Compatibility with the previous array-of-strings and nested-pair formats.
-            List<string> pairs = new List<string>();
+            // Compatibility with arrays of strings and old nested [score, confidence] pairs.
+            List<string> arrayScores = new List<string>();
             foreach (JsonElement entry in entries)
             {
                 if (entry.ValueKind == JsonValueKind.String)
                 {
-                    string pair = entry.GetString() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(pair)) pairs.Add(pair.Trim());
+                    if (!TryNormalizeWritingScore(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
+                    arrayScores.Add(score);
                     continue;
                 }
 
                 if (entry.ValueKind == JsonValueKind.Array)
                 {
                     JsonElement[] numbers = entry.EnumerateArray().Take(2).ToArray();
-                    if (numbers.Length == 2
+                    if (numbers.Length >= 1
                         && TryReadJsonDouble(numbers[0], out double score)
-                        && TryReadJsonDouble(numbers[1], out double confidence))
+                        && TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                     {
-                        pairs.Add(
-                            score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
-                            + ":"
-                            + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                        arrayScores.Add(normalizedScore);
+                        continue;
                     }
                 }
+
+                return string.Empty;
             }
 
-            return CompleteNearExpectedWritingVector(string.Join(";", pairs));
+            return CompleteNearExpectedWritingVector(string.Join(";", arrayScores));
         }
 
         private static string CompleteNearExpectedWritingVector(string raw)
         {
-            string text = (raw ?? string.Empty).Trim().Trim('"');
+            string text = (raw ?? string.Empty).Trim().Trim('"').Trim('[', ']');
             if (string.IsNullOrWhiteSpace(text)) return string.Empty;
 
-            List<string> pairs = new List<string>();
+            List<string> scores = new List<string>();
             string[] separated = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (separated.Length == 1)
+            {
+                separated = text.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            }
+
             if (separated.Length > 1)
             {
                 foreach (string item in separated)
                 {
-                    if (!TryNormalizeWritingPair(item, out string pair)) return string.Empty;
-                    pairs.Add(pair);
+                    if (!TryNormalizeWritingScore(item, out string score)) return string.Empty;
+                    scores.Add(score);
                 }
             }
             else
             {
-                // Compatibility for models that omit semicolons and emit one colon chain.
-                // Accept the observed 26/27/28-pair shapes and normalize them below.
                 string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
-                if (tokens.Length < 52 || tokens.Length % 2 != 0) return string.Empty;
-                for (int i = 0; i + 1 < tokens.Length; i += 2)
+                if (tokens.Length >= 26 && tokens.Length <= 28)
                 {
-                    if (!TryNormalizeWritingPair(tokens[i] + ":" + tokens[i + 1], out string pair))
+                    // Defensive compatibility if a model uses colons between score-only items.
+                    foreach (string token in tokens)
                     {
-                        return string.Empty;
+                        if (!TryNormalizeWritingScore(token, out string score)) return string.Empty;
+                        scores.Add(score);
                     }
-                    pairs.Add(pair);
+                }
+                else if (tokens.Length >= 52 && tokens.Length <= 56 && tokens.Length % 2 == 0)
+                {
+                    // Legacy compatibility for one colon chain containing alternating
+                    // score/confidence values. Confidence values are discarded.
+                    for (int i = 0; i < tokens.Length; i += 2)
+                    {
+                        if (!TryNormalizeWritingScore(tokens[i], out string score)) return string.Empty;
+                        scores.Add(score);
+                    }
+                }
+                else
+                {
+                    return string.Empty;
                 }
             }
 
-            // Gemma was observed returning 26 entries for every Kaelia candidate, omitting
-            // only the final Overall category. Derive Overall from the core quality categories
-            // rather than spending another full repair request.
-            if (pairs.Count == 26)
+            // Gemma has omitted only Overall in some responses. Derive it from the core
+            // literary-quality categories rather than issuing a second full review.
+            if (scores.Count == 26)
             {
-                pairs.Add(DeriveOverallWritingPair(pairs));
+                scores.Add(DeriveOverallWritingScore(scores));
             }
-            else if (pairs.Count > 27)
+            else if (scores.Count > 27)
             {
-                // An observed failure returned 28 complete pairs. With no labels for the
-                // extra value, retain the requested first 27.
-                pairs = pairs.Take(27).ToList();
+                scores = scores.Take(27).ToList();
             }
 
-            return pairs.Count == 27 ? string.Join(";", pairs) : string.Empty;
+            return scores.Count == 27 ? string.Join(";", scores) : string.Empty;
         }
 
-        private static bool TryNormalizeWritingPair(string raw, out string normalized)
+        private static bool TryNormalizeWritingScore(string raw, out string normalized)
         {
             normalized = string.Empty;
-            string[] values = (raw ?? string.Empty).Trim().Split(':');
-            if (values.Length != 2) return false;
-            if (!double.TryParse(values[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
-            if (!double.TryParse(values[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) return false;
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            // Former output used score:confidence. Retain only the score.
+            int colon = text.IndexOf(':');
+            if (colon >= 0) text = text.Substring(0, colon).Trim();
+
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
             if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
-            if (double.IsNaN(confidence) || double.IsInfinity(confidence) || confidence < 0) return false;
-
-            // Retain compatibility with the brief confidence-decile wire format used by the
-            // previous revision and with occasional percentage confidence output.
-            if (confidence > 1 && confidence <= 10) confidence /= 10.0;
-            else if (confidence > 10 && confidence <= 100) confidence /= 100.0;
-            if (confidence > 1) return false;
-
-            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
-                + ":"
-                + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             return true;
         }
 
-        private static string DeriveOverallWritingPair(IReadOnlyList<string> pairs)
+        private static string DeriveOverallWritingScore(IReadOnlyList<string> scores)
         {
             int[] qualityIndices = { 4, 5, 6, 8, 9, 19, 20, 21, 22, 23, 24, 25 };
-            List<double> scores = new List<double>();
-            List<double> confidences = new List<double>();
+            List<double> values = new List<double>();
             foreach (int index in qualityIndices)
             {
-                if (index < 0 || index >= pairs.Count) continue;
-                string[] values = pairs[index].Split(':');
-                if (values.Length != 2) continue;
-                if (!double.TryParse(values[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
-                if (!double.TryParse(values[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) continue;
-                if (score < 0 || score > 100 || confidence < 0 || confidence > 1) continue;
-                scores.Add(score);
-                confidences.Add(confidence);
+                if (index < 0 || index >= scores.Count) continue;
+                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
+                if (score < 0 || score > 100) continue;
+                values.Add(score);
             }
 
-            if (scores.Count == 0) return "50:0.5";
-            double overallScore = scores.Average();
-            double overallConfidence = confidences.Count == 0 ? 0.5 : confidences.Average();
-            return overallScore.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                + ":"
-                + overallConfidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            double overall = values.Count == 0 ? 50 : values.Average();
+            return overall.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static bool TryReadJsonDouble(JsonElement element, out double value)

@@ -2381,7 +2381,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 output.AppendLine(item.Writing);
                 output.AppendLine(item.Persisted
                     ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
-                    : "Not persisted by this Star's current score/confidence rules.");
+                    : "Not persisted by this Star's current score rules.");
                 output.AppendLine();
             }
 

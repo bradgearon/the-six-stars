@@ -100,7 +100,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 2;
+            state.Version = 3;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.AllUsedWords ??= new List<string>();
@@ -110,6 +110,10 @@ namespace Wds.SixStars.Api.Writings
             {
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
+                if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
+                {
+                    item.EmotionalVector = normalizedVector;
+                }
             }
             state.RecentWritingHistory = state.RecentWritingHistory
                 .Where(x => x != null)
@@ -123,6 +127,10 @@ namespace Wds.SixStars.Api.Writings
             {
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
+                if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
+                {
+                    item.EmotionalVector = normalizedVector;
+                }
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
             state.AllUsedWords = state.AllUsedWords

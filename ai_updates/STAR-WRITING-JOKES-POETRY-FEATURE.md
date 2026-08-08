@@ -90,30 +90,27 @@ Each `emotionalVector` contains 27 entries in this fixed order:
 26. WorthRetelling
 27. Overall
 
-The compact format is:
+The compact format is one score-only string per writing:
 
 ```text
-score:confidence;score:confidence;...
+72;91;80;...;84
 ```
 
-- score range: `0-100`
-- confidence range: `0-1`
+Each score is in the `0-100` range. The five review results use numeric JSON properties `"0"` through `"4"`, each containing exactly 27 semicolon-delimited scores in category order.
 
 Example response:
 
 ```json
 {
-  "starId": "Nyxari",
-  "ratings": [
-    {
-      "index": 0,
-      "emotionalVector": "72:0.86;91:0.92;80:0.78;..."
-    }
-  ]
+  "0": "72;91;80;...;84",
+  "1": "65;82;74;...;78",
+  "2": "...",
+  "3": "...",
+  "4": "..."
 }
 ```
 
-The service normalizes malformed, missing, or out-of-range vector entries before using them. The category dictionary is created only in memory while applying persistence rules or selecting a voice emotion; it is never written into the notes JSON.
+The service normalizes malformed, missing, or out-of-range vector entries before using them. The category dictionary is created only in memory while applying persistence rules or selecting a voice emotion; it is never written into the notes JSON. Former `score:confidence` vectors are accepted and deterministically reduced to scores during migration.
 
 ### 3. Perform best/latest pending writing
 
@@ -185,7 +182,7 @@ The generation prompt includes only the following Star fields:
 
 It excludes romance/girlfriend settings, attraction hooks, flirt rules, relationship state/scoring, emotion influence maps, combo/inter-Star rules, voice-clone files, skill trees, people/contact lists, and unrelated story data.
 
-Writing-notes schema version 2 stores `EmotionalVector` as the sole rating representation. Existing version-1 files containing `EmotionalValues` remain readable because unknown legacy JSON fields are ignored. The next save rewrites the file in version-2 form without the expanded object.
+Writing-notes schema version 3 stores `EmotionalVector` as the sole score-only rating representation. Existing version-2 `score:confidence` strings remain readable; confidence values are discarded and the next save rewrites them as version-3 score-only strings. Existing version-1 files containing `EmotionalValues` remain readable because unknown legacy JSON fields are ignored.
 
 ## Per-Star Persistence Rules
 
@@ -200,13 +197,11 @@ Example:
   "requirements": [
     {
       "category": "Poetic",
-      "minimumScore": 82,
-      "minimumConfidence": 0.72
+      "minimumScore": 82
     },
     {
       "category": "Haunting",
-      "minimumScore": 72,
-      "minimumConfidence": 0.66
+      "minimumScore": 72
     }
   ]
 }
@@ -221,7 +216,7 @@ The supplied profiles emphasize different creative identities:
 - **Auerlis:** funny/playful fire, vivid surprise, hopeful retellability.
 - **Maera:** emotional resonance, possessive depth, sharp blood wit.
 
-If a profile has no writing rules, the service uses a conservative fallback: `Overall >= 75` with confidence `>= 0.70`.
+If a profile has no writing rules, the service uses a conservative fallback: `Overall >= 75`.
 
 ## Mobile Bridge Commands and Events
 

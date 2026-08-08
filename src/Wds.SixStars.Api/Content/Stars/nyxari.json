@@ -935,13 +935,11 @@
       "requirements": [
         {
           "category": "Poetic",
-          "minimumScore": 82,
-          "minimumConfidence": 0.72
+          "minimumScore": 82
         },
         {
           "category": "Haunting",
-          "minimumScore": 72,
-          "minimumConfidence": 0.66
+          "minimumScore": 72
         }
       ]
     },
@@ -951,13 +949,11 @@
       "requirements": [
         {
           "category": "Deep",
-          "minimumScore": 80,
-          "minimumConfidence": 0.72
+          "minimumScore": 80
         },
         {
           "category": "Quotable",
-          "minimumScore": 80,
-          "minimumConfidence": 0.72
+          "minimumScore": 80
         }
       ]
     },
@@ -967,13 +963,11 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 70,
-          "minimumConfidence": 0.65
+          "minimumScore": 70
         },
         {
           "category": "Witty",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         }
       ]
     }

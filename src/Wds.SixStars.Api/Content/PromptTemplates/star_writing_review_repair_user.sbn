@@ -16,4 +16,4 @@ WRITINGS
 Return only this outer JSON shape:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace every empty value with exactly 27 score:confidence pairs separated by semicolons, in the category order above.
+Replace every empty value with exactly 27 integer scores separated by semicolons, in the category order above.

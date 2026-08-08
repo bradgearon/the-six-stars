@@ -937,13 +937,11 @@
       "requirements": [
         {
           "category": "Hopeful",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         },
         {
           "category": "Meaningful",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         }
       ]
     },
@@ -953,13 +951,11 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 72,
-          "minimumConfidence": 0.66
+          "minimumScore": 72
         },
         {
           "category": "Playful",
-          "minimumScore": 76,
-          "minimumConfidence": 0.7
+          "minimumScore": 76
         }
       ]
     },
@@ -969,13 +965,11 @@
       "requirements": [
         {
           "category": "Moving",
-          "minimumScore": 74,
-          "minimumConfidence": 0.68
+          "minimumScore": 74
         },
         {
           "category": "Beautiful",
-          "minimumScore": 78,
-          "minimumConfidence": 0.7
+          "minimumScore": 78
         }
       ]
     }
