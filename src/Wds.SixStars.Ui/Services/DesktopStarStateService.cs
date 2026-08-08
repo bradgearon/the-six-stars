@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Engine;
+using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.State;
 
 namespace Wds.SixStars.Ui.Services;
