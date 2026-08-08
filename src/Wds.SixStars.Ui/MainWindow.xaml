@@ -67,7 +67,16 @@
                         <StackPanel>
                             <TextBlock Text="Star Writing Shelf" FontWeight="SemiBold" Margin="0,0,0,5" />
                             <Button Content="Create 5 Jokes / Poems" Command="{Binding GenerateStarWritingCommand}" Margin="0,0,0,6" Height="34" />
-                            <Button Content="{Binding TellStarWritingButtonText}" Command="{Binding TellStarWritingCommand}" Margin="0,0,0,5" Height="34" />
+                            <Button Content="{Binding TellStarWritingButtonText}" Command="{Binding TellStarWritingCommand}" Margin="0,0,0,6" Height="34" />
+                            <CheckBox Content="Generate for every Star while idle"
+                                      IsChecked="{Binding BackgroundWritingLoopEnabled, Mode=TwoWay}"
+                                      ToolTip="Unchecked by default. When enabled, the desktop cycles through all six Stars in the background. Player speech, messages, requested replies, and other foreground Star activity cancel the current background pass; it resumes after a few idle seconds."
+                                      Margin="0,0,0,6" />
+                            <Button Content="Start Writing Loop Now"
+                                    Command="{Binding StartWritingLoopNowCommand}"
+                                    ToolTip="Enable the background writing loop and begin with the selected Star as soon as foreground conversation is clear."
+                                    Margin="0,0,0,5" Height="32" />
+                            <TextBlock Text="{Binding BackgroundWritingLoopStatus}" TextWrapping="Wrap" Foreground="#7A4B91" Margin="0,0,0,5" />
                             <TextBlock Text="{Binding WritingLibraryStatusText}" TextWrapping="Wrap" Foreground="#66527A" />
                         </StackPanel>
                     </Border>

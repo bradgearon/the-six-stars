@@ -429,6 +429,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         OpenLlmExchangeLogFolderCommand = new RelayCommand(_ => OpenLlmExchangeLogFolder());
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         EnqueueAllStarStateUpdatesCommand = new RelayCommand(async _ => await EnqueueAllStarStateUpdatesAsync());
+        InitializeBackgroundWritingLoop();
         _ = RefreshSelectedWritingStateAsync("startup");
         InitializeMobileBridgeCommandsAndMaybeStart();
         _services.StarInitiative.Start();
@@ -663,6 +664,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (SetProperty(ref _isProcessingRuntime, value))
             {
+                NotifyBackgroundWritingLoopForegroundActivity(
+                    value ? "a foreground Star request" : "the end of a foreground Star request",
+                    cancelCurrentIteration: value);
                 _generateStarWritingCommand?.RaiseCanExecuteChanged();
                 _tellStarWritingCommand?.RaiseCanExecuteChanged();
             }
@@ -1249,6 +1253,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         // Wire up speech interruption
         _speechPipeline.SpeechSegmentStarted += (_, args) =>
         {
+            NotifyBackgroundWritingLoopForegroundActivity("the player speaking into the microphone");
             OnUiThread(() =>
             {
                 SpeechStatus = "Speech active. Segment " + args.Segment.SegmentId + " started.";
@@ -2262,6 +2267,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task StartManualRecordingAsync(bool loopContinuation)
     {
+        NotifyBackgroundWritingLoopForegroundActivity("manual voice recording");
         try
         {
             if (!loopContinuation)
@@ -2500,6 +2506,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void CancelAllRuntimeOperations(string reason)
     {
+        NotifyBackgroundWritingLoopForegroundActivity("the player cancelling or changing runtime activity");
         StopActiveStoryState();
         _voiceConversationLoopActive = false;
         _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
@@ -3826,6 +3833,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
+            DisposeBackgroundWritingLoop();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _services.Dispose();

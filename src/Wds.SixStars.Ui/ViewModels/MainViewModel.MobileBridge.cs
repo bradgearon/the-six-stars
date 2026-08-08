@@ -506,6 +506,7 @@ public sealed partial class MainViewModel
 
             case "GenerateStarWriting":
             {
+                using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request to generate Star writing");
                 StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 List<string> items = writingResult.Batch.Items.Select((x, i) =>
@@ -565,6 +566,7 @@ public sealed partial class MainViewModel
 
             case "TellStarWriting":
             {
+                using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request for the Star to tell her writing");
                 StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(starId, cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 if (performance == null)
@@ -1611,6 +1613,7 @@ public sealed partial class MainViewModel
 
     private async Task<MobileBridgeResponse> ProcessMobileAudioAsync(MobileBridgeRequest request, CancellationToken cancellationToken)
     {
+        using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android voice interaction");
         if (string.IsNullOrWhiteSpace(request.AudioBase64))
         {
             return new MobileBridgeResponse { Ok = false, VoiceError = "No audioBase64 was supplied.", Notes = { "Android did not send audio data." } };
@@ -1704,6 +1707,9 @@ public sealed partial class MainViewModel
                 || ContainsIgnoreCase(mobileRequest.ClientName, "ListenButton")
                 || ContainsIgnoreCase(mobileRequest.Reason, "manual")
                 || ContainsIgnoreCase(mobileRequest.Reason, "button"));
+        using IDisposable? writingLoopLease = !isPrefetchInitiative && (!isAtRestInitiative || isManualInitiative)
+            ? BeginBackgroundWritingForegroundActivity("an Android foreground interaction with " + starId)
+            : null;
         MobileConversationService.Lease? mobileLease = null;
         System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
