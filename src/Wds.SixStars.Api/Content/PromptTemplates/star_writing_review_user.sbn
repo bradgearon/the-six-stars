@@ -22,4 +22,8 @@ CANDIDATES
 Writing: {{ item.writing }}
 {{ end }}
 
-Rate all five. Each emotionalVector must contain exactly 27 score:confidence pairs in the exact order above. Return only JSON with starId and ratings.
+Return only one JSON object with this exact five-key shape:
+{"0":"","1":"","2":"","3":"","4":""}
+
+Replace every empty string with exactly 27 numeric score:confidence pairs.
+Use exactly 26 semicolons in every vector. Never use a colon between pairs.

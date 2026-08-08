@@ -104,31 +104,18 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateStarWritingReviewResponseFormat()
         {
-            Dictionary<string, object> item = new Dictionary<string, object>
+            Dictionary<string, object> properties = new Dictionary<string, object>();
+            for (int i = 0; i < 5; i++)
             {
-                { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "index", "emotionalVector" } },
-                { "properties", new Dictionary<string, object>
-                    {
-                        { "index", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 }, { "maximum", 4 } } },
-                        { "emotionalVector", StringProperty(1600) }
-                    }
-                }
-            };
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(1600);
+            }
+
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
-                { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "ratings" } },
-                { "properties", new Dictionary<string, object>
-                    {
-                        { "starId", StringProperty(80) },
-                        { "ratings", new Dictionary<string, object>
-                            {
-                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 }, { "items", item }
-                            }
-                        }
-                    }
-                }
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "0", "1", "2", "3", "4" } },
+                { "properties", properties }
             };
             return WrapSchema("six_stars_writing_review", schema);
         }

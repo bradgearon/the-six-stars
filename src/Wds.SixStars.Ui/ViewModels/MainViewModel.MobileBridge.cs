@@ -512,7 +512,10 @@ public sealed partial class MainViewModel
                     (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ". [" + string.Join(" + ", x.WordsUsed) + "] " + x.Writing +
                     (x.Persisted ? " (saved)" : " (not saved)"))
                     .ToList();
-                string message = starId + " created five writings; " + writingResult.PersistedCount + " passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told.";
+                string repairMessage = writingResult.RepairedRatingCount > 0
+                    ? " Re-rated " + writingResult.RepairedRatingCount + " older writings whose vectors were incomplete."
+                    : string.Empty;
+                string message = starId + " created five writings; " + writingResult.PersistedCount + " passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told." + repairMessage;
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

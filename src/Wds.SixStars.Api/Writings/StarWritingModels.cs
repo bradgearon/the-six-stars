@@ -113,6 +113,7 @@ namespace Wds.SixStars.Api.Writings
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public StarWritingHistoryBatch Batch { get; set; } = new StarWritingHistoryBatch();
         public int PersistedCount { get; set; }
+        public int RepairedRatingCount { get; set; }
     }
 
     public sealed class StarWritingPerformancePlan
@@ -142,8 +143,67 @@ namespace Wds.SixStars.Api.Writings
 
         public static string CategoryOrder => string.Join(",", Categories);
 
+        public static bool TryNormalizeComplete(
+            string? raw,
+            out string normalized,
+            out Dictionary<string, StarWritingEmotionValue> values)
+        {
+            normalized = string.Empty;
+            values = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            List<StarWritingEmotionValue> parsed = new List<StarWritingEmotionValue>();
+            string[] semicolonParts = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (semicolonParts.Length == Categories.Length)
+            {
+                foreach (string part in semicolonParts)
+                {
+                    if (!TryParsePair(part, out StarWritingEmotionValue value)) return false;
+                    parsed.Add(value);
+                }
+            }
+            else
+            {
+                // Some local models ignore the requested semicolons but still return all 54
+                // alternating score/confidence numbers. Recover that exact shape without
+                // inventing missing confidences.
+                string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+                if (tokens.Length != Categories.Length * 2) return false;
+                for (int i = 0; i < Categories.Length; i++)
+                {
+                    if (!TryParseNumbers(tokens[i * 2], tokens[(i * 2) + 1], out StarWritingEmotionValue value)) return false;
+                    parsed.Add(value);
+                }
+            }
+
+            for (int i = 0; i < Categories.Length; i++)
+            {
+                values[Categories[i]] = parsed[i];
+            }
+
+            normalized = Format(values);
+            return true;
+        }
+
+        public static bool TryNormalizeUsable(
+            string? raw,
+            out string normalized,
+            out Dictionary<string, StarWritingEmotionValue> values)
+        {
+            if (!TryNormalizeComplete(raw, out normalized, out values)) return false;
+            return values.Values.Count(x => x.Confidence > 0.001) >= 20;
+        }
+
         public static string Normalize(string? raw, out Dictionary<string, StarWritingEmotionValue> values)
         {
+            if (TryNormalizeComplete(raw, out string normalized, out values))
+            {
+                return normalized;
+            }
+
+            // Lenient legacy path used while reading old files. New LLM review results are
+            // validated with TryNormalizeUsable before they are ever persisted.
             values = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
             string[] parts = (raw ?? string.Empty).Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < Categories.Length; i++)
@@ -161,17 +221,35 @@ namespace Wds.SixStars.Api.Writings
                 values[Categories[i]] = new StarWritingEmotionValue { Score = score, Confidence = confidence };
             }
 
-            return string.Join(";", Categories.Select(ReadScore(values)));
+            return Format(values);
         }
 
-        private static Func<string, string> ReadScore(Dictionary<string, StarWritingEmotionValue> values)
+        private static bool TryParsePair(string raw, out StarWritingEmotionValue value)
         {
-            return category =>
+            value = new StarWritingEmotionValue();
+            string[] pair = (raw ?? string.Empty).Trim().Split(':');
+            return pair.Length == 2 && TryParseNumbers(pair[0], pair[1], out value);
+        }
+
+        private static bool TryParseNumbers(string rawScore, string rawConfidence, out StarWritingEmotionValue value)
+        {
+            value = new StarWritingEmotionValue();
+            if (!double.TryParse(rawScore.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
+            if (!double.TryParse(rawConfidence.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) return false;
+            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
+            if (double.IsNaN(confidence) || double.IsInfinity(confidence) || confidence < 0 || confidence > 1) return false;
+            value = new StarWritingEmotionValue { Score = score, Confidence = confidence };
+            return true;
+        }
+
+        private static string Format(IReadOnlyDictionary<string, StarWritingEmotionValue> values)
+        {
+            return string.Join(";", Categories.Select(category =>
             {
                 StarWritingEmotionValue value = values[category];
                 return value.Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + ":" +
                     value.Confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-            };
+            }));
         }
 
         private static double Clamp(double value, double min, double max)

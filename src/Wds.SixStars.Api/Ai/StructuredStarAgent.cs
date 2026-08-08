@@ -164,14 +164,224 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                1600,
+                1800,
                 "star-writing-rate",
                 cancellationToken).ConfigureAwait(false);
-            StarWritingReviewResult? result = JsonSerializer.Deserialize<StarWritingReviewResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Writing review returned empty JSON.");
+            StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
+
+            if (!HasCompleteWritingReview(result))
+            {
+                IReadOnlyList<ChatMessage> repairMessages = new List<ChatMessage>
+                {
+                    new ChatMessage("system", _templates.Render("star_writing_review_repair_system.sbn", data)),
+                    new ChatMessage("user", _templates.Render("star_writing_review_repair_user.sbn", data))
+                };
+                string repairJson = await _client.CompleteJsonAsync(
+                    repairMessages,
+                    StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
+                    1800,
+                    "star-writing-rate-repair",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
+                repaired.RawModelJson = json + Environment.NewLine + "--- RATING FORMAT REPAIR ---" + Environment.NewLine + repairJson;
+                result = repaired;
+            }
+
+            if (!HasCompleteWritingReview(result))
+            {
+                throw new InvalidOperationException(
+                    "Writing review did not return five usable 27-entry score:confidence vectors. " +
+                    "No new writing batch was saved; try the generation again.");
+            }
+
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
-            result.RawModelJson = json;
+            if (string.IsNullOrWhiteSpace(result.RawModelJson)) result.RawModelJson = json;
             return result;
+        }
+
+        private StarWritingReviewResult ParseWritingReviewResult(string rawContent, string fallbackStarId)
+        {
+            StarWritingReviewResult result = new StarWritingReviewResult
+            {
+                StarId = fallbackStarId,
+                RawModelJson = rawContent
+            };
+            string json = ExtractJson(rawContent);
+            if (string.IsNullOrWhiteSpace(json)) return result;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryGetPropertyIgnoreCase(root, "starId", out JsonElement starIdElement)
+                        && starIdElement.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(starIdElement.GetString()))
+                    {
+                        result.StarId = starIdElement.GetString()!.Trim();
+                    }
+
+                    if (TryGetPropertyIgnoreCase(root, "ratings", out JsonElement ratingsElement))
+                    {
+                        ReadWritingRatings(ratingsElement, result.Ratings);
+                    }
+
+                    // Compact preferred shape: {"0":"vector",...,"4":"vector"}.
+                    if (result.Ratings.Count == 0)
+                    {
+                        ReadNumericWritingRatingProperties(root, result.Ratings);
+                    }
+                }
+                else if (root.ValueKind == JsonValueKind.Array)
+                {
+                    ReadWritingRatings(root, result.Ratings);
+                }
+            }
+            catch (JsonException)
+            {
+                // The caller will make one strict repair request. Do not silently create zero vectors.
+            }
+
+            return result;
+        }
+
+        private static void ReadWritingRatings(JsonElement element, List<StarWritingRating> ratings)
+        {
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                int fallbackIndex = 0;
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    AddWritingRating(item, fallbackIndex++, ratings);
+                }
+                return;
+            }
+
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                ReadNumericWritingRatingProperties(element, ratings);
+            }
+        }
+
+        private static void ReadNumericWritingRatingProperties(JsonElement element, List<StarWritingRating> ratings)
+        {
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (!int.TryParse(
+                    property.Name,
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out int index)
+                    || index < 0
+                    || index > 4)
+                {
+                    continue;
+                }
+
+                AddWritingRating(property.Value, index, ratings);
+            }
+        }
+
+        private static void AddWritingRating(JsonElement item, int fallbackIndex, List<StarWritingRating> ratings)
+        {
+            int index = fallbackIndex;
+            string vector = string.Empty;
+
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                vector = item.GetString() ?? string.Empty;
+            }
+            else if (item.ValueKind == JsonValueKind.Object)
+            {
+                if (TryGetPropertyIgnoreCase(item, "index", out JsonElement indexElement)
+                    && TryReadJsonInt(indexElement, out int explicitIndex))
+                {
+                    index = explicitIndex;
+                }
+                else if (TryGetPropertyIgnoreCase(item, "starId", out JsonElement legacyIndexElement)
+                    && TryReadJsonInt(legacyIndexElement, out int legacyIndex))
+                {
+                    // Older local-model output confused the rating index with starId.
+                    index = legacyIndex;
+                }
+
+                if (TryGetPropertyIgnoreCase(item, "emotionalVector", out JsonElement vectorElement)
+                    || TryGetPropertyIgnoreCase(item, "vector", out vectorElement)
+                    || TryGetPropertyIgnoreCase(item, "value", out vectorElement))
+                {
+                    if (vectorElement.ValueKind == JsonValueKind.String)
+                    {
+                        vector = vectorElement.GetString() ?? string.Empty;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(vector))
+            {
+                ratings.Add(new StarWritingRating
+                {
+                    Index = index,
+                    EmotionalVector = vector.Trim()
+                });
+            }
+        }
+
+        private static bool TryReadJsonInt(JsonElement element, out int value)
+        {
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value)) return true;
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return int.TryParse(
+                    element.GetString(),
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value);
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static bool HasCompleteWritingReview(StarWritingReviewResult result)
+        {
+            if (result.Ratings == null || result.Ratings.Count < 5) return false;
+            HashSet<StarWritingRating> used = new HashSet<StarWritingRating>();
+            for (int i = 0; i < 5; i++)
+            {
+                StarWritingRating? rating = result.Ratings.FirstOrDefault(x => !used.Contains(x) && x.Index == i)
+                    ?? result.Ratings.FirstOrDefault(x => !used.Contains(x));
+                if (rating == null
+                    || !StarWritingEmotionVector.TryNormalizeUsable(
+                        rating.EmotionalVector,
+                        out _,
+                        out _))
+                {
+                    return false;
+                }
+
+                used.Add(rating);
+            }
+
+            return true;
         }
 
         public async Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(

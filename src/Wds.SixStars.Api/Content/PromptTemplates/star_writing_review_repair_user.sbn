@@ -1,0 +1,16 @@
+CHARACTER
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Personality: {{ data.personalityShort }}
+Speaking style: {{ data.speakingStyle }}
+
+CATEGORY ORDER
+{{ data.vectorOrder }}
+
+WRITINGS
+{{ for item in data.candidates }}
+[{{ item.index }}] {{ item.writing }}
+{{ end }}
+
+Rate all five writings now. Output only the five-key JSON object.

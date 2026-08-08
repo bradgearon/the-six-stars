@@ -36,6 +36,7 @@ namespace Wds.SixStars.Api.Writings
             {
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+                int repairedRatingCount = await RepairIncompleteRecentRatingsAsync(profile, state, cancellationToken).ConfigureAwait(false);
 
                 // Deliberately separate calls: the first creates freely in character; the second acts as a structured critic.
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
@@ -54,7 +55,7 @@ namespace Wds.SixStars.Api.Writings
                 for (int i = 0; i < generation.Items.Count; i++)
                 {
                     StarWritingCandidate candidate = generation.Items[i];
-                    StarWritingRating rating = review.Ratings.FirstOrDefault(x => x.Index == i) ?? review.Ratings.ElementAtOrDefault(i) ?? CreateZeroRating(i);
+                    StarWritingRating rating = review.Ratings.First(x => x.Index == i);
                     rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
                     List<string> matchedRules = GetMatchedRuleIds(profile, values);
                     string itemId = "writing-" + Guid.NewGuid().ToString("N");
@@ -100,7 +101,13 @@ namespace Wds.SixStars.Api.Writings
                 AddUsedWords(state, generation.Items.SelectMany(x => x.WordsUsed));
                 await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
 
-                return new StarWritingCreateResult { State = state, Batch = batch, PersistedCount = persistedCount };
+                return new StarWritingCreateResult
+                {
+                    State = state,
+                    Batch = batch,
+                    PersistedCount = persistedCount,
+                    RepairedRatingCount = repairedRatingCount
+                };
             }
             finally { _operationGate.Release(); }
         }
@@ -236,24 +243,151 @@ namespace Wds.SixStars.Api.Writings
             generation.UsedWords = generation.Items.Select(x => x.WordsUsed.ToList()).ToList();
         }
 
+        private async Task<int> RepairIncompleteRecentRatingsAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            CancellationToken cancellationToken)
+        {
+            List<StarWritingHistoryItem> invalid = (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>())
+                .Where(x => x != null && NeedsRatingRepair(x))
+                .OrderBy(x => x.GeneratedAt)
+                .ThenBy(x => x.Index)
+                .Take(10)
+                .ToList();
+            if (invalid.Count == 0) return 0;
+
+            int repairedCount = 0;
+            DateTimeOffset repairedAt = DateTimeOffset.UtcNow;
+            for (int offset = 0; offset < invalid.Count; offset += 5)
+            {
+                List<StarWritingHistoryItem> group = invalid.Skip(offset).Take(5).ToList();
+                StarWritingGenerationResult generation = new StarWritingGenerationResult
+                {
+                    StarId = profile.StarId,
+                    Items = group.Select(item => new StarWritingCandidate
+                    {
+                        WordsUsed = (item.WordsUsed ?? new List<string>()).Take(2).ToList(),
+                        Writing = item.Writing ?? string.Empty
+                    }).ToList()
+                };
+
+                while (generation.Items.Count < 5)
+                {
+                    generation.Items.Add(new StarWritingCandidate
+                    {
+                        WordsUsed = new List<string> { "rating", "placeholder" },
+                        Writing = "A temporary rating placeholder that will not be stored."
+                    });
+                }
+
+                StarWritingReviewResult review = await _agent
+                    .RateWritingCandidatesAsync(profile, state, generation, cancellationToken)
+                    .ConfigureAwait(false);
+                NormalizeReview(review);
+
+                for (int i = 0; i < group.Count; i++)
+                {
+                    StarWritingHistoryItem item = group[i];
+                    StarWritingRating rating = review.Ratings.First(x => x.Index == i);
+                    rating.EmotionalVector = StarWritingEmotionVector.Normalize(
+                        rating.EmotionalVector,
+                        out Dictionary<string, StarWritingEmotionValue> values);
+                    List<string> matchedRules = GetMatchedRuleIds(profile, values);
+
+                    item.EmotionalVector = rating.EmotionalVector;
+                    item.Persisted = matchedRules.Count > 0;
+                    item.MatchedPersistenceRuleIds = matchedRules;
+
+                    PersistedStarWriting? existing = state.PersistedWritings
+                        .FirstOrDefault(x => string.Equals(x.Id, item.Id, StringComparison.OrdinalIgnoreCase));
+                    if (item.Persisted)
+                    {
+                        if (existing == null)
+                        {
+                            state.PersistedWritings.Add(new PersistedStarWriting
+                            {
+                                Id = item.Id,
+                                SourceBatchId = item.SourceBatchId,
+                                WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
+                                Writing = item.Writing,
+                                EmotionalVector = item.EmotionalVector,
+                                MatchedPersistenceRuleIds = matchedRules.ToList(),
+                                GeneratedAt = item.GeneratedAt,
+                                PersistedAt = repairedAt,
+                                ToldCount = 0
+                            });
+                        }
+                        else
+                        {
+                            existing.SourceBatchId = item.SourceBatchId;
+                            existing.WordsUsed = (item.WordsUsed ?? new List<string>()).ToList();
+                            existing.Writing = item.Writing;
+                            existing.EmotionalVector = item.EmotionalVector;
+                            existing.MatchedPersistenceRuleIds = matchedRules.ToList();
+                            existing.GeneratedAt = item.GeneratedAt;
+                        }
+                    }
+                    else if (existing != null)
+                    {
+                        state.PersistedWritings.Remove(existing);
+                    }
+
+                    repairedCount++;
+                }
+            }
+
+            if (repairedCount > 0)
+            {
+                await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+
+            return repairedCount;
+        }
+
+        private static bool NeedsRatingRepair(StarWritingHistoryItem item)
+        {
+            return !StarWritingEmotionVector.TryNormalizeUsable(
+                item?.EmotionalVector,
+                out _,
+                out _);
+        }
+
         private static void NormalizeReview(StarWritingReviewResult review)
         {
             review.Ratings ??= new List<StarWritingRating>();
+            List<StarWritingRating> source = review.Ratings.Where(x => x != null).Take(5).ToList();
+            if (source.Count != 5)
+            {
+                throw new InvalidOperationException("Writing review must contain exactly five ratings; received " + source.Count + ".");
+            }
+
             List<StarWritingRating> normalized = new List<StarWritingRating>();
+            HashSet<StarWritingRating> used = new HashSet<StarWritingRating>();
             for (int i = 0; i < 5; i++)
             {
-                StarWritingRating rating = review.Ratings.FirstOrDefault(x => x.Index == i) ?? review.Ratings.ElementAtOrDefault(i) ?? CreateZeroRating(i);
+                StarWritingRating? rating = source.FirstOrDefault(x => !used.Contains(x) && x.Index == i)
+                    ?? source.FirstOrDefault(x => !used.Contains(x));
+                if (rating == null)
+                {
+                    throw new InvalidOperationException("Writing review is missing rating index " + i + ".");
+                }
+
+                used.Add(rating);
+                if (!StarWritingEmotionVector.TryNormalizeUsable(
+                    rating.EmotionalVector,
+                    out string emotionalVector,
+                    out _))
+                {
+                    throw new InvalidOperationException(
+                        "Writing review rating " + i + " did not contain 27 valid score:confidence pairs with usable confidence coverage.");
+                }
+
                 rating.Index = i;
-                rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out _);
+                rating.EmotionalVector = emotionalVector;
                 normalized.Add(rating);
             }
-            review.Ratings = normalized;
-        }
 
-        private static StarWritingRating CreateZeroRating(int index)
-        {
-            string vector = StarWritingEmotionVector.Normalize(string.Empty, out _);
-            return new StarWritingRating { Index = index, EmotionalVector = vector };
+            review.Ratings = normalized;
         }
 
         private static void AddUsedWords(StarWritingNotesState state, IEnumerable<string> words)

@@ -2396,7 +2396,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     vectorCategoryOrder = StarWritingEmotionVector.Categories,
                     result
                 }, _jsonOptions);
-                Status = starId + " finished five writings; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told.";
+                string repairMessage = result.RepairedRatingCount > 0
+                    ? " Re-rated " + result.RepairedRatingCount + " older writings whose vectors were incomplete."
+                    : string.Empty;
+                Status = starId + " finished five writings; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
                 IsProcessingRuntime = false;
             });
             await PublishWritingShelfEventAsync("StarWritingGenerated", starId, result.State, result.Batch.Items.Select(x => x.Writing).ToList(), Status).ConfigureAwait(false);
