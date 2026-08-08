@@ -110,9 +110,15 @@ namespace Wds.SixStars.Api.Ai
                 properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = new Dictionary<string, object>
                 {
                     { "type", "array" },
-                    { "minItems", 27 },
-                    { "maxItems", 27 },
-                    { "items", StringProperty(32) }
+                    { "minItems", 54 },
+                    { "maxItems", 54 },
+                    { "items", new Dictionary<string, object>
+                        {
+                            { "type", "integer" },
+                            { "minimum", 0 },
+                            { "maximum", 100 }
+                        }
+                    }
                 };
             }
 

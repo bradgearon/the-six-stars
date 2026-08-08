@@ -22,9 +22,9 @@ CANDIDATES
 Writing: {{ item.writing }}
 {{ end }}
 
-Return only one JSON object with this exact outer shape:
+Return only this outer JSON shape:
 {"0":[],"1":[],"2":[],"3":[],"4":[]}
 
-Fill every array with exactly 27 strings, one string per category in the listed order.
-Every string must look like "score:confidence" and contain only that one pair.
-The numeric property name identifies the writing. It is not a Star ID.
+Fill every array with exactly 54 integers. They alternate score, confidence-decile for all 27 categories in the listed order.
+The last pair is Overall. Example pair: score 78 with confidence 0.9 is written as 78,9.
+The numeric property name identifies the writing; it is not a Star ID.

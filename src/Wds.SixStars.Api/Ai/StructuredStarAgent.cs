@@ -81,7 +81,7 @@ namespace Wds.SixStars.Api.Ai
                 voiceDirection = PromptText(profile.VoiceDirection, 900),
                 characterAttributes = BuildCharacterAttributeSummary(profile),
                 characterAttributeNotes = PromptList(profile.CharacterAttributeNotes, 8, 700),
-                behaviors = PromptList(profile.Behaviors, 10, 700),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
                 storytellingRules = PromptList(profile.StorytellingRules, 8, 700),
                 quotes = PromptList(profile.Quotes, 10, 700),
                 relevantSecrets = PromptList(
@@ -142,7 +142,7 @@ namespace Wds.SixStars.Api.Ai
                 personalityShort = PromptText(profile.PersonalityShort, 900),
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
-                behaviors = PromptList(profile.Behaviors, 10, 700),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
@@ -164,7 +164,7 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                1800,
+                1500,
                 "star-writing-rate",
                 cancellationToken).ConfigureAwait(false);
             StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
@@ -179,7 +179,7 @@ namespace Wds.SixStars.Api.Ai
                 string repairJson = await _client.CompleteJsonAsync(
                     repairMessages,
                     StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                    1800,
+                    1500,
                     "star-writing-rate-repair",
                     cancellationToken).ConfigureAwait(false);
                 StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
@@ -329,7 +329,7 @@ namespace Wds.SixStars.Api.Ai
         {
             if (element.ValueKind == JsonValueKind.String)
             {
-                return element.GetString() ?? string.Empty;
+                return CompleteNearExpectedWritingVector(element.GetString() ?? string.Empty);
             }
 
             if (element.ValueKind != JsonValueKind.Array)
@@ -337,8 +337,59 @@ namespace Wds.SixStars.Api.Ai
                 return string.Empty;
             }
 
+            JsonElement[] entries = element.EnumerateArray().ToArray();
+
+            // Fast wire format: 54 integers alternating score, confidence-decile.
+            // Example: [70,9,55,8,...] becomes 70:0.9;55:0.8;...
+            // Keeping the persisted representation as one vector string remains unchanged.
+            bool flatNumericWireVector = entries.Length > 0;
+            foreach (JsonElement entry in entries)
+            {
+                if (entry.ValueKind == JsonValueKind.String
+                    && (entry.GetString() ?? string.Empty).IndexOf(':') >= 0)
+                {
+                    flatNumericWireVector = false;
+                    break;
+                }
+
+                if (!TryReadJsonDouble(entry, out _))
+                {
+                    flatNumericWireVector = false;
+                    break;
+                }
+            }
+
+            if (flatNumericWireVector)
+            {
+                List<string> numericPairs = new List<string>();
+                int usableNumberCount = entries.Length;
+                if (usableNumberCount == 52) usableNumberCount = 52;       // 26 pairs; derive Overall below.
+                else if (usableNumberCount >= 54) usableNumberCount = 54;  // Ignore a model-added 28th pair.
+                else return string.Empty;
+
+                for (int i = 0; i + 1 < usableNumberCount; i += 2)
+                {
+                    if (!TryReadJsonDouble(entries[i], out double score)
+                        || !TryReadJsonDouble(entries[i + 1], out double rawConfidence))
+                    {
+                        return string.Empty;
+                    }
+
+                    double confidence = rawConfidence <= 10
+                        ? rawConfidence / 10.0
+                        : rawConfidence / 100.0;
+                    numericPairs.Add(
+                        score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+                        + ":"
+                        + confidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+                }
+
+                return CompleteNearExpectedWritingVector(string.Join(";", numericPairs));
+            }
+
+            // Compatibility with the previous array-of-strings and nested-pair formats.
             List<string> pairs = new List<string>();
-            foreach (JsonElement entry in element.EnumerateArray())
+            foreach (JsonElement entry in entries)
             {
                 if (entry.ValueKind == JsonValueKind.String)
                 {
@@ -362,7 +413,57 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
+            return CompleteNearExpectedWritingVector(string.Join(";", pairs));
+        }
+
+        private static string CompleteNearExpectedWritingVector(string raw)
+        {
+            List<string> pairs = (raw ?? string.Empty)
+                .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => x.Length > 0)
+                .ToList();
+
+            // Gemma was observed returning 26 entries for every Kaelia candidate, omitting
+            // only the final Overall category. Derive Overall from the core quality categories
+            // rather than spending another 10-12 seconds on a repair request.
+            if (pairs.Count == 26)
+            {
+                pairs.Add(DeriveOverallWritingPair(pairs));
+            }
+            else if (pairs.Count > 27)
+            {
+                // A second observed failure returned 28 complete pairs. The response has no
+                // labels that identify the extra entry, so retain the requested first 27.
+                pairs = pairs.Take(27).ToList();
+            }
+
             return string.Join(";", pairs);
+        }
+
+        private static string DeriveOverallWritingPair(IReadOnlyList<string> pairs)
+        {
+            int[] qualityIndices = { 4, 5, 6, 8, 9, 19, 20, 21, 22, 23, 24, 25 };
+            List<double> scores = new List<double>();
+            List<double> confidences = new List<double>();
+            foreach (int index in qualityIndices)
+            {
+                if (index < 0 || index >= pairs.Count) continue;
+                string[] values = pairs[index].Split(':');
+                if (values.Length != 2) continue;
+                if (!double.TryParse(values[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
+                if (!double.TryParse(values[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double confidence)) continue;
+                if (score < 0 || score > 100 || confidence < 0 || confidence > 1) continue;
+                scores.Add(score);
+                confidences.Add(confidence);
+            }
+
+            if (scores.Count == 0) return "50:0.5";
+            double overallScore = scores.Average();
+            double overallConfidence = confidences.Count == 0 ? 0.5 : confidences.Average();
+            return overallScore.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                + ":"
+                + overallConfidence.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
         }
 
         private static bool TryReadJsonDouble(JsonElement element, out double value)
@@ -513,6 +614,17 @@ namespace Wds.SixStars.Api.Ai
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(Math.Max(0, maximumItems))
                 .ToList();
+        }
+
+        private static List<string> PromptWritingBehaviorList(IEnumerable<string>? values, int maximumItems, int maximumCharactersPerItem)
+        {
+            return PromptList(
+                (values ?? Enumerable.Empty<string>()).Where(x =>
+                    x.IndexOf("romance mode", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("girlfriend", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("relationship mode", StringComparison.OrdinalIgnoreCase) < 0),
+                maximumItems,
+                maximumCharactersPerItem);
         }
 
         private static string PromptText(string? value, int maximumCharacters)

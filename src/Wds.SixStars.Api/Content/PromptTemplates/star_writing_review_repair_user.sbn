@@ -13,7 +13,7 @@ WRITINGS
 [{{ item.index }}] {{ item.writing }}
 {{ end }}
 
-Return only one JSON object with this exact outer shape:
+Return only this outer JSON shape:
 {"0":[],"1":[],"2":[],"3":[],"4":[]}
 
-Fill every array with exactly 27 "score:confidence" strings in the category order above.
+Fill every property with exactly 54 integers alternating score, confidence-decile for the 27 categories above. The final pair is Overall.

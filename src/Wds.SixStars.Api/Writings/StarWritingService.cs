@@ -34,15 +34,23 @@ namespace Wds.SixStars.Api.Writings
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                System.Diagnostics.Stopwatch totalTimer = System.Diagnostics.Stopwatch.StartNew();
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
-                int repairedRatingCount = await RepairIncompleteRecentRatingsAsync(profile, state, cancellationToken).ConfigureAwait(false);
+
+                // Do not make a new-writing button repair legacy vectors first. Older malformed
+                // ratings are historical data and must never block or add hidden LLM calls to a
+                // fresh generation. They can be migrated by a separate maintenance action later.
+                int repairedRatingCount = 0;
 
                 // Deliberately separate calls: the first creates freely in character; the second acts as a structured critic.
+                long generationStartedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
                 NormalizeGeneration(generation);
+                long generationFinishedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingReviewResult review = await _agent.RateWritingCandidatesAsync(profile, state, generation, cancellationToken).ConfigureAwait(false);
                 NormalizeReview(review);
+                long reviewFinishedAt = totalTimer.ElapsedMilliseconds;
 
                 DateTimeOffset now = DateTimeOffset.UtcNow;
                 StarWritingHistoryBatch batch = new StarWritingHistoryBatch
@@ -100,6 +108,13 @@ namespace Wds.SixStars.Api.Writings
                     .ToList();
                 AddUsedWords(state, generation.Items.SelectMany(x => x.WordsUsed));
                 await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                long saveFinishedAt = totalTimer.ElapsedMilliseconds;
+                System.Diagnostics.Debug.WriteLine(
+                    "[StarWritingTiming] " + profile.StarId
+                    + " generation=" + (generationFinishedAt - generationStartedAt) + "ms"
+                    + ", review=" + (reviewFinishedAt - generationFinishedAt) + "ms"
+                    + ", saveAndRules=" + (saveFinishedAt - reviewFinishedAt) + "ms"
+                    + ", total=" + saveFinishedAt + "ms.");
 
                 return new StarWritingCreateResult
                 {
