@@ -116,7 +116,7 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingGenerationResponseFormat(),
-                1800,
+                0,
                 "star-writing-generate",
                 cancellationToken).ConfigureAwait(false);
             StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(json), _jsonOptions);
@@ -164,7 +164,7 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                1100,
+                0,
                 "star-writing-rate",
                 cancellationToken).ConfigureAwait(false);
             StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
@@ -179,7 +179,7 @@ namespace Wds.SixStars.Api.Ai
                 string repairJson = await _client.CompleteJsonAsync(
                     repairMessages,
                     StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
-                    1100,
+                    0,
                     "star-writing-rate-repair",
                     cancellationToken).ConfigureAwait(false);
                 StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
@@ -631,7 +631,7 @@ namespace Wds.SixStars.Api.Ai
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingPerformanceResponseFormat(),
-                1800,
+                0,
                 "star-writing-perform",
                 cancellationToken).ConfigureAwait(false);
             StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);

@@ -12,4 +12,4 @@ The stored writing-note representation remains unchanged: one `EmotionalVector` 
 
 The parser still accepts the prior array formats for compatibility. It also repairs the observed 26-pair Kaelia response by deriving `Overall`, trims an unlabeled 28th pair, and accepts a colon-only chain when the model omits semicolons.
 
-The normal review and one repair attempt now use a 1,100-token completion ceiling instead of 1,500.
+The review response remains compact, and no per-request completion-token ceiling is sent. The backend/model may finish naturally without an application-added `max_tokens` cutoff.
