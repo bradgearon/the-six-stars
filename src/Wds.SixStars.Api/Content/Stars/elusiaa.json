@@ -966,11 +966,11 @@
       "requirements": [
         {
           "category": "Hopeful",
-          "minimumScore": 72
+          "minimumScore": 68
         },
         {
           "category": "Meaningful",
-          "minimumScore": 76
+          "minimumScore": 72
         }
       ]
     },
@@ -980,11 +980,25 @@
       "requirements": [
         {
           "category": "Beautiful",
-          "minimumScore": 80
+          "minimumScore": 76
         },
         {
           "category": "Moving",
-          "minimumScore": 68
+          "minimumScore": 64
+        }
+      ]
+    },
+    {
+      "id": "luminous-aphorism",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Poetic",
+          "minimumScore": 76
+        },
+        {
+          "category": "Quotable",
+          "minimumScore": 70
         }
       ]
     },

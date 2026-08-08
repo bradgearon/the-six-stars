@@ -89,10 +89,10 @@ namespace Wds.SixStars.Api.Ai
                         .Concat(profile.LibraryCanonNotes ?? new List<string>()),
                     10,
                     800),
-                recentWritings = (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>())
+                recentWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
                     .Where(x => x != null)
-                    .OrderByDescending(x => x.GeneratedAt)
-                    .ThenByDescending(x => x.Index)
+                    .OrderByDescending(x => x.PersistedAt)
+                    .ThenByDescending(x => x.GeneratedAt)
                     .Take(10)
                     .Select(x => new
                     {

@@ -106,7 +106,7 @@ namespace Wds.SixStars.Api.Writings
                     .OrderBy(x => x.GeneratedAt)
                     .ThenBy(x => x.Index)
                     .ToList();
-                AddUsedWords(state, generation.Items.SelectMany(x => x.WordsUsed));
+                RebuildUsedWordsFromPersistedWritings(state);
                 await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
                 long saveFinishedAt = totalTimer.ElapsedMilliseconds;
                 System.Diagnostics.Debug.WriteLine(
@@ -353,6 +353,7 @@ namespace Wds.SixStars.Api.Writings
 
             if (repairedCount > 0)
             {
+                RebuildUsedWordsFromPersistedWritings(state);
                 await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
             }
 
@@ -405,13 +406,17 @@ namespace Wds.SixStars.Api.Writings
             review.Ratings = normalized;
         }
 
-        private static void AddUsedWords(StarWritingNotesState state, IEnumerable<string> words)
+        private static void RebuildUsedWordsFromPersistedWritings(StarWritingNotesState state)
         {
-            HashSet<string> seen = new HashSet<string>(state.AllUsedWords ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
-            foreach (string word in words.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()))
-            {
-                if (seen.Add(word)) state.AllUsedWords.Add(word);
-            }
+            state.AllUsedWords = (state.PersistedWritings ?? new List<PersistedStarWriting>())
+                .Where(x => x != null)
+                .OrderBy(x => x.PersistedAt)
+                .ThenBy(x => x.GeneratedAt)
+                .SelectMany(x => x.WordsUsed ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)

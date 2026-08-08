@@ -42,8 +42,8 @@ RELEVANT PRIVATE OR CANON DETAILS
 - {{ item }}
 {{ end }}
 
-LAST TEN WRITINGS
-These are continuity references, not pieces to repeat.
+LAST TEN SAVED WRITINGS
+Only shelf-persisted writings appear here. Their words are already historical and should not be reused.
 {{ if data.recentWritings.size == 0 }}
 (none yet)
 {{ else }}
@@ -53,7 +53,8 @@ Writing: {{ item.writing }}
 {{ end }}
 {{ end }}
 
-COMPLETE HISTORICAL USED-WORD LIST
+PERSISTED HISTORICAL USED-WORD LIST
+Only words from shelf-persisted writings appear here. Words from rejected writings remain available.
 {{ if data.allUsedWordsText == "" }}
 (none yet)
 {{ else }}

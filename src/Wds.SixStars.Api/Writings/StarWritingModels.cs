@@ -96,7 +96,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 3;
+        public int Version { get; set; } = 4;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();

@@ -100,7 +100,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 3;
+            state.Version = 4;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.AllUsedWords ??= new List<string>();
@@ -133,7 +133,12 @@ namespace Wds.SixStars.Api.Writings
                 }
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
-            state.AllUsedWords = state.AllUsedWords
+            // A word becomes historical only when its writing reaches the shelf. Rebuild rather
+            // than preserving older Version 1-3 files that marked every generated word as used.
+            state.AllUsedWords = state.PersistedWritings
+                .OrderBy(x => x.PersistedAt)
+                .ThenBy(x => x.GeneratedAt)
+                .SelectMany(x => x.WordsUsed ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
