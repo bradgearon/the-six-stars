@@ -190,6 +190,11 @@ public final class MainActivity extends ComponentActivity {
     private Button prodCancelVoiceButton;
     private Button prodSendVoiceButton;
     private Button prodSendTextButton;
+    private Button prodGenerateWritingButton;
+    private Button prodTellWritingButton;
+    private int selectedStarPendingWritingCount;
+    private int selectedStarPersistedWritingCount;
+    private boolean starWritingRequestRunning;
     private View prodTextToggleButton;
     private View prodTextComposer;
     private TextView prodConversationText;
@@ -946,6 +951,19 @@ public final class MainActivity extends ComponentActivity {
         buttons2.addView(dev, weightParams(1));
         controls.addView(buttons2);
 
+        TextView writingLabel = prodText("Star Writing Shelf", 13, 0xFFFFC8F0, true);
+        writingLabel.setPadding(0, dp(10), 0, dp(4));
+        controls.addView(writingLabel);
+        LinearLayout writingButtons = row();
+        prodGenerateWritingButton = prodButton("Create 5 Jokes / Poems");
+        prodTellWritingButton = prodButton("Tell Best / Latest (" + selectedStarPendingWritingCount + ")");
+        writingButtons.addView(prodGenerateWritingButton, weightParams(1));
+        writingButtons.addView(prodTellWritingButton, weightParams(1));
+        controls.addView(writingButtons);
+        TextView writingHint = prodText("Creates five two-word jokes or poetic fragments, rates them in a second AI pass, and saves only those that pass this Star's rules.", 11, 0xFFB6A7C8, false);
+        controls.addView(writingHint);
+        updateProdWritingButtons();
+
         TextView status = prodOutput(buildProdMenuStatusText(), 12);
         status.setTextIsSelectable(true);
         ScrollView scroll = new ScrollView(this);
@@ -1008,6 +1026,8 @@ public final class MainActivity extends ComponentActivity {
                 }));
             });
             audio.setOnClickListener(v -> testPhoneAudio());
+            prodGenerateWritingButton.setOnClickListener(v -> dispatchStarWritingCommand("GenerateStarWriting", false));
+            prodTellWritingButton.setOnClickListener(v -> dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked()));
             pauseVoice.setOnClickListener(v -> {
                 if ((phoneVoiceService != null && phoneVoiceService.isPaused())) phoneVoiceService.resume(); else phoneVoiceService.pause();
                 pauseVoice.setText((phoneVoiceService != null && phoneVoiceService.isPaused()) ? "Resume Voice" : "Pause Voice");
@@ -1028,6 +1048,8 @@ public final class MainActivity extends ComponentActivity {
         sb.append("IPv6 primary: ").append(settingsService == null || settingsService.useIpv6Primary() ? "enabled" : "disabled").append('\n');
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
+        sb.append("Writing shelf: ").append(Math.max(0, selectedStarPendingWritingCount)).append(" new, ")
+                .append(Math.max(0, selectedStarPersistedWritingCount)).append(" saved.\n\n");
         sb.append(currentDailyStarState == null ? "Today: no daily Star state yet." : currentDailyStarState).append("\n\n");
         sb.append(currentInterstarStatus == null ? "Interstar state: idle." : currentInterstarStatus).append("\n\n");
         sb.append(currentLastEmotionVectors == null ? "Last emotional vectors: none yet." : currentLastEmotionVectors).append("\n");
@@ -1907,6 +1929,70 @@ public final class MainActivity extends ComponentActivity {
         return json;
     }
 
+    private void dispatchStarWritingCommand(String commandType, boolean returnAudio) {
+        if (starWritingRequestRunning) return;
+        try {
+            final String starId = selectedStarName();
+            starWritingRequestRunning = true;
+            updateProdWritingButtons();
+            if (prodMiniStatusText != null) {
+                prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
+                        ? starId + " is creating and rating five writings…"
+                        : starId + " is choosing her best new writings…");
+            }
+
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-writing-" + System.currentTimeMillis());
+            json.put("commandType", commandType);
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", starId);
+            json.put("reason", "GenerateStarWriting".equalsIgnoreCase(commandType)
+                    ? "Android cat popup requested five two-word jokes or poetic writings."
+                    : "Android cat popup requested the best and latest untold writing performance.");
+            json.put("returnAudio", returnAudio);
+            json.put("returnAudioInline", false);
+            json.put("clientName", "SixStarsMobileAndroidWritingShelf");
+
+            appendVoiceDebug("Writing shelf command sent", commandType + " for " + starId);
+            sendSocketRequest("dispatch", json, 240000L, response -> {
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    starWritingRequestRunning = false;
+                    updateProdWritingButtons();
+                    if (event != null) {
+                        handleBridgeEvent(event);
+                    } else {
+                        handleWritingBridgeEvent(response, commandType, 0L, starId,
+                                response.optString("message", commandType));
+                    }
+                    setDebug("Writing shelf request complete", clip(response.toString(), 5000));
+                });
+            }, error -> runOnUiThread(() -> {
+                starWritingRequestRunning = false;
+                updateProdWritingButtons();
+                if (prodMiniStatusText != null) prodMiniStatusText.setText("Writing request failed.");
+                setDebug("Writing shelf request failed", error.toString());
+                appendVoiceDebug("Writing shelf request failed", error.toString());
+            }));
+        } catch (Exception ex) {
+            starWritingRequestRunning = false;
+            updateProdWritingButtons();
+            setDebug("Writing shelf request failed", ex.toString());
+        }
+    }
+
+    private void updateProdWritingButtons() {
+        if (prodGenerateWritingButton != null) {
+            prodGenerateWritingButton.setEnabled(!starWritingRequestRunning);
+            prodGenerateWritingButton.setText(starWritingRequestRunning ? "Writing…" : "Create 5 Jokes / Poems");
+        }
+        if (prodTellWritingButton != null) {
+            prodTellWritingButton.setEnabled(!starWritingRequestRunning && selectedStarPendingWritingCount > 0);
+            prodTellWritingButton.setText("Tell Best / Latest (" + Math.max(0, selectedStarPendingWritingCount) + ")");
+        }
+    }
+
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
         dispatchBridgeCommand(commandType, starId, isMet, isAlly, reason, null);
     }
@@ -2036,6 +2122,8 @@ public final class MainActivity extends ComponentActivity {
 
         if (isTranscriptBridgeEvent(type)) {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
+        } else if (isWritingBridgeEvent(type)) {
+            handleWritingBridgeEvent(event, type, seq, starId, message);
         } else if (isConversationBridgeEvent(type)) {
             handleConversationBridgeEvent(event, type, seq, starId, message);
         } else if (isPhotoBridgeEvent(type)) {
@@ -2064,6 +2152,47 @@ public final class MainActivity extends ComponentActivity {
             setDebug("History cleared", message);
         }
         appendVoiceDebug("Elusiaa received a queued bridge update", "#" + seq + " " + type + " star=" + starId + ", selected=" + selected + ", " + clip(message, 180));
+    }
+
+    private boolean isWritingBridgeEvent(String type) {
+        return "StarWritingGenerated".equalsIgnoreCase(type)
+                || "StarWritingPerformanceReady".equalsIgnoreCase(type)
+                || "GenerateStarWriting".equalsIgnoreCase(type)
+                || "TellStarWriting".equalsIgnoreCase(type);
+    }
+
+    private void handleWritingBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        if (event == null) return;
+        selectedStarPendingWritingCount = optIntEither(event, "pendingWritingCount", "PendingWritingCount", selectedStarPendingWritingCount);
+        selectedStarPersistedWritingCount = optIntEither(event, "persistedWritingCount", "PersistedWritingCount", selectedStarPersistedWritingCount);
+        starWritingRequestRunning = false;
+        updateProdWritingButtons();
+
+        JSONArray items = optJsonArrayEither(event, "writingItems", "WritingItems");
+        String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        StringBuilder visible = new StringBuilder();
+        if (items != null) {
+            for (int i = 0; i < items.length(); i++) {
+                String item = items.optString(i, "").trim();
+                if (item.length() == 0) continue;
+                if (visible.length() > 0) visible.append("\n\n");
+                visible.append(item);
+            }
+        }
+        if (spoken.length() > 0) {
+            if (visible.length() == 0) visible.append(spoken);
+            if (!recentProdConversationAlreadyHas(starId, spoken)) appendProdConversationLine(starId, spoken);
+        }
+
+        String title = "StarWritingGenerated".equalsIgnoreCase(type) || "GenerateStarWriting".equalsIgnoreCase(type)
+                ? starId + " — five new writings"
+                : starId + " — best and latest writing";
+        responseText.setText(title + "\n\n" + (visible.length() > 0 ? visible.toString() : message)
+                + "\n\nNew: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount);
+        if (prodMiniStatusText != null) {
+            prodMiniStatusText.setText(message + " New writing: " + selectedStarPendingWritingCount + ".");
+        }
+        appendVoiceDebug("Writing shelf updated", "#" + seq + " " + type + ", pending=" + selectedStarPendingWritingCount + ", saved=" + selectedStarPersistedWritingCount);
     }
 
     private boolean isConversationBridgeEvent(String type) {
@@ -2321,6 +2450,9 @@ public final class MainActivity extends ComponentActivity {
         selectedStarCuteModeEnabled = optBooleanEither(state, "girlfriendCuteModeEnabled", "GirlfriendCuteModeEnabled", true);
         selectedStarCuteModeActive = optBooleanEither(state, "girlfriendCuteModeActive", "GirlfriendCuteModeActive", false);
         selectedStarCuteModeSignature = optStringEither(state, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
+        selectedStarPendingWritingCount = optIntEither(state, "pendingWritingCount", "PendingWritingCount", selectedStarPendingWritingCount);
+        selectedStarPersistedWritingCount = optIntEither(state, "persistedWritingCount", "PersistedWritingCount", selectedStarPersistedWritingCount);
+        updateProdWritingButtons();
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;
         updateEmotionVectorsFromJson(state);

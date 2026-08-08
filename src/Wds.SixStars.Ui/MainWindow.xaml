@@ -63,6 +63,14 @@
                             Command="{Binding EnqueueAllStarStateUpdatesCommand}"
                             ToolTip="Queue fresh current-state generation for all six Stars. Foreground conversations remain higher priority."
                             Margin="0,0,0,8" Height="34" />
+                    <Border BorderBrush="#D8C8F2" BorderThickness="1" CornerRadius="6" Padding="7" Margin="0,0,0,8" Background="#FCF9FF">
+                        <StackPanel>
+                            <TextBlock Text="Star Writing Shelf" FontWeight="SemiBold" Margin="0,0,0,5" />
+                            <Button Content="Create 5 Jokes / Poems" Command="{Binding GenerateStarWritingCommand}" Margin="0,0,0,6" Height="34" />
+                            <Button Content="{Binding TellStarWritingButtonText}" Command="{Binding TellStarWritingCommand}" Margin="0,0,0,5" Height="34" />
+                            <TextBlock Text="{Binding WritingLibraryStatusText}" TextWrapping="Wrap" Foreground="#66527A" />
+                        </StackPanel>
+                    </Border>
                     <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear Selected Star History" Command="{Binding ClearSelectedStarHistoryCommand}" Margin="0,0,0,8" Height="34" />
                     <Button Content="Clear All Star Data" Command="{Binding ClearAllStarDataCommand}" Margin="0,0,0,8" Height="34" />

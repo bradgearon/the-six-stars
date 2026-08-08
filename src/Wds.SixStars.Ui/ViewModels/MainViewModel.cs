@@ -31,6 +31,7 @@ using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Writings;
 using Wds.SixStars.Ui.Audio;
 using Wds.SixStars.Ui.Configuration;
 using Wds.SixStars.Ui.Infrastructure;
@@ -44,6 +45,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private const string DefaultSessionId = "desktop-local-dev";
 
     private readonly SixStarsRuntime _runtime;
+    private readonly IStarProfileProvider _profileProvider;
+    private readonly StarWritingService _writingService;
+    private RelayCommand _generateStarWritingCommand = null!;
+    private RelayCommand _tellStarWritingCommand = null!;
     private readonly InMemoryScreenContextStore _screenContextStore;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly VoiceCaptureSettings _voiceCaptureSettings;
@@ -107,6 +112,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _suppressMobileBridgeSelectedStarBroadcast;
     private bool _starInitiativeEnabled;
     private DateTimeOffset _lastStarInitiativeAt = DateTimeOffset.MinValue;
+    private int _pendingWritingCount;
+    private int _persistedWritingCount;
     private int _systemResumeRecoveryActive;
     private DateTimeOffset _lastSystemResumeRecoveryAt = DateTimeOffset.MinValue;
 
@@ -133,7 +140,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             CancelPlaybackOnInterruption = true
         });
 
-        IStarProfileProvider profiles = FileStarProfileProvider.TryCreateDefaultOrFallback();
+        _profileProvider = FileStarProfileProvider.TryCreateDefaultOrFallback();
+        IStarAgent starAgent = CreateStarAgent();
+        if (starAgent is not IStarWritingAgent writingAgent)
+        {
+            throw new InvalidOperationException("The configured Star agent does not implement the writing request pipeline.");
+        }
+        _writingService = new StarWritingService(_profileProvider, writingAgent, StarWritingFileStore.CreateDefault());
+        System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
         _screenContextStore = new InMemoryScreenContextStore(5);
         int recentHistoryForPrompt = GetIntSetting(
             Environment.GetEnvironmentVariable("SIX_STARS_RECENT_HISTORY_FOR_PROMPT"),
@@ -143,8 +157,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         System.Diagnostics.Debug.WriteLine("[Memory] Local state file: " + stateStore.FilePath);
 
         _runtime = new SixStarsRuntime(
-            profiles,
-            CreateStarAgent(),
+            _profileProvider,
+            starAgent,
             new RelationshipDeltaCalculator(),
             stateStore,
             _screenContextStore,
@@ -400,6 +414,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         CancelOrStopRuntimeCommand = new RelayCommand(_ => CancelAllRuntimeOperations("User clicked cancel/stop."));
         ClearSelectedStarHistoryCommand = new RelayCommand(async _ => await ClearSelectedStarHistoryAsync());
         ClearAllStarDataCommand = new RelayCommand(async _ => await ClearAllStarDataAsync());
+        _generateStarWritingCommand = new RelayCommand(async _ => await GenerateStarWritingAsync(), _ => !IsProcessingRuntime);
+        GenerateStarWritingCommand = _generateStarWritingCommand;
+        _tellStarWritingCommand = new RelayCommand(async _ => await TellStarWritingAsync(), _ => PendingWritingCount > 0 && !IsProcessingRuntime);
+        TellStarWritingCommand = _tellStarWritingCommand;
         SimulateSpeechCommand = new RelayCommand(async _ => await SimulateSpeechAsync());
         StartScreenAwarenessCommand = new RelayCommand(async _ => await StartScreenAwarenessAsync());
         StopScreenAwarenessCommand = new RelayCommand(async _ => await StopScreenAwarenessAsync());
@@ -411,6 +429,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         OpenLlmExchangeLogFolderCommand = new RelayCommand(_ => OpenLlmExchangeLogFolder());
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         EnqueueAllStarStateUpdatesCommand = new RelayCommand(async _ => await EnqueueAllStarStateUpdatesAsync());
+        _ = RefreshSelectedWritingStateAsync("startup");
         InitializeMobileBridgeCommandsAndMaybeStart();
         _services.StarInitiative.Start();
 
@@ -435,6 +454,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand CancelOrStopRuntimeCommand { get; }
     public ICommand ClearSelectedStarHistoryCommand { get; }
     public ICommand ClearAllStarDataCommand { get; }
+    public ICommand GenerateStarWritingCommand { get; }
+    public ICommand TellStarWritingCommand { get; }
     public ICommand SimulateSpeechCommand { get; }
     public ICommand StartScreenAwarenessCommand { get; }
     public ICommand StopScreenAwarenessCommand { get; }
@@ -461,6 +482,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 }
                 UpdateSpeechOptions();
                 _ = RefreshSelectedStarStateForUiAsync("selected star changed");
+                _ = RefreshSelectedWritingStateAsync("selected star changed");
                 if (!_suppressMobileBridgeSelectedStarBroadcast)
                 {
                     _ = PublishMobileSelectedStarUpdateAsync("desktop selected star changed");
@@ -637,8 +659,41 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool IsProcessingRuntime
     {
         get => _isProcessingRuntime;
-        set => SetProperty(ref _isProcessingRuntime, value);
+        set
+        {
+            if (SetProperty(ref _isProcessingRuntime, value))
+            {
+                _generateStarWritingCommand?.RaiseCanExecuteChanged();
+                _tellStarWritingCommand?.RaiseCanExecuteChanged();
+            }
+        }
     }
+
+    public int PendingWritingCount
+    {
+        get => _pendingWritingCount;
+        private set
+        {
+            if (SetProperty(ref _pendingWritingCount, Math.Max(0, value)))
+            {
+                OnPropertyChanged(nameof(TellStarWritingButtonText));
+                OnPropertyChanged(nameof(WritingLibraryStatusText));
+                _tellStarWritingCommand?.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public int PersistedWritingCount
+    {
+        get => _persistedWritingCount;
+        private set
+        {
+            if (SetProperty(ref _persistedWritingCount, Math.Max(0, value))) OnPropertyChanged(nameof(WritingLibraryStatusText));
+        }
+    }
+
+    public string TellStarWritingButtonText => "Tell Best / Latest (" + PendingWritingCount + ")";
+    public string WritingLibraryStatusText => "Writing shelf: " + PendingWritingCount + " new, " + PersistedWritingCount + " saved.";
 
     public string StarOutput
     {
@@ -2284,6 +2339,162 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task RefreshSelectedWritingStateAsync(string reason)
+    {
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        try
+        {
+            StarWritingNotesState state = await _writingService.GetStateAsync(starId, CancellationToken.None).ConfigureAwait(false);
+            OnUiThread(() =>
+            {
+                if (!string.Equals(ResolveDefaultStarId(SelectedStarId), starId, StringComparison.OrdinalIgnoreCase)) return;
+                PendingWritingCount = state.PendingCount;
+                PersistedWritingCount = state.PersistedWritings?.Count ?? 0;
+                System.Diagnostics.Debug.WriteLine("[WritingNotes] Refreshed " + starId + " after " + reason + ": pending=" + PendingWritingCount + ", persisted=" + PersistedWritingCount + ".");
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[WritingNotes] Could not refresh writing state: " + ex.Message);
+        }
+    }
+
+    private async Task GenerateStarWritingAsync()
+    {
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        CancellationToken token = _operationController.BeginNewOperation("Generate and rate five Star writings.");
+        OnUiThread(() =>
+        {
+            IsProcessingRuntime = true;
+            Status = starId + " is choosing five pairs of words, then a second AI pass will rate the writing.";
+        });
+        try
+        {
+            StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, token).ConfigureAwait(false);
+            StringBuilder output = new StringBuilder();
+            output.AppendLine(starId + " created five new jokes / poetic fragments:");
+            output.AppendLine();
+            for (int i = 0; i < result.Batch.Items.Count; i++)
+            {
+                StarWritingHistoryItem item = result.Batch.Items[i];
+                output.Append(i + 1).Append(". [").Append(string.Join(" + ", item.WordsUsed)).AppendLine("]");
+                output.AppendLine(item.Writing);
+                output.AppendLine(item.Persisted
+                    ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
+                    : "Not persisted by this Star's current score/confidence rules.");
+                output.AppendLine();
+            }
+
+            OnUiThread(() =>
+            {
+                PendingWritingCount = result.State.PendingCount;
+                PersistedWritingCount = result.State.PersistedWritings.Count;
+                StarOutput = output.ToString().TrimEnd();
+                DebugJson = JsonSerializer.Serialize(new
+                {
+                    feature = "star-writing-two-pass-generation",
+                    vectorCategoryOrder = StarWritingEmotionVector.Categories,
+                    result
+                }, _jsonOptions);
+                Status = starId + " finished five writings; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told.";
+                IsProcessingRuntime = false;
+            });
+            await PublishWritingShelfEventAsync("StarWritingGenerated", starId, result.State, result.Batch.Items.Select(x => x.Writing).ToList(), Status).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() => { IsProcessingRuntime = false; Status = "Writing generation cancelled."; });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                Status = "Could not generate Star writing: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
+    private async Task TellStarWritingAsync()
+    {
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        if (PendingWritingCount <= 0)
+        {
+            Status = starId + " has no new persisted writing waiting to be told.";
+            return;
+        }
+
+        CancellationToken token = _operationController.BeginNewOperation("Tell best and latest Star writing.");
+        OnUiThread(() =>
+        {
+            IsProcessingRuntime = true;
+            Status = starId + " is choosing up to five of her best and latest untold writings.";
+        });
+        try
+        {
+            StarWritingPerformanceResult? result = await _writingService.TellPendingAsync(starId, token).ConfigureAwait(false);
+            if (result == null)
+            {
+                OnUiThread(() =>
+                {
+                    PendingWritingCount = 0;
+                    IsProcessingRuntime = false;
+                    Status = starId + " has no new persisted writing waiting to be told.";
+                });
+                return;
+            }
+
+            OnUiThread(() =>
+            {
+                PendingWritingCount = result.State.PendingCount;
+                PersistedWritingCount = result.State.PersistedWritings.Count;
+                StarOutput = result.Response.SpokenText;
+                DebugJson = JsonSerializer.Serialize(new
+                {
+                    feature = "star-writing-performance",
+                    selected = result.SelectedWritings,
+                    response = result.Response,
+                    pendingAfter = PendingWritingCount
+                }, _jsonOptions);
+                Status = starId + " selected " + result.SelectedWritings.Count + " writing(s) to tell. " + PendingWritingCount + " remain new.";
+            });
+
+            await PublishWritingShelfEventAsync("StarWritingPerformanceReady", starId, result.State, result.Response.SpokenParts, Status).ConfigureAwait(false);
+            await SpeakStarResponseAsync(result.Response, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() => { IsProcessingRuntime = false; Status = "Writing performance cancelled."; });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                Status = "Could not prepare writing performance: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
+    private Task PublishWritingShelfEventAsync(string eventType, string starId, StarWritingNotesState state, IReadOnlyList<string> writingItems, string message)
+    {
+        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+        {
+            EventType = eventType,
+            SourceClientId = "desktop-ui",
+            SessionId = DefaultSessionId,
+            StarId = starId,
+            SelectedStarId = SelectedStarId,
+            Message = message,
+            PendingWritingCount = state.PendingCount,
+            PersistedWritingCount = state.PersistedWritings?.Count ?? 0,
+            WritingItems = writingItems?.ToList() ?? new List<string>()
+        });
+        return Task.CompletedTask;
+    }
+
     public void CancelAllRuntimeOperations(string reason)
     {
         StopActiveStoryState();
@@ -2299,6 +2510,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         string requestSessionId = string.IsNullOrWhiteSpace(primarySessionId) ? DefaultSessionId : primarySessionId!.Trim();
         StarState reset = await _services.StarState.ResetAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
         await _runtime.ClearDailyStateAsync(requestSessionId, starId, cancellationToken).ConfigureAwait(false);
+        await _writingService.ClearAsync(starId, cancellationToken).ConfigureAwait(false);
         return reset;
     }
 
@@ -2310,7 +2522,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             CancelAllRuntimeOperations("Clearing selected Star history.");
             StarState state = await ResetStarEverywhereAsync(starId, DefaultSessionId, CancellationToken.None).ConfigureAwait(false);
             _stateChangeTracker.Reset(starId);
-            PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Elusiaa saw the desktop clear history for " + starId + ".");
+            PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Elusiaa saw the desktop clear history for " + starId + ".", 0, 0);
             OnUiThread(() =>
             {
                 _isLoadingSelectedStarState = true;
@@ -2323,9 +2535,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     _isLoadingSelectedStarState = false;
                 }
+                PendingWritingCount = 0;
+                PersistedWritingCount = 0;
                 StarOutput = string.Empty;
                 LastTranscript = string.Empty;
-                Status = "Cleared local conversation history and relationship state for " + starId + ".";
+                Status = "Cleared local conversation history, relationship state, and writing notes for " + starId + ".";
                 DebugJson = JsonSerializer.Serialize(new { action = "clear_star_history", starId, state }, _jsonOptions);
             });
         }
@@ -2351,7 +2565,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarState state = await ResetStarEverywhereAsync(star, DefaultSessionId, CancellationToken.None).ConfigureAwait(false);
                 _stateChangeTracker.Reset(star);
                 cleared.Add(new { starId = star, state.IsMet, state.IsAlly, state.Heart, state.Trust, state.Romance, state.EmotionalConnectionPercent });
-                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear the shared local state for " + star + ".");
+                PublishMobileBridgeStateEventFromDesktop("StarHistoryCleared", state, "Auerlis watched the desktop fully clear the shared local state for " + star + ".", 0, 0);
             }
 
             StarState selectedState = await _services.StarState.LoadAsync(DefaultSessionId, ResolveDefaultStarId(SelectedStarId), CancellationToken.None).ConfigureAwait(false);
@@ -2367,10 +2581,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     _isLoadingSelectedStarState = false;
                 }
+                PendingWritingCount = 0;
+                PersistedWritingCount = 0;
                 StarOutput = string.Empty;
                 LastTranscript = string.Empty;
                 PlayerText = string.Empty;
-                Status = "Cleared the shared local Star state, daily JSON/XML cache, relationship scores, and conversation history.";
+                Status = "Cleared the shared local Star state, daily JSON/XML cache, relationship scores, conversation history, and writing notes.";
                 DebugJson = JsonSerializer.Serialize(new { action = "clear_all_star_data", cleared }, _jsonOptions);
             });
         }
@@ -3635,6 +3851,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         app.Dispatcher.Invoke(action);
+    }
+
+    private void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

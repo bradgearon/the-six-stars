@@ -946,5 +946,55 @@
     "High insight and patience make her perceptive, but high despair and fear can freeze her future.",
     "Low hope and zeal mean she may withdraw, delay, or assume change is impossible.",
     "Benaveil pressure should mostly sharpen despair, fear, fatalism, and cold distance."
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "void-melancholy",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Deep",
+          "minimumScore": 78,
+          "minimumConfidence": 0.7
+        },
+        {
+          "category": "Melancholy",
+          "minimumScore": 72,
+          "minimumConfidence": 0.66
+        }
+      ]
+    },
+    {
+      "id": "fatal-beauty",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunting",
+          "minimumScore": 78,
+          "minimumConfidence": 0.7
+        },
+        {
+          "category": "Poetic",
+          "minimumScore": 78,
+          "minimumConfidence": 0.7
+        }
+      ]
+    },
+    {
+      "id": "cold-cleverness",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Clever",
+          "minimumScore": 82,
+          "minimumConfidence": 0.74
+        },
+        {
+          "category": "Original",
+          "minimumScore": 74,
+          "minimumConfidence": 0.68
+        }
+      ]
+    }
   ]
 }

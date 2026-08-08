@@ -12,10 +12,11 @@ using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.Writings;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
+    public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -56,6 +57,117 @@ namespace Wds.SixStars.Api.Ai
             _jsonOptions.Converters.Add(new FlexibleListJsonConverterFactory());
         }
 
+
+        public async Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            CancellationToken cancellationToken)
+        {
+            string profileJson = SerializeWritingCharacterProfile(profile);
+            string historyJson = JsonSerializer.Serialize(new
+            {
+                recentWritingHistory = (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>()).OrderByDescending(x => x.GeneratedAt).Take(10),
+                allUsedWords = state.AllUsedWords ?? new List<string>()
+            }, new JsonSerializerOptions { WriteIndented = true });
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system",
+                    "You are the named Star in the supplied complete character profile. This is a special creative-writing request, not normal conversation. " +
+                    "Remain completely in character, including her element, domain, memories, speaking habits, virtues, flaws, private imagery, and style. " +
+                    "Create exactly five original miniature writings. For each item, independently choose exactly two interesting, substantially unrelated words, then use both concepts to create a joke, aphorism, or tiny poetic fragment. " +
+                    "A laugh is welcome, but poetic, haunting, emotionally revealing, or philosophically clever value is equally valid. Avoid merely explaining the pair. Avoid prior used words when possible, and never repeat a pair. " +
+                    "Return only the required JSON object. jokes must be an array of exactly five finished strings. usedWords must be a matching array of exactly five two-string arrays, where usedWords[i] contains the two words used by jokes[i]. Do not add ratings yet."),
+                new ChatMessage("user",
+                    "COMPLETE STAR PROFILE:\n" + profileJson +
+                    "\n\nWRITING NOTES (the last ten individual writings plus the complete historical used-word list):\n" + historyJson +
+                    "\n\nNow choose five fresh two-word sets and create five in-character jokes or poetic writings. Return only JSON with starId, jokes, and usedWords.")
+            };
+
+            string json = await _client.CompleteJsonAsync(messages, StarResponseJsonSchema.CreateStarWritingGenerationResponseFormat(), 1800, "star-writing-generate", cancellationToken).ConfigureAwait(false);
+            StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing generation returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingReviewResult> RateWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            StarWritingGenerationResult generation,
+            CancellationToken cancellationToken)
+        {
+            string candidateJson = JsonSerializer.Serialize(generation.Items, new JsonSerializerOptions { WriteIndented = true });
+            string profileJson = SerializeWritingCharacterProfile(profile);
+            string vectorOrder = StarWritingEmotionVector.CategoryOrder;
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system",
+                    "Act as a precise literary and emotional evaluator. Rate each of the five supplied writings independently while understanding the complete Star profile. " +
+                    "For each item return one compact emotionalVector string with exactly 27 entries in the exact category order supplied by the user message. " +
+                    "Every entry is score:confidence, where score is 0-100 and confidence is 0-1. Use numbers only, separated by colons and semicolons. " +
+                    "Score means how strongly the writing possesses the category; confidence means confidence in that judgment. Do not reverse them. " +
+                    "Return exactly five rating objects with zero-based index values 0 through 4. Return only JSON."),
+                new ChatMessage("user",
+                    "COMPLETE STAR PROFILE:\n" + profileJson +
+                    "\n\nEXACT VECTOR CATEGORY ORDER (27):\n" + vectorOrder +
+                    "\n\nCANDIDATE WRITINGS:\n" + candidateJson +
+                    "\n\nRate all five. Each emotionalVector must have exactly 27 score:confidence pairs in that exact order.")
+            };
+
+            string json = await _client.CompleteJsonAsync(messages, StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(), 2200, "star-writing-rate", cancellationToken).ConfigureAwait(false);
+            StarWritingReviewResult? result = JsonSerializer.Deserialize<StarWritingReviewResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing review returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<PersistedStarWriting> pendingWritings,
+            CancellationToken cancellationToken)
+        {
+            string profileJson = SerializeWritingCharacterProfile(profile);
+            string allPersistedJson = JsonSerializer.Serialize((state.PersistedWritings ?? new List<PersistedStarWriting>()).OrderByDescending(x => x.PersistedAt), new JsonSerializerOptions { WriteIndented = true });
+            string pendingIds = string.Join(", ", pendingWritings.Select(x => x.Id));
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system",
+                    "You are the named Star in the complete profile. Prepare a natural spoken performance of up to five of her best and latest persisted jokes, aphorisms, or poems. " +
+                    "You receive the complete persisted collection, including dates, ratings, and whether each item has already been told. Select only IDs from the explicit pending-ID list. " +
+                    "Choose exactly five items when at least five are pending; otherwise choose every pending item. Choose according to her own taste, balancing quality, recency, emotional contrast, and personal character. " +
+                    "selectedWritingIds must contain the exact stored IDs. spokenText must contain exactly one TTS-ready string for each selectedWritingIds entry in the same order. She may fold a brief introduction into the first string, but every string must perform its matching writing and preserve its important wording. Never mention scores, confidence, JSON, or storage. " +
+                    "Return only JSON."),
+                new ChatMessage("user",
+                    "COMPLETE STAR PROFILE:\n" + profileJson +
+                    "\n\nALL PERSISTED WRITINGS:\n" + allPersistedJson +
+                    "\n\nPENDING IDS ELIGIBLE TO TELL NOW:\n" + pendingIds +
+                    "\n\nChoose the required pending writings and produce the one-to-one spoken response array. Return only JSON.")
+            };
+
+            string json = await _client.CompleteJsonAsync(messages, StarResponseJsonSchema.CreateStarWritingPerformanceResponseFormat(), 1800, "star-writing-perform", cancellationToken).ConfigureAwait(false);
+            StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing performance returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.RawModelJson = json;
+            return result;
+        }
+
+
+
+        private static string SerializeWritingCharacterProfile(StarProfile profile)
+        {
+            // Persistence thresholds are configuration, not character identity. Keep them out of the
+            // creator and critic prompts so the model cannot aim at or inflate a save threshold.
+            string json = JsonSerializer.Serialize(profile);
+            Dictionary<string, JsonElement>? properties = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+            if (properties == null) return json;
+            properties.Remove("WritingPersistenceRules");
+            return JsonSerializer.Serialize(properties, new JsonSerializerOptions { WriteIndented = true });
+        }
 
         public async Task<InformationNeedSelectionResult> AnalyzeInformationNeedAsync(
             StarProfile profile,

@@ -927,5 +927,55 @@
     "High control, justice, fear, and fragmented insight make her tactical, severe, and tempted to treat people as pieces.",
     "She can see roles and formations before she sees whole persons, especially when under threat.",
     "Benaveil pressure should mostly sharpen control, fear, fragmentation, harsh judgment, and acceptable-loss thinking."
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "fragmentary-metaphysical-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Poetic",
+          "minimumScore": 82,
+          "minimumConfidence": 0.72
+        },
+        {
+          "category": "Haunting",
+          "minimumScore": 72,
+          "minimumConfidence": 0.66
+        }
+      ]
+    },
+    {
+      "id": "shadow-aphorism",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Deep",
+          "minimumScore": 80,
+          "minimumConfidence": 0.72
+        },
+        {
+          "category": "Quotable",
+          "minimumScore": 80,
+          "minimumConfidence": 0.72
+        }
+      ]
+    },
+    {
+      "id": "brittle-shadow-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70,
+          "minimumConfidence": 0.65
+        },
+        {
+          "category": "Witty",
+          "minimumScore": 76,
+          "minimumConfidence": 0.7
+        }
+      ]
+    }
   ]
 }

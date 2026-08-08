@@ -8,6 +8,7 @@ using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
+using Wds.SixStars.Api.Writings;
 
 namespace Wds.SixStars.Api.Agents
 {
@@ -15,8 +16,70 @@ namespace Wds.SixStars.Api.Agents
     /// Deterministic starter agent for the desktop harness. Replace this with an LLM-backed agent later,
     /// but keep the same IStarAgent contract so Unity does not change.
     /// </summary>
-    public sealed class MockStarAgent : IStarAgent
+    public sealed class MockStarAgent : IStarAgent, IStarWritingAgent
     {
+        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, CancellationToken cancellationToken)
+        {
+            string[][] pairs =
+            {
+                new[] { "Starlight", "Pebble" },
+                new[] { "Void", "Teacup" },
+                new[] { "Shadow", "Tapestry" },
+                new[] { "Fragment", "Echo" },
+                new[] { "Stone", "Whisper" }
+            };
+            string[] lines =
+            {
+                "Why did the starlight refuse to sit on the pebble? It found the weight of its own brilliance too heavy.",
+                "What did the void say to the teacup? You hold such fragile containment; I prefer the beautiful, endless spill.",
+                "Why did the shadow refuse to join the tapestry? It did not want to be defined by any single thread.",
+                "How does a fragment greet an echo? With a quiet, knowing nod; they both know something is missing.",
+                "What did the stone whisper to the wind? You have no memory of my silence."
+            };
+            StarWritingGenerationResult result = new StarWritingGenerationResult
+            {
+                StarId = profile.StarId,
+                Jokes = lines.ToList(),
+                UsedWords = pairs.Select(x => x.ToList()).ToList(),
+                RawModelJson = "mock"
+            };
+            return Task.FromResult(result);
+        }
+
+        public Task<StarWritingReviewResult> RateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, StarWritingGenerationResult generation, CancellationToken cancellationToken)
+        {
+            StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
+            for (int i = 0; i < 5; i++)
+            {
+                List<string> pairs = new List<string>();
+                for (int category = 0; category < StarWritingEmotionVector.Categories.Length; category++)
+                {
+                    string name = StarWritingEmotionVector.Categories[category];
+                    double score = name == "Funny" ? 72 + i : name == "Poetic" || name == "Characterful" || name == "Overall" ? 86 + Math.Min(i, 4) : 78;
+                    pairs.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":0.88");
+                }
+                string vector = string.Join(";", pairs);
+                vector = StarWritingEmotionVector.Normalize(vector, out Dictionary<string, StarWritingEmotionValue> values);
+                result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector, Values = values });
+            }
+            return Task.FromResult(result);
+        }
+
+        public Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> pendingWritings, CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> selected = pendingWritings.OrderByDescending(x => x.PersistedAt).Take(5).ToList();
+            StarWritingPerformancePlan result = new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = selected.Select(x => x.Id).ToList(),
+                RawModelJson = "mock"
+            };
+            result.SpokenText.AddRange(selected.Select((x, index) => index == 0
+                ? "I kept a few small fragments from the dark. Listen. " + x.Writing
+                : x.Writing));
+            return Task.FromResult(result);
+        }
+
         public Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
         {
             StarInteractionResponse response = new StarInteractionResponse

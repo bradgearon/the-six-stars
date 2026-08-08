@@ -70,6 +70,90 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
+        public static object CreateStarWritingGenerationResponseFormat()
+        {
+            Dictionary<string, object> twoWords = new Dictionary<string, object>
+            {
+                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                { "items", StringProperty(80) }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "jokes", "usedWords" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "jokes", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", StringProperty(1400) }
+                            }
+                        },
+                        { "usedWords", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", twoWords }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_generation", schema);
+        }
+
+        public static object CreateStarWritingReviewResponseFormat()
+        {
+            Dictionary<string, object> item = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "index", "emotionalVector" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "index", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 }, { "maximum", 4 } } },
+                        { "emotionalVector", StringProperty(1600) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "ratings" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "ratings", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 }, { "items", item }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_review", schema);
+        }
+
+        public static object CreateStarWritingPerformanceResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "selectedWritingIds", "spokenText" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "selectedWritingIds", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 5 }, { "items", StringProperty(120) }
+                            }
+                        },
+                        { "spokenText", SpokenTextArray(5, 1800) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_performance", schema);
+        }
+
         public static object CreateDailyStarStateResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

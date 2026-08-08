@@ -19,6 +19,7 @@ using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Writings;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
 using Wds.SixStars.Ui.Services;
@@ -208,7 +209,8 @@ public sealed partial class MainViewModel
         foreach (string starId in StarIds)
         {
             StarState state = await _services.MobileConversation.GetStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
-            states.Add(CreateMobileStarStateDto(state));
+            StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+            states.Add(CreateMobileStarStateDto(state, writingState));
         }
 
         return new
@@ -440,8 +442,14 @@ public sealed partial class MainViewModel
                     }
                 });
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Android selected " + starId + "."));
-                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Elusiaa shifted the phone focus to " + starId + ".");
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(state, "Android selected " + starId + ".");
+                    PendingWritingCount = writingState.PendingCount;
+                    PersistedWritingCount = writingState.PersistedWritings.Count;
+                });
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Elusiaa shifted the phone focus to " + starId + ".", writingState);
             }
             case "SetMet":
             {
@@ -496,6 +504,183 @@ public sealed partial class MainViewModel
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " entered girlfriend cute mode now.");
             }
 
+            case "GenerateStarWriting":
+            {
+                StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                List<string> items = writingResult.Batch.Items.Select((x, i) =>
+                    (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ". [" + string.Join(" + ", x.WordsUsed) + "] " + x.Writing +
+                    (x.Persisted ? " (saved)" : " (not saved)"))
+                    .ToList();
+                string message = starId + " created five writings; " + writingResult.PersistedCount + " passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told.";
+                OnUiThread(() =>
+                {
+                    if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PendingWritingCount = writingResult.State.PendingCount;
+                        PersistedWritingCount = writingResult.State.PersistedWritings.Count;
+                        StarOutput = string.Join(Environment.NewLine + Environment.NewLine, items);
+                        Status = message;
+                    }
+                });
+                MobileBridgeDispatchEvent evt = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "StarWritingGenerated",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = writingResult.State.PendingCount,
+                    PersistedWritingCount = writingResult.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    Message = message
+                });
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = writingResult.State.PendingCount,
+                    PersistedWritingCount = writingResult.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    StarOutput = string.Join(Environment.NewLine + Environment.NewLine, items),
+                    State = state,
+                    Event = evt,
+                    Message = message,
+                    SuppressEventPublication = true
+                };
+            }
+
+            case "TellStarWriting":
+            {
+                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (performance == null)
+                {
+                    StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                    string emptyMessage = starId + " has no new persisted writing waiting to be told.";
+                    OnUiThread(() =>
+                    {
+                        if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            PendingWritingCount = writingState.PendingCount;
+                            PersistedWritingCount = writingState.PersistedWritings.Count;
+                            Status = emptyMessage;
+                        }
+                    });
+                    MobileBridgeDispatchEvent emptyEvent = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                    {
+                        EventType = "StarWritingPerformanceReady",
+                        CommandId = command.CommandId,
+                        SourceClientId = command.SourceClientId,
+                        SessionId = sessionId,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        IsMet = state.IsMet,
+                        IsAlly = state.IsAlly,
+                        IsGirlfriend = state.IsGirlfriend,
+                        PendingWritingCount = writingState.PendingCount,
+                        PersistedWritingCount = writingState.PersistedWritings.Count,
+                        WritingItems = new List<string>(),
+                        Message = emptyMessage
+                    });
+                    return new MobileBridgeDispatchResult
+                    {
+                        Ok = true,
+                        CommandId = command.CommandId,
+                        CommandType = commandType,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        IsMet = state.IsMet,
+                        IsAlly = state.IsAlly,
+                        IsGirlfriend = state.IsGirlfriend,
+                        PendingWritingCount = writingState.PendingCount,
+                        PersistedWritingCount = writingState.PersistedWritings.Count,
+                        WritingItems = new List<string>(),
+                        State = state,
+                        Event = emptyEvent,
+                        Message = emptyMessage,
+                        SuppressEventPublication = true
+                    };
+                }
+
+                List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
+                string message = starId + " selected " + items.Count + " writing(s) to tell; " + performance.State.PendingCount + " remain new.";
+                OnUiThread(() =>
+                {
+                    if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PendingWritingCount = performance.State.PendingCount;
+                        PersistedWritingCount = performance.State.PersistedWritings.Count;
+                        StarOutput = performance.Response.SpokenText;
+                        Status = message;
+                    }
+                });
+                MobileBridgeDispatchEvent evt = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "StarWritingPerformanceReady",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = performance.State.PendingCount,
+                    PersistedWritingCount = performance.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    SpokenText = performance.Response.SpokenText,
+                    Message = message
+                });
+                MobileBridgeDispatchResult dispatchResult = new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = performance.State.PendingCount,
+                    PersistedWritingCount = performance.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    SpokenText = performance.Response.SpokenText,
+                    StarOutput = performance.Response.SpokenText,
+                    VoiceRequested = command.ReturnAudio,
+                    VoiceSocketConnected = _services.MobileVoice.IsConnected,
+                    State = state,
+                    Event = evt,
+                    Message = message,
+                    SuppressEventPublication = true
+                };
+                if (command.ReturnAudio)
+                {
+                    MobileBridgeResponse mobileVoiceResponse = new MobileBridgeResponse
+                    {
+                        Ok = true,
+                        StarId = starId,
+                        RequestType = "StarWritingPerformance",
+                        SpokenText = performance.Response.SpokenText,
+                        StarOutput = performance.Response.SpokenText,
+                        VoiceRequested = true,
+                        VoiceSocketConnected = _services.MobileVoice.IsConnected
+                    };
+                    dispatchResult.AfterTransportResponseAsync = () => SendMobileVoiceAsync(performance.Response, mobileVoiceResponse, CancellationToken.None);
+                }
+                return dispatchResult;
+            }
+
             case "SetSpeechPlaybackPaused":
             case "ResumeSpeech":
             {
@@ -531,16 +716,19 @@ public sealed partial class MainViewModel
             {
                 StarState state = await ResetStarEverywhereAsync(starId, sessionId, cancellationToken).ConfigureAwait(false);
                 _stateChangeTracker.Reset(starId);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() =>
                 {
                     ApplyMobileStateToSelectedStarUi(state, "Cleared Android bridge history for " + starId + ".");
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
                     {
+                        PendingWritingCount = writingState.PendingCount;
+                        PersistedWritingCount = writingState.PersistedWritings.Count;
                         StarOutput = string.Empty;
                         LastTranscript = string.Empty;
                     }
                 });
-                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Khavia washed the Android conversation history clean for " + starId + ".");
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Khavia washed the Android conversation history clean for " + starId + ".", writingState);
             }
 
             case "ClearAllData":
@@ -568,6 +756,8 @@ public sealed partial class MainViewModel
                         GirlfriendCuteModeEnabled = reset.GirlfriendCuteModeEnabled,
                         GirlfriendCuteModeActive = reset.GirlfriendCuteModeEnabled && (reset.GirlfriendHourlyState?.CuteModeActive ?? false),
                         GirlfriendCuteModeSignature = reset.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                        PendingWritingCount = 0,
+                        PersistedWritingCount = 0,
                         Heart = reset.Heart,
                         Trust = reset.Trust,
                         Romance = reset.Romance,
@@ -577,13 +767,16 @@ public sealed partial class MainViewModel
                     });
                 }
                 if (selectedState == null) selectedState = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState selectedWritingState = await _writingService.GetStateAsync(selectedState.StarId, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() =>
                 {
                     ApplyMobileStateToSelectedStarUi(selectedState, "Cleared all Android bridge Star data.");
+                    PendingWritingCount = selectedWritingState.PendingCount;
+                    PersistedWritingCount = selectedWritingState.PersistedWritings.Count;
                     StarOutput = string.Empty;
                     LastTranscript = string.Empty;
                 });
-                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept the shared Star memory shelf clean and refreshed the state.");
+                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept the shared Star memory shelf clean and refreshed the state.", selectedWritingState);
             }
             case "SendPhoto":
             {
@@ -736,8 +929,14 @@ public sealed partial class MainViewModel
             default:
             {
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Refreshed Android bridge state for " + starId + "."));
-                return PublishMobileCommandResult(command, true, "RefreshState", starId, sessionId, state, "Nyxari checked the current state for " + starId + ".");
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(state, "Refreshed Android bridge state for " + starId + ".");
+                    PendingWritingCount = writingState.PendingCount;
+                    PersistedWritingCount = writingState.PersistedWritings.Count;
+                });
+                return PublishMobileCommandResult(command, true, "RefreshState", starId, sessionId, state, "Nyxari checked the current state for " + starId + ".", writingState);
             }
         }
     }
@@ -927,7 +1126,7 @@ public sealed partial class MainViewModel
         };
     }
 
-    private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message)
+    private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message, StarWritingNotesState? writingState = null)
     {
         MobileBridgeDispatchResult result = new MobileBridgeDispatchResult
         {
@@ -942,6 +1141,8 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            PendingWritingCount = writingState?.PendingCount,
+            PersistedWritingCount = writingState?.PersistedWritings?.Count,
             State = state,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -954,8 +1155,8 @@ public sealed partial class MainViewModel
             EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
             NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
-                InterstarStatusText = InterstarStatusText,
-                Message = message
+            InterstarStatusText = InterstarStatusText,
+            Message = message
         };
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
@@ -972,6 +1173,8 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            PendingWritingCount = writingState?.PendingCount,
+            PersistedWritingCount = writingState?.PersistedWritings?.Count,
             Heart = state.Heart,
             Trust = state.Trust,
             Romance = state.Romance,
@@ -1000,6 +1203,7 @@ public sealed partial class MainViewModel
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
             StarState state = await _services.MobileConversation.GetStateAsync("android-phone-dev", starId, CancellationToken.None).ConfigureAwait(false);
+            StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, CancellationToken.None).ConfigureAwait(false);
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "SelectedStarChanged",
@@ -1013,6 +1217,8 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                PendingWritingCount = writingState.PendingCount,
+                PersistedWritingCount = writingState.PersistedWritings.Count,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -1028,7 +1234,7 @@ public sealed partial class MainViewModel
                 DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
                 DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
                 DailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
-            DailyStateXml = string.Empty,
+                DailyStateXml = string.Empty,
                 Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
             });
         }
@@ -1127,7 +1333,7 @@ public sealed partial class MainViewModel
             && !(text.IndexOf("received your words", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("try again", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
-    private static object CreateMobileStarStateDto(StarState state)
+    private static object CreateMobileStarStateDto(StarState state, StarWritingNotesState writingState)
     {
         return new
         {
@@ -1155,11 +1361,13 @@ public sealed partial class MainViewModel
             dailyStateSummary = state.TodayState?.Summary ?? string.Empty,
             dailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
             dailyStateXml = string.Empty,
-            interactionCount = state.InteractionCount
+            interactionCount = state.InteractionCount,
+            pendingWritingCount = writingState?.PendingCount ?? 0,
+            persistedWritingCount = writingState?.PersistedWritings?.Count ?? 0
         };
     }
 
-    private void PublishMobileBridgeStateEventFromDesktop(string eventType, StarState state, string message)
+    private void PublishMobileBridgeStateEventFromDesktop(string eventType, StarState state, string message, int? pendingWritingCount = null, int? persistedWritingCount = null)
     {
         if (state == null) return;
         try
@@ -1177,6 +1385,8 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                PendingWritingCount = pendingWritingCount,
+                PersistedWritingCount = persistedWritingCount,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,

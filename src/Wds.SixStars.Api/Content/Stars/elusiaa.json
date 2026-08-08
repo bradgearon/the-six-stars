@@ -958,5 +958,55 @@
     "High mercy and zeal make her protective, but pride can make her too certain when innocents seem harmed.",
     "Patience, humility, and insight are the traits that help her delay judgment and investigate.",
     "Benaveil pressure should mostly sharpen pride, zeal, justice, and wrath."
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "radiant-meaning",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Hopeful",
+          "minimumScore": 72,
+          "minimumConfidence": 0.68
+        },
+        {
+          "category": "Meaningful",
+          "minimumScore": 76,
+          "minimumConfidence": 0.7
+        }
+      ]
+    },
+    {
+      "id": "beautiful-mercy-fragment",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Beautiful",
+          "minimumScore": 80,
+          "minimumConfidence": 0.72
+        },
+        {
+          "category": "Moving",
+          "minimumScore": 68,
+          "minimumConfidence": 0.62
+        }
+      ]
+    },
+    {
+      "id": "gentle-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 72,
+          "minimumConfidence": 0.68
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 70,
+          "minimumConfidence": 0.65
+        }
+      ]
+    }
   ]
 }

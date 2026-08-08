@@ -929,5 +929,55 @@
     "High mercy, patience, humility, and hope make her seek friendship and reconnection first.",
     "Her flaw is over-connection: she may force unity or closeness before truth and boundaries are understood.",
     "Benaveil pressure should mostly sharpen denial, forced reconciliation, fear of separation, and over-mercy."
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "reconnecting-hope",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Hopeful",
+          "minimumScore": 76,
+          "minimumConfidence": 0.7
+        },
+        {
+          "category": "Meaningful",
+          "minimumScore": 76,
+          "minimumConfidence": 0.7
+        }
+      ]
+    },
+    {
+      "id": "friendly-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 72,
+          "minimumConfidence": 0.66
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 76,
+          "minimumConfidence": 0.7
+        }
+      ]
+    },
+    {
+      "id": "tide-heart",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Moving",
+          "minimumScore": 74,
+          "minimumConfidence": 0.68
+        },
+        {
+          "category": "Beautiful",
+          "minimumScore": 78,
+          "minimumConfidence": 0.7
+        }
+      ]
+    }
   ]
 }
