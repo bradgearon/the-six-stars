@@ -961,44 +961,16 @@
   ],
   "writingPersistenceRules": [
     {
-      "id": "radiant-meaning",
+      "id": "radiant-resonance",
       "matchMode": "all",
       "requirements": [
-        {
-          "category": "Hopeful",
-          "minimumScore": 68
-        },
-        {
-          "category": "Meaningful",
-          "minimumScore": 72
-        }
-      ]
-    },
-    {
-      "id": "beautiful-mercy-fragment",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Beautiful",
-          "minimumScore": 76
-        },
-        {
-          "category": "Moving",
-          "minimumScore": 64
-        }
-      ]
-    },
-    {
-      "id": "luminous-aphorism",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Poetic",
-          "minimumScore": 76
-        },
         {
           "category": "Quotable",
           "minimumScore": 70
+        },
+        {
+          "category": "EmotionallyResonant",
+          "minimumScore": 75
         }
       ]
     },
@@ -1008,13 +980,47 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 72
+          "minimumScore": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 70
+          "minimumScore": 65
         }
       ]
     }
-  ]
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 4,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 60
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

@@ -934,12 +934,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Poetic",
-          "minimumScore": 82
+          "category": "Haunting",
+          "minimumScore": 75
         },
         {
-          "category": "Haunting",
-          "minimumScore": 72
+          "category": "Clever",
+          "minimumScore": 70
         }
       ]
     },
@@ -948,28 +948,48 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Deep",
-          "minimumScore": 80
-        },
-        {
           "category": "Quotable",
-          "minimumScore": 80
-        }
-      ]
-    },
-    {
-      "id": "brittle-shadow-joke",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Funny",
-          "minimumScore": 70
+          "minimumScore": 60
         },
         {
-          "category": "Witty",
-          "minimumScore": 76
+          "category": "Original",
+          "minimumScore": 80
         }
       ]
     }
-  ]
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 4,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 65
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 65
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

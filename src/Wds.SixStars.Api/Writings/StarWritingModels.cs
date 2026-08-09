@@ -12,6 +12,18 @@ namespace Wds.SixStars.Api.Writings
     }
 
     /// <summary>
+    /// Shared quality floor applied before any Star-specific persistence rule or the global Overall backstop.
+    /// The candidate must meet MinimumOverallScore and at least MinimumSupportingMatches of the listed
+    /// supporting requirements. When MinimumSupportingMatches is zero, every supporting requirement is required.
+    /// </summary>
+    public sealed class StarWritingPersistenceQualityGate
+    {
+        public double MinimumOverallScore { get; set; }
+        public int MinimumSupportingMatches { get; set; }
+        public List<StarWritingPersistenceRequirement> SupportingRequirements { get; set; } = new List<StarWritingPersistenceRequirement>();
+    }
+
+    /// <summary>
     /// A writing is persisted when at least one rule matches. Within a rule, MatchMode is "all" by default,
     /// or "any" when any requirement may qualify the writing.
     /// </summary>

@@ -949,30 +949,16 @@
   ],
   "writingPersistenceRules": [
     {
-      "id": "void-melancholy",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Deep",
-          "minimumScore": 78
-        },
-        {
-          "category": "Melancholy",
-          "minimumScore": 72
-        }
-      ]
-    },
-    {
       "id": "fatal-beauty",
       "matchMode": "all",
       "requirements": [
         {
           "category": "Haunting",
-          "minimumScore": 78
+          "minimumScore": 80
         },
         {
-          "category": "Poetic",
-          "minimumScore": 78
+          "category": "Original",
+          "minimumScore": 70
         }
       ]
     },
@@ -982,13 +968,51 @@
       "requirements": [
         {
           "category": "Clever",
-          "minimumScore": 82
+          "minimumScore": 80
         },
         {
           "category": "Original",
-          "minimumScore": 74
+          "minimumScore": 80
+        },
+        {
+          "category": "Quotable",
+          "minimumScore": 65
         }
       ]
     }
-  ]
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 4,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 65
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

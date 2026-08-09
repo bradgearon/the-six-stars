@@ -932,44 +932,16 @@
   ],
   "writingPersistenceRules": [
     {
-      "id": "reconnecting-hope",
+      "id": "shared-meaning",
       "matchMode": "all",
       "requirements": [
-        {
-          "category": "Hopeful",
-          "minimumScore": 76
-        },
         {
           "category": "Meaningful",
-          "minimumScore": 76
-        }
-      ]
-    },
-    {
-      "id": "intriguing-repeatable",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Intrigued",
-          "minimumScore": 72
+          "minimumScore": 70
         },
         {
-          "category": "WorthRetelling",
-          "minimumScore": 72
-        }
-      ]
-    },
-    {
-      "id": "clever-wit",
-      "matchMode": "all",
-      "requirements": [
-        {
-          "category": "Funny",
-          "minimumScore": 72
-        },
-        {
-          "category": "Clever",
-          "minimumScore": 72
+          "category": "Characterful",
+          "minimumScore": 70
         }
       ]
     },
@@ -979,27 +951,69 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 72
+          "minimumScore": 75
         },
         {
           "category": "Playful",
-          "minimumScore": 76
+          "minimumScore": 70
+        },
+        {
+          "category": "Hopeful",
+          "minimumScore": 65
         }
       ]
     },
     {
-      "id": "tide-heart",
+      "id": "intriguing-repeatable",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Moving",
-          "minimumScore": 74
+          "category": "Intrigued",
+          "minimumScore": 75
         },
         {
-          "category": "Beautiful",
-          "minimumScore": 78
+          "category": "WorthRetelling",
+          "minimumScore": 75
+        },
+        {
+          "category": "Coherent",
+          "minimumScore": 70
         }
       ]
     }
-  ]
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 4,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 65
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 60
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

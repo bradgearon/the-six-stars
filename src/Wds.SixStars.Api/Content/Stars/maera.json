@@ -931,11 +931,11 @@
       "requirements": [
         {
           "category": "Moving",
-          "minimumScore": 76
+          "minimumScore": 75
         },
         {
-          "category": "EmotionallyResonant",
-          "minimumScore": 80
+          "category": "WorthRetelling",
+          "minimumScore": 60
         }
       ]
     },
@@ -945,11 +945,15 @@
       "requirements": [
         {
           "category": "Deep",
-          "minimumScore": 80
+          "minimumScore": 85
         },
         {
           "category": "Haunting",
-          "minimumScore": 72
+          "minimumScore": 85
+        },
+        {
+          "category": "Characterful",
+          "minimumScore": 70
         }
       ]
     },
@@ -958,14 +962,52 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 76
+          "category": "Witty",
+          "minimumScore": 75
         },
         {
-          "category": "Witty",
-          "minimumScore": 78
+          "category": "Characterful",
+          "minimumScore": 75
+        },
+        {
+          "category": "Original",
+          "minimumScore": 70
         }
       ]
     }
-  ]
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 62,
+    "minimumSupportingMatches": 4,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 70
+      },
+      {
+        "category": "Original",
+        "minimumScore": 60
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

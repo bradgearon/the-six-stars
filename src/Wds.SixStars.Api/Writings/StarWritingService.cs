@@ -456,6 +456,13 @@ namespace Wds.SixStars.Api.Writings
 
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
+            // The review model occasionally emits an inflated Overall value while craft dimensions remain low.
+            // Require a broader score consensus before any character route or the global backstop can persist it.
+            if (!PassesPersistenceQualityGate(profile.WritingPersistenceQualityGate, values))
+            {
+                return new List<string>();
+            }
+
             List<StarWritingPersistenceRule> rules = profile.WritingPersistenceRules ?? new List<StarWritingPersistenceRule>();
             if (rules.Count == 0)
             {
@@ -497,6 +504,36 @@ namespace Wds.SixStars.Api.Writings
             }
 
             return matched;
+        }
+
+        private static bool PassesPersistenceQualityGate(
+            StarWritingPersistenceQualityGate? gate,
+            IReadOnlyDictionary<string, StarWritingEmotionValue> values)
+        {
+            if (gate == null) return true;
+
+            if (gate.MinimumOverallScore > 0)
+            {
+                if (!values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
+                    || overall.Score < gate.MinimumOverallScore)
+                {
+                    return false;
+                }
+            }
+
+            List<StarWritingPersistenceRequirement> supporting = (gate.SupportingRequirements
+                    ?? new List<StarWritingPersistenceRequirement>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Category))
+                .ToList();
+            if (supporting.Count == 0) return true;
+
+            int requiredMatches = gate.MinimumSupportingMatches <= 0
+                ? supporting.Count
+                : Math.Min(gate.MinimumSupportingMatches, supporting.Count);
+            int matched = supporting.Count(requirement =>
+                values.TryGetValue(requirement.Category, out StarWritingEmotionValue? value)
+                && value.Score >= requirement.MinimumScore);
+            return matched >= requiredMatches;
         }
 
         private static double ReadGlobalOverallThreshold()
