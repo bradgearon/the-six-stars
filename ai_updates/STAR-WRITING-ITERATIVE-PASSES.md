@@ -13,19 +13,21 @@ The runtime assigns stable ids `candidate-1` through `candidate-5` to the five p
 
 ## Passes 2 and later: reusable literary review
 
-Every additional pass calls `star-writing-improve-pass-N` with the current candidate ids, current word sets, and current writings. The Star privately rates all five pieces and returns only the candidates that should be replaced:
+Every additional pass calls `star-writing-improve-pass-N` with the current candidate ids, current word sets, and current writings. The Star returns proposed replacements with a 0-100 score for both the current version and the proposed version:
 
 ```json
 [
   {
     "id": "candidate-2",
+    "oldScore": 78,
     "newWordSet": ["sextant", "shadow"],
-    "newWriting": "Even the most precise sextant cannot map the shadow of a forgotten bell."
+    "newWriting": "Even the most precise sextant cannot map the shadow of a forgotten bell.",
+    "newScore": 91
   }
 ]
 ```
 
-A replacement may preserve both words, replace one word, or replace both words. Omitted ids remain unchanged. Each accepted replacement immediately updates the working set, so the next pass receives the newest words and writing rather than the original draft.
+A replacement may preserve both words, replace one word, or replace both words. The runtime applies it only when `newScore` is strictly greater than `oldScore`; ties and lower scores keep the current item. Omitted ids also remain unchanged. Every accepted replacement immediately updates the working set, so the next pass receives the newest words and writing rather than the original draft.
 
 After every completed pass, the per-Star writing-notes state is saved with:
 

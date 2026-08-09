@@ -58,8 +58,10 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingImprovementReplacement
     {
         public string Id { get; set; } = string.Empty;
+        public double OldScore { get; set; }
         public List<string> NewWordSet { get; set; } = new List<string>();
         public string NewWriting { get; set; } = string.Empty;
+        public double NewScore { get; set; }
     }
 
     public sealed class StarWritingImprovementResult

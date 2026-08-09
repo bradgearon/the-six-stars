@@ -155,17 +155,19 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "id", "newWordSet", "newWriting" } },
+                { "required", new[] { "id", "oldScore", "newWordSet", "newWriting", "newScore" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "id", StringProperty(80) },
+                        { "oldScore", NumberProperty(0, 100) },
                         { "newWordSet", new Dictionary<string, object>
                             {
                                 { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
                                 { "items", StringProperty(80) }
                             }
                         },
-                        { "newWriting", StringProperty(1400) }
+                        { "newWriting", StringProperty(1400) },
+                        { "newScore", NumberProperty(0, 100) }
                     }
                 }
             };

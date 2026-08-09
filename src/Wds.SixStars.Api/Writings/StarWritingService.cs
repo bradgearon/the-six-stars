@@ -71,9 +71,9 @@ namespace Wds.SixStars.Api.Writings
                 AppendPassSnapshot(generation, 1, 0);
                 await SaveLatestPassStateAsync(state, generation).ConfigureAwait(false);
 
-                // Passes two and later reuse the same critic/rewrite request. Each response names
-                // only candidate ids to replace, and the accepted word sets/writings immediately
-                // become the input state for the next pass.
+                // Passes two and later reuse the same critic/rewrite request. Each proposed
+                // replacement includes an old and new score. Only a strictly higher-scoring rewrite
+                // becomes the input state for the next pass; ties and lower scores keep the old item.
                 for (int passNumber = 2; passNumber <= selectedPassCount; passNumber++)
                 {
                     StarWritingImprovementResult improvement = await _agent
@@ -356,7 +356,18 @@ namespace Wds.SixStars.Api.Writings
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 string writing = (replacement.NewWriting ?? string.Empty).Trim();
-                if (words.Count != 2 || string.IsNullOrWhiteSpace(writing))
+                bool scoresAreValid = !double.IsNaN(replacement.OldScore)
+                    && !double.IsInfinity(replacement.OldScore)
+                    && !double.IsNaN(replacement.NewScore)
+                    && !double.IsInfinity(replacement.NewScore)
+                    && replacement.OldScore >= 0
+                    && replacement.OldScore <= 100
+                    && replacement.NewScore >= 0
+                    && replacement.NewScore <= 100;
+                if (words.Count != 2
+                    || string.IsNullOrWhiteSpace(writing)
+                    || !scoresAreValid
+                    || replacement.NewScore <= replacement.OldScore)
                 {
                     changedIds.Remove(replacement.Id.Trim());
                     continue;

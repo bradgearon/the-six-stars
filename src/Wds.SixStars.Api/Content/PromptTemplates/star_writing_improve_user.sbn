@@ -40,4 +40,4 @@ Writing: {{ item.writing }}
 ---
 {{ end }}
 
-Privately judge all five, then return only the JSON array of replacements. Use exact ids. Omit candidates that should remain unchanged.
+Return only proposed replacements. Score each old and new version from 0 to 100 using the same standard; the runtime will keep the higher-scoring version.
