@@ -40,15 +40,15 @@ namespace Wds.SixStars.Api.XPosting
         }
 
         public IReadOnlyList<string> ConfiguredStarIds => (_options.StarAccounts ?? new List<StarXAccountOptions>())
-            .Where(x => x != null && x.Enabled && !string.IsNullOrWhiteSpace(x.Id))
+            .Where(x => x != null && x.Enabled && x.HasClientConfiguration && !string.IsNullOrWhiteSpace(x.Id))
             .Select(x => x.Id.Trim().ToLowerInvariant())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        public bool HasConfiguredCredentials(string starId)
+        public bool HasConfiguredClient(string starId)
         {
             StarXAccountOptions? account = FindAccount(starId);
-            return account != null && account.Enabled && account.HasCredentials;
+            return account != null && account.Enabled && account.HasClientConfiguration;
         }
 
         public async Task<StarXPostingRunResult> PostForStarAsync(string starId)
@@ -64,9 +64,13 @@ namespace Wds.SixStars.Api.XPosting
                 {
                     return CreateMessage(profile.StarId, "No enabled X account entry matches id '" + profile.StarId.ToLowerInvariant() + "'.");
                 }
-                if (!account.HasCredentials)
+                if (!account.HasClientConfiguration)
                 {
-                    return CreateMessage(profile.StarId, "The X account for " + profile.StarId + " is missing ApiKey, ApiSecret, AccessToken, or AccessTokenSecret.");
+                    return CreateMessage(profile.StarId, "The X account for " + profile.StarId + " is missing an OAuth 2.0 ClientId or valid loopback RedirectUri.");
+                }
+                if (!await _xClient.HasAuthorizationAsync(account, CancellationToken.None).ConfigureAwait(false))
+                {
+                    return CreateMessage(profile.StarId, "Authorize or reauthorize " + profile.StarId + " for X in the desktop app before posting.");
                 }
 
                 StarWritingNotesState state = await _writingStore.LoadAsync(profile.StarId, CancellationToken.None).ConfigureAwait(false);

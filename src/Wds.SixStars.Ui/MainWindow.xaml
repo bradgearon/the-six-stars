@@ -84,6 +84,10 @@
                                       IsChecked="{Binding XPostingEnabled, Mode=TwoWay}"
                                       ToolTip="Uses the lower-case Star account entry in XPosting. A batch already started is not cancelled by player speech, LLM activity, or turning this scheduler off."
                                       Margin="0,0,0,6" />
+                            <Button Content="Authorize / Reauthorize Selected Star for X"
+                                    Command="{Binding AuthorizeSelectedStarForXCommand}"
+                                    ToolTip="Opens X OAuth 2.0 authorization in your browser and receives the callback on the configured loopback URL. Sign into the selected Star's X account before approving."
+                                    Margin="0,0,0,5" Height="32" />
                             <Button Content="Post Selected Star to X Now"
                                     Command="{Binding PostSelectedStarToXNowCommand}"
                                     ToolTip="Queues an immediate five-post batch. Each source writing is marked posted only after X accepts that post."

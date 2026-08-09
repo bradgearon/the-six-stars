@@ -1,9 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
+using System.Net;
 using System.Net.Http;
-using System.Security.Cryptography;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -11,17 +12,34 @@ using System.Threading.Tasks;
 
 namespace Wds.SixStars.Api.XPosting
 {
-    /// <summary>Minimal official X API v2 REST client for POST /2/tweets using OAuth 1.0a user context.</summary>
+    /// <summary>Official X API v2 REST client using OAuth 2.0 Authorization Code with PKCE user tokens.</summary>
     public sealed class XApiPostClient : IXPostClient, IDisposable
     {
         private const string CreatePostUrl = "https://api.x.com/2/tweets";
+        private const string TokenUrl = "https://api.x.com/2/oauth2/token";
+        private readonly IXOAuth2TokenStore _tokenStore;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsClient;
+        private readonly int _refreshSkewSeconds;
+        private readonly ConcurrentDictionary<string, SemaphoreSlim> _refreshGates = new ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase);
 
-        public XApiPostClient(HttpClient? httpClient = null)
+        public XApiPostClient(
+            IXOAuth2TokenStore tokenStore,
+            int refreshSkewSeconds = 120,
+            HttpClient? httpClient = null)
         {
+            _tokenStore = tokenStore ?? throw new ArgumentNullException(nameof(tokenStore));
+            _refreshSkewSeconds = Math.Max(30, refreshSkewSeconds);
             _httpClient = httpClient ?? new HttpClient();
             _ownsClient = httpClient == null;
+        }
+
+        public async Task<bool> HasAuthorizationAsync(
+            StarXAccountOptions account,
+            CancellationToken cancellationToken)
+        {
+            if (account == null || !account.HasClientConfiguration) return false;
+            return await GetUsableTokenAsync(account, cancellationToken).ConfigureAwait(false) != null;
         }
 
         public async Task<StarXPostApiResult> CreatePostAsync(
@@ -32,9 +50,9 @@ namespace Wds.SixStars.Api.XPosting
         {
             if (account == null) throw new ArgumentNullException(nameof(account));
             string postText = (text ?? string.Empty).Trim();
-            if (!account.HasCredentials)
+            if (!account.HasClientConfiguration)
             {
-                return new StarXPostApiResult { Error = "The selected Star account does not have complete OAuth 1.0a credentials." };
+                return new StarXPostApiResult { Error = "The selected Star account is missing an OAuth 2.0 ClientId or valid loopback RedirectUri." };
             }
             if (postText.Length == 0)
             {
@@ -45,24 +63,91 @@ namespace Wds.SixStars.Api.XPosting
                 return new StarXPostApiResult { Error = "X post text exceeded 280 characters." };
             }
 
-            Dictionary<string, string> oauth = new Dictionary<string, string>(StringComparer.Ordinal)
+            StarXOAuth2Token? token = await GetUsableTokenAsync(account, cancellationToken).ConfigureAwait(false);
+            if (token == null)
             {
-                ["oauth_consumer_key"] = account.ApiKey.Trim(),
-                ["oauth_nonce"] = Guid.NewGuid().ToString("N"),
-                ["oauth_signature_method"] = "HMAC-SHA1",
-                ["oauth_timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
-                ["oauth_token"] = account.AccessToken.Trim(),
-                ["oauth_version"] = "1.0"
-            };
-            oauth["oauth_signature"] = CreateSignature(oauth, account.ApiSecret.Trim(), account.AccessTokenSecret.Trim());
+                return new StarXPostApiResult { Error = "Authorize or reauthorize " + account.Id + " for X in the desktop app before posting." };
+            }
 
-            string authorization = "OAuth " + string.Join(", ", oauth
-                .OrderBy(x => x.Key, StringComparer.Ordinal)
-                .Select(x => PercentEncode(x.Key) + "=\"" + PercentEncode(x.Value) + "\""));
+            StarXPostApiResult first = await SendCreatePostAsync(token.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+            if (first.StatusCode != (int)HttpStatusCode.Unauthorized) return first;
 
+            StarXOAuth2Token? refreshed = await RefreshTokenAsync(account, forceRefresh: true, cancellationToken).ConfigureAwait(false);
+            if (refreshed == null)
+            {
+                first.Error = string.IsNullOrWhiteSpace(first.Error)
+                    ? "X rejected the OAuth 2.0 token and it could not be refreshed. Reauthorize this Star account."
+                    : first.Error;
+                return first;
+            }
+
+            return await SendCreatePostAsync(refreshed.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<StarXOAuth2Token?> GetUsableTokenAsync(
+            StarXAccountOptions account,
+            CancellationToken cancellationToken)
+        {
+            StarXOAuth2Token? token = await _tokenStore.LoadAsync(account.Id, cancellationToken).ConfigureAwait(false);
+            if (token == null
+                || !string.Equals(token.ClientId, account.ClientId.Trim(), StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(token.AccessToken)
+                || !token.HasRefreshToken) return null;
+            if (!token.NeedsRefresh(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(_refreshSkewSeconds))) return token;
+            return await RefreshTokenAsync(account, forceRefresh: false, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<StarXOAuth2Token?> RefreshTokenAsync(
+            StarXAccountOptions account,
+            bool forceRefresh,
+            CancellationToken cancellationToken)
+        {
+            SemaphoreSlim gate = _refreshGates.GetOrAdd(account.Id, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                StarXOAuth2Token? current = await _tokenStore.LoadAsync(account.Id, cancellationToken).ConfigureAwait(false);
+                if (current == null
+                    || !string.Equals(current.ClientId, account.ClientId.Trim(), StringComparison.Ordinal)
+                    || !current.HasRefreshToken) return null;
+                if (!forceRefresh && !current.NeedsRefresh(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(_refreshSkewSeconds))) return current;
+
+                using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, TokenUrl);
+                request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["refresh_token"] = current.RefreshToken,
+                    ["grant_type"] = "refresh_token",
+                    ["client_id"] = account.ClientId.Trim()
+                });
+
+                using HttpResponseMessage response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+                string responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) return null;
+
+                StarXOAuth2Token? refreshed = ParseTokenResponse(account.Id, account.ClientId, responseText, current.RefreshToken);
+                if (refreshed == null || string.IsNullOrWhiteSpace(refreshed.AccessToken) || !refreshed.HasRefreshToken) return null;
+                await _tokenStore.SaveAsync(refreshed, cancellationToken).ConfigureAwait(false);
+                return refreshed;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private async Task<StarXPostApiResult> SendCreatePostAsync(
+            string accessToken,
+            string postText,
+            int timeoutSeconds,
+            CancellationToken cancellationToken)
+        {
             string payload = JsonSerializer.Serialize(new Dictionary<string, string> { ["text"] = postText });
             using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, CreatePostUrl);
-            request.Headers.TryAddWithoutValidation("Authorization", authorization);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
 
             using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -116,34 +201,45 @@ namespace Wds.SixStars.Api.XPosting
             }
         }
 
-        private static string CreateSignature(
-            IReadOnlyDictionary<string, string> oauth,
-            string consumerSecret,
-            string tokenSecret)
+        public static StarXOAuth2Token? ParseTokenResponse(
+            string accountId,
+            string clientId,
+            string responseText,
+            string existingRefreshToken = "")
         {
-            string normalized = string.Join("&", oauth
-                .OrderBy(x => PercentEncode(x.Key), StringComparer.Ordinal)
-                .ThenBy(x => PercentEncode(x.Value), StringComparer.Ordinal)
-                .Select(x => PercentEncode(x.Key) + "=" + PercentEncode(x.Value)));
-            string baseString = "POST&" + PercentEncode(CreatePostUrl) + "&" + PercentEncode(normalized);
-            string signingKey = PercentEncode(consumerSecret ?? string.Empty) + "&" + PercentEncode(tokenSecret ?? string.Empty);
-            using HMACSHA1 hmac = new HMACSHA1(Encoding.ASCII.GetBytes(signingKey));
-            return Convert.ToBase64String(hmac.ComputeHash(Encoding.ASCII.GetBytes(baseString)));
-        }
-
-        private static string PercentEncode(string value)
-        {
-            return Uri.EscapeDataString(value ?? string.Empty)
-                .Replace("!", "%21")
-                .Replace("*", "%2A")
-                .Replace("'", "%27")
-                .Replace("(", "%28")
-                .Replace(")", "%29");
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(responseText);
+                JsonElement root = document.RootElement;
+                string accessToken = root.TryGetProperty("access_token", out JsonElement access) ? access.GetString() ?? string.Empty : string.Empty;
+                string refreshToken = root.TryGetProperty("refresh_token", out JsonElement refresh) ? refresh.GetString() ?? string.Empty : existingRefreshToken;
+                string tokenType = root.TryGetProperty("token_type", out JsonElement type) ? type.GetString() ?? "bearer" : "bearer";
+                string scope = root.TryGetProperty("scope", out JsonElement scopeElement) ? scopeElement.GetString() ?? string.Empty : string.Empty;
+                int expiresIn = root.TryGetProperty("expires_in", out JsonElement expires) && expires.TryGetInt32(out int parsed) ? parsed : 7200;
+                if (string.IsNullOrWhiteSpace(accessToken)) return null;
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                return new StarXOAuth2Token
+                {
+                    AccountId = (accountId ?? string.Empty).Trim().ToLowerInvariant(),
+                    ClientId = (clientId ?? string.Empty).Trim(),
+                    AccessToken = accessToken,
+                    RefreshToken = refreshToken,
+                    TokenType = tokenType,
+                    Scope = scope,
+                    ExpiresAt = now.AddSeconds(Math.Max(60, expiresIn)),
+                    UpdatedAt = now
+                };
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
         public void Dispose()
         {
             if (_ownsClient) _httpClient.Dispose();
+            foreach (SemaphoreSlim gate in _refreshGates.Values) gate.Dispose();
         }
     }
 }

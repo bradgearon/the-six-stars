@@ -22,6 +22,7 @@ public sealed partial class MainViewModel
     private bool _xPostingEnabled;
     private string _xPostingStatus = "Automatic X posting is off.";
 
+    public ICommand AuthorizeSelectedStarForXCommand { get; private set; } = null!;
     public ICommand PostSelectedStarToXNowCommand { get; private set; } = null!;
 
     public bool XPostingEnabled
@@ -51,6 +52,7 @@ public sealed partial class MainViewModel
 
     private void InitializeXPostingLoop()
     {
+        AuthorizeSelectedStarForXCommand = new RelayCommand(parameter => { _ = AuthorizeSelectedStarForXAsync(); });
         PostSelectedStarToXNowCommand = new RelayCommand(_ => QueueManualXPosting(SelectedStarId));
         _xPostingEnabled = _xPostingOptions.Enabled;
         if (_xPostingEnabled)
@@ -58,6 +60,33 @@ public sealed partial class MainViewModel
             SetXPostingStatus("Automatic X posting is enabled. Waiting for the current daily slot.");
             EnsureXPostingLoopStarted();
         }
+    }
+
+
+    private async Task AuthorizeSelectedStarForXAsync()
+    {
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        StarXAccountOptions? account = (_xPostingOptions.StarAccounts ?? new List<StarXAccountOptions>())
+            .FirstOrDefault(x => x != null && string.Equals(x.Id, starId, StringComparison.OrdinalIgnoreCase));
+        if (account == null || !account.Enabled)
+        {
+            SetXPostingStatus("No enabled XPosting.StarAccounts entry matches " + starId + ".");
+            return;
+        }
+        if (!account.HasClientConfiguration)
+        {
+            SetXPostingStatus("Set ClientId and the exact loopback RedirectUri for " + starId + " before authorizing.");
+            return;
+        }
+
+        SetXPostingStatus("Opening X authorization for " + starId + ". Sign into the correct Star account and approve write access.");
+        StarXOAuth2AuthorizationResult result = await _xOAuth2AuthorizationService.AuthorizeAsync(
+            account,
+            _xPostingOptions.OAuthScopes,
+            _xPostingOptions.OAuthAuthorizationTimeoutSeconds,
+            CancellationToken.None).ConfigureAwait(false);
+        SetXPostingStatus(result.Message);
+        PublishXPostingStatusEvent(result.Success ? "StarXAuthorizationCompleted" : "StarXAuthorizationFailed", starId, result.Message);
     }
 
     private void QueueManualXPosting(string starId)

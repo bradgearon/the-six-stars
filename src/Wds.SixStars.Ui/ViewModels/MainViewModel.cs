@@ -51,6 +51,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly StarXPostingOptions _xPostingOptions;
     private readonly StarXPostingService _xPostingService;
     private readonly StarXPostingScheduleStore _xPostingScheduleStore;
+    private readonly DesktopXOAuth2TokenStore _xOAuth2TokenStore;
+    private readonly XOAuth2DesktopAuthorizationService _xOAuth2AuthorizationService;
     private RelayCommand _generateStarWritingCommand = null!;
     private RelayCommand _tellStarWritingCommand = null!;
     private readonly InMemoryScreenContextStore _screenContextStore;
@@ -170,11 +172,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     _appConfig.WritingPasses.SeedWordsEnabled)));
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
         _xPostingOptions = CreateXPostingOptions();
+        _xOAuth2TokenStore = new DesktopXOAuth2TokenStore(Path.Combine(_xPostingOptions.StateRoot, "oauth2-tokens"));
+        _xOAuth2AuthorizationService = new XOAuth2DesktopAuthorizationService(_xOAuth2TokenStore);
         _xPostingService = new StarXPostingService(
             _profileProvider,
             writingAgent,
             writingStore,
-            new XApiPostClient(),
+            new XApiPostClient(_xOAuth2TokenStore, _xPostingOptions.OAuthTokenRefreshSkewSeconds),
             _xPostingOptions);
         _xPostingScheduleStore = new StarXPostingScheduleStore(_xPostingOptions.StateRoot);
         _screenContextStore = new InMemoryScreenContextStore(5);
@@ -909,10 +913,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     Id = id,
                     Enabled = x.Enabled,
-                    ApiKey = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "API_KEY"), x.ApiKey) ?? string.Empty,
-                    ApiSecret = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "API_SECRET"), x.ApiSecret) ?? string.Empty,
-                    AccessToken = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "ACCESS_TOKEN"), x.AccessToken) ?? string.Empty,
-                    AccessTokenSecret = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "ACCESS_TOKEN_SECRET"), x.AccessTokenSecret) ?? string.Empty
+                    ClientId = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "CLIENT_ID"), x.ClientId) ?? string.Empty,
+                    RedirectUri = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "REDIRECT_URI"), x.RedirectUri)
+                        ?? "http://127.0.0.1:47837/x-oauth2/callback/"
                 };
             })
             .ToList();
@@ -926,6 +929,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             RequestTimeoutSeconds = Math.Max(5, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_REQUEST_TIMEOUT_SECONDS"), cfg.RequestTimeoutSeconds)),
             PollSeconds = Math.Max(10, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_POLL_SECONDS"), cfg.PollSeconds)),
             RetryDelaySeconds = Math.Max(30, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_RETRY_DELAY_SECONDS"), cfg.RetryDelaySeconds)),
+            OAuthAuthorizationTimeoutSeconds = Math.Max(30, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_OAUTH_TIMEOUT_SECONDS"), cfg.OAuthAuthorizationTimeoutSeconds)),
+            OAuthTokenRefreshSkewSeconds = Math.Max(30, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_OAUTH_REFRESH_SKEW_SECONDS"), cfg.OAuthTokenRefreshSkewSeconds)),
+            OAuthScopes = FirstNonEmpty(Environment.GetEnvironmentVariable("SIX_STARS_X_OAUTH_SCOPES"), cfg.OAuthScopes)
+                ?? "tweet.read tweet.write users.read offline.access",
             RefreshSlots = cfg.RefreshSlots == null || cfg.RefreshSlots.Count == 0
                 ? StarXPostingOptions.CreateDefaultSlots()
                 : cfg.RefreshSlots.Select(x => new StarXPostingScheduleSlot
@@ -3908,6 +3915,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             DisposeBackgroundWritingLoop();
             DisposeXPostingLoop();
+            _xPostingService.Dispose();
+            _xOAuth2AuthorizationService.Dispose();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _services.Dispose();

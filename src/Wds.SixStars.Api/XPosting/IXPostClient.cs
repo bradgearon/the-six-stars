@@ -5,6 +5,10 @@ namespace Wds.SixStars.Api.XPosting
 {
     public interface IXPostClient
     {
+        Task<bool> HasAuthorizationAsync(
+            StarXAccountOptions account,
+            CancellationToken cancellationToken);
+
         Task<StarXPostApiResult> CreatePostAsync(
             StarXAccountOptions account,
             string text,

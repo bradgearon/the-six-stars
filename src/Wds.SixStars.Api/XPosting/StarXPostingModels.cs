@@ -12,6 +12,9 @@ namespace Wds.SixStars.Api.XPosting
         public int RequestTimeoutSeconds { get; set; } = 45;
         public int PollSeconds { get; set; } = 60;
         public int RetryDelaySeconds { get; set; } = 300;
+        public int OAuthAuthorizationTimeoutSeconds { get; set; } = 180;
+        public int OAuthTokenRefreshSkewSeconds { get; set; } = 120;
+        public string OAuthScopes { get; set; } = "tweet.read tweet.write users.read offline.access";
         public List<StarXPostingScheduleSlot> RefreshSlots { get; set; } = CreateDefaultSlots();
         public List<StarXAccountOptions> StarAccounts { get; set; } = new List<StarXAccountOptions>();
 
@@ -39,15 +42,43 @@ namespace Wds.SixStars.Api.XPosting
         /// <summary>Lower-case Star id, for example elusiaa.</summary>
         public string Id { get; set; } = string.Empty;
         public bool Enabled { get; set; } = true;
-        public string ApiKey { get; set; } = string.Empty;
-        public string ApiSecret { get; set; } = string.Empty;
-        public string AccessToken { get; set; } = string.Empty;
-        public string AccessTokenSecret { get; set; } = string.Empty;
+        /// <summary>OAuth 2.0 Client ID from the X Developer Console.</summary>
+        public string ClientId { get; set; } = string.Empty;
+        /// <summary>Exact loopback callback registered for this X app.</summary>
+        public string RedirectUri { get; set; } = string.Empty;
 
-        public bool HasCredentials => !string.IsNullOrWhiteSpace(ApiKey)
-            && !string.IsNullOrWhiteSpace(ApiSecret)
-            && !string.IsNullOrWhiteSpace(AccessToken)
-            && !string.IsNullOrWhiteSpace(AccessTokenSecret);
+        public bool HasClientConfiguration => !string.IsNullOrWhiteSpace(ClientId)
+            && Uri.TryCreate(RedirectUri, UriKind.Absolute, out Uri? callback)
+            && callback.IsLoopback
+            && callback.Port > 0
+            && string.Equals(callback.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public sealed class StarXOAuth2Token
+    {
+        public string AccountId { get; set; } = string.Empty;
+        public string ClientId { get; set; } = string.Empty;
+        public string AccessToken { get; set; } = string.Empty;
+        public string RefreshToken { get; set; } = string.Empty;
+        public string TokenType { get; set; } = "bearer";
+        public string Scope { get; set; } = string.Empty;
+        public DateTimeOffset ExpiresAt { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+
+        public bool HasRefreshToken => !string.IsNullOrWhiteSpace(RefreshToken);
+
+        public bool NeedsRefresh(DateTimeOffset now, TimeSpan skew)
+        {
+            return string.IsNullOrWhiteSpace(AccessToken) || ExpiresAt <= now.Add(skew);
+        }
+    }
+
+    public sealed class StarXOAuth2AuthorizationResult
+    {
+        public bool Success { get; set; }
+        public string AccountId { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public DateTimeOffset? ExpiresAt { get; set; }
     }
 
     public sealed class StarXPostSelectionItem

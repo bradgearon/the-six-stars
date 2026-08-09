@@ -148,6 +148,9 @@ namespace Wds.SixStars.Ui.Configuration
         public int RequestTimeoutSeconds { get; set; } = 45;
         public int PollSeconds { get; set; } = 60;
         public int RetryDelaySeconds { get; set; } = 300;
+        public int OAuthAuthorizationTimeoutSeconds { get; set; } = 180;
+        public int OAuthTokenRefreshSkewSeconds { get; set; } = 120;
+        public string OAuthScopes { get; set; } = "tweet.read tweet.write users.read offline.access";
         public List<XPostingSlotConfig> RefreshSlots { get; set; } = new List<XPostingSlotConfig>
         {
             new XPostingSlotConfig { SlotId = "overnight", StartsAt = "00:00", RefreshBefore = "06:00" },
@@ -183,10 +186,10 @@ namespace Wds.SixStars.Ui.Configuration
         /// <summary>Lower-case Star id used to choose this account.</summary>
         public string Id { get; set; } = string.Empty;
         public bool Enabled { get; set; } = true;
-        public string ApiKey { get; set; } = string.Empty;
-        public string ApiSecret { get; set; } = string.Empty;
-        public string AccessToken { get; set; } = string.Empty;
-        public string AccessTokenSecret { get; set; } = string.Empty;
+        /// <summary>OAuth 2.0 Client ID from the X Developer Console.</summary>
+        public string ClientId { get; set; } = string.Empty;
+        /// <summary>Exact loopback callback registered for this X app.</summary>
+        public string RedirectUri { get; set; } = "http://127.0.0.1:47837/x-oauth2/callback/";
     }
 
     public sealed class DailyStarStateConfig

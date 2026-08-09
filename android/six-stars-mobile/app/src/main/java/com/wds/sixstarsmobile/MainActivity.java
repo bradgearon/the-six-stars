@@ -1000,7 +1000,7 @@ public final class MainActivity extends ComponentActivity {
 
         prodPostToXNowButton = prodButton("Post Selected Star to X Now");
         controls.addView(prodPostToXNowButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        TextView xPostingHint = prodText("The desktop chooses five unposted shelf items, waits the configured delay between posts, and marks each writing posted only after X accepts it. Foreground speech does not interrupt a started batch.", 11, 0xFFB6A7C8, false);
+        TextView xPostingHint = prodText("Authorize each Star account once from the desktop OAuth 2.0 button. The desktop then chooses five unposted shelf items, waits the configured delay between posts, and marks each writing posted only after X accepts it. Foreground speech does not interrupt a started batch.", 11, 0xFFB6A7C8, false);
         controls.addView(xPostingHint);
 
         TextView status = prodOutput(buildProdMenuStatusText(), 12);

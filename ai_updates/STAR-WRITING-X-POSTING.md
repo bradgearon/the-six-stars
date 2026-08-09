@@ -1,39 +1,44 @@
-# Star Writing X Posting
+# Star writing X posting
 
-## Purpose
+The writing shelf can publish five Star-selected writings to X at each of the four daily state windows or from the desktop **Post Selected Star to X Now** button.
 
-The desktop can let each Star select five of her own persisted shelf writings and publish them to her configured X account. Public posting is separate from telling writings aloud: `ToldCount` and `PostedAt` do not affect one another.
+## Selection and posting behavior
 
-## Selection and posting flow
+1. Load persisted shelf writings that do not have `PostedAt`.
+2. Randomly sample at most `CandidateLimit` (maximum 500).
+3. Ask the selected Star, through the dedicated Scriban templates, to choose exactly five source writings and provide the final post text.
+4. Post the five items in sequence through X API v2 `POST /2/tweets`.
+5. Wait `DelayBetweenPostsSeconds` between attempts.
+6. Set `PostedAt`, `XPostId`, and `PostedText` only after X accepts that individual post.
 
-1. Load the selected Star's persisted writing shelf.
-2. Keep only writings with no `PostedAt` value.
-3. Randomize the unposted shelf and send at most 500 candidates to a dedicated Scriban LLM request.
-4. Include the Star's identity, element, domain, personality, backstory, speaking style, voice direction, attributes, and behaviors.
-5. Require exactly five distinct source writing IDs and one final public post text for each.
-6. Post the five items in order with the configured delay between them.
-7. Set `PostedAt`, `XPostId`, and `PostedText` only after the X API accepts that individual post.
+Spoken/told state is independent from posted state. A writing remains eligible until its post succeeds.
 
-A failed post remains unposted and can be selected on a later run. Whether a writing has been spoken has no effect on X eligibility.
+## OAuth 2.0 desktop authorization
 
-## Uninterrupted batches
+The desktop uses X OAuth 2.0 Authorization Code with PKCE. Tokens are not pasted into JSON.
 
-The X scheduler and publisher are independent from the interruptible background writing loop. Player speech, foreground LLM requests, recording, Star selection changes, runtime cancellation, and disabling the schedule do not cancel a five-post batch after it has started. Disabling the feature prevents future scheduled batches.
+For each X developer app:
 
-## Schedule
+1. Enable OAuth 2.0 user authentication in the X Developer Console.
+2. Choose **Native App** so the desktop is treated as a public client and does not embed a client secret.
+3. Register the callback exactly as configured, by default:
+   `http://127.0.0.1:47837/x-oauth2/callback/`
+4. Copy the OAuth 2.0 **Client ID** into the matching lower-case Star account entry.
+5. Select that Star in the desktop and click **Authorize / Reauthorize Selected Star for X**.
+6. Sign into the correct Star X account in the browser and approve access.
 
-The default schedule uses the same four local-time windows as daily Star state:
+The desktop temporarily listens only on the configured loopback address and port. It generates a one-use PKCE verifier/challenge and CSRF `state`, opens the X authorization page, validates the local callback, exchanges the authorization code immediately, and stores the resulting access and refresh tokens encrypted with Windows DPAPI for the current user.
 
-- overnight: 00:00–06:00
-- morning: 06:00–12:00
-- afternoon: 12:00–18:00
-- evening: 18:00–00:00
+The requested scopes are:
 
-Each successful five-attempt batch is recorded per local date, slot, and Star in `state/x-posting/schedule-state.json`, preventing duplicate execution in the same slot. A batch that cannot start, such as one with fewer than five unposted writings or missing credentials, remains eligible for retry after `RetryDelaySeconds`.
+- `tweet.read`
+- `tweet.write`
+- `users.read`
+- `offline.access`
+
+`offline.access` is required for a refresh token. Access tokens are refreshed automatically before expiration and the rotated refresh token is saved immediately.
 
 ## Configuration
-
-Keep real credentials in `src/Wds.SixStars.Ui/appsettings.Local.json`, which is ignored by Git. Do not commit them.
 
 ```json
 "XPosting": {
@@ -44,51 +49,42 @@ Keep real credentials in `src/Wds.SixStars.Ui/appsettings.Local.json`, which is 
   "RequestTimeoutSeconds": 45,
   "PollSeconds": 60,
   "RetryDelaySeconds": 300,
-  "RefreshSlots": [
-    { "SlotId": "overnight", "StartsAt": "00:00", "RefreshBefore": "06:00" },
-    { "SlotId": "morning", "StartsAt": "06:00", "RefreshBefore": "12:00" },
-    { "SlotId": "afternoon", "StartsAt": "12:00", "RefreshBefore": "18:00" },
-    { "SlotId": "evening", "StartsAt": "18:00", "RefreshBefore": "00:00" }
-  ],
+  "OAuthAuthorizationTimeoutSeconds": 180,
+  "OAuthTokenRefreshSkewSeconds": 120,
+  "OAuthScopes": "tweet.read tweet.write users.read offline.access",
   "StarAccounts": [
     {
       "Id": "elusiaa",
       "Enabled": true,
-      "ApiKey": "",
-      "ApiSecret": "",
-      "AccessToken": "",
-      "AccessTokenSecret": ""
+      "ClientId": "PASTE_X_OAUTH2_CLIENT_ID",
+      "RedirectUri": "http://127.0.0.1:47837/x-oauth2/callback/"
     }
   ]
 }
 ```
 
-The account ID is the lower-case Star ID. The shipped examples include `elusiaa`, `kaelia`, `maera`, `khavia`, `auerlis`, and `nyxari`. Accounts can be disabled individually.
+Per-Star environment overrides:
 
-Optional environment overrides:
+- `SIX_STARS_X_ELUSIAA_CLIENT_ID`
+- `SIX_STARS_X_ELUSIAA_REDIRECT_URI`
+
+Replace `ELUSIAA` with the upper-case Star id.
+
+Global overrides:
 
 - `SIX_STARS_X_POSTING_ENABLED`
 - `SIX_STARS_X_POSTING_DELAY_SECONDS`
 - `SIX_STARS_X_POSTING_REQUEST_TIMEOUT_SECONDS`
 - `SIX_STARS_X_POSTING_POLL_SECONDS`
 - `SIX_STARS_X_POSTING_RETRY_DELAY_SECONDS`
-- `SIX_STARS_X_<STAR>_API_KEY`
-- `SIX_STARS_X_<STAR>_API_SECRET`
-- `SIX_STARS_X_<STAR>_ACCESS_TOKEN`
-- `SIX_STARS_X_<STAR>_ACCESS_TOKEN_SECRET`
+- `SIX_STARS_X_OAUTH_TIMEOUT_SECONDS`
+- `SIX_STARS_X_OAUTH_REFRESH_SKEW_SECONDS`
+- `SIX_STARS_X_OAUTH_SCOPES`
 
-For Elusiaa, `<STAR>` is `ELUSIAA`.
+Encrypted token files are stored below `state/x-posting/oauth2-tokens`. They can only be decrypted by the same Windows user on the same Windows installation. Reauthorizing replaces that Star's saved token.
 
-## Controls
+## Scheduling
 
-The desktop Writing Shelf panel includes:
+Each successful five-attempt batch is recorded per local date, slot, and Star in `state/x-posting/schedule-state.json`, preventing duplicate execution in the same slot. A batch that cannot start, such as one with fewer than five unposted writings or no authorization, remains eligible for retry after `RetryDelaySeconds`.
 
-- a toggle for four-times-daily posting;
-- **Post Selected Star to X Now**;
-- current X posting status.
-
-The Android player popup contains the same toggle and immediate-post button below the Writing Shelf controls. The immediate command queues work on the desktop and returns promptly; progress arrives through bridge events.
-
-## X transport
-
-The API layer uses X API v2 `POST /2/tweets` with OAuth 1.0a user-context credentials. The project uses a small `HttpClient` REST implementation because the application is C# and the X integration is limited to creating text posts.
+A started batch is deliberately independent from foreground conversation cancellation. Fully closing or killing the desktop process still ends in-process work.
