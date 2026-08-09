@@ -172,11 +172,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void setListener(Listener value) { listener = value == null ? NO_OP_LISTENER : value; }
 
     void start() { playbackQueue.start(); }
-    boolean isSocketConnected() {
-        synchronized (socketLock) {
-            return audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed();
-        }
-    }
     boolean isIdle() { return playbackQueue.isIdle(); }
     boolean isPaused() { return playbackQueue.isPaused(); }
     boolean isDesktopStreamActive() { return desktopStreamActive; }
@@ -197,9 +192,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void connect(String host, int port) {
         if (host == null || host.trim().isEmpty() || port <= 0) return;
         synchronized (socketLock) {
-            boolean sameEndpoint = host.equals(connectedHost) && port == connectedPort;
-            if (sameEndpoint && audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()) return;
-            if (sameEndpoint && audioSocketThread != null && audioSocketThread.isAlive()) return;
+            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
+                    && host.equals(connectedHost) && port == connectedPort) return;
             closeSocketLocked();
             connectedHost = host;
             connectedPort = port;
@@ -294,27 +288,22 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private boolean acceptStreamFrame(String streamId, long ordinal, String starId) {
         if (ordinal <= 0L || streamId == null || streamId.isEmpty()) return true;
         boolean started = false;
-        boolean clear = false;
         synchronized (voiceStreamLock) {
-            boolean same = streamId.equals(activeStreamId) && ordinal == activeStreamOrdinal;
+            boolean same = streamId.equals(activeStreamId);
             if (!same && !activeStreamId.isEmpty() && ordinal < activeStreamOrdinal) return false;
-            if (!same) {
+            if (!same || ordinal > activeStreamOrdinal) {
                 activeStreamOrdinal = ordinal;
                 activeStreamId = streamId;
+                started = true;
                 resetOrderedQueue();
                 resetSavedAccumulator();
-                clear = true;
-            }
-            // An accepted audio frame is authoritative evidence that this stream is active. This
-            // also recovers from a missed start control without allowing an older cancel/end frame
-            // to make a newer stream appear idle.
-            if (!desktopStreamActive) {
-                desktopStreamActive = true;
-                started = true;
             }
         }
-        if (clear) playbackQueue.prepareForDesktopStream();
-        if (started) post(() -> listener.onStreamState(true, starId, "start"));
+        if (started) {
+            desktopStreamActive = true;
+            playbackQueue.prepareForDesktopStream();
+            post(() -> listener.onStreamState(true, starId, "start"));
+        }
         return true;
     }
 
@@ -324,59 +313,30 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         String streamId = status.optString("streamId", "");
         long ordinal = status.optLong("streamOrdinal", 0L);
         String starId = status.optString("starId", "Star");
-        if (ordinal <= 0L || streamId == null || streamId.isEmpty()) return;
-
+        if (ordinal <= 0L) return;
         boolean clear = false;
-        boolean accepted = false;
-        long activeOrdinalSnapshot;
-        String activeIdSnapshot;
         synchronized (voiceStreamLock) {
-            activeOrdinalSnapshot = activeStreamOrdinal;
-            activeIdSnapshot = activeStreamId;
-            boolean same = ordinal == activeStreamOrdinal && streamId.equals(activeStreamId);
-            boolean stale = !activeStreamId.isEmpty()
-                    && (ordinal < activeStreamOrdinal
-                    || (ordinal == activeStreamOrdinal && !streamId.equals(activeStreamId)));
-            if (!stale && "start".equalsIgnoreCase(action)) {
-                if (!same) {
+            if ("start".equalsIgnoreCase(action)) {
+                desktopStreamActive = true;
+                if (ordinal != activeStreamOrdinal || !streamId.equals(activeStreamId)) {
                     activeStreamOrdinal = ordinal;
                     activeStreamId = streamId;
                     resetOrderedQueue();
                     resetSavedAccumulator();
                     clear = true;
                 }
-                desktopStreamActive = true;
-                accepted = true;
-            } else if (!stale && ("end".equalsIgnoreCase(action) || "cancel".equalsIgnoreCase(action))) {
-                // Only the current stream (or a genuinely newer stream) may make the desktop stream
-                // inactive. A late cancel from the stream that was just replaced must not stop or
-                // hide the replacement stream.
-                if (same || ordinal > activeStreamOrdinal || activeStreamId.isEmpty()) {
+            } else if ("end".equalsIgnoreCase(action) || "cancel".equalsIgnoreCase(action)) {
+                desktopStreamActive = false;
+                if (streamId.equals(activeStreamId) || ordinal >= activeStreamOrdinal) {
                     activeStreamOrdinal = ordinal;
                     activeStreamId = streamId;
-                    desktopStreamActive = false;
                     clear = "cancel".equalsIgnoreCase(action);
                     if (clear) { resetOrderedQueue(); resetSavedAccumulator(); }
-                    accepted = true;
                 }
             }
         }
-
-        if (!accepted) {
-            final long ignoredOrdinal = ordinal;
-            final String ignoredStreamId = streamId;
-            final long currentOrdinal = activeOrdinalSnapshot;
-            final String currentStreamId = activeIdSnapshot;
-            post(() -> listener.onDebug(
-                    "Stale voice control ignored",
-                    "action=" + action + ", stream=" + ignoredOrdinal + "/" + ignoredStreamId
-                            + ", active=" + currentOrdinal + "/" + currentStreamId));
-            return;
-        }
-
         if (clear) playbackQueue.prepareForDesktopStream();
-        boolean active = desktopStreamActive;
-        post(() -> listener.onStreamState(active, starId, action));
+        post(() -> listener.onStreamState(desktopStreamActive, starId, action));
     }
 
     private int enqueueDesktopInOrder(PhoneVoiceClip clip) {

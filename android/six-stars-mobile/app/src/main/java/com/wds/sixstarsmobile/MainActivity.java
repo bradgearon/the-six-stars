@@ -195,7 +195,6 @@ public final class MainActivity extends ComponentActivity {
     private int selectedStarPendingWritingCount;
     private int selectedStarPersistedWritingCount;
     private boolean starWritingRequestRunning;
-    private volatile long foregroundWritingVoiceGraceUntilMs;
     private View prodTextToggleButton;
     private View prodTextComposer;
     private TextView prodConversationText;
@@ -1675,11 +1674,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void maybeResumePreparedListenAfterAudio(String reason) {
-        if (destroyed
-                || starWritingRequestRunning
-                || System.currentTimeMillis() < foregroundWritingVoiceGraceUntilMs
-                || isDesktopVoiceStreamActive()
-                || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return;
+        if (destroyed || isDesktopVoiceStreamActive() || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return;
         allowPreparedListenAfter(2500L, reason);
         mainHandler.postDelayed(
                 () -> syncStarInitiativeBackgroundService("Audio is idle; prepare the next Listen response", true),
@@ -1938,15 +1933,6 @@ public final class MainActivity extends ComponentActivity {
         if (starWritingRequestRunning) return;
         try {
             final String starId = selectedStarName();
-            final boolean isPerformanceRequest = "TellStarWriting".equalsIgnoreCase(commandType);
-            if (isPerformanceRequest) {
-                foregroundWritingVoiceGraceUntilMs = System.currentTimeMillis() + 15000L;
-                invalidatePrefetchedInitiative("The player requested a persisted writing performance.");
-                pauseStarInitiativeBackgroundService("A persisted writing performance has foreground priority.");
-                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true,
-                        "Persisted writing performance requested; keeping the phone awake for text and voice.");
-                if (returnAudio) ensurePhoneVoiceSocketForForegroundRequest("persisted writing performance");
-            }
             starWritingRequestRunning = true;
             updateProdWritingButtons();
             if (prodMiniStatusText != null) {
@@ -1981,23 +1967,6 @@ public final class MainActivity extends ComponentActivity {
                                 response.optString("message", commandType));
                     }
                     setDebug("Writing shelf request complete", clip(response.toString(), 5000));
-                    if (isPerformanceRequest) {
-                        long wakeReleaseDelay = returnAudio ? 8000L : 0L;
-                        mainHandler.postDelayed(
-                                () -> setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false,
-                                        "Persisted writing response arrived; any active voice stream now owns the wake lock."),
-                                wakeReleaseDelay);
-                        long initiativeResumeDelay = returnAudio ? 30000L : 6500L;
-                        mainHandler.postDelayed(() -> {
-                            if (!isDesktopVoiceStreamActive()
-                                    && (phoneVoiceService == null || phoneVoiceService.isIdle())) {
-                                foregroundWritingVoiceGraceUntilMs = 0L;
-                                allowPreparedListenAfter(2500L,
-                                        "Persisted writing performance and phone audio are idle.");
-                                syncStarInitiativeBackgroundService("Persisted writing performance finished", false);
-                            }
-                        }, initiativeResumeDelay);
-                    }
                 });
             }, error -> runOnUiThread(() -> {
                 starWritingRequestRunning = false;
@@ -2005,48 +1974,12 @@ public final class MainActivity extends ComponentActivity {
                 if (prodMiniStatusText != null) prodMiniStatusText.setText("Writing request failed.");
                 setDebug("Writing shelf request failed", error.toString());
                 appendVoiceDebug("Writing shelf request failed", error.toString());
-                if (isPerformanceRequest) {
-                    foregroundWritingVoiceGraceUntilMs = 0L;
-                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false,
-                            "Persisted writing request failed; releasing its wake lock.");
-                    mainHandler.postDelayed(
-                            () -> syncStarInitiativeBackgroundService("Persisted writing request recovery", false),
-                            6500L);
-                }
             }));
         } catch (Exception ex) {
             starWritingRequestRunning = false;
             updateProdWritingButtons();
             setDebug("Writing shelf request failed", ex.toString());
-            if ("TellStarWriting".equalsIgnoreCase(commandType)) {
-                foregroundWritingVoiceGraceUntilMs = 0L;
-                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false,
-                        "Persisted writing request failed before transport; releasing its wake lock.");
-                mainHandler.postDelayed(
-                        () -> syncStarInitiativeBackgroundService("Persisted writing request recovery", false),
-                        6500L);
-            }
         }
-    }
-
-    private void ensurePhoneVoiceSocketForForegroundRequest(String reason) {
-        if (phoneVoiceService == null) return;
-        String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
-        String host = BridgeAddressService.hostFromBaseUrl(activeUrl);
-        int port = BridgeAddressService.audioPort(activeUrl);
-        boolean alreadyConnected = phoneVoiceService.isSocketConnected();
-        if (alreadyConnected && !phoneVoiceService.isDesktopStreamActive()) {
-            // A TCP socket can still report isConnected() after the desktop has already dropped
-            // the other end. Refresh idle sockets before an explicit performance so the desktop
-            // captures this phone in the new voice stream's target-client snapshot.
-            phoneVoiceService.disconnect();
-        }
-        ensureAudioSocket(host, port);
-        appendVoiceDebug(
-                "Phone voice socket prepared",
-                (alreadyConnected ? "Idle connection refreshed" : "Connection requested")
-                        + " for " + (reason == null ? "foreground speech" : reason)
-                        + " at " + host + ":" + port + ".");
     }
 
     private void updateProdWritingButtons() {

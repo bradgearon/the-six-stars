@@ -2588,14 +2588,6 @@ public sealed partial class MainViewModel
 
     private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null, string backgroundAnalysisId = "")
     {
-        if (existingStream == null && !_services.MobileVoice.IsConnected)
-        {
-            OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                "Waiting for phone voice socket",
-                "The text response is already on its way. Holding voice stream creation briefly so a reconnecting Android audio socket can join."));
-            await _services.MobileVoice.WaitForConnectedClientAsync(TimeSpan.FromSeconds(6), cancellationToken).ConfigureAwait(false);
-        }
-
         bool ownsStream = existingStream == null;
         MobileVoiceStreamScope voiceStream = existingStream ?? BeginMobileVoiceStream(starResponse, _storySpeechAdapter.ShouldUseStoryAutoplay(starResponse), "Android phone voice request");
         using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, voiceStream.CancellationToken);
