@@ -195,6 +195,7 @@ public final class MainActivity extends ComponentActivity {
     private int selectedStarPendingWritingCount;
     private int selectedStarPersistedWritingCount;
     private boolean starWritingRequestRunning;
+    private volatile long foregroundWritingVoiceGraceUntilMs;
     private View prodTextToggleButton;
     private View prodTextComposer;
     private TextView prodConversationText;
@@ -1674,7 +1675,11 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void maybeResumePreparedListenAfterAudio(String reason) {
-        if (destroyed || isDesktopVoiceStreamActive() || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return;
+        if (destroyed
+                || starWritingRequestRunning
+                || System.currentTimeMillis() < foregroundWritingVoiceGraceUntilMs
+                || isDesktopVoiceStreamActive()
+                || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return;
         allowPreparedListenAfter(2500L, reason);
         mainHandler.postDelayed(
                 () -> syncStarInitiativeBackgroundService("Audio is idle; prepare the next Listen response", true),
@@ -1935,6 +1940,7 @@ public final class MainActivity extends ComponentActivity {
             final String starId = selectedStarName();
             final boolean isPerformanceRequest = "TellStarWriting".equalsIgnoreCase(commandType);
             if (isPerformanceRequest) {
+                foregroundWritingVoiceGraceUntilMs = System.currentTimeMillis() + 15000L;
                 invalidatePrefetchedInitiative("The player requested a persisted writing performance.");
                 pauseStarInitiativeBackgroundService("A persisted writing performance has foreground priority.");
                 setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true,
@@ -1985,6 +1991,9 @@ public final class MainActivity extends ComponentActivity {
                         mainHandler.postDelayed(() -> {
                             if (!isDesktopVoiceStreamActive()
                                     && (phoneVoiceService == null || phoneVoiceService.isIdle())) {
+                                foregroundWritingVoiceGraceUntilMs = 0L;
+                                allowPreparedListenAfter(2500L,
+                                        "Persisted writing performance and phone audio are idle.");
                                 syncStarInitiativeBackgroundService("Persisted writing performance finished", false);
                             }
                         }, initiativeResumeDelay);
@@ -1997,6 +2006,7 @@ public final class MainActivity extends ComponentActivity {
                 setDebug("Writing shelf request failed", error.toString());
                 appendVoiceDebug("Writing shelf request failed", error.toString());
                 if (isPerformanceRequest) {
+                    foregroundWritingVoiceGraceUntilMs = 0L;
                     setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false,
                             "Persisted writing request failed; releasing its wake lock.");
                     mainHandler.postDelayed(
@@ -2009,6 +2019,7 @@ public final class MainActivity extends ComponentActivity {
             updateProdWritingButtons();
             setDebug("Writing shelf request failed", ex.toString());
             if ("TellStarWriting".equalsIgnoreCase(commandType)) {
+                foregroundWritingVoiceGraceUntilMs = 0L;
                 setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false,
                         "Persisted writing request failed before transport; releasing its wake lock.");
                 mainHandler.postDelayed(
