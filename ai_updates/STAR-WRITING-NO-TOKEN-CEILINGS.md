@@ -6,6 +6,7 @@ This applies to:
 
 - `star-writing-word-pairs`
 - `star-writing-compose`
+- `star-writing-improve-pass-N`
 - `star-writing-rate`
 - `star-writing-rate-repair`
 - `star-writing-perform`

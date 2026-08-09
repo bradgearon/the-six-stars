@@ -149,6 +149,36 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_writing_generation", schema);
         }
 
+        public static object CreateStarWritingImprovementResponseFormat()
+        {
+            Dictionary<string, object> replacement = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "id", "newWordSet", "newWriting" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "id", StringProperty(80) },
+                        { "newWordSet", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                                { "items", StringProperty(80) }
+                            }
+                        },
+                        { "newWriting", StringProperty(1400) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "minItems", 0 },
+                { "maxItems", 5 },
+                { "items", replacement }
+            };
+            return WrapSchema("six_stars_writing_improvement_pass", schema);
+        }
+
         public static object CreateStarWritingReviewResponseFormat()
         {
             Dictionary<string, object> properties = new Dictionary<string, object>();

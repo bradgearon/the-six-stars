@@ -18,13 +18,22 @@ namespace Wds.SixStars.Api.Writings
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
         private readonly StarWritingFileStore _store;
+        private readonly StarWritingPassOptions _passOptions;
+        private readonly Random _random;
         private readonly SemaphoreSlim _operationGate = new SemaphoreSlim(1, 1);
 
-        public StarWritingService(IStarProfileProvider profiles, IStarWritingAgent agent, StarWritingFileStore store)
+        public StarWritingService(
+            IStarProfileProvider profiles,
+            IStarWritingAgent agent,
+            StarWritingFileStore store,
+            StarWritingPassOptions? passOptions = null,
+            Random? random = null)
         {
             _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
             _agent = agent ?? throw new ArgumentNullException(nameof(agent));
             _store = store ?? throw new ArgumentNullException(nameof(store));
+            _passOptions = passOptions ?? new StarWritingPassOptions();
+            _random = random ?? new Random();
         }
 
         public string RootDirectory => _store.RootDirectory;
@@ -42,17 +51,43 @@ namespace Wds.SixStars.Api.Writings
                 System.Diagnostics.Stopwatch totalTimer = System.Diagnostics.Stopwatch.StartNew();
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+                int selectedPassCount = _passOptions.SelectPassCount(_random);
+                System.Diagnostics.Debug.WriteLine(
+                    "[StarWritingPasses] " + profile.StarId + " selected " + selectedPassCount.ToString(CultureInfo.InvariantCulture) + " total pass(es).");
 
                 // Do not make a new-writing button repair legacy vectors first. Older malformed
                 // ratings are historical data and must never block or add hidden LLM calls to a
                 // fresh generation. They can be migrated by a separate maintenance action later.
                 int repairedRatingCount = 0;
 
-                // Deliberately staged calls: first select five unrelated word pairs without revealing the creative task;
-                // then compose from those fixed pairs; finally use a separate structured critic for persistence scores.
+                // Pass one deliberately remains two staged requests: choose five unrelated word
+                // pairs without revealing the creative task, then compose from those fixed pairs.
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
                 NormalizeGeneration(generation);
+                generation.SelectedPassCount = selectedPassCount;
+                generation.CompletedPassCount = 1;
+                AppendPassSnapshot(generation, 1, 0);
+                await SaveLatestPassStateAsync(state, generation).ConfigureAwait(false);
+
+                // Passes two and later reuse the same critic/rewrite request. Each response names
+                // only candidate ids to replace, and the accepted word sets/writings immediately
+                // become the input state for the next pass.
+                for (int passNumber = 2; passNumber <= selectedPassCount; passNumber++)
+                {
+                    StarWritingImprovementResult improvement = await _agent
+                        .ImproveWritingCandidatesAsync(profile, state, generation, passNumber, selectedPassCount, cancellationToken)
+                        .ConfigureAwait(false);
+                    int applied = ApplyImprovementReplacements(generation, improvement);
+                    generation.AppliedImprovementCount += applied;
+                    generation.CompletedPassCount = passNumber;
+                    generation.RawModelJson += Environment.NewLine
+                        + "--- WRITING IMPROVEMENT PASS " + passNumber.ToString(CultureInfo.InvariantCulture) + " ---" + Environment.NewLine
+                        + improvement.RawModelJson;
+                    AppendPassSnapshot(generation, passNumber, applied);
+                    await SaveLatestPassStateAsync(state, generation).ConfigureAwait(false);
+                }
+
                 long generationFinishedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingReviewResult review = await _agent.RateWritingCandidatesAsync(profile, state, generation, cancellationToken).ConfigureAwait(false);
                 NormalizeReview(review);
@@ -62,7 +97,11 @@ namespace Wds.SixStars.Api.Writings
                 StarWritingHistoryBatch batch = new StarWritingHistoryBatch
                 {
                     Id = "writing-batch-" + Guid.NewGuid().ToString("N"),
-                    GeneratedAt = now
+                    GeneratedAt = now,
+                    SelectedPassCount = generation.SelectedPassCount,
+                    CompletedPassCount = generation.CompletedPassCount,
+                    AppliedImprovementCount = generation.AppliedImprovementCount,
+                    Passes = ClonePasses(generation.Passes)
                 };
 
                 int persistedCount = 0;
@@ -113,14 +152,13 @@ namespace Wds.SixStars.Api.Writings
                     .ThenBy(x => x.Index)
                     .ToList();
                 RebuildUsedWordsFromPersistedWritings(state);
-                // Once generation and review have completed, make the five statements durable even
-                // if foreground activity cancels the background loop a moment later. The shared
-                // append-only log and the per-Star state are written together under the store gate.
                 await _store.SaveGeneratedBatchAsync(state, profile.DisplayName, batch, CancellationToken.None).ConfigureAwait(false);
                 long saveFinishedAt = totalTimer.ElapsedMilliseconds;
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingTiming] " + profile.StarId
-                    + " generation=" + (generationFinishedAt - generationStartedAt) + "ms"
+                    + " passes=" + generation.CompletedPassCount + "/" + generation.SelectedPassCount
+                    + ", improvements=" + generation.AppliedImprovementCount
+                    + ", generation=" + (generationFinishedAt - generationStartedAt) + "ms"
                     + ", review=" + (reviewFinishedAt - generationFinishedAt) + "ms"
                     + ", saveAndRules=" + (saveFinishedAt - reviewFinishedAt) + "ms"
                     + ", total=" + saveFinishedAt + "ms.");
@@ -130,7 +168,10 @@ namespace Wds.SixStars.Api.Writings
                     State = state,
                     Batch = batch,
                     PersistedCount = persistedCount,
-                    RepairedRatingCount = repairedRatingCount
+                    RepairedRatingCount = repairedRatingCount,
+                    SelectedPassCount = generation.SelectedPassCount,
+                    CompletedPassCount = generation.CompletedPassCount,
+                    AppliedImprovementCount = generation.AppliedImprovementCount
                 };
             }
             finally { _operationGate.Release(); }
@@ -236,11 +277,99 @@ namespace Wds.SixStars.Api.Writings
             finally { _operationGate.Release(); }
         }
 
+        private async Task SaveLatestPassStateAsync(StarWritingNotesState state, StarWritingGenerationResult generation)
+        {
+            state.LatestSelectedPassCount = generation.SelectedPassCount;
+            state.LatestCompletedPassCount = generation.CompletedPassCount;
+            state.LatestAppliedImprovementCount = generation.AppliedImprovementCount;
+            state.LatestPassUpdatedAt = DateTimeOffset.UtcNow;
+            state.LatestWritingPasses = ClonePasses(generation.Passes);
+            await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+        }
+
+        private static int ApplyImprovementReplacements(StarWritingGenerationResult generation, StarWritingImprovementResult improvement)
+        {
+            if (improvement?.Replacements == null || improvement.Replacements.Count == 0) return 0;
+            Dictionary<string, StarWritingCandidate> candidates = generation.Items
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
+                .ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
+            HashSet<string> changedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (StarWritingImprovementReplacement replacement in improvement.Replacements.Where(x => x != null))
+            {
+                if (string.IsNullOrWhiteSpace(replacement.Id)
+                    || !candidates.TryGetValue(replacement.Id.Trim(), out StarWritingCandidate candidate)
+                    || !changedIds.Add(replacement.Id.Trim()))
+                {
+                    continue;
+                }
+
+                List<string> words = (replacement.NewWordSet ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                string writing = (replacement.NewWriting ?? string.Empty).Trim();
+                if (words.Count != 2 || string.IsNullOrWhiteSpace(writing))
+                {
+                    changedIds.Remove(replacement.Id.Trim());
+                    continue;
+                }
+
+                candidate.WordsUsed = words;
+                candidate.Writing = writing;
+            }
+
+            generation.Jokes = generation.Items.Select(x => x.Writing).ToList();
+            generation.UsedWords = generation.Items.Select(x => x.WordsUsed.ToList()).ToList();
+            return changedIds.Count;
+        }
+
+        private static void AppendPassSnapshot(StarWritingGenerationResult generation, int passNumber, int appliedReplacementCount)
+        {
+            generation.Passes ??= new List<StarWritingPassSnapshot>();
+            generation.Passes.Add(new StarWritingPassSnapshot
+            {
+                PassNumber = passNumber,
+                AppliedReplacementCount = appliedReplacementCount,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Items = CloneCandidates(generation.Items)
+            });
+        }
+
+        private static List<StarWritingPassSnapshot> ClonePasses(IEnumerable<StarWritingPassSnapshot>? passes)
+        {
+            return (passes ?? Enumerable.Empty<StarWritingPassSnapshot>())
+                .Where(x => x != null)
+                .Select(x => new StarWritingPassSnapshot
+                {
+                    PassNumber = x.PassNumber,
+                    AppliedReplacementCount = x.AppliedReplacementCount,
+                    UpdatedAt = x.UpdatedAt,
+                    Items = CloneCandidates(x.Items)
+                })
+                .ToList();
+        }
+
+        private static List<StarWritingCandidate> CloneCandidates(IEnumerable<StarWritingCandidate>? items)
+        {
+            return (items ?? Enumerable.Empty<StarWritingCandidate>())
+                .Where(x => x != null)
+                .Select(x => new StarWritingCandidate
+                {
+                    Id = x.Id ?? string.Empty,
+                    WordsUsed = (x.WordsUsed ?? new List<string>()).ToList(),
+                    Writing = x.Writing ?? string.Empty
+                })
+                .ToList();
+        }
+
         private static void NormalizeGeneration(StarWritingGenerationResult generation)
         {
             generation.Jokes ??= new List<string>();
             generation.UsedWords ??= new List<List<string>>();
             generation.Items ??= new List<StarWritingCandidate>();
+            generation.Passes ??= new List<StarWritingPassSnapshot>();
 
             // The public response shape is two parallel arrays. Convert it into paired internal records.
             if (generation.Jokes.Count > 0 || generation.UsedWords.Count > 0)
@@ -282,6 +411,7 @@ namespace Wds.SixStars.Api.Writings
             for (int i = 0; i < generation.Items.Count; i++)
             {
                 StarWritingCandidate item = generation.Items[i];
+                item.Id = "candidate-" + (i + 1).ToString(CultureInfo.InvariantCulture);
                 item.Writing = item.Writing.Trim();
                 item.WordsUsed ??= new List<string>();
                 item.WordsUsed = item.WordsUsed.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToList();

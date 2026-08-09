@@ -37,7 +37,10 @@ A normal generation cycle is now:
 
 1. `star-writing-word-pairs`
 2. `star-writing-compose`
-3. `star-writing-rate`
-4. optional `star-writing-rate-repair` only when the score-vector response is malformed
+3. zero or more `star-writing-improve-pass-N` requests selected by the configured writing-pass range and weights
+4. `star-writing-rate`
+5. optional `star-writing-rate-repair` only when the score-vector response is malformed
+
+The word-pair and composition requests together are creative pass 1. See `STAR-WRITING-ITERATIVE-PASSES.md` for the reusable pre-review passes and configuration.
 
 All writing requests continue to omit `max_tokens`; their output is bounded by JSON schema and parser validation instead.

@@ -976,7 +976,7 @@ public final class MainActivity extends ComponentActivity {
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("First chooses five word pairs without the writing task, then creates and rates five jokes or poetic fragments, saving only those that pass this Star's rules.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("First chooses five word pairs without the writing task, composes five pieces, may refine them through configured review passes, then applies the final shelf ratings.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 

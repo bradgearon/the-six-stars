@@ -187,9 +187,10 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 4;
+            state.Version = 5;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
+            state.LatestWritingPasses ??= new List<StarWritingPassSnapshot>();
             state.AllUsedWords ??= new List<string>();
             state.PersistedWritings ??= new List<PersistedStarWriting>();
 
@@ -210,6 +211,28 @@ namespace Wds.SixStars.Api.Writings
                 .ThenBy(x => x.Index)
                 .ToList();
 
+            foreach (StarWritingPassSnapshot pass in state.LatestWritingPasses.Where(x => x != null))
+            {
+                pass.Items ??= new List<StarWritingCandidate>();
+                pass.Items = pass.Items
+                    .Where(x => x != null)
+                    .Take(5)
+                    .Select((item, index) => new StarWritingCandidate
+                    {
+                        Id = string.IsNullOrWhiteSpace(item.Id) ? "candidate-" + (index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) : item.Id.Trim(),
+                        WordsUsed = (item.WordsUsed ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Take(2).ToList(),
+                        Writing = (item.Writing ?? string.Empty).Trim()
+                    })
+                    .ToList();
+            }
+            state.LatestWritingPasses = state.LatestWritingPasses
+                .Where(x => x != null)
+                .OrderBy(x => x.PassNumber)
+                .ToList();
+            state.LatestSelectedPassCount = Math.Max(1, state.LatestSelectedPassCount);
+            state.LatestCompletedPassCount = Math.Max(0, Math.Min(state.LatestSelectedPassCount, state.LatestCompletedPassCount));
+            state.LatestAppliedImprovementCount = Math.Max(0, state.LatestAppliedImprovementCount);
+
             foreach (PersistedStarWriting item in state.PersistedWritings.Where(x => x != null))
             {
                 item.WordsUsed ??= new List<string>();
@@ -221,7 +244,7 @@ namespace Wds.SixStars.Api.Writings
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
             // A word becomes historical only when its writing reaches the shelf. Rebuild rather
-            // than preserving older Version 1-3 files that marked every generated word as used.
+            // than preserving older Version 1-4 files that marked every generated word as used.
             state.AllUsedWords = state.PersistedWritings
                 .OrderBy(x => x.PersistedAt)
                 .ThenBy(x => x.GeneratedAt)

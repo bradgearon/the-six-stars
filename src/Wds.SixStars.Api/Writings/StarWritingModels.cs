@@ -43,8 +43,31 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingCandidate
     {
+        /// <summary>Stable id used by iterative improvement passes to target this candidate.</summary>
+        public string Id { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingImprovementReplacement
+    {
+        public string Id { get; set; } = string.Empty;
+        public List<string> NewWordSet { get; set; } = new List<string>();
+        public string NewWriting { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingImprovementResult
+    {
+        public List<StarWritingImprovementReplacement> Replacements { get; set; } = new List<StarWritingImprovementReplacement>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingPassSnapshot
+    {
+        public int PassNumber { get; set; }
+        public int AppliedReplacementCount { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+        public List<StarWritingCandidate> Items { get; set; } = new List<StarWritingCandidate>();
     }
 
     public sealed class StarWritingGenerationResult
@@ -57,6 +80,10 @@ namespace Wds.SixStars.Api.Writings
 
         // Normalized internal view used by the review, history, and persistence pipeline.
         public List<StarWritingCandidate> Items { get; set; } = new List<StarWritingCandidate>();
+        public int SelectedPassCount { get; set; } = 1;
+        public int CompletedPassCount { get; set; }
+        public int AppliedImprovementCount { get; set; }
+        public List<StarWritingPassSnapshot> Passes { get; set; } = new List<StarWritingPassSnapshot>();
         public string RawModelJson { get; set; } = string.Empty;
     }
 
@@ -95,6 +122,10 @@ namespace Wds.SixStars.Api.Writings
     {
         public string Id { get; set; } = string.Empty;
         public DateTimeOffset GeneratedAt { get; set; }
+        public int SelectedPassCount { get; set; } = 1;
+        public int CompletedPassCount { get; set; } = 1;
+        public int AppliedImprovementCount { get; set; }
+        public List<StarWritingPassSnapshot> Passes { get; set; } = new List<StarWritingPassSnapshot>();
         public List<StarWritingHistoryItem> Items { get; set; } = new List<StarWritingHistoryItem>();
     }
 
@@ -133,10 +164,16 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 4;
+        public int Version { get; set; } = 5;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
+        /// <summary>Latest iterative generation state, updated and saved after every completed pass.</summary>
+        public int LatestSelectedPassCount { get; set; } = 1;
+        public int LatestCompletedPassCount { get; set; }
+        public int LatestAppliedImprovementCount { get; set; }
+        public DateTimeOffset? LatestPassUpdatedAt { get; set; }
+        public List<StarWritingPassSnapshot> LatestWritingPasses { get; set; } = new List<StarWritingPassSnapshot>();
         public List<string> AllUsedWords { get; set; } = new List<string>();
         public List<PersistedStarWriting> PersistedWritings { get; set; } = new List<PersistedStarWriting>();
 
@@ -149,6 +186,9 @@ namespace Wds.SixStars.Api.Writings
         public StarWritingHistoryBatch Batch { get; set; } = new StarWritingHistoryBatch();
         public int PersistedCount { get; set; }
         public int RepairedRatingCount { get; set; }
+        public int SelectedPassCount { get; set; } = 1;
+        public int CompletedPassCount { get; set; } = 1;
+        public int AppliedImprovementCount { get; set; }
     }
 
     public sealed class StarWritingPerformancePlan

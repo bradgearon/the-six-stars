@@ -179,6 +179,83 @@ namespace Wds.SixStars.Api.Ai
             return result;
         }
 
+        public async Task<StarWritingImprovementResult> ImproveWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            StarWritingGenerationResult generation,
+            int passNumber,
+            int totalPasses,
+            CancellationToken cancellationToken)
+        {
+            string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 120))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                allUsedWordsText,
+                passNumber = Math.Max(2, passNumber),
+                totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
+                candidates = (generation.Items ?? new List<StarWritingCandidate>())
+                    .Take(5)
+                    .Select(item => new
+                    {
+                        id = PromptText(item.Id, 80),
+                        words = string.Join(" + ", (item.WordsUsed ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(2)),
+                        writing = PromptText(item.Writing, 1600)
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_improve_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_improve_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingImprovementResponseFormat(),
+                0,
+                "star-writing-improve-pass-" + passNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                cancellationToken).ConfigureAwait(false);
+
+            List<StarWritingImprovementReplacement>? replacements;
+            try
+            {
+                replacements = JsonSerializer.Deserialize<List<StarWritingImprovementReplacement>>(ExtractJsonArray(json), _jsonOptions);
+            }
+            catch (JsonException)
+            {
+                // A malformed optional improvement pass must not discard the valid working set.
+                // Treat it as no replacements and allow later passes/final scoring to continue.
+                replacements = new List<StarWritingImprovementReplacement>();
+            }
+
+            return new StarWritingImprovementResult
+            {
+                Replacements = replacements ?? new List<StarWritingImprovementReplacement>(),
+                RawModelJson = json
+            };
+        }
+
         public async Task<StarWritingReviewResult> RateWritingCandidatesAsync(
             StarProfile profile,
             StarWritingNotesState state,
@@ -2217,6 +2294,53 @@ namespace Wds.SixStars.Api.Ai
             if (value < 0) return 0;
             if (value > 100) return 100;
             return value;
+        }
+
+        private static string ExtractJsonArray(string rawContent)
+        {
+            if (string.IsNullOrWhiteSpace(rawContent)) return "[]";
+            string text = rawContent.Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewLine = text.IndexOf('\n');
+                int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstNewLine >= 0 && lastFence > firstNewLine)
+                {
+                    text = text.Substring(firstNewLine + 1, lastFence - firstNewLine - 1).Trim();
+                }
+            }
+            if (text.StartsWith("[", StringComparison.Ordinal) && text.EndsWith("]", StringComparison.Ordinal)) return text;
+
+            int start = -1;
+            for (int candidateStart = text.IndexOf('['); candidateStart >= 0; candidateStart = text.IndexOf('[', candidateStart + 1))
+            {
+                int next = candidateStart + 1;
+                while (next < text.Length && char.IsWhiteSpace(text[next])) next++;
+                if (next >= text.Length || text[next] == '{' || text[next] == ']')
+                {
+                    start = candidateStart;
+                    break;
+                }
+            }
+            if (start < 0) return "[]";
+            bool inString = false;
+            bool escaped = false;
+            int depth = 0;
+            for (int i = start; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (escaped) { escaped = false; continue; }
+                if (c == '\\' && inString) { escaped = true; continue; }
+                if (c == '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (c == '[') depth++;
+                else if (c == ']')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(start, i - start + 1).Trim();
+                }
+            }
+            return text.Substring(start).Trim();
         }
 
         private static string ExtractJson(string rawContent)

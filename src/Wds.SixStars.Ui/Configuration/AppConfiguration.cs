@@ -22,6 +22,7 @@ namespace Wds.SixStars.Ui.Configuration
         public StarSpeechIntentConfig StarSpeechIntents { get; set; } = new StarSpeechIntentConfig();
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
+        public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
     }
 
 
@@ -121,6 +122,17 @@ namespace Wds.SixStars.Ui.Configuration
         public double HighConnectionMediumSpeakProbability { get; set; } = 0.30;
         public double HighConnectionThreshold { get; set; } = 70;
         public int MinimumMinutesBetweenAutoSpeech { get; set; } = 8;
+    }
+
+    public sealed class WritingPassesConfig
+    {
+        /// <summary>When false, the writing shelf runs only its initial word-pair/composition pass.</summary>
+        public bool Enabled { get; set; } = true;
+        public int MinimumPasses { get; set; } = 1;
+        public int MaximumPasses { get; set; } = 6;
+        public double OnePassWeight { get; set; } = 0.50;
+        public double TwoToThreePassWeight { get; set; } = 0.30;
+        public double FourOrMorePassWeight { get; set; } = 0.20;
     }
 
     public sealed class DailyStarStateConfig

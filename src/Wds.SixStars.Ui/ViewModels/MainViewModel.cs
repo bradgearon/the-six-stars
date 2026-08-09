@@ -146,7 +146,19 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             throw new InvalidOperationException("The configured Star agent does not implement the writing request pipeline.");
         }
-        _writingService = new StarWritingService(_profileProvider, writingAgent, StarWritingFileStore.CreateDefault());
+        _writingService = new StarWritingService(
+            _profileProvider,
+            writingAgent,
+            StarWritingFileStore.CreateDefault(),
+            new StarWritingPassOptions
+            {
+                Enabled = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_PASSES_ENABLED"), _appConfig.WritingPasses.Enabled),
+                MinimumPasses = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_MIN_PASSES"), _appConfig.WritingPasses.MinimumPasses),
+                MaximumPasses = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_MAX_PASSES"), _appConfig.WritingPasses.MaximumPasses),
+                OnePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_ONE_PASS_WEIGHT"), _appConfig.WritingPasses.OnePassWeight),
+                TwoToThreePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_TWO_TO_THREE_PASS_WEIGHT"), _appConfig.WritingPasses.TwoToThreePassWeight),
+                FourOrMorePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_FOUR_OR_MORE_PASS_WEIGHT"), _appConfig.WritingPasses.FourOrMorePassWeight)
+            });
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
         _screenContextStore = new InMemoryScreenContextStore(5);
         int recentHistoryForPrompt = GetIntSetting(
@@ -2368,11 +2380,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task GenerateStarWritingAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
-        CancellationToken token = _operationController.BeginNewOperation("Select words, compose, and rate five Star writings.");
+        CancellationToken token = _operationController.BeginNewOperation("Select words, compose, refine through writing passes, and rate five Star writings.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing five word pairs, composing from them, then rating the five writings.";
+            Status = starId + " is choosing five word pairs, composing them, and selecting its configured refinement pass count before final rating.";
         });
         try
         {
@@ -2398,14 +2410,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarOutput = output.ToString().TrimEnd();
                 DebugJson = JsonSerializer.Serialize(new
                 {
-                    feature = "star-writing-three-stage-generation",
+                    feature = "star-writing-iterative-pass-generation",
                     vectorCategoryOrder = StarWritingEmotionVector.Categories,
                     result
                 }, _jsonOptions);
                 string repairMessage = result.RepairedRatingCount > 0
                     ? " Re-rated " + result.RepairedRatingCount + " older writings whose vectors were incomplete."
                     : string.Empty;
-                Status = starId + " finished five writings; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
+                Status = starId + " finished " + result.CompletedPassCount + " of " + result.SelectedPassCount + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
                 IsProcessingRuntime = false;
             });
             await PublishWritingShelfEventAsync("StarWritingGenerated", starId, result.State, result.Batch.Items.Select(x => x.Writing).ToList(), Status).ConfigureAwait(false);

@@ -534,7 +534,7 @@ public sealed partial class MainViewModel
                 string repairMessage = writingResult.RepairedRatingCount > 0
                     ? " Re-rated " + writingResult.RepairedRatingCount + " older writings whose vectors were incomplete."
                     : string.Empty;
-                string message = starId + " created five writings; " + writingResult.PersistedCount + " passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told." + repairMessage;
+                string message = starId + " completed " + writingResult.CompletedPassCount + " of " + writingResult.SelectedPassCount + " writing passes with " + writingResult.AppliedImprovementCount + " accepted replacements; " + writingResult.PersistedCount + " writings passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told." + repairMessage;
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

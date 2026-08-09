@@ -46,6 +46,16 @@ namespace Wds.SixStars.Api.Agents
             return Task.FromResult(result);
         }
 
+        public Task<StarWritingImprovementResult> ImproveWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, StarWritingGenerationResult generation, int passNumber, int totalPasses, CancellationToken cancellationToken)
+        {
+            // Deterministic mock keeps strong candidates unchanged while still exercising the reusable pass contract.
+            return Task.FromResult(new StarWritingImprovementResult
+            {
+                Replacements = new List<StarWritingImprovementReplacement>(),
+                RawModelJson = "[]"
+            });
+        }
+
         public Task<StarWritingReviewResult> RateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, StarWritingGenerationResult generation, CancellationToken cancellationToken)
         {
             StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
