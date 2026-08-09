@@ -107,7 +107,10 @@ namespace Wds.SixStars.Api.Writings
                     .ThenBy(x => x.Index)
                     .ToList();
                 RebuildUsedWordsFromPersistedWritings(state);
-                await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+                // Once generation and review have completed, make the five statements durable even
+                // if foreground activity cancels the background loop a moment later. The shared
+                // append-only log and the per-Star state are written together under the store gate.
+                await _store.SaveGeneratedBatchAsync(state, profile.DisplayName, batch, CancellationToken.None).ConfigureAwait(false);
                 long saveFinishedAt = totalTimer.ElapsedMilliseconds;
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingTiming] " + profile.StarId

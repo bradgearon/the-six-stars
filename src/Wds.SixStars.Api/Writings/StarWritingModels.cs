@@ -79,6 +79,24 @@ namespace Wds.SixStars.Api.Writings
         public List<StarWritingHistoryItem> Items { get; set; } = new List<StarWritingHistoryItem>();
     }
 
+    /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
+    public sealed class StarWritingStatementLogEntry
+    {
+        public int Version { get; set; } = 1;
+        public string Id { get; set; } = string.Empty;
+        public string SourceBatchId { get; set; } = string.Empty;
+        public string StarId { get; set; } = string.Empty;
+        public string Speaker { get; set; } = string.Empty;
+        public DateTimeOffset GeneratedAt { get; set; }
+        public int Index { get; set; }
+        public List<string> WordsUsed { get; set; } = new List<string>();
+        public string Statement { get; set; } = string.Empty;
+        public string EmotionalVector { get; set; } = string.Empty;
+        public Dictionary<string, double> Scores { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        public bool Persisted { get; set; }
+        public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
+    }
+
     public sealed class PersistedStarWriting
     {
         public string Id { get; set; } = string.Empty;

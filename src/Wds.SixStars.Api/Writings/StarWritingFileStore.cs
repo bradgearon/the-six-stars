@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,10 @@ namespace Wds.SixStars.Api.Writings
             AllowTrailingCommas = true,
             ReadCommentHandling = JsonCommentHandling.Skip
         };
+        private readonly JsonSerializerOptions _jsonLineOptions = new JsonSerializerOptions
+        {
+            WriteIndented = false
+        };
 
         public StarWritingFileStore(string rootDirectory)
         {
@@ -27,6 +32,7 @@ namespace Wds.SixStars.Api.Writings
         }
 
         public string RootDirectory => _rootDirectory;
+        public string AllStatementsLogPath => Path.Combine(_rootDirectory, "all-star-writing-statements.jsonl");
 
         public static StarWritingFileStore CreateDefault()
         {
@@ -67,18 +73,30 @@ namespace Wds.SixStars.Api.Writings
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                await SaveStateUnderGateAsync(state, cancellationToken).ConfigureAwait(false);
+            }
+            finally { _gate.Release(); }
+        }
+
+        /// <summary>
+        /// Appends every reviewed candidate to one shared JSON Lines file, then saves the Star's
+        /// normal notes state. The aggregate log is deliberately not removed by ClearAsync.
+        /// </summary>
+        public async Task SaveGeneratedBatchAsync(
+            StarWritingNotesState state,
+            string speaker,
+            StarWritingHistoryBatch batch,
+            CancellationToken cancellationToken)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (batch == null) throw new ArgumentNullException(nameof(batch));
+
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
                 Directory.CreateDirectory(_rootDirectory);
-                state = Normalize(state, state.StarId);
-                state.UpdatedAt = DateTimeOffset.UtcNow;
-                string path = BuildPath(state.StarId);
-                string temp = path + ".tmp";
-                using (FileStream stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
-                {
-                    await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken).ConfigureAwait(false);
-                    await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                }
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(temp, path);
+                await AppendBatchUnderGateAsync(state.StarId, speaker, batch, cancellationToken).ConfigureAwait(false);
+                await SaveStateUnderGateAsync(state, cancellationToken).ConfigureAwait(false);
             }
             finally { _gate.Release(); }
         }
@@ -92,6 +110,75 @@ namespace Wds.SixStars.Api.Writings
                 if (File.Exists(path)) File.Delete(path);
             }
             finally { _gate.Release(); }
+        }
+
+        private async Task SaveStateUnderGateAsync(StarWritingNotesState state, CancellationToken cancellationToken)
+        {
+            Directory.CreateDirectory(_rootDirectory);
+            state = Normalize(state, state.StarId);
+            state.UpdatedAt = DateTimeOffset.UtcNow;
+            string path = BuildPath(state.StarId);
+            string temp = path + ".tmp";
+            using (FileStream stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
+            {
+                await JsonSerializer.SerializeAsync(stream, state, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            if (File.Exists(path)) File.Delete(path);
+            File.Move(temp, path);
+        }
+
+        private async Task AppendBatchUnderGateAsync(
+            string starId,
+            string speaker,
+            StarWritingHistoryBatch batch,
+            CancellationToken cancellationToken)
+        {
+            if (batch.Items == null || batch.Items.Count == 0) return;
+
+            StringBuilder lines = new StringBuilder();
+            foreach (StarWritingHistoryItem item in batch.Items.Where(x => x != null))
+            {
+                StarWritingEmotionVector.TryNormalizeComplete(
+                    item.EmotionalVector,
+                    out string normalizedVector,
+                    out Dictionary<string, StarWritingEmotionValue> values);
+
+                Dictionary<string, double> scores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                foreach (string category in StarWritingEmotionVector.Categories)
+                {
+                    if (values.TryGetValue(category, out StarWritingEmotionValue? value))
+                    {
+                        scores[category] = value.Score;
+                    }
+                }
+
+                StarWritingStatementLogEntry entry = new StarWritingStatementLogEntry
+                {
+                    Id = item.Id,
+                    SourceBatchId = item.SourceBatchId,
+                    StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(),
+                    Speaker = string.IsNullOrWhiteSpace(speaker) ? (string.IsNullOrWhiteSpace(starId) ? "Unknown Star" : starId.Trim()) : speaker.Trim(),
+                    GeneratedAt = item.GeneratedAt,
+                    Index = item.Index,
+                    WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
+                    Statement = item.Writing ?? string.Empty,
+                    EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? (item.EmotionalVector ?? string.Empty) : normalizedVector,
+                    Scores = scores,
+                    Persisted = item.Persisted,
+                    MatchedPersistenceRuleIds = (item.MatchedPersistenceRuleIds ?? new List<string>()).ToList()
+                };
+                lines.Append(JsonSerializer.Serialize(entry, _jsonLineOptions));
+                lines.Append('\n');
+            }
+
+            if (lines.Length == 0) return;
+            byte[] bytes = Encoding.UTF8.GetBytes(lines.ToString());
+            using (FileStream stream = new FileStream(AllStatementsLogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 8192, true))
+            {
+                await stream.WriteAsync(bytes, 0, bytes.Length, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         private string BuildPath(string starId) => Path.Combine(_rootDirectory, SafeName(starId) + "-writing-notes.json");
