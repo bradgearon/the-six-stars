@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +11,10 @@ namespace Wds.SixStars.Api.Writings
 {
     public sealed class StarWritingService
     {
+        private const string GlobalOverallRuleId = "global-overall-excellence";
+        private const double DefaultGlobalOverallThreshold = 80.0;
+        private static readonly double GlobalOverallThreshold = ReadGlobalOverallThreshold();
+
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
         private readonly StarWritingFileStore _store;
@@ -452,7 +457,31 @@ namespace Wds.SixStars.Api.Writings
                 bool qualifies = isAny ? checks.Any(x => x) : checks.All(x => x);
                 if (qualifies) matched.Add(string.IsNullOrWhiteSpace(rule.Id) ? "writing-rule" : rule.Id.Trim());
             }
+
+            // Every Star also gets the same conservative excellence backstop. The comparison is
+            // deliberately strict: an Overall score of exactly 80 does not qualify at the default
+            // threshold, while 80.01 and above do. Character-specific rules remain the primary
+            // route; this catches rare excellent pieces whose strengths do not fit their rule shape.
+            if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
+                && overall.Score > GlobalOverallThreshold
+                && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
+            {
+                matched.Add(GlobalOverallRuleId);
+            }
+
             return matched;
+        }
+
+        private static double ReadGlobalOverallThreshold()
+        {
+            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_THRESHOLD");
+            if (!string.IsNullOrWhiteSpace(configured)
+                && double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+            {
+                return Math.Max(0.0, Math.Min(100.0, parsed));
+            }
+
+            return DefaultGlobalOverallThreshold;
         }
 
         private static IEnumerable<KeyValuePair<string, StarWritingEmotionValue>> ReadEmotionValues(PersistedStarWriting writing)
