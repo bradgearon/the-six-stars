@@ -172,6 +172,11 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void setListener(Listener value) { listener = value == null ? NO_OP_LISTENER : value; }
 
     void start() { playbackQueue.start(); }
+    boolean isSocketConnected() {
+        synchronized (socketLock) {
+            return audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed();
+        }
+    }
     boolean isIdle() { return playbackQueue.isIdle(); }
     boolean isPaused() { return playbackQueue.isPaused(); }
     boolean isDesktopStreamActive() { return desktopStreamActive; }
@@ -192,8 +197,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void connect(String host, int port) {
         if (host == null || host.trim().isEmpty() || port <= 0) return;
         synchronized (socketLock) {
-            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
-                    && host.equals(connectedHost) && port == connectedPort) return;
+            boolean sameEndpoint = host.equals(connectedHost) && port == connectedPort;
+            if (sameEndpoint && audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()) return;
+            if (sameEndpoint && audioSocketThread != null && audioSocketThread.isAlive()) return;
             closeSocketLocked();
             connectedHost = host;
             connectedPort = port;
