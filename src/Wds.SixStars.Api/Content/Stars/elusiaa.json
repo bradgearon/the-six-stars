@@ -987,11 +987,25 @@
           "minimumScore": 65
         }
       ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
     }
   ],
   "writingPersistenceQualityGate": {
     "minimumOverallScore": 60,
-    "minimumSupportingMatches": 4,
+    "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",

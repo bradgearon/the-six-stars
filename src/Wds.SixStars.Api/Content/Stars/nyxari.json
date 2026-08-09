@@ -956,11 +956,39 @@
           "minimumScore": 80
         }
       ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
     }
   ],
   "writingPersistenceQualityGate": {
     "minimumOverallScore": 60,
-    "minimumSupportingMatches": 4,
+    "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",

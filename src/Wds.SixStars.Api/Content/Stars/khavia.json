@@ -956,10 +956,20 @@
         {
           "category": "Playful",
           "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
         },
         {
-          "category": "Hopeful",
-          "minimumScore": 65
+          "category": "Original",
+          "minimumScore": 60
         }
       ]
     },
@@ -974,17 +984,13 @@
         {
           "category": "WorthRetelling",
           "minimumScore": 75
-        },
-        {
-          "category": "Coherent",
-          "minimumScore": 70
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
     "minimumOverallScore": 60,
-    "minimumSupportingMatches": 4,
+    "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",

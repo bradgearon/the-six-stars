@@ -945,15 +945,11 @@
       "requirements": [
         {
           "category": "Deep",
-          "minimumScore": 85
+          "minimumScore": 80
         },
         {
           "category": "Haunting",
-          "minimumScore": 85
-        },
-        {
-          "category": "Characterful",
-          "minimumScore": 70
+          "minimumScore": 80
         }
       ]
     },
@@ -966,19 +962,43 @@
           "minimumScore": 75
         },
         {
-          "category": "Characterful",
-          "minimumScore": 75
+          "category": "Original",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
         },
         {
           "category": "Original",
-          "minimumScore": 70
+          "minimumScore": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
     "minimumOverallScore": 62,
-    "minimumSupportingMatches": 4,
+    "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",

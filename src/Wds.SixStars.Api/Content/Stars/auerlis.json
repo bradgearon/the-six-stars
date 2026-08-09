@@ -956,10 +956,6 @@
         {
           "category": "Surprising",
           "minimumScore": 70
-        },
-        {
-          "category": "Original",
-          "minimumScore": 70
         }
       ]
     },
@@ -974,17 +970,41 @@
         {
           "category": "WorthRetelling",
           "minimumScore": 75
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
         },
         {
-          "category": "Memorable",
-          "minimumScore": 75
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
     "minimumOverallScore": 58,
-    "minimumSupportingMatches": 4,
+    "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",
