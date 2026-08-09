@@ -2766,12 +2766,7 @@ public final class MainActivity extends ComponentActivity {
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
-        String preparedPrefixIntentId = maybeSpeakPreparedBeforeReply();
-        try {
-            if (preparedPrefixIntentId.length() > 0) requestJson.put("preparedSpeechPrefixIntentId", preparedPrefixIntentId);
-        } catch (Exception ex) {
-            appendVoiceDebug("Prepared prefix id could not be attached", ex.toString());
-        }
+        maybeSpeakPreparedBeforeReply();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Image request sent; keeping the screen on while the Star answers.");
         invalidatePrefetchedInitiative("The player sent an image, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Image request has priority over at-rest initiative.");
@@ -2881,8 +2876,6 @@ public final class MainActivity extends ComponentActivity {
             }
             appendVoiceDebug("Prepared Star speech synchronized", reason + ", star=" + starId
                     + ", ready=" + result.readyItems.size() + ", preparing=" + result.preparingCount
-                    + ", active=" + result.activeIntentCount + ", pending=" + result.pendingIntentCount
-                    + ", high=" + result.highPriorityIntentCount
                     + ", highest=" + result.highestPriority + " " + String.format(Locale.US, "%.1f", result.highestEffectiveScore));
         }));
     }
@@ -2912,40 +2905,21 @@ public final class MainActivity extends ComponentActivity {
             prodPreparedSpeechIndicatorText.setFocusable(false);
             prodPreparedSpeechIndicatorText.setOnClickListener(null);
         } else if (item != null) {
-            boolean hasHighBacklog = result != null && result.highPriorityIntentCount > 0;
-            boolean highVisible = item.priorityRank() >= 3 || hasHighBacklog;
-            String marker = highVisible ? "●" : "○";
-            String backlog = hasHighBacklog
-                    ? " • " + result.highPriorityIntentCount + " high active"
-                    : result != null && result.pendingIntentCount > 0 ? " • " + result.pendingIntentCount + " pending" : "";
+            String marker = item.priorityRank() >= 3 ? "●" : "○";
             prodPreparedSpeechIndicatorText.setText(marker + " " + capitalize(item.priority) + " thought ready — "
                     + String.format(Locale.US, "%.0f", item.effectiveScore)
-                    + backlog
                     + (item.topic.length() > 0 ? " • " + clip(item.topic, 70) : ""));
-            prodPreparedSpeechIndicatorText.setTextColor(highVisible ? 0xFFFFD27A : 0xFF9EE8F0);
+            prodPreparedSpeechIndicatorText.setTextColor(item.priorityRank() >= 3 ? 0xFFFFD27A : 0xFF9EE8F0);
             prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
             prodPreparedSpeechIndicatorText.setClickable(true);
             prodPreparedSpeechIndicatorText.setFocusable(true);
-            prodPreparedSpeechIndicatorText.setContentDescription(hasHighBacklog
-                    ? "Prepared Star thought ready. High-priority thoughts are also active. Tap to listen."
-                    : "Prepared Star thought ready. Tap to listen.");
+            prodPreparedSpeechIndicatorText.setContentDescription("Prepared Star thought ready. Tap to listen.");
             prodPreparedSpeechIndicatorText.setOnClickListener(v -> playPreparedSpeech(item, "indicator tapped"));
-        } else if (result != null && result.activeIntentCount > 0) {
-            boolean hasHigh = result.highPriorityIntentCount > 0 || "high".equals(result.highestPriority) || "critical".equals(result.highestPriority);
-            String marker = result.preparingCount > 0 ? "⋯" : hasHigh ? "●" : "○";
-            String state = result.preparingCount > 0 ? "thought preparing" : "thoughts queued";
-            String countText = result.highPriorityIntentCount > 0
-                    ? " • " + result.highPriorityIntentCount + " high"
-                    : result.pendingIntentCount > 0 ? " • " + result.pendingIntentCount + " pending" : "";
-            prodPreparedSpeechIndicatorText.setText(marker + " " + capitalize(result.highestPriority) + " " + state + " — "
-                    + String.format(Locale.US, "%.0f", result.highestEffectiveScore)
-                    + countText
-                    + (result.highestIntentTopic.length() > 0 ? " • " + clip(result.highestIntentTopic, 70) : ""));
-            prodPreparedSpeechIndicatorText.setTextColor(hasHigh ? 0xFFFFD27A : 0xFF9EE8F0);
+        } else if (result != null && result.preparingCount > 0) {
+            prodPreparedSpeechIndicatorText.setText("⋯ " + selectedStarName() + " is preparing something to say");
+            prodPreparedSpeechIndicatorText.setTextColor(0xFF9EE8F0);
             prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
             prodPreparedSpeechIndicatorText.setClickable(false);
-            prodPreparedSpeechIndicatorText.setFocusable(false);
-            prodPreparedSpeechIndicatorText.setContentDescription(selectedStarName() + " has queued speech intentions.");
             prodPreparedSpeechIndicatorText.setOnClickListener(null);
         } else {
             prodPreparedSpeechIndicatorText.setText("");
@@ -2977,6 +2951,11 @@ public final class MainActivity extends ComponentActivity {
         if (rank >= 3) {
             if (item.effectiveScore < policy.highPriorityAutoSpeakThreshold) return;
             if (dwellMs < Math.max(1, policy.minimumPageDwellSeconds) * 1000L) return;
+            double probability = rank >= 4 ? 1.0 : 0.85;
+            if (Math.random() > probability) {
+                selectedStarVisibleSinceMs = now - Math.max(1, policy.minimumPageDwellSeconds / 2) * 1000L;
+                return;
+            }
         } else if (rank == 2) {
             if (item.effectiveScore < policy.mediumPriorityAutoSpeakThreshold) return;
             if (dwellMs < Math.max(policy.minimumPageDwellSeconds, policy.mediumPriorityPageDwellSeconds) * 1000L) return;
@@ -2996,27 +2975,20 @@ public final class MainActivity extends ComponentActivity {
         playPreparedSpeech(item, "at-rest page dwell");
     }
 
-    private String maybeSpeakPreparedBeforeReply() {
+    private void maybeSpeakPreparedBeforeReply() {
         PreparedSpeechStore.SyncResult policy = preparedSpeechSyncResult;
-        if (!policy.speakBeforeReplyEnabled || !starInitiativeEnabled || preparedSpeechPlaybackActive || recording || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return "";
-        boolean playOnPhone = playOnPhoneCheck == null || playOnPhoneCheck.isChecked();
-        if (!playOnPhone) return "";
+        if (!policy.speakBeforeReplyEnabled || !starInitiativeEnabled || preparedSpeechPlaybackActive || recording || !(phoneVoiceService == null || phoneVoiceService.isIdle())) return;
         PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
-        if (item == null) return "";
-        int rank = item.priorityRank();
-        if (rank >= 3) {
-            if (item.effectiveScore < policy.highPriorityAutoSpeakThreshold) return "";
-            playPreparedSpeech(item, "before foreground reply");
-            return item.intentId;
-        }
-        if (rank != 2 || item.effectiveScore < policy.mediumPriorityAutoSpeakThreshold) return "";
+        if (item == null) return;
         double estimatedSeconds = item.estimatedDurationSeconds();
-        if (policy.speakBeforeReplyMaximumSeconds > 0 && estimatedSeconds > policy.speakBeforeReplyMaximumSeconds) return "";
-        if (policy.speakBeforeReplyProbability > 0.0 && Math.random() <= policy.speakBeforeReplyProbability) {
-            playPreparedSpeech(item, "before foreground reply");
-            return item.intentId;
-        }
-        return "";
+        if (policy.speakBeforeReplyMaximumSeconds > 0 && estimatedSeconds > policy.speakBeforeReplyMaximumSeconds) return;
+        int rank = item.priorityRank();
+        if (rank >= 3 && item.effectiveScore < policy.highPriorityAutoSpeakThreshold) return;
+        if (rank == 2 && item.effectiveScore < policy.mediumPriorityAutoSpeakThreshold) return;
+        double probability = rank >= 3
+                ? policy.highPrioritySpeakBeforeReplyProbability
+                : rank == 2 ? policy.speakBeforeReplyProbability : 0.0;
+        if (probability > 0.0 && Math.random() <= probability) playPreparedSpeech(item, "before foreground reply");
     }
 
     private void playPreparedSpeech(PreparedSpeechStore.CachedItem item, String reason) {
@@ -3127,11 +3099,10 @@ public final class MainActivity extends ComponentActivity {
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Text request sent; keeping the screen on while the Star answers.");
         invalidatePrefetchedInitiative("The player sent a text message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Text request has priority over at-rest initiative.");
-        String preparedPrefixIntentId = maybeSpeakPreparedBeforeReply();
+        maybeSpeakPreparedBeforeReply();
 
         try {
             JSONObject json = baseRequestJson();
-            if (preparedPrefixIntentId.length() > 0) json.put("preparedSpeechPrefixIntentId", preparedPrefixIntentId);
             json.put("playerText", playerText);
             json.put("girlfriendProposal", looksLikeGirlfriendProposal(playerText));
             setDebug("Sending text", "Message box cleared. The request was placed directly on the persistent WebSocket. Voice will arrive on the phone audio socket when generated.");
@@ -3251,12 +3222,7 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
 
-        String preparedPrefixIntentId = maybeSpeakPreparedBeforeReply();
-        try {
-            if (preparedPrefixIntentId.length() > 0) requestJson.put("preparedSpeechPrefixIntentId", preparedPrefixIntentId);
-        } catch (Exception ex) {
-            appendVoiceDebug("Prepared prefix id could not be attached", ex.toString());
-        }
+        maybeSpeakPreparedBeforeReply();
         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Voice request sent; keeping the screen on through transcription, LLM, and speech.");
         invalidatePrefetchedInitiative("The player sent a voice message, so the prepared at-rest line is no longer current.");
         pauseStarInitiativeBackgroundService("Voice request has priority over at-rest initiative.");

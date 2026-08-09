@@ -9,6 +9,7 @@ For each replacement:
 - you may keep or replace either word;
 - explicitly use both returned words;
 - prefer fresh words when reasonable;
+- you may use the supplied seedWords array for word ideas; you do not need to use any particular seed word;
 - keep it concise and recognizably yours;
 - give the old writing and the new writing an overall score from 0 to 100 using the same standard.
 

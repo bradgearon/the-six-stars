@@ -114,7 +114,7 @@ namespace Wds.SixStars.Ui.Configuration
         public bool RespectExplicitLengthRequests { get; set; } = true;
         public bool SpeakBeforeReplyEnabled { get; set; } = true;
         public double SpeakBeforeReplyProbability { get; set; } = 0.30;
-        public double HighPrioritySpeakBeforeReplyProbability { get; set; } = 1.00;
+        public double HighPrioritySpeakBeforeReplyProbability { get; set; } = 0.80;
         public int SpeakBeforeReplyMaximumSeconds { get; set; } = 12;
         public int MinimumPageDwellSeconds { get; set; } = 8;
         public int MediumPriorityPageDwellSeconds { get; set; } = 18;
@@ -128,6 +128,8 @@ namespace Wds.SixStars.Ui.Configuration
     {
         /// <summary>When false, the writing shelf runs only its initial word-pair/composition pass.</summary>
         public bool Enabled { get; set; } = true;
+        /// <summary>When true, each writing cycle receives 100 optional random noun/adjective/verb ideas.</summary>
+        public bool SeedWordsEnabled { get; set; } = true;
         public int MinimumPasses { get; set; } = 1;
         public int MaximumPasses { get; set; } = 6;
         public double OnePassWeight { get; set; } = 0.50;

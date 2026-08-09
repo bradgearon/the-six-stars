@@ -66,6 +66,7 @@ namespace Wds.SixStars.Api.Ai
         public async Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(
             StarProfile profile,
             StarWritingNotesState state,
+            IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
         {
             string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
@@ -90,6 +91,7 @@ namespace Wds.SixStars.Api.Ai
                     8,
                     600),
                 allUsedWordsText,
+                seedWords = NormalizeSeedWords(seedWords),
                 recentGeneratedWordSets = (state.RecentGeneratedWordSets ?? new List<StarWritingGeneratedWordSet>())
                     .Where(x => x != null)
                     .OrderByDescending(x => x.GeneratedAt)
@@ -202,6 +204,7 @@ namespace Wds.SixStars.Api.Ai
             if (result == null) throw new InvalidOperationException("Writing composition returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
             result.UsedWords = wordPairResult.WordPairs.Select(pair => pair.ToList()).ToList();
+            result.SeedWords = NormalizeSeedWords(seedWords);
             result.RawModelJson = "--- WORD PAIR SELECTION ---" + Environment.NewLine
                 + wordPairJson + Environment.NewLine
                 + "--- WRITING COMPOSITION ---" + Environment.NewLine
@@ -241,6 +244,7 @@ namespace Wds.SixStars.Api.Ai
                     10,
                     800),
                 allUsedWordsText,
+                seedWords = NormalizeSeedWords(generation.SeedWords),
                 passNumber = Math.Max(2, passNumber),
                 totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
@@ -800,6 +804,16 @@ namespace Wds.SixStars.Api.Ai
             return result;
         }
 
+        private static List<string> NormalizeSeedWords(IEnumerable<string>? seedWords)
+        {
+            return (seedWords ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 80))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(100)
+                .ToList();
+        }
+
         private static List<List<string>> NormalizeWritingWordPairs(IEnumerable<List<string>>? wordPairs)
         {
             List<List<string>> normalized = (wordPairs ?? Enumerable.Empty<List<string>>())
@@ -1148,7 +1162,6 @@ namespace Wds.SixStars.Api.Ai
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
             model.ThingsLearnedOrSuggestedByPlayer = CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8);
-            model.AddressedSpeechIntentIds = CleanList(model.AddressedSpeechIntentIds, 2);
             List<GirlfriendVectorItem> initiativeSpeechDecisionVector = NormalizeGirlfriendVector(model.SpeechDecisionVector, 1);
             bool initiativeVectorWantsSpeech = initiativeSpeechDecisionVector.Any(x => x != null && (x.Score > 0 || x.Confidence > 0));
             StarInteractionResponse response = new StarInteractionResponse
@@ -1177,7 +1190,6 @@ namespace Wds.SixStars.Api.Ai
                 NeedsMoreInformation = model.NeedsMoreInformation,
                 InformationNeeds = model.InformationNeeds ?? new List<InformationNeedVectorItem>(),
                 ThingsLearnedOrSuggestedByPlayer = model.ThingsLearnedOrSuggestedByPlayer ?? new List<string>(),
-                AddressedSpeechIntentIds = model.AddressedSpeechIntentIds ?? new List<string>(),
                 Debug = new DebugInfo
                 {
                     DetectedIntent = request.RequestType.ToString(),

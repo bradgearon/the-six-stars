@@ -7,6 +7,7 @@ Choose exactly five sets of two words.
 - Do not use the same word in multiple pairs very often; prefer ten distinct words.
 - Avoid every unavailable historical word when a fresh alternative is reasonably available.
 - Use common, everyday words sometimes.
+- You may use the supplied seedWords array for word ideas; you do not need to use any particular seed word.
 
 Do not form sentences, explain the choices, describe a theme, or speculate about how the words might be used.
 

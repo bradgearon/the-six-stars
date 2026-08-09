@@ -2062,11 +2062,6 @@ public sealed partial class MainViewModel
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
         context.Flags["returnAudioInline"] = request.ReturnAudioInline.ToString().ToLowerInvariant();
         context.Flags["prefetchForListen"] = request.PrefetchForListen.ToString().ToLowerInvariant();
-        if (!string.IsNullOrWhiteSpace(request.PreparedSpeechPrefixIntentId))
-        {
-            context.Flags["preparedSpeechPrefixIntentId"] = request.PreparedSpeechPrefixIntentId.Trim();
-            context.RecentEvents.Add("Android already started one prepared high-priority thought before this reply, so the foreground answer must not repeat or consume another durable speech intention.");
-        }
         if (request.GirlfriendProposal || GirlfriendProposalIntentDetector.IsProposal(request.PlayerText))
         {
             context.Flags["girlfriendProposalDetected"] = "true";
@@ -2469,21 +2464,6 @@ public sealed partial class MainViewModel
                         ? "Voice is streamed over the phone audio socket on port " + ResolveMobileBridgeAudioPort() + "."
                         : "Phone voice was not requested."
         };
-    }
-
-    private async Task PrepareExistingSpeechIntentQueuesAsync(string reason)
-    {
-        foreach (string starId in StarIds.ToList())
-        {
-            try
-            {
-                await PrepareHighPrioritySpeechForStarAsync(starId, reason).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                OnUiThread(() => AppendMobileBridgeVoiceDebug("Speech intention startup recovery failed", starId + ": " + ex.Message));
-            }
-        }
     }
 
     private async Task PrepareHighPrioritySpeechForStarAsync(string starId, string reason)

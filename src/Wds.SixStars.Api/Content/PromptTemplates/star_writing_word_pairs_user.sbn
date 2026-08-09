@@ -22,6 +22,16 @@ PRIVATE OR CANON DETAILS THAT MAY SHAPE WHAT CATCHES YOUR ATTENTION
 - {{ item }}
 {{ end }}
 
+SEED WORDS
+These are optional ideas. Use any that help, or ignore them.
+{{ if data.seedWords.size == 0 }}
+(disabled)
+{{ else }}
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
 UNAVAILABLE HISTORICAL WORDS
 {{ if data.allUsedWordsText == "" }}
 (none yet)
@@ -35,7 +45,7 @@ These are the newest complete five-pair selections. Prefer fresh words instead o
 (none yet)
 {{ else }}
 {{ for word_set in data.recentGeneratedWordSets }}
-Set {{ word_set.index }} — {{ word_set.generatedAt }}
+Set {{ word_set.index }} â€” {{ word_set.generatedAt }}
 {{ for pair in word_set.pairs }}
 - {{ pair.first }} + {{ pair.second }}
 {{ end }}

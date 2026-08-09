@@ -19,6 +19,7 @@ namespace Wds.SixStars.Api.Writings
         private readonly IStarWritingAgent _agent;
         private readonly StarWritingFileStore _store;
         private readonly StarWritingPassOptions _passOptions;
+        private readonly IStarWritingSeedWordProvider? _seedWordProvider;
         private readonly Random _random;
         private readonly SemaphoreSlim _operationGate = new SemaphoreSlim(1, 1);
 
@@ -27,12 +28,14 @@ namespace Wds.SixStars.Api.Writings
             IStarWritingAgent agent,
             StarWritingFileStore store,
             StarWritingPassOptions? passOptions = null,
+            IStarWritingSeedWordProvider? seedWordProvider = null,
             Random? random = null)
         {
             _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
             _agent = agent ?? throw new ArgumentNullException(nameof(agent));
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _passOptions = passOptions ?? new StarWritingPassOptions();
+            _seedWordProvider = seedWordProvider;
             _random = random ?? new Random();
         }
 
@@ -63,7 +66,8 @@ namespace Wds.SixStars.Api.Writings
                 // Pass one deliberately remains two staged requests: choose five unrelated word
                 // pairs without revealing the creative task, then compose from those fixed pairs.
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
-                StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
+                IReadOnlyList<string> seedWords = _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>();
+                StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, seedWords, cancellationToken).ConfigureAwait(false);
                 NormalizeGeneration(generation);
                 RecordGeneratedWordSet(state, generation.UsedWords);
                 generation.SelectedPassCount = selectedPassCount;
@@ -425,6 +429,7 @@ namespace Wds.SixStars.Api.Writings
         {
             generation.Jokes ??= new List<string>();
             generation.UsedWords ??= new List<List<string>>();
+            generation.SeedWords ??= new List<string>();
             generation.Items ??= new List<StarWritingCandidate>();
             generation.Passes ??= new List<StarWritingPassSnapshot>();
 

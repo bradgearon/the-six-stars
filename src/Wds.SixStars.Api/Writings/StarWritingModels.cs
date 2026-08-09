@@ -85,6 +85,8 @@ namespace Wds.SixStars.Api.Writings
         // The composition response supplies Jokes. UsedWords is attached from the separate word-pair selection response so Jokes[i] always maps to UsedWords[i].
         public List<string> Jokes { get; set; } = new List<string>();
         public List<List<string>> UsedWords { get; set; } = new List<List<string>>();
+        /// <summary>Optional random seed vocabulary shared by every pass in this writing cycle.</summary>
+        public List<string> SeedWords { get; set; } = new List<string>();
 
         // Normalized internal view used by the review, history, and persistence pipeline.
         public List<StarWritingCandidate> Items { get; set; } = new List<StarWritingCandidate>();

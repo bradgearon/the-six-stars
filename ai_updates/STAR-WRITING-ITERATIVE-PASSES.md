@@ -54,6 +54,7 @@ Weights are normalized against the configured range, so ranges such as `2..4` or
 ```json
 "WritingPasses": {
   "Enabled": true,
+  "SeedWordsEnabled": true,
   "MinimumPasses": 1,
   "MaximumPasses": 6,
   "OnePassWeight": 0.5,
@@ -67,6 +68,7 @@ Weights are normalized against the configured range, so ranges such as `2..4` or
 Environment overrides are available:
 
 - `SIX_STARS_WRITING_PASSES_ENABLED`
+- `SIX_STARS_WRITING_SEED_WORDS_ENABLED`
 - `SIX_STARS_WRITING_MIN_PASSES`
 - `SIX_STARS_WRITING_MAX_PASSES`
 - `SIX_STARS_WRITING_ONE_PASS_WEIGHT`
@@ -86,3 +88,9 @@ The per-Star writing-notes state stores this in `RecentGeneratedWordSets` and
 selection request; later rewrite-pass substitutions do not retroactively alter that
 history. Existing Version 5 notes files migrate to Version 6 and seed the new fields
 from available recent writing history.
+
+## Optional random seed words
+
+When `SeedWordsEnabled` is true, the desktop host creates one array of 100 optional word ideas at the start of the writing cycle. The array is shared by the initial private word-pair request and every later improvement pass. The prompt only tells the Star that she may use the words for ideas; it does not require any seed to appear in the result.
+
+The generator uses relative weights of `0.50` noun, `0.25` adjective, and `0.40` verb. Because those values total `1.15`, they are normalized during random selection.

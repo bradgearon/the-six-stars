@@ -18,7 +18,7 @@ namespace Wds.SixStars.Api.Agents
     /// </summary>
     public sealed class MockStarAgent : IStarAgent, IStarWritingAgent
     {
-        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, CancellationToken cancellationToken)
+        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
         {
             string[][] pairs =
             {
@@ -41,6 +41,7 @@ namespace Wds.SixStars.Api.Agents
                 StarId = profile.StarId,
                 Jokes = lines.ToList(),
                 UsedWords = pairs.Select(x => x.ToList()).ToList(),
+                SeedWords = (seedWords ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(100).ToList(),
                 RawModelJson = "mock"
             };
             return Task.FromResult(result);

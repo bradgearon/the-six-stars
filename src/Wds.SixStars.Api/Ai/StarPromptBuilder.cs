@@ -843,10 +843,8 @@ namespace Wds.SixStars.Api.Ai
                 {
                     string goal = request.GameContext.Flags.TryGetValue("preparedSpeechIntentGoal", out string? goalValue) ? goalValue : string.Empty;
                     string topic = request.GameContext.Flags.TryGetValue("preparedSpeechIntentTopic", out string? topicValue) ? topicValue : string.Empty;
-                    string intentId = request.GameContext.Flags.TryGetValue("preparedSpeechIntentId", out string? intentIdValue) ? intentIdValue : string.Empty;
                     task.AppendLine("DURABLE WANTS-TO-SAY PREPARATION: this is a previously selected intention that must be spoken now for reliable later playback. Set hasSomethingToSay=true. Speak naturally as yourself and fulfill this exact communication goal without mentioning queues, preparation, files, scores, or the app: " + Truncate(goal, 900));
                     if (!string.IsNullOrWhiteSpace(topic)) task.AppendLine("Selected intention topic: " + Truncate(topic, 240));
-                    if (!string.IsNullOrWhiteSpace(intentId)) task.AppendLine("Because spokenText must fulfill it, include this exact id in addressedSpeechIntentIds: " + Truncate(intentId, 120));
                 }
                 task.AppendLine("This is not a player statement. Do not treat PlayerText as something the Last Cat said. Do not thank him for asking. Do not score emotions or create memory from this.");
                 if (IsTruthyFlag(request, "starInitiativeForce"))
@@ -876,17 +874,6 @@ namespace Wds.SixStars.Api.Ai
                 {
                     AppendFastChatAnswerGuidance(task, profile, request, state);
                 }
-                if (IsTruthyFlag(request, "foregroundSpeechIntent"))
-                {
-                    string intentId = GetFlag(request.GameContext, "foregroundSpeechIntentId");
-                    string goal = GetFlag(request.GameContext, "foregroundSpeechIntentGoal");
-                    string topic = GetFlag(request.GameContext, "foregroundSpeechIntentTopic");
-                    task.AppendLine();
-                    task.AppendLine("UNRESOLVED HIGH-PRIORITY THING YOU WANT TO SAY");
-                    task.AppendLine("Answer the Last Cat's current message directly, and in the same natural spoken response also fulfill this unresolved communication goal. Do not mention intentions, queues, priority, scores, files, prompts, or the app: " + Truncate(goal, 900));
-                    if (!string.IsNullOrWhiteSpace(topic)) task.AppendLine("Natural topic: " + Truncate(topic, 240));
-                    task.AppendLine("When and only when your spokenText truly fulfills that goal, return this exact id in addressedSpeechIntentIds: " + Truncate(intentId, 120));
-                }
                 if (request.GameContext.Flags.TryGetValue("extraInformationContext", out string? extraInformationContext) && !string.IsNullOrWhiteSpace(extraInformationContext))
                 {
                     task.AppendLine();
@@ -912,8 +899,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else if (request.RequestType == RequestType.StarInitiative)
             {
-                contract.AppendLine("Return star initiative JSON only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText, addressedSpeechIntentIds.");
-                contract.AppendLine("addressedSpeechIntentIds must normally be []. During durable prepared-speech generation, include the exact supplied preparedSpeechIntentId only when spokenText fulfills that goal.");
+                contract.AppendLine("Return star initiative JSON only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText.");
                 contract.AppendLine("speechDecisionVector must contain exactly one item: itemId='saySomethingNow', displayName='Say something now', confidence 0-1, score 0-100, reason. Confidence is zero-based: any confidence can help the runtime accept the line, but score still describes urgency/desire.");
                 contract.AppendLine("hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, GIRLFRIEND HOURLY STATE, recent emotion state, or interstar feedback gives her a real reason to speak now.");
                 contract.AppendLine("spokenText is the second output: if hasSomethingToSay=true, it is exactly what she chooses to say as herself while the Last Cat is at rest; if false, it must be [].");
@@ -924,8 +910,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, thingsLearnedOrSuggestedByPlayer, and addressedSpeechIntentIds.");
-                contract.AppendLine("addressedSpeechIntentIds must be [] unless an UNRESOLVED HIGH-PRIORITY THING YOU WANT TO SAY was supplied above. Include only the exact supplied id, and only when spokenText actually fulfills that communication goal.");
+                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer.");
                 contract.AppendLine();
                 contract.AppendLine("informationNeeds is an array of objects with subject, confidence, and score.");
                 contract.AppendLine("The subject field chooses the information source and must be exactly one of: history, quotes, markers, lore, bestiary, characters, world, screen, story. When the latest message may need older context or information outside this prompt, return the informationNeeds array: one separate object for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas.");

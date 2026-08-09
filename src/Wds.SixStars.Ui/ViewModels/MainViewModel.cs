@@ -158,7 +158,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 OnePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_ONE_PASS_WEIGHT"), _appConfig.WritingPasses.OnePassWeight),
                 TwoToThreePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_TWO_TO_THREE_PASS_WEIGHT"), _appConfig.WritingPasses.TwoToThreePassWeight),
                 FourOrMorePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_FOUR_OR_MORE_PASS_WEIGHT"), _appConfig.WritingPasses.FourOrMorePassWeight)
-            });
+            },
+            new RandomStarWritingSeedWordProvider(
+                GetBooleanSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEED_WORDS_ENABLED"),
+                    _appConfig.WritingPasses.SeedWordsEnabled)));
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
         _screenContextStore = new InMemoryScreenContextStore(5);
         int recentHistoryForPrompt = GetIntSetting(
@@ -340,13 +344,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
         _runtime.SpeechIntentChanged += (_, args) =>
         {
-            if (args.ChangeType == "upserted"
-                || args.ChangeType == "requeued"
-                || args.ChangeType == "spoken"
-                || args.ChangeType == "dismissed")
-            {
-                _ = PrepareHighPrioritySpeechForStarAsync(args.Intent.StarId, "speech intention queue changed: " + args.ChangeType);
-            }
+            if (args.ChangeType == "upserted") _ = PrepareHighPrioritySpeechForStarAsync(args.Intent.StarId, "speech intention became eligible");
         };
         _runtime.DailyStateUpdateFailed += (_, ex) => OnUiThread(() =>
         {
@@ -450,7 +448,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         InitializeBackgroundWritingLoop();
         _ = RefreshSelectedWritingStateAsync("startup");
         InitializeMobileBridgeCommandsAndMaybeStart();
-        _ = PrepareExistingSpeechIntentQueuesAsync("startup queue recovery");
         _services.StarInitiative.Start();
 
         if (GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_ALWAYS_LISTENING"), _appConfig.VoiceInput.AlwaysListeningOnStartup))

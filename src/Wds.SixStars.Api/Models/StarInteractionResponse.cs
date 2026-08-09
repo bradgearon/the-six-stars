@@ -100,9 +100,6 @@ namespace Wds.SixStars.Api.Models
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
-        /// <summary>Validated durable wants-to-say intent ids fulfilled by this foreground spoken response.</summary>
-        public List<string> AddressedSpeechIntentIds { get; set; } = new List<string>();
-
         /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();

@@ -25,6 +25,16 @@ RELEVANT PRIVATE OR CANON DETAILS
 - {{ item }}
 {{ end }}
 
+SEED WORDS
+These are optional ideas for replacement words. Use any that help, or ignore them.
+{{ if data.seedWords.size == 0 }}
+(disabled)
+{{ else }}
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
 UNAVAILABLE HISTORICAL WORDS
 {{ if data.allUsedWordsText == "" }}
 (none yet)

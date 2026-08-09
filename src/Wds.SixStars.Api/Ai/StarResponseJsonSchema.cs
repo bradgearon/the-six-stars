@@ -403,15 +403,14 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "spokenText", "needsMoreInformation", "informationNeeds", "thingsLearnedOrSuggestedByPlayer", "addressedSpeechIntentIds" } },
+                { "required", new[] { "starId", "spokenText", "needsMoreInformation", "informationNeeds", "thingsLearnedOrSuggestedByPlayer" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
                         { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "needsMoreInformation", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "informationNeeds", InformationNeedArray(9) },
-                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
-                        { "addressedSpeechIntentIds", StringArray(2) }
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) }
                     }
                 }
             };
@@ -429,7 +428,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "starId", "hasSomethingToSay", "priority", "speechDecisionVector", "selectedTopic", "reason", "spokenText", "addressedSpeechIntentIds" } },
+                { "required", new[] { "starId", "hasSomethingToSay", "priority", "speechDecisionVector", "selectedTopic", "reason", "spokenText" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
@@ -438,8 +437,7 @@ namespace Wds.SixStars.Api.Ai
                         { "speechDecisionVector", GirlfriendVectorArray(1) },
                         { "selectedTopic", StringProperty(160) },
                         { "reason", StringProperty(260) },
-                        { "spokenText", StarInitiativeSpokenTextArray(3) },
-                        { "addressedSpeechIntentIds", StringArray(2) }
+                        { "spokenText", StarInitiativeSpokenTextArray(3) }
                     }
                 }
             };

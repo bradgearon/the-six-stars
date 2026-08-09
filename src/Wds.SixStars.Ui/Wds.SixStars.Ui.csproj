@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="CrypticWizard.RandomWordGenerator" Version="0.9.5" />
     <PackageReference Include="NAudio" Version="2.2.1" />
   </ItemGroup>
 
