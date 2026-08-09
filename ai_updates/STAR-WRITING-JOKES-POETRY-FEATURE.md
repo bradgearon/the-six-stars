@@ -26,37 +26,47 @@ Tap the cat portrait to open the production companion popup. Its **Star Writing 
 
 The Tell button is disabled when `pendingWritingCount` is zero. The popup also displays the number of new and saved pieces. The performance request can stream the resulting voice to the phone using the existing phone-audio path.
 
-## Three AI Requests
+## Four AI Requests
 
-### 1. Generate five writings
+### 1. Select five unrelated word pairs
 
-The first request receives:
+The first request is a compact word-selection task. It receives the Star's identity, personality, characteristic interests, relevant canon details, and only the words already attached to shelf-persisted writings.
 
-- a Scriban-rendered creative-writing character card containing only writing-relevant identity, personality, backstory, voice, attributes, imagery, quotes, and canon details;
-- the last ten individual writings;
-- the complete historical list of chosen words.
+It is not told that another request will use the words for jokes, poetry, aphorisms, or any other writing task. It returns exactly five arrays of two words:
 
-It must choose exactly five pairs of substantially unrelated words and create one finished joke, aphorism, or poetic fragment from each pair.
+```json
+{
+  "starId": "Nyxari",
+  "wordPairs": [
+    ["fragment", "echo"],
+    ["sextant", "shadow"],
+    ["rust", "chime"],
+    ["lichen", "gesture"],
+    ["clockwork", "gravity"]
+  ]
+}
+```
 
-Structured response:
+The response is validated as five complete pairs with no repeated word across the ten selections.
+
+### 2. Compose five writings from those fixed pairs
+
+The second request receives the full creative-writing character card, the last ten shelf-persisted writings, and the five preselected word pairs. It does not choose or replace words.
+
+For each pair, the prompt asks the Star to privately consider several possible connections, tensions, reversals, images, implications, misunderstandings, or punchlines before choosing the strongest finished joke, aphorism, tiny poem, or poetic fragment. Only the five finished strings are returned:
 
 ```json
 {
   "starId": "Nyxari",
   "jokes": [
     "How does a fragment greet an echo? With a quiet, knowing nod; they both know something is missing."
-  ],
-  "usedWords": [
-    ["Fragment", "Echo"]
   ]
 }
 ```
 
-The schema requires exactly five joke/writing strings and exactly five matching two-word arrays. `jokes[i]` is always paired with `usedWords[i]`. The service converts those parallel arrays into internal candidate records before the review request.
+The application attaches the exact Stage 1 word pairs to the matching strings before review, history, persistence, and shared-log processing. The composition prompt is rendered from `star_writing_generate_system.sbn` and `star_writing_generate_user.sbn`; the private selection prompt uses `star_writing_word_pairs_system.sbn` and `star_writing_word_pairs_user.sbn`.
 
-The generator prompt is rendered from `star_writing_generate_system.sbn` and `star_writing_generate_user.sbn`. It deliberately excludes romance mode, girlfriend mode, relationship statistics, inter-Star scoring rules, emotion matrices, story decks, TTS clone configuration, and other unrelated profile data. The last ten writings are rendered as compact prose lines, while the complete used-word history is rendered as a simple word list rather than serializing the entire writing state.
-
-### 2. Rate all five writings
+### 3. Rate all five writings
 
 A separate critic request receives a smaller Scriban-rendered evaluator card and the five candidates. Persistence thresholds are deliberately removed from both creative/evaluator prompt copies of the profile, so the model cannot aim at or inflate a save threshold; the deterministic service applies those rules afterward. It returns exactly five zero-based rating entries.
 
@@ -112,13 +122,13 @@ Example response:
 
 The service normalizes malformed, missing, or out-of-range vector entries before using them. The category dictionary is created only in memory while applying persistence rules or selecting a voice emotion; it is never written into the notes JSON. Former `score:confidence` vectors are accepted and deterministically reduced to scores during migration.
 
-### 3. Perform best/latest pending writing
+### 4. Perform best/latest pending writing
 
-The third request receives:
+The fourth request receives:
 
 - a compact Scriban-rendered performance character card;
-- the entire persisted writing collection, including generation date, persistence date, ratings, and told status;
-- the exact IDs currently eligible to be told.
+- up to the twelve newest untold persisted writings, including generation date, persistence date, ratings, and told status;
+- the exact candidate IDs currently eligible to be told.
 
 The Star chooses exactly five pending IDs when five or more are available, otherwise all pending IDs, according to her own preferences, recency, quality, contrast, and character. She returns a one-to-one TTS-ready spoken array in the same order:
 
@@ -151,7 +161,7 @@ SIX_STARS_WRITING_NOTES_DIRECTORY
 Each Star has a separate file containing:
 
 - `recentWritingHistory` — rolling last ten individual generated/rated pieces, including pieces that did not persist;
-- `allUsedWords` — complete case-insensitive historical word list;
+- `allUsedWords` — case-insensitive word list rebuilt only from shelf-persisted writings;
 - `persistedWritings` — durable pieces that passed at least one Star-specific rule;
 - generation/persistence/told timestamps;
 - normalized emotional vectors stored only as compact strings;
@@ -162,14 +172,13 @@ Clearing a Star's history clears that Star's writing-notes file. **Clear All Sta
 
 ## Prompt Context and Storage Revision
 
-The writing pipeline uses six Scriban templates:
+The writing pipeline uses dedicated Scriban user/system templates for word selection, composition, review, review repair, and performance:
 
-- `star_writing_generate_system.sbn`
-- `star_writing_generate_user.sbn`
-- `star_writing_review_system.sbn`
-- `star_writing_review_user.sbn`
-- `star_writing_performance_system.sbn`
-- `star_writing_performance_user.sbn`
+- `star_writing_word_pairs_system.sbn` / `star_writing_word_pairs_user.sbn`
+- `star_writing_generate_system.sbn` / `star_writing_generate_user.sbn`
+- `star_writing_review_system.sbn` / `star_writing_review_user.sbn`
+- `star_writing_review_repair_system.sbn` / `star_writing_review_repair_user.sbn`
+- `star_writing_performance_system.sbn` / `star_writing_performance_user.sbn`
 
 The generation prompt includes only the following Star fields:
 
@@ -178,11 +187,11 @@ The generation prompt includes only the following Star fields:
 - writing voice: voice archetype, speaking style, general delivery direction;
 - character pressure: named 0-100 attribute values and their notes;
 - creative identity: behaviors, storytelling rules, representative quotes, selected Star secrets and canon notes;
-- continuity: the rolling last ten writings and the complete historical used-word list.
+- continuity: the last ten shelf-persisted writings for composition, plus the persisted-word blacklist for the separate word-selection request.
 
 It excludes romance/girlfriend settings, attraction hooks, flirt rules, relationship state/scoring, emotion influence maps, combo/inter-Star rules, voice-clone files, skill trees, people/contact lists, and unrelated story data.
 
-Writing-notes schema version 3 stores `EmotionalVector` as the sole score-only rating representation. Existing version-2 `score:confidence` strings remain readable; confidence values are discarded and the next save rewrites them as version-3 score-only strings. Existing version-1 files containing `EmotionalValues` remain readable because unknown legacy JSON fields are ignored.
+Writing-notes schema version 4 stores `EmotionalVector` as the sole score-only rating representation and rebuilds `AllUsedWords` from persisted writings only. Existing version-2 `score:confidence` strings remain readable; confidence values are discarded and the next save rewrites them as version-3 score-only strings. Existing version-1 files containing `EmotionalValues` remain readable because unknown legacy JSON fields are ignored.
 
 ## Per-Star Persistence Rules
 

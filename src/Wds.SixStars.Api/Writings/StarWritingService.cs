@@ -48,7 +48,8 @@ namespace Wds.SixStars.Api.Writings
                 // fresh generation. They can be migrated by a separate maintenance action later.
                 int repairedRatingCount = 0;
 
-                // Deliberately separate calls: the first creates freely in character; the second acts as a structured critic.
+                // Deliberately staged calls: first select five unrelated word pairs without revealing the creative task;
+                // then compose from those fixed pairs; finally use a separate structured critic for persistence scores.
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
                 NormalizeGeneration(generation);

@@ -1,4 +1,4 @@
-CREATE FIVE NEW WRITINGS
+CREATE FIVE NEW WRITINGS FROM THE SUPPLIED PAIRS
 
 CHARACTER IDENTITY
 Name: {{ data.displayName }}
@@ -43,7 +43,7 @@ RELEVANT PRIVATE OR CANON DETAILS
 {{ end }}
 
 LAST TEN SAVED WRITINGS
-Only shelf-persisted writings appear here. Their words are already historical and should not be reused.
+Use these only to avoid repeating old sentence shapes, images, or conclusions.
 {{ if data.recentWritings.size == 0 }}
 (none yet)
 {{ else }}
@@ -53,12 +53,10 @@ Writing: {{ item.writing }}
 {{ end }}
 {{ end }}
 
-PERSISTED HISTORICAL USED-WORD LIST
-Only words from shelf-persisted writings appear here. Words from rejected writings remain available.
-{{ if data.allUsedWordsText == "" }}
-(none yet)
-{{ else }}
-{{ data.allUsedWordsText }}
+PRESELECTED WORD PAIRS
+Write exactly one finished piece for each pair, preserving this order:
+{{ for pair in data.wordPairs }}
+{{ pair.index }}. {{ pair.first }} + {{ pair.second }}
 {{ end }}
 
-Now choose five fresh pairs and write five finished pieces. Return only JSON with starId, jokes, and usedWords.
+Privately explore several possible things to say about each pair, choose the strongest one, and return only JSON with starId and five jokes.

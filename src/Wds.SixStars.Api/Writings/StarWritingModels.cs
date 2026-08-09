@@ -22,6 +22,13 @@ namespace Wds.SixStars.Api.Writings
         public List<StarWritingPersistenceRequirement> Requirements { get; set; } = new List<StarWritingPersistenceRequirement>();
     }
 
+    public sealed class StarWritingWordPairResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public List<List<string>> WordPairs { get; set; } = new List<List<string>>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
     public sealed class StarWritingCandidate
     {
         public List<string> WordsUsed { get; set; } = new List<string>();
@@ -32,7 +39,7 @@ namespace Wds.SixStars.Api.Writings
     {
         public string StarId { get; set; } = string.Empty;
 
-        // The LLM response deliberately uses two matching arrays: Jokes[i] was created from UsedWords[i].
+        // The composition response supplies Jokes. UsedWords is attached from the separate word-pair selection response so Jokes[i] always maps to UsedWords[i].
         public List<string> Jokes { get; set; } = new List<string>();
         public List<List<string>> UsedWords { get; set; } = new List<List<string>>();
 

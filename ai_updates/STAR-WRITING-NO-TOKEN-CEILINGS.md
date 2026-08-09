@@ -4,7 +4,8 @@ All Star writing LLM requests now pass `0` for the optional per-request token li
 
 This applies to:
 
-- `star-writing-generate`
+- `star-writing-word-pairs`
+- `star-writing-compose`
 - `star-writing-rate`
 - `star-writing-rate-repair`
 - `star-writing-perform`

@@ -2368,11 +2368,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task GenerateStarWritingAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
-        CancellationToken token = _operationController.BeginNewOperation("Generate and rate five Star writings.");
+        CancellationToken token = _operationController.BeginNewOperation("Select words, compose, and rate five Star writings.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing five pairs of words, then a second AI pass will rate the writing.";
+            Status = starId + " is choosing five word pairs, composing from them, then rating the five writings.";
         });
         try
         {
@@ -2398,7 +2398,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 StarOutput = output.ToString().TrimEnd();
                 DebugJson = JsonSerializer.Serialize(new
                 {
-                    feature = "star-writing-two-pass-generation",
+                    feature = "star-writing-three-stage-generation",
                     vectorCategoryOrder = StarWritingEmotionVector.Categories,
                     result
                 }, _jsonOptions);

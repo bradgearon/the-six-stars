@@ -68,7 +68,49 @@ namespace Wds.SixStars.Api.Ai
             StarWritingNotesState state,
             CancellationToken cancellationToken)
         {
-            object data = new
+            string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 120))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+
+            object wordPairData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    8,
+                    600),
+                allUsedWordsText
+            };
+
+            IReadOnlyList<ChatMessage> wordPairMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_word_pairs_system.sbn", wordPairData)),
+                new ChatMessage("user", _templates.Render("star_writing_word_pairs_user.sbn", wordPairData))
+            };
+
+            string wordPairJson = await _client.CompleteJsonAsync(
+                wordPairMessages,
+                StarResponseJsonSchema.CreateStarWritingWordPairResponseFormat(),
+                0,
+                "star-writing-word-pairs",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingWordPairResult? wordPairResult = JsonSerializer.Deserialize<StarWritingWordPairResult>(ExtractJson(wordPairJson), _jsonOptions);
+            if (wordPairResult == null) throw new InvalidOperationException("Writing word-pair selection returned empty JSON.");
+            wordPairResult.StarId = string.IsNullOrWhiteSpace(wordPairResult.StarId) ? profile.StarId : wordPairResult.StarId;
+            wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
+            wordPairResult.RawModelJson = wordPairJson;
+
+            object compositionData = new
             {
                 starId = PromptText(profile.StarId, 80),
                 displayName = PromptText(profile.DisplayName, 120),
@@ -104,28 +146,36 @@ namespace Wds.SixStars.Api.Ai
                         writing = PromptText(x.Writing, 1200)
                     })
                     .ToList(),
-                allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(x => PromptText(x, 120))
-                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                wordPairs = wordPairResult.WordPairs
+                    .Select((pair, index) => new
+                    {
+                        index = index + 1,
+                        first = PromptText(pair[0], 80),
+                        second = PromptText(pair[1], 80)
+                    })
+                    .ToList()
             };
 
-            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            IReadOnlyList<ChatMessage> compositionMessages = new List<ChatMessage>
             {
-                new ChatMessage("system", _templates.Render("star_writing_generate_system.sbn", data)),
-                new ChatMessage("user", _templates.Render("star_writing_generate_user.sbn", data))
+                new ChatMessage("system", _templates.Render("star_writing_generate_system.sbn", compositionData)),
+                new ChatMessage("user", _templates.Render("star_writing_generate_user.sbn", compositionData))
             };
 
-            string json = await _client.CompleteJsonAsync(
-                messages,
-                StarResponseJsonSchema.CreateStarWritingGenerationResponseFormat(),
+            string compositionJson = await _client.CompleteJsonAsync(
+                compositionMessages,
+                StarResponseJsonSchema.CreateStarWritingCompositionResponseFormat(),
                 0,
-                "star-writing-generate",
+                "star-writing-compose",
                 cancellationToken).ConfigureAwait(false);
-            StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Writing generation returned empty JSON.");
+            StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(compositionJson), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing composition returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
-            result.RawModelJson = json;
+            result.UsedWords = wordPairResult.WordPairs.Select(pair => pair.ToList()).ToList();
+            result.RawModelJson = "--- WORD PAIR SELECTION ---" + Environment.NewLine
+                + wordPairJson + Environment.NewLine
+                + "--- WRITING COMPOSITION ---" + Environment.NewLine
+                + compositionJson;
             return result;
         }
 
@@ -643,6 +693,33 @@ namespace Wds.SixStars.Api.Ai
             return result;
         }
 
+        private static List<List<string>> NormalizeWritingWordPairs(IEnumerable<List<string>>? wordPairs)
+        {
+            List<List<string>> normalized = (wordPairs ?? Enumerable.Empty<List<string>>())
+                .Where(pair => pair != null)
+                .Select(pair => pair
+                    .Where(word => !string.IsNullOrWhiteSpace(word))
+                    .Select(word => word.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .ToList())
+                .Take(5)
+                .ToList();
+
+            if (normalized.Count != 5 || normalized.Any(pair => pair.Count != 2))
+            {
+                throw new InvalidOperationException("Writing word-pair selection must contain exactly five pairs of two non-empty words.");
+            }
+
+            List<string> allWords = normalized.SelectMany(pair => pair).ToList();
+            if (allWords.Distinct(StringComparer.OrdinalIgnoreCase).Count() != allWords.Count)
+            {
+                throw new InvalidOperationException("Writing word-pair selection repeated a word across the five pairs.");
+            }
+
+            return normalized;
+        }
+
         private static string BuildCharacterAttributeSummary(StarProfile profile)
         {
             List<int> values = StarCharacterAttributeSchema.ParseCompactScores(
@@ -672,6 +749,18 @@ namespace Wds.SixStars.Api.Ai
                     && x.IndexOf("relationship mode", StringComparison.OrdinalIgnoreCase) < 0),
                 maximumItems,
                 maximumCharactersPerItem);
+        }
+
+        private static List<string> PromptWordSelectionBehaviorList(IEnumerable<string>? values, int maximumItems, int maximumCharactersPerItem)
+        {
+            return PromptWritingBehaviorList(values, maximumItems, maximumCharactersPerItem)
+                .Where(x => x.IndexOf("joke", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("poem", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("poet", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("writing", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("story", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("aphorism", StringComparison.OrdinalIgnoreCase) < 0)
+                .ToList();
         }
 
         private static string PromptText(string? value, int maximumCharacters)

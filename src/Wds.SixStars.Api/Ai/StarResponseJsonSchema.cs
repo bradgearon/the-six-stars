@@ -70,6 +70,53 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
+        public static object CreateStarWritingWordPairResponseFormat()
+        {
+            Dictionary<string, object> twoWords = new Dictionary<string, object>
+            {
+                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                { "items", StringProperty(80) }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "wordPairs" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "wordPairs", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", twoWords }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_word_pairs", schema);
+        }
+
+        public static object CreateStarWritingCompositionResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "jokes" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "jokes", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", StringProperty(1400) }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_composition", schema);
+        }
+
         public static object CreateStarWritingGenerationResponseFormat()
         {
             Dictionary<string, object> twoWords = new Dictionary<string, object>

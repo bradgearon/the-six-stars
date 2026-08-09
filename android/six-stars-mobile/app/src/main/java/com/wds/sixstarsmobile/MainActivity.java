@@ -961,7 +961,7 @@ public final class MainActivity extends ComponentActivity {
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("Creates five two-word jokes or poetic fragments, rates them in a second AI pass, and saves only those that pass this Star's rules.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("First chooses five word pairs without the writing task, then creates and rates five jokes or poetic fragments, saving only those that pass this Star's rules.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 
@@ -1951,7 +1951,7 @@ public final class MainActivity extends ComponentActivity {
             updateProdWritingButtons();
             if (prodMiniStatusText != null) {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
-                        ? starId + " is creating and rating five writings…"
+                        ? starId + " is choosing words, creating, and rating five writings…"
                         : starId + " is choosing her best new writings…");
             }
 
