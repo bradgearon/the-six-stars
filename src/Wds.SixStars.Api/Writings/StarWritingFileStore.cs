@@ -187,10 +187,12 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 5;
+            state.Version = 6;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingPasses ??= new List<StarWritingPassSnapshot>();
+            state.RecentGeneratedWordSets ??= new List<StarWritingGeneratedWordSet>();
+            state.GeneratedWordUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             state.AllUsedWords ??= new List<string>();
             state.PersistedWritings ??= new List<PersistedStarWriting>();
 
@@ -243,6 +245,80 @@ namespace Wds.SixStars.Api.Writings
                 }
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
+
+            // Version 6 keeps the ten newest complete initial word-pair selections and a cumulative
+            // frequency table. Older files are gently seeded from the recent reviewed history so the
+            // repetition guard starts with useful context instead of an empty state.
+            if (state.RecentGeneratedWordSets.Count == 0 && state.RecentWritingHistory.Count > 0)
+            {
+                state.RecentGeneratedWordSets = state.RecentWritingHistory
+                    .Where(x => x != null)
+                    .GroupBy(x => string.IsNullOrWhiteSpace(x.SourceBatchId)
+                        ? x.GeneratedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
+                        : x.SourceBatchId, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => new StarWritingGeneratedWordSet
+                    {
+                        GeneratedAt = group.Max(x => x.GeneratedAt),
+                        WordPairs = group
+                            .OrderBy(x => x.Index)
+                            .Select(x => (x.WordsUsed ?? new List<string>())
+                                .Where(word => !string.IsNullOrWhiteSpace(word))
+                                .Select(word => word.Trim())
+                                .Take(2)
+                                .ToList())
+                            .Where(pair => pair.Count == 2)
+                            .Take(5)
+                            .ToList()
+                    })
+                    .Where(x => x.WordPairs.Count > 0)
+                    .ToList();
+            }
+
+            foreach (StarWritingGeneratedWordSet set in state.RecentGeneratedWordSets.Where(x => x != null))
+            {
+                set.WordPairs ??= new List<List<string>>();
+                set.WordPairs = set.WordPairs
+                    .Where(pair => pair != null)
+                    .Select(pair => pair
+                        .Where(word => !string.IsNullOrWhiteSpace(word))
+                        .Select(word => word.Trim())
+                        .Take(2)
+                        .ToList())
+                    .Where(pair => pair.Count == 2)
+                    .Take(5)
+                    .ToList();
+            }
+            state.RecentGeneratedWordSets = state.RecentGeneratedWordSets
+                .Where(x => x != null && x.WordPairs.Count > 0)
+                .OrderByDescending(x => x.GeneratedAt)
+                .Take(10)
+                .OrderBy(x => x.GeneratedAt)
+                .ToList();
+
+            Dictionary<string, int> normalizedUsageCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, int> entry in state.GeneratedWordUsageCounts)
+            {
+                string word = (entry.Key ?? string.Empty).Trim();
+                if (word.Length == 0 || entry.Value <= 0) continue;
+                normalizedUsageCounts[word] = normalizedUsageCounts.TryGetValue(word, out int current)
+                    ? current + entry.Value
+                    : entry.Value;
+            }
+            if (normalizedUsageCounts.Count == 0)
+            {
+                foreach (string word in state.RecentGeneratedWordSets
+                    .SelectMany(x => x.WordPairs)
+                    .SelectMany(pair => pair)
+                    .Where(word => !string.IsNullOrWhiteSpace(word))
+                    .Select(word => word.Trim()))
+                {
+                    normalizedUsageCounts[word] = normalizedUsageCounts.TryGetValue(word, out int current)
+                        ? current + 1
+                        : 1;
+                }
+            }
+            state.GeneratedWordUsageCounts = normalizedUsageCounts;
+
             // A word becomes historical only when its writing reaches the shelf. Rebuild rather
             // than preserving older Version 1-4 files that marked every generated word as used.
             state.AllUsedWords = state.PersistedWritings

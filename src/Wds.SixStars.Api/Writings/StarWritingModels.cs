@@ -41,6 +41,12 @@ namespace Wds.SixStars.Api.Writings
         public string RawModelJson { get; set; } = string.Empty;
     }
 
+    public sealed class StarWritingGeneratedWordSet
+    {
+        public DateTimeOffset GeneratedAt { get; set; }
+        public List<List<string>> WordPairs { get; set; } = new List<List<string>>();
+    }
+
     public sealed class StarWritingCandidate
     {
         /// <summary>Stable id used by iterative improvement passes to target this candidate.</summary>
@@ -164,7 +170,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 5;
+        public int Version { get; set; } = 6;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -174,6 +180,10 @@ namespace Wds.SixStars.Api.Writings
         public int LatestAppliedImprovementCount { get; set; }
         public DateTimeOffset? LatestPassUpdatedAt { get; set; }
         public List<StarWritingPassSnapshot> LatestWritingPasses { get; set; } = new List<StarWritingPassSnapshot>();
+        /// <summary>The ten newest initial five-pair selections, used to discourage near-term word repetition.</summary>
+        public List<StarWritingGeneratedWordSet> RecentGeneratedWordSets { get; set; } = new List<StarWritingGeneratedWordSet>();
+        /// <summary>Cumulative usage count for words selected by the initial word-pair request.</summary>
+        public Dictionary<string, int> GeneratedWordUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public List<string> AllUsedWords { get; set; } = new List<string>();
         public List<PersistedStarWriting> PersistedWritings { get; set; } = new List<PersistedStarWriting>();
 

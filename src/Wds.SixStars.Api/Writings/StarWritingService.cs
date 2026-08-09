@@ -65,6 +65,7 @@ namespace Wds.SixStars.Api.Writings
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, cancellationToken).ConfigureAwait(false);
                 NormalizeGeneration(generation);
+                RecordGeneratedWordSet(state, generation.UsedWords);
                 generation.SelectedPassCount = selectedPassCount;
                 generation.CompletedPassCount = 1;
                 AppendPassSnapshot(generation, 1, 0);
@@ -275,6 +276,51 @@ namespace Wds.SixStars.Api.Writings
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try { await _store.ClearAsync(starId, cancellationToken).ConfigureAwait(false); }
             finally { _operationGate.Release(); }
+        }
+
+        private static void RecordGeneratedWordSet(StarWritingNotesState state, IEnumerable<List<string>>? wordPairs)
+        {
+            List<List<string>> normalizedPairs = (wordPairs ?? Enumerable.Empty<List<string>>())
+                .Where(pair => pair != null)
+                .Select(pair => pair
+                    .Where(word => !string.IsNullOrWhiteSpace(word))
+                    .Select(word => word.Trim())
+                    .Take(2)
+                    .ToList())
+                .Where(pair => pair.Count == 2)
+                .Take(5)
+                .ToList();
+            if (normalizedPairs.Count == 0) return;
+
+            state.RecentGeneratedWordSets ??= new List<StarWritingGeneratedWordSet>();
+            state.RecentGeneratedWordSets.Add(new StarWritingGeneratedWordSet
+            {
+                GeneratedAt = DateTimeOffset.UtcNow,
+                WordPairs = normalizedPairs.Select(pair => pair.ToList()).ToList()
+            });
+            state.RecentGeneratedWordSets = state.RecentGeneratedWordSets
+                .Where(x => x != null)
+                .OrderByDescending(x => x.GeneratedAt)
+                .Take(10)
+                .OrderBy(x => x.GeneratedAt)
+                .ToList();
+
+            Dictionary<string, int> usageCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, int> entry in state.GeneratedWordUsageCounts ?? new Dictionary<string, int>())
+            {
+                string word = (entry.Key ?? string.Empty).Trim();
+                if (word.Length == 0 || entry.Value <= 0) continue;
+                usageCounts[word] = usageCounts.TryGetValue(word, out int current)
+                    ? current + entry.Value
+                    : entry.Value;
+            }
+            foreach (string word in normalizedPairs.SelectMany(pair => pair))
+            {
+                usageCounts[word] = usageCounts.TryGetValue(word, out int current)
+                    ? current + 1
+                    : 1;
+            }
+            state.GeneratedWordUsageCounts = usageCounts;
         }
 
         private async Task SaveLatestPassStateAsync(StarWritingNotesState state, StarWritingGenerationResult generation)

@@ -70,3 +70,17 @@ Environment overrides are available:
 - `SIX_STARS_WRITING_ONE_PASS_WEIGHT`
 - `SIX_STARS_WRITING_TWO_TO_THREE_PASS_WEIGHT`
 - `SIX_STARS_WRITING_FOUR_OR_MORE_PASS_WEIGHT`
+
+## Word-pair repetition memory
+
+Before the private `star-writing-word-pairs` request, each Star now receives:
+
+- her ten newest complete five-pair selections;
+- the ten most frequently selected words and each word's cumulative use count;
+- a short instruction not to reuse the same word across multiple pairs very often.
+
+The per-Star writing-notes state stores this in `RecentGeneratedWordSets` and
+`GeneratedWordUsageCounts`. Counts are recorded from the initial hidden word-pair
+selection request; later rewrite-pass substitutions do not retroactively alter that
+history. Existing Version 5 notes files migrate to Version 6 and seed the new fields
+from available recent writing history.

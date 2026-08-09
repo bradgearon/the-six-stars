@@ -29,4 +29,27 @@ UNAVAILABLE HISTORICAL WORDS
 {{ data.allUsedWordsText }}
 {{ end }}
 
+LAST TEN GENERATED WORD SETS
+These are the newest complete five-pair selections. Prefer fresh words instead of repeating them.
+{{ if data.recentGeneratedWordSets.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word_set in data.recentGeneratedWordSets }}
+Set {{ word_set.index }} — {{ word_set.generatedAt }}
+{{ for pair in word_set.pairs }}
+- {{ pair.first }} + {{ pair.second }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+TOP TEN MOST USED GENERATED WORDS
+{{ if data.topUsedWords.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.topUsedWords }}
+- {{ item.word }}: {{ item.count }} uses
+{{ end }}
+{{ end }}
+
+Do not use the same word in multiple pairs very often.
 Choose five varied pairs now. Return only JSON with starId and wordPairs.

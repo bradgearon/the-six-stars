@@ -89,7 +89,37 @@ namespace Wds.SixStars.Api.Ai
                         .Concat(profile.LibraryCanonNotes ?? new List<string>()),
                     8,
                     600),
-                allUsedWordsText
+                allUsedWordsText,
+                recentGeneratedWordSets = (state.RecentGeneratedWordSets ?? new List<StarWritingGeneratedWordSet>())
+                    .Where(x => x != null)
+                    .OrderByDescending(x => x.GeneratedAt)
+                    .Take(10)
+                    .Select((set, index) => new
+                    {
+                        index = index + 1,
+                        generatedAt = set.GeneratedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture),
+                        pairs = (set.WordPairs ?? new List<List<string>>())
+                            .Where(pair => pair != null && pair.Count >= 2)
+                            .Take(5)
+                            .Select(pair => new
+                            {
+                                first = PromptText(pair[0], 80),
+                                second = PromptText(pair[1], 80)
+                            })
+                            .ToList()
+                    })
+                    .ToList(),
+                topUsedWords = (state.GeneratedWordUsageCounts ?? new Dictionary<string, int>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Value > 0)
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .Select(x => new
+                    {
+                        word = PromptText(x.Key, 80),
+                        count = x.Value
+                    })
+                    .ToList()
             };
 
             IReadOnlyList<ChatMessage> wordPairMessages = new List<ChatMessage>
@@ -786,12 +816,6 @@ namespace Wds.SixStars.Api.Ai
             if (normalized.Count != 5 || normalized.Any(pair => pair.Count != 2))
             {
                 throw new InvalidOperationException("Writing word-pair selection must contain exactly five pairs of two non-empty words.");
-            }
-
-            List<string> allWords = normalized.SelectMany(pair => pair).ToList();
-            if (allWords.Distinct(StringComparer.OrdinalIgnoreCase).Count() != allWords.Count)
-            {
-                throw new InvalidOperationException("Writing word-pair selection repeated a word across the five pairs.");
             }
 
             return normalized;
