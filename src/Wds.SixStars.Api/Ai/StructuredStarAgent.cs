@@ -13,6 +13,7 @@ using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.XPosting;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -736,6 +737,64 @@ namespace Wds.SixStars.Api.Ai
             }
 
             return true;
+        }
+
+        public async Task<StarXPostSelectionResult> PrepareXPostsAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<PersistedStarWriting> unpostedWritings,
+            int requestedCount,
+            CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> candidates = (unpostedWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Writing))
+                .Take(500)
+                .ToList();
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                backstorySummary = PromptText(profile.BackstorySummary, 1600),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 12, 700),
+                totalUnpostedCount = (state.PersistedWritings ?? new List<PersistedStarWriting>()).Count(x => x != null && !x.PostedAt.HasValue),
+                candidateCount = candidates.Count,
+                requestedCount = Math.Max(1, Math.Min(5, requestedCount)),
+                unpostedWritings = candidates.Select(x => new
+                {
+                    id = PromptText(x.Id, 160),
+                    generatedAt = x.GeneratedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                    writing = PromptText(x.Writing, 600)
+                }).ToList()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_x_post_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_x_post_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarXPostSelectionResponseFormat(),
+                0,
+                "star-writing-x-post-select",
+                cancellationToken).ConfigureAwait(false);
+            StarXPostSelectionResult? result = JsonSerializer.Deserialize<StarXPostSelectionResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("X post selection returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.Posts ??= new List<StarXPostSelectionItem>();
+            result.RawModelJson = json;
+            return result;
         }
 
         public async Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(

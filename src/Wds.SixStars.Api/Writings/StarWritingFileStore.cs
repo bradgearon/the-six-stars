@@ -101,6 +101,51 @@ namespace Wds.SixStars.Api.Writings
             finally { _gate.Release(); }
         }
 
+        public async Task<bool> TryMarkPostedAsync(
+            string starId,
+            string writingId,
+            string xPostId,
+            string postedText,
+            DateTimeOffset postedAt,
+            CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                string path = BuildPath(starId);
+                StarWritingNotesState state;
+                if (!File.Exists(path))
+                {
+                    return false;
+                }
+
+                try
+                {
+                    using FileStream readStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8192, true);
+                    StarWritingNotesState? loaded = await JsonSerializer.DeserializeAsync<StarWritingNotesState>(readStream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                    state = Normalize(loaded ?? CreateEmpty(starId), starId);
+                }
+                catch (JsonException)
+                {
+                    return false;
+                }
+
+                PersistedStarWriting? writing = state.PersistedWritings.FirstOrDefault(x =>
+                    x != null && string.Equals(x.Id, writingId, StringComparison.OrdinalIgnoreCase));
+                if (writing == null || writing.PostedAt.HasValue)
+                {
+                    return false;
+                }
+
+                writing.PostedAt = postedAt;
+                writing.XPostId = (xPostId ?? string.Empty).Trim();
+                writing.PostedText = (postedText ?? string.Empty).Trim();
+                await SaveStateUnderGateAsync(state, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            finally { _gate.Release(); }
+        }
+
         public async Task ClearAsync(string starId, CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -116,8 +161,9 @@ namespace Wds.SixStars.Api.Writings
         {
             Directory.CreateDirectory(_rootDirectory);
             state = Normalize(state, state.StarId);
-            state.UpdatedAt = DateTimeOffset.UtcNow;
             string path = BuildPath(state.StarId);
+            await MergePostedMetadataFromDiskUnderGateAsync(state, path, cancellationToken).ConfigureAwait(false);
+            state.UpdatedAt = DateTimeOffset.UtcNow;
             string temp = path + ".tmp";
             using (FileStream stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
             {
@@ -126,6 +172,45 @@ namespace Wds.SixStars.Api.Writings
             }
             if (File.Exists(path)) File.Delete(path);
             File.Move(temp, path);
+        }
+
+        private async Task MergePostedMetadataFromDiskUnderGateAsync(
+            StarWritingNotesState incoming,
+            string path,
+            CancellationToken cancellationToken)
+        {
+            if (!File.Exists(path) || incoming.PersistedWritings == null || incoming.PersistedWritings.Count == 0) return;
+            try
+            {
+                using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8192, true);
+                StarWritingNotesState? current = await JsonSerializer.DeserializeAsync<StarWritingNotesState>(stream, _jsonOptions, cancellationToken).ConfigureAwait(false);
+                if (current?.PersistedWritings == null) return;
+
+                Dictionary<string, PersistedStarWriting> currentById = current.PersistedWritings
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id) && x.PostedAt.HasValue)
+                    .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(x => x.Key, x => x.OrderByDescending(y => y.PostedAt).First(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (PersistedStarWriting item in incoming.PersistedWritings.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id)))
+                {
+                    if (!currentById.TryGetValue(item.Id, out PersistedStarWriting? posted)) continue;
+                    if (!item.PostedAt.HasValue || posted.PostedAt > item.PostedAt)
+                    {
+                        item.PostedAt = posted.PostedAt;
+                        item.XPostId = posted.XPostId ?? string.Empty;
+                        item.PostedText = posted.PostedText ?? string.Empty;
+                    }
+                    else
+                    {
+                        if (string.IsNullOrWhiteSpace(item.XPostId)) item.XPostId = posted.XPostId ?? string.Empty;
+                        if (string.IsNullOrWhiteSpace(item.PostedText)) item.PostedText = posted.PostedText ?? string.Empty;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Preserve the incoming state if the prior file is unreadable; normal save recovery still applies.
+            }
         }
 
         private async Task AppendBatchUnderGateAsync(
@@ -187,7 +272,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 6;
+            state.Version = 7;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingPasses ??= new List<StarWritingPassSnapshot>();
@@ -239,6 +324,8 @@ namespace Wds.SixStars.Api.Writings
             {
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
+                item.XPostId ??= string.Empty;
+                item.PostedText ??= string.Empty;
                 if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
                 {
                     item.EmotionalVector = normalizedVector;

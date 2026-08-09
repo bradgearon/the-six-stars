@@ -77,7 +77,18 @@
                                     ToolTip="Enable the background writing loop and begin with the selected Star as soon as foreground conversation is clear."
                                     Margin="0,0,0,5" Height="32" />
                             <TextBlock Text="{Binding BackgroundWritingLoopStatus}" TextWrapping="Wrap" Foreground="#7A4B91" Margin="0,0,0,5" />
-                            <TextBlock Text="{Binding WritingLibraryStatusText}" TextWrapping="Wrap" Foreground="#66527A" />
+                            <TextBlock Text="{Binding WritingLibraryStatusText}" TextWrapping="Wrap" Foreground="#66527A" Margin="0,0,0,8" />
+                            <Separator Margin="0,2,0,7" />
+                            <TextBlock Text="Star X Publishing" FontWeight="SemiBold" Margin="0,0,0,5" />
+                            <CheckBox Content="Post five selected writings at each daily slot"
+                                      IsChecked="{Binding XPostingEnabled, Mode=TwoWay}"
+                                      ToolTip="Uses the lower-case Star account entry in XPosting. A batch already started is not cancelled by player speech, LLM activity, or turning this scheduler off."
+                                      Margin="0,0,0,6" />
+                            <Button Content="Post Selected Star to X Now"
+                                    Command="{Binding PostSelectedStarToXNowCommand}"
+                                    ToolTip="Queues an immediate five-post batch. Each source writing is marked posted only after X accepts that post."
+                                    Margin="0,0,0,5" Height="32" />
+                            <TextBlock Text="{Binding XPostingStatus}" TextWrapping="Wrap" Foreground="#396F8A" />
                         </StackPanel>
                     </Border>
                     <Button Content="Open LLM Exchange Log Folder" Command="{Binding OpenLlmExchangeLogFolderCommand}" Margin="0,0,0,8" Height="34" />

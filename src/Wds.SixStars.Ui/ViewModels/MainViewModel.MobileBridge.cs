@@ -189,6 +189,8 @@ public sealed partial class MainViewModel
             selectedStarId = SelectedStarId,
             backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            xPostingEnabled = XPostingEnabled,
+            xPostingStatus = XPostingStatus,
             streamingTts = _useStreamingTts,
             time = DateTimeOffset.Now
         };
@@ -222,6 +224,8 @@ public sealed partial class MainViewModel
             sessionId = safeSessionId,
             backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            xPostingEnabled = XPostingEnabled,
+            xPostingStatus = XPostingStatus,
             stars = states,
             latestEventSequence = _mobileBridgeDispatcher.GetEventsAfter(long.MaxValue).LatestSequence,
             time = DateTimeOffset.Now
@@ -518,6 +522,29 @@ public sealed partial class MainViewModel
                 string message = enabled
                     ? "Desktop automatic Star writing generation is enabled. It will resume after the runtime has been idle for a few seconds."
                     : "Desktop automatic Star writing generation is off. The current background generation pass was cancelled for reliable voice playback.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "SetXPostingEnabled":
+            {
+                bool enabled = command.XPostingEnabled ?? XPostingEnabled;
+                OnUiThread(() => XPostingEnabled = enabled);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                string message = enabled
+                    ? "Automatic X posting is enabled for the four daily slots. A batch that starts will not be interrupted by foreground activity."
+                    : "Automatic X posting is off. Any public-posting batch already in progress will finish.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "PostStarWritingsToXNow":
+            {
+                QueueManualXPosting(starId);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                string message = "Queued an uninterrupted five-post X batch for " + starId + ". Progress will arrive through bridge events.";
                 OnUiThread(() => Status = message);
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
             }
@@ -1166,8 +1193,11 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            XPostingEnabled = XPostingEnabled,
+            XPostingStatus = XPostingStatus,
             PendingWritingCount = writingState?.PendingCount,
             PersistedWritingCount = writingState?.PersistedWritings?.Count,
+            UnpostedWritingCount = writingState?.UnpostedCount,
             State = state,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -1190,6 +1220,8 @@ public sealed partial class MainViewModel
                 ? "SelectedStarChanged"
                 : commandType == "SetBackgroundWritingLoopEnabled"
                     ? "BackgroundWritingLoopChanged"
+                    : (commandType == "SetXPostingEnabled" || commandType == "PostStarWritingsToXNow")
+                        ? "XPostingChanged"
                     : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow")
                         ? "GirlfriendCuteModeChanged"
                         : (commandType == "ClearHistory" || commandType == "ClearAllData")
@@ -1208,8 +1240,11 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            XPostingEnabled = XPostingEnabled,
+            XPostingStatus = XPostingStatus,
             PendingWritingCount = writingState?.PendingCount,
             PersistedWritingCount = writingState?.PersistedWritings?.Count,
+            UnpostedWritingCount = writingState?.UnpostedCount,
             Heart = state.Heart,
             Trust = state.Trust,
             Romance = state.Romance,
@@ -1398,7 +1433,8 @@ public sealed partial class MainViewModel
             dailyStateXml = string.Empty,
             interactionCount = state.InteractionCount,
             pendingWritingCount = writingState?.PendingCount ?? 0,
-            persistedWritingCount = writingState?.PersistedWritings?.Count ?? 0
+            persistedWritingCount = writingState?.PersistedWritings?.Count ?? 0,
+            unpostedWritingCount = writingState?.UnpostedCount ?? 0
         };
     }
 
@@ -1422,6 +1458,8 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
                 BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+                XPostingEnabled = XPostingEnabled,
+                XPostingStatus = XPostingStatus,
                 PendingWritingCount = pendingWritingCount,
                 PersistedWritingCount = persistedWritingCount,
                 Heart = state.Heart,

@@ -193,10 +193,16 @@ public final class MainActivity extends ComponentActivity {
     private Button prodGenerateWritingButton;
     private Button prodTellWritingButton;
     private CheckBox prodBackgroundWritingLoopCheck;
+    private CheckBox prodXPostingCheck;
+    private Button prodPostToXNowButton;
     private boolean desktopBackgroundWritingLoopEnabled;
     private boolean suppressBackgroundWritingLoopToggleDispatch;
+    private boolean desktopXPostingEnabled;
+    private boolean suppressXPostingToggleDispatch;
+    private String desktopXPostingStatus = "Automatic X posting status has not been loaded.";
     private int selectedStarPendingWritingCount;
     private int selectedStarPersistedWritingCount;
+    private int selectedStarUnpostedWritingCount;
     private boolean starWritingRequestRunning;
     private View prodTextToggleButton;
     private View prodTextComposer;
@@ -660,6 +666,8 @@ public final class MainActivity extends ComponentActivity {
         prodGenerateWritingButton = null;
         prodTellWritingButton = null;
         prodBackgroundWritingLoopCheck = null;
+        prodXPostingCheck = null;
+        prodPostToXNowButton = null;
         prodTextToggleButton = null;
         prodTextComposer = null;
         prodConversationText = null;
@@ -980,6 +988,21 @@ public final class MainActivity extends ComponentActivity {
         controls.addView(writingHint);
         updateProdWritingButtons();
 
+        TextView xPostingLabel = prodText("Star X Publishing", 13, 0xFF9DEBFF, true);
+        xPostingLabel.setPadding(0, dp(10), 0, dp(4));
+        controls.addView(xPostingLabel);
+
+        prodXPostingCheck = new CheckBox(this);
+        prodXPostingCheck.setText("Post five selected writings at each of the four daily slots");
+        prodXPostingCheck.setTextColor(0xFFEAF7FF);
+        prodXPostingCheck.setChecked(desktopXPostingEnabled);
+        controls.addView(prodXPostingCheck);
+
+        prodPostToXNowButton = prodButton("Post Selected Star to X Now");
+        controls.addView(prodPostToXNowButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        TextView xPostingHint = prodText("The desktop chooses five unposted shelf items, waits the configured delay between posts, and marks each writing posted only after X accepts it. Foreground speech does not interrupt a started batch.", 11, 0xFFB6A7C8, false);
+        controls.addView(xPostingHint);
+
         TextView status = prodOutput(buildProdMenuStatusText(), 12);
         status.setTextIsSelectable(true);
         ScrollView scroll = new ScrollView(this);
@@ -993,7 +1016,11 @@ public final class MainActivity extends ComponentActivity {
                 .setView(dialogScroll)
                 .setNegativeButton("Close", null)
                 .create();
-        dialog.setOnDismissListener(d -> prodBackgroundWritingLoopCheck = null);
+        dialog.setOnDismissListener(d -> {
+            prodBackgroundWritingLoopCheck = null;
+            prodXPostingCheck = null;
+            prodPostToXNowButton = null;
+        });
         dialog.setOnShowListener(d -> {
             dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
@@ -1001,6 +1028,11 @@ public final class MainActivity extends ComponentActivity {
                 if (suppressBackgroundWritingLoopToggleDispatch) return;
                 dispatchBackgroundWritingLoopToggle(isChecked, prodBackgroundWritingLoopCheck, status);
             });
+            prodXPostingCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (suppressXPostingToggleDispatch) return;
+                dispatchXPostingToggle(isChecked, prodXPostingCheck, status);
+            });
+            prodPostToXNowButton.setOnClickListener(v -> dispatchXPostingNow(prodPostToXNowButton, status));
             fetchMobileState(false);
             save.setOnClickListener(v -> {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
@@ -1071,8 +1103,11 @@ public final class MainActivity extends ComponentActivity {
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
         sb.append("Desktop auto writing: ").append(desktopBackgroundWritingLoopEnabled ? "enabled" : "disabled").append('\n');
+        sb.append("Automatic X posting: ").append(desktopXPostingEnabled ? "enabled" : "disabled").append('\n');
+        sb.append("X status: ").append(desktopXPostingStatus == null ? "unknown" : desktopXPostingStatus).append('\n');
         sb.append("Writing shelf: ").append(Math.max(0, selectedStarPendingWritingCount)).append(" new, ")
-                .append(Math.max(0, selectedStarPersistedWritingCount)).append(" saved.\n\n");
+                .append(Math.max(0, selectedStarPersistedWritingCount)).append(" saved, ")
+                .append(Math.max(0, selectedStarUnpostedWritingCount)).append(" not posted.\n\n");
         sb.append(currentDailyStarState == null ? "Today: no daily Star state yet." : currentDailyStarState).append("\n\n");
         sb.append(currentInterstarStatus == null ? "Interstar state: idle." : currentInterstarStatus).append("\n\n");
         sb.append(currentLastEmotionVectors == null ? "Last emotional vectors: none yet." : currentLastEmotionVectors).append("\n");
@@ -2075,6 +2110,90 @@ public final class MainActivity extends ComponentActivity {
         setBackgroundWritingLoopCheckState(enabled);
     }
 
+    private void dispatchXPostingToggle(boolean enabled, CheckBox checkBox, TextView status) {
+        final boolean previous = desktopXPostingEnabled;
+        if (checkBox != null) checkBox.setEnabled(false);
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-x-posting-toggle-" + System.currentTimeMillis());
+            json.put("commandType", "SetXPostingEnabled");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("xPostingEnabled", enabled);
+            json.put("reason", "Android Last Cat Console changed automatic X posting.");
+            sendSocketRequest("dispatch", json, 30000L, response -> {
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    applyXPostingState(event == null ? response : event);
+                    if (checkBox != null) checkBox.setEnabled(true);
+                    if (status != null) status.setText(buildProdMenuStatusText());
+                    setDebug("Automatic X posting updated", response.optString("message", response.toString()));
+                });
+            }, error -> runOnUiThread(() -> {
+                setXPostingCheckState(previous);
+                if (checkBox != null) checkBox.setEnabled(true);
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("Automatic X posting toggle failed", error.toString());
+            }));
+        } catch (Exception ex) {
+            setXPostingCheckState(previous);
+            if (checkBox != null) checkBox.setEnabled(true);
+            if (status != null) status.setText(buildProdMenuStatusText());
+            setDebug("Automatic X posting toggle failed", ex.toString());
+        }
+    }
+
+    private void dispatchXPostingNow(Button button, TextView status) {
+        if (button != null) button.setEnabled(false);
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-x-post-now-" + System.currentTimeMillis());
+            json.put("commandType", "PostStarWritingsToXNow");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("reason", "Android Last Cat Console requested an immediate five-post X batch.");
+            sendSocketRequest("dispatch", json, 30000L, response -> runOnUiThread(() -> {
+                JSONObject event = response.optJSONObject("event");
+                applyXPostingState(event == null ? response : event);
+                if (button != null) button.setEnabled(true);
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("X posting batch queued", response.optString("message", response.toString()));
+            }), error -> runOnUiThread(() -> {
+                if (button != null) button.setEnabled(true);
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("Could not queue X posting", error.toString());
+            }));
+        } catch (Exception ex) {
+            if (button != null) button.setEnabled(true);
+            if (status != null) status.setText(buildProdMenuStatusText());
+            setDebug("Could not queue X posting", ex.toString());
+        }
+    }
+
+    private void setXPostingCheckState(boolean enabled) {
+        desktopXPostingEnabled = enabled;
+        if (prodXPostingCheck == null) return;
+        suppressXPostingToggleDispatch = true;
+        try {
+            prodXPostingCheck.setChecked(enabled);
+        } finally {
+            suppressXPostingToggleDispatch = false;
+        }
+    }
+
+    private void applyXPostingState(JSONObject json) {
+        if (json == null) return;
+        if (json.has("xPostingEnabled") || json.has("XPostingEnabled")) {
+            setXPostingCheckState(optBooleanEither(json, "xPostingEnabled", "XPostingEnabled", desktopXPostingEnabled));
+        }
+        String status = optStringEither(json, "xPostingStatus", "XPostingStatus", "");
+        if (status.length() == 0) status = optStringEither(json, "message", "Message", "");
+        if (status.length() > 0) desktopXPostingStatus = status;
+        selectedStarUnpostedWritingCount = optIntEither(json, "unpostedWritingCount", "UnpostedWritingCount", selectedStarUnpostedWritingCount);
+    }
+
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
         dispatchBridgeCommand(commandType, starId, isMet, isAlly, reason, null);
     }
@@ -2164,6 +2283,7 @@ public final class MainActivity extends ComponentActivity {
         }
         selectStarInSpinner(selected);
         applyBackgroundWritingLoopState(json);
+        applyXPostingState(json);
         JSONArray stars = json.optJSONArray("stars");
         if (stars != null) {
             for (int i = 0; i < stars.length(); i++) {
@@ -2194,6 +2314,11 @@ public final class MainActivity extends ComponentActivity {
         if (selected.length() > 0) selectStarInSpinner(selected);
         if ("BackgroundWritingLoopChanged".equalsIgnoreCase(type)) {
             applyBackgroundWritingLoopState(event);
+        }
+        if ("XPostingChanged".equalsIgnoreCase(type)
+                || type.startsWith("StarXPosting")
+                || optStringEither(event, "xPostingStatus", "XPostingStatus", "").length() > 0) {
+            applyXPostingState(event);
         }
 
         if ("PreparedSpeechReady".equalsIgnoreCase(type)
@@ -2251,6 +2376,7 @@ public final class MainActivity extends ComponentActivity {
         if (event == null) return;
         selectedStarPendingWritingCount = optIntEither(event, "pendingWritingCount", "PendingWritingCount", selectedStarPendingWritingCount);
         selectedStarPersistedWritingCount = optIntEither(event, "persistedWritingCount", "PersistedWritingCount", selectedStarPersistedWritingCount);
+        selectedStarUnpostedWritingCount = optIntEither(event, "unpostedWritingCount", "UnpostedWritingCount", selectedStarUnpostedWritingCount);
         starWritingRequestRunning = false;
         updateProdWritingButtons();
 
@@ -2538,6 +2664,7 @@ public final class MainActivity extends ComponentActivity {
         selectedStarCuteModeSignature = optStringEither(state, "girlfriendCuteModeSignature", "GirlfriendCuteModeSignature", selectedStarCuteModeSignature);
         selectedStarPendingWritingCount = optIntEither(state, "pendingWritingCount", "PendingWritingCount", selectedStarPendingWritingCount);
         selectedStarPersistedWritingCount = optIntEither(state, "persistedWritingCount", "PersistedWritingCount", selectedStarPersistedWritingCount);
+        selectedStarUnpostedWritingCount = optIntEither(state, "unpostedWritingCount", "UnpostedWritingCount", selectedStarUnpostedWritingCount);
         updateProdWritingButtons();
         String top = formatTopAffectedEmotions(optJsonArrayEither(state, "topAffectedEmotions", "TopAffectedEmotions"));
         if (top.length() > 0) currentTopAffectedEmotions = top;

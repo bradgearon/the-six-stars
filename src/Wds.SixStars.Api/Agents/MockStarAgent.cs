@@ -9,6 +9,7 @@ using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.XPosting;
 
 namespace Wds.SixStars.Api.Agents
 {
@@ -89,6 +90,24 @@ namespace Wds.SixStars.Api.Agents
                 ? "I kept a few small fragments from the dark. Listen. " + x.Writing
                 : x.Writing));
             return Task.FromResult(result);
+        }
+
+        public Task<StarXPostSelectionResult> PrepareXPostsAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> unpostedWritings, int requestedCount, CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> selected = (unpostedWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing))
+                .Take(Math.Max(1, requestedCount))
+                .ToList();
+            return Task.FromResult(new StarXPostSelectionResult
+            {
+                StarId = profile.StarId,
+                Posts = selected.Select(x => new StarXPostSelectionItem
+                {
+                    WritingId = x.Id,
+                    Text = x.Writing.Length <= 280 ? x.Writing : x.Writing.Substring(0, 277) + "..."
+                }).ToList(),
+                RawModelJson = "mock"
+            });
         }
 
         public Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)

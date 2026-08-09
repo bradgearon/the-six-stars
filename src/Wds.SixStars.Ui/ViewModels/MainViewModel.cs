@@ -32,6 +32,7 @@ using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.XPosting;
 using Wds.SixStars.Ui.Audio;
 using Wds.SixStars.Ui.Configuration;
 using Wds.SixStars.Ui.Infrastructure;
@@ -47,6 +48,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SixStarsRuntime _runtime;
     private readonly IStarProfileProvider _profileProvider;
     private readonly StarWritingService _writingService;
+    private readonly StarXPostingOptions _xPostingOptions;
+    private readonly StarXPostingService _xPostingService;
+    private readonly StarXPostingScheduleStore _xPostingScheduleStore;
     private RelayCommand _generateStarWritingCommand = null!;
     private RelayCommand _tellStarWritingCommand = null!;
     private readonly InMemoryScreenContextStore _screenContextStore;
@@ -146,10 +150,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             throw new InvalidOperationException("The configured Star agent does not implement the writing request pipeline.");
         }
+        StarWritingFileStore writingStore = StarWritingFileStore.CreateDefault();
         _writingService = new StarWritingService(
             _profileProvider,
             writingAgent,
-            StarWritingFileStore.CreateDefault(),
+            writingStore,
             new StarWritingPassOptions
             {
                 Enabled = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_PASSES_ENABLED"), _appConfig.WritingPasses.Enabled),
@@ -164,6 +169,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEED_WORDS_ENABLED"),
                     _appConfig.WritingPasses.SeedWordsEnabled)));
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
+        _xPostingOptions = CreateXPostingOptions();
+        _xPostingService = new StarXPostingService(
+            _profileProvider,
+            writingAgent,
+            writingStore,
+            new XApiPostClient(),
+            _xPostingOptions);
+        _xPostingScheduleStore = new StarXPostingScheduleStore(_xPostingOptions.StateRoot);
         _screenContextStore = new InMemoryScreenContextStore(5);
         int recentHistoryForPrompt = GetIntSetting(
             Environment.GetEnvironmentVariable("SIX_STARS_RECENT_HISTORY_FOR_PROMPT"),
@@ -446,6 +459,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         AskStarInitiativeNowCommand = new RelayCommand(async _ => await AskStarInitiativeNowAsync());
         EnqueueAllStarStateUpdatesCommand = new RelayCommand(async _ => await EnqueueAllStarStateUpdatesAsync());
         InitializeBackgroundWritingLoop();
+        InitializeXPostingLoop();
         _ = RefreshSelectedWritingStateAsync("startup");
         InitializeMobileBridgeCommandsAndMaybeStart();
         _services.StarInitiative.Start();
@@ -879,6 +893,49 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Environment.GetEnvironmentVariable("LM_API_TOKEN"),
             Environment.GetEnvironmentVariable("LM_STUDIO_API_KEY"),
             configuredApiKey);
+    }
+
+    private StarXPostingOptions CreateXPostingOptions()
+    {
+        XPostingConfig cfg = _appConfig.XPosting ?? new XPostingConfig();
+        List<XPostingStarAccountConfig> configuredAccounts = cfg.StarAccounts ?? new List<XPostingStarAccountConfig>();
+        List<StarXAccountOptions> accounts = configuredAccounts
+            .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
+            .Select(x =>
+            {
+                string id = x.Id.Trim().ToLowerInvariant();
+                string envPrefix = "SIX_STARS_X_" + id.ToUpperInvariant() + "_";
+                return new StarXAccountOptions
+                {
+                    Id = id,
+                    Enabled = x.Enabled,
+                    ApiKey = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "API_KEY"), x.ApiKey) ?? string.Empty,
+                    ApiSecret = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "API_SECRET"), x.ApiSecret) ?? string.Empty,
+                    AccessToken = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "ACCESS_TOKEN"), x.AccessToken) ?? string.Empty,
+                    AccessTokenSecret = FirstNonEmpty(Environment.GetEnvironmentVariable(envPrefix + "ACCESS_TOKEN_SECRET"), x.AccessTokenSecret) ?? string.Empty
+                };
+            })
+            .ToList();
+
+        return new StarXPostingOptions
+        {
+            Enabled = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_ENABLED"), cfg.Enabled),
+            StateRoot = string.IsNullOrWhiteSpace(cfg.StateRoot) ? "state/x-posting" : cfg.StateRoot,
+            CandidateLimit = Math.Max(5, Math.Min(500, cfg.CandidateLimit <= 0 ? 500 : cfg.CandidateLimit)),
+            DelayBetweenPostsSeconds = Math.Max(0, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_DELAY_SECONDS"), cfg.DelayBetweenPostsSeconds)),
+            RequestTimeoutSeconds = Math.Max(5, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_REQUEST_TIMEOUT_SECONDS"), cfg.RequestTimeoutSeconds)),
+            PollSeconds = Math.Max(10, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_POLL_SECONDS"), cfg.PollSeconds)),
+            RetryDelaySeconds = Math.Max(30, GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_X_POSTING_RETRY_DELAY_SECONDS"), cfg.RetryDelaySeconds)),
+            RefreshSlots = cfg.RefreshSlots == null || cfg.RefreshSlots.Count == 0
+                ? StarXPostingOptions.CreateDefaultSlots()
+                : cfg.RefreshSlots.Select(x => new StarXPostingScheduleSlot
+                {
+                    SlotId = x.SlotId,
+                    StartsAt = x.StartsAt,
+                    RefreshBefore = x.RefreshBefore
+                }).ToList(),
+            StarAccounts = accounts
+        };
     }
 
     private DailyStarStateOptions CreateDailyStarStateOptions()
@@ -3850,6 +3907,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             DisposeBackgroundWritingLoop();
+            DisposeXPostingLoop();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
             _services.Dispose();

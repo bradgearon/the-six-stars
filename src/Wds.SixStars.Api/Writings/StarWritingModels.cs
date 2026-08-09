@@ -169,12 +169,16 @@ namespace Wds.SixStars.Api.Writings
         public DateTimeOffset PersistedAt { get; set; }
         public DateTimeOffset? LastToldAt { get; set; }
         public int ToldCount { get; set; }
+        public DateTimeOffset? PostedAt { get; set; }
+        public string XPostId { get; set; } = string.Empty;
+        public string PostedText { get; set; } = string.Empty;
         public bool IsPending => ToldCount <= 0;
+        public bool IsPosted => PostedAt.HasValue;
     }
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 6;
+        public int Version { get; set; } = 7;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -192,6 +196,7 @@ namespace Wds.SixStars.Api.Writings
         public List<PersistedStarWriting> PersistedWritings { get; set; } = new List<PersistedStarWriting>();
 
         public int PendingCount => PersistedWritings?.Count(x => x != null && x.ToldCount <= 0) ?? 0;
+        public int UnpostedCount => PersistedWritings?.Count(x => x != null && !x.PostedAt.HasValue) ?? 0;
     }
 
     public sealed class StarWritingCreateResult

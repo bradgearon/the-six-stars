@@ -23,6 +23,7 @@ namespace Wds.SixStars.Ui.Configuration
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
         public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
+        public XPostingConfig XPosting { get; set; } = new XPostingConfig();
     }
 
 
@@ -135,6 +136,57 @@ namespace Wds.SixStars.Ui.Configuration
         public double OnePassWeight { get; set; } = 0.50;
         public double TwoToThreePassWeight { get; set; } = 0.30;
         public double FourOrMorePassWeight { get; set; } = 0.20;
+    }
+
+    public sealed class XPostingConfig
+    {
+        /// <summary>Enables the four-times-daily scheduler. Manual Post Now remains available when false.</summary>
+        public bool Enabled { get; set; } = false;
+        public string StateRoot { get; set; } = "state/x-posting";
+        public int CandidateLimit { get; set; } = 500;
+        public int DelayBetweenPostsSeconds { get; set; } = 120;
+        public int RequestTimeoutSeconds { get; set; } = 45;
+        public int PollSeconds { get; set; } = 60;
+        public int RetryDelaySeconds { get; set; } = 300;
+        public List<XPostingSlotConfig> RefreshSlots { get; set; } = new List<XPostingSlotConfig>
+        {
+            new XPostingSlotConfig { SlotId = "overnight", StartsAt = "00:00", RefreshBefore = "06:00" },
+            new XPostingSlotConfig { SlotId = "morning", StartsAt = "06:00", RefreshBefore = "12:00" },
+            new XPostingSlotConfig { SlotId = "afternoon", StartsAt = "12:00", RefreshBefore = "18:00" },
+            new XPostingSlotConfig { SlotId = "evening", StartsAt = "18:00", RefreshBefore = "00:00" }
+        };
+        public List<XPostingStarAccountConfig> StarAccounts { get; set; } = CreateDefaultAccounts();
+
+        private static List<XPostingStarAccountConfig> CreateDefaultAccounts()
+        {
+            return new List<XPostingStarAccountConfig>
+            {
+                new XPostingStarAccountConfig { Id = "elusiaa" },
+                new XPostingStarAccountConfig { Id = "kaelia" },
+                new XPostingStarAccountConfig { Id = "maera" },
+                new XPostingStarAccountConfig { Id = "khavia" },
+                new XPostingStarAccountConfig { Id = "auerlis" },
+                new XPostingStarAccountConfig { Id = "nyxari" }
+            };
+        }
+    }
+
+    public sealed class XPostingSlotConfig
+    {
+        public string SlotId { get; set; } = string.Empty;
+        public string StartsAt { get; set; } = string.Empty;
+        public string RefreshBefore { get; set; } = string.Empty;
+    }
+
+    public sealed class XPostingStarAccountConfig
+    {
+        /// <summary>Lower-case Star id used to choose this account.</summary>
+        public string Id { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+        public string ApiKey { get; set; } = string.Empty;
+        public string ApiSecret { get; set; } = string.Empty;
+        public string AccessToken { get; set; } = string.Empty;
+        public string AccessTokenSecret { get; set; } = string.Empty;
     }
 
     public sealed class DailyStarStateConfig
