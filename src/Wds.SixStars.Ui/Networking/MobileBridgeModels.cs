@@ -22,6 +22,7 @@ public sealed class MobileBridgeRequest
     public bool ReturnAudioInline { get; set; }
     public bool PrefetchForListen { get; set; }
     public string SpeechIntentId { get; set; } = string.Empty;
+    public string PreparedSpeechPrefixIntentId { get; set; } = string.Empty;
     public string SpeechIntentGoal { get; set; } = string.Empty;
     public string SpeechIntentTopic { get; set; } = string.Empty;
     public string SpeechIntentPriority { get; set; } = string.Empty;

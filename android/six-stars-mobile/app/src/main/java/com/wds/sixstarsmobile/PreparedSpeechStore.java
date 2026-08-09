@@ -103,6 +103,11 @@ final class PreparedSpeechStore {
         final int preparingCount;
         final double highestEffectiveScore;
         final String highestPriority;
+        final int activeIntentCount;
+        final int pendingIntentCount;
+        final int highPriorityIntentCount;
+        final String highestIntentStatus;
+        final String highestIntentTopic;
         final boolean speakBeforeReplyEnabled;
         final double speakBeforeReplyProbability;
         final double highPrioritySpeakBeforeReplyProbability;
@@ -118,7 +123,8 @@ final class PreparedSpeechStore {
 
         SyncResult(List<CachedItem> readyItems, int preparingCount, double highestEffectiveScore, String highestPriority) {
             this(readyItems, preparingCount, highestEffectiveScore, highestPriority,
-                    true, 0.30, 0.80, 12, 8, 18, 0.55, 0.30, 70.0, 8, 78.0, 55.0);
+                    0, 0, 0, "", "",
+                    true, 0.30, 1.00, 12, 8, 18, 0.55, 0.30, 70.0, 8, 78.0, 55.0);
         }
 
         SyncResult(
@@ -126,6 +132,11 @@ final class PreparedSpeechStore {
                 int preparingCount,
                 double highestEffectiveScore,
                 String highestPriority,
+                int activeIntentCount,
+                int pendingIntentCount,
+                int highPriorityIntentCount,
+                String highestIntentStatus,
+                String highestIntentTopic,
                 boolean speakBeforeReplyEnabled,
                 double speakBeforeReplyProbability,
                 double highPrioritySpeakBeforeReplyProbability,
@@ -142,6 +153,11 @@ final class PreparedSpeechStore {
             this.preparingCount = Math.max(0, preparingCount);
             this.highestEffectiveScore = Math.max(0.0, Math.min(100.0, highestEffectiveScore));
             this.highestPriority = normalizePriority(highestPriority);
+            this.activeIntentCount = Math.max(0, activeIntentCount);
+            this.pendingIntentCount = Math.max(0, pendingIntentCount);
+            this.highPriorityIntentCount = Math.max(0, highPriorityIntentCount);
+            this.highestIntentStatus = safeText(highestIntentStatus).toLowerCase(Locale.US);
+            this.highestIntentTopic = safeText(highestIntentTopic);
             this.speakBeforeReplyEnabled = speakBeforeReplyEnabled;
             this.speakBeforeReplyProbability = clamp01(speakBeforeReplyProbability);
             this.highPrioritySpeakBeforeReplyProbability = clamp01(highPrioritySpeakBeforeReplyProbability);
@@ -172,6 +188,11 @@ final class PreparedSpeechStore {
         JSONArray artifacts = manifest.optJSONArray("artifacts");
         Map<String, JSONObject> intentsById = new HashMap<>();
         int preparingCount = 0;
+        int activeIntentCount = 0;
+        int pendingIntentCount = 0;
+        int highPriorityIntentCount = 0;
+        String highestIntentStatus = "";
+        String highestIntentTopic = "";
         if (intents != null) {
             for (int i = 0; i < intents.length(); i++) {
                 JSONObject intent = intents.optJSONObject(i);
@@ -180,7 +201,15 @@ final class PreparedSpeechStore {
                 if (id.length() == 0) continue;
                 intentsById.put(id.toLowerCase(Locale.US), intent);
                 String status = intent.optString("status", "");
+                String priority = normalizePriority(intent.optString("priority", "low"));
+                activeIntentCount++;
                 if ("preparing".equalsIgnoreCase(status)) preparingCount++;
+                if ("pending".equalsIgnoreCase(status) || "failed".equalsIgnoreCase(status)) pendingIntentCount++;
+                if ("high".equals(priority) || "critical".equals(priority)) highPriorityIntentCount++;
+                if (highestIntentStatus.length() == 0) {
+                    highestIntentStatus = status;
+                    highestIntentTopic = intent.optString("topic", "");
+                }
             }
         }
 
@@ -271,9 +300,14 @@ final class PreparedSpeechStore {
                 preparingCount,
                 manifest.optDouble("highestEffectiveScore", 0.0),
                 manifest.optString("highestPriority", "low"),
+                activeIntentCount,
+                pendingIntentCount,
+                highPriorityIntentCount,
+                highestIntentStatus,
+                highestIntentTopic,
                 clientPolicy == null || clientPolicy.optBoolean("speakBeforeReplyEnabled", true),
                 clientPolicy == null ? 0.30 : clientPolicy.optDouble("speakBeforeReplyProbability", 0.30),
-                clientPolicy == null ? 0.80 : clientPolicy.optDouble("highPrioritySpeakBeforeReplyProbability", 0.80),
+                clientPolicy == null ? 1.00 : clientPolicy.optDouble("highPrioritySpeakBeforeReplyProbability", 1.00),
                 clientPolicy == null ? 12 : clientPolicy.optInt("speakBeforeReplyMaximumSeconds", 12),
                 clientPolicy == null ? 8 : clientPolicy.optInt("minimumPageDwellSeconds", 8),
                 clientPolicy == null ? 18 : clientPolicy.optInt("mediumPriorityPageDwellSeconds", 18),

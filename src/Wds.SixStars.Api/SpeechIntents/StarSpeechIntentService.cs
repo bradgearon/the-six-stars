@@ -167,6 +167,27 @@ namespace Wds.SixStars.Api.SpeechIntents
             }, true, cancellationToken);
         }
 
+        public async Task<StarSpeechIntent?> GetNextForForegroundAsync(string starId, string? excludedIntentId, CancellationToken cancellationToken)
+        {
+            StarSpeechIntentManifest manifest = await GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+            return manifest.Intents.FirstOrDefault(x =>
+            {
+                if (!string.IsNullOrWhiteSpace(excludedIntentId)
+                    && string.Equals(x.IntentId, excludedIntentId, StringComparison.OrdinalIgnoreCase)) return false;
+                if (x.Status != StarSpeechIntentStatuses.Pending
+                    && x.Status != StarSpeechIntentStatuses.Failed
+                    && x.Status != StarSpeechIntentStatuses.Ready) return false;
+                if (StarSpeechIntentPriorities.Rank(x.Priority) < StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.High)) return false;
+                return x.EffectiveScore >= _options.HighPriorityPreparationThreshold;
+            });
+        }
+
+        public async Task<StarSpeechIntent?> GetHighestEligibleUnpreparedAsync(string starId, CancellationToken cancellationToken)
+        {
+            StarSpeechIntentManifest manifest = await GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+            return manifest.Intents.FirstOrDefault(x => IsEligibleForPreparation(x, DateTimeOffset.UtcNow));
+        }
+
         public async Task<StarSpeechIntent?> GetNextToPrepareAsync(string starId, CancellationToken cancellationToken)
         {
             StarSpeechIntentManifest manifest = await GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
@@ -175,20 +196,23 @@ namespace Wds.SixStars.Api.SpeechIntents
                 || x.Status == StarSpeechIntentStatuses.Leased
                 || x.Status == StarSpeechIntentStatuses.Playing);
             if (preparedOrPreparingCount >= Math.Max(1, _options.MaximumPreparedItemsPerStar)) return null;
-            return manifest.Intents.FirstOrDefault(x =>
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return manifest.Intents.FirstOrDefault(x => IsEligibleForPreparation(x, now));
+        }
+
+        private bool IsEligibleForPreparation(StarSpeechIntent x, DateTimeOffset now)
+        {
+            if (x.Status != StarSpeechIntentStatuses.Pending && x.Status != StarSpeechIntentStatuses.Failed) return false;
+            if (x.Status == StarSpeechIntentStatuses.Failed)
             {
-                if (x.Status != StarSpeechIntentStatuses.Pending && x.Status != StarSpeechIntentStatuses.Failed) return false;
-                if (x.Status == StarSpeechIntentStatuses.Failed)
-                {
-                    if (x.PrepareAttempts >= Math.Max(1, _options.MaximumPrepareAttempts)) return false;
-                    if (DateTimeOffset.UtcNow - x.UpdatedAt < TimeSpan.FromSeconds(Math.Max(1, _options.PrepareRetryDelaySeconds))) return false;
-                }
-                int rank = StarSpeechIntentPriorities.Rank(x.Priority);
-                if (rank >= StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.High))
-                    return x.EffectiveScore >= _options.HighPriorityPreparationThreshold;
-                return rank == StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.Medium)
-                    && x.EffectiveScore >= _options.MediumPriorityPreparationThreshold;
-            });
+                if (x.PrepareAttempts >= Math.Max(1, _options.MaximumPrepareAttempts)) return false;
+                if (now - x.UpdatedAt < TimeSpan.FromSeconds(Math.Max(1, _options.PrepareRetryDelaySeconds))) return false;
+            }
+            int rank = StarSpeechIntentPriorities.Rank(x.Priority);
+            if (rank >= StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.High))
+                return x.EffectiveScore >= _options.HighPriorityPreparationThreshold;
+            return rank == StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.Medium)
+                && x.EffectiveScore >= _options.MediumPriorityPreparationThreshold;
         }
 
         public Task<StarSpeechIntent?> MarkPreparingAsync(string intentId, CancellationToken cancellationToken)
@@ -219,6 +243,21 @@ namespace Wds.SixStars.Api.SpeechIntents
                 x.Status = StarSpeechIntentStatuses.Failed;
                 x.LastError = error ?? string.Empty;
                 x.LeaseExpiresAt = null;
+            }, cancellationToken, x => !IsTerminal(x.Status));
+        }
+
+        public Task<StarSpeechIntent?> RequeueForPreparationAsync(string intentId, string reason, CancellationToken cancellationToken)
+        {
+            return MutateAsync(intentId, "requeued", x =>
+            {
+                x.Status = StarSpeechIntentStatuses.Pending;
+                x.PreparedArtifactId = string.Empty;
+                x.LeaseExpiresAt = null;
+                x.PlaybackStartedAt = null;
+                x.PrepareAttempts = 0;
+                x.LastError = string.IsNullOrWhiteSpace(reason)
+                    ? "Prepared speech artifact was unavailable; the intention was requeued."
+                    : reason.Trim();
             }, cancellationToken, x => !IsTerminal(x.Status));
         }
 

@@ -53,6 +53,10 @@ namespace Wds.SixStars.Api.Ai
         [JsonPropertyName("thingsLearnedOrSuggestedByPlayer")]
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
+        /// <summary>Durable wants-to-say intent ids this exact spoken response actually fulfilled.</summary>
+        [JsonPropertyName("addressedSpeechIntentIds")]
+        public List<string> AddressedSpeechIntentIds { get; set; } = new List<string>();
+
         /// <summary>
         /// Compact foreground emotion-vector hint for speed tests. Format is one entry per canonical
         /// StarEmotionMatrix.StandardEmotionIds item in order: confidence:score;confidence:score;...

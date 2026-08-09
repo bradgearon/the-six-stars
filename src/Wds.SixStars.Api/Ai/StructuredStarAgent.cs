@@ -1124,6 +1124,7 @@ namespace Wds.SixStars.Api.Ai
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
             model.ThingsLearnedOrSuggestedByPlayer = CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8);
+            model.AddressedSpeechIntentIds = CleanList(model.AddressedSpeechIntentIds, 2);
             List<GirlfriendVectorItem> initiativeSpeechDecisionVector = NormalizeGirlfriendVector(model.SpeechDecisionVector, 1);
             bool initiativeVectorWantsSpeech = initiativeSpeechDecisionVector.Any(x => x != null && (x.Score > 0 || x.Confidence > 0));
             StarInteractionResponse response = new StarInteractionResponse
@@ -1152,6 +1153,7 @@ namespace Wds.SixStars.Api.Ai
                 NeedsMoreInformation = model.NeedsMoreInformation,
                 InformationNeeds = model.InformationNeeds ?? new List<InformationNeedVectorItem>(),
                 ThingsLearnedOrSuggestedByPlayer = model.ThingsLearnedOrSuggestedByPlayer ?? new List<string>(),
+                AddressedSpeechIntentIds = model.AddressedSpeechIntentIds ?? new List<string>(),
                 Debug = new DebugInfo
                 {
                     DetectedIntent = request.RequestType.ToString(),

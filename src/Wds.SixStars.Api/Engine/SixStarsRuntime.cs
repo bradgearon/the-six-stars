@@ -307,11 +307,81 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
-        public Task<StarSpeechIntentManifest> GetSpeechIntentManifestAsync(string? starId, CancellationToken cancellationToken)
-            => _speechIntentService.GetManifestAsync(starId, cancellationToken);
+        public async Task<StarSpeechIntentManifest> GetSpeechIntentManifestAsync(string? starId, CancellationToken cancellationToken)
+        {
+            await RepairUnavailablePreparedSpeechAsync(starId, cancellationToken).ConfigureAwait(false);
+            return await _speechIntentService.GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+        }
 
-        public Task<StarSpeechIntent?> GetNextSpeechIntentToPrepareAsync(string starId, CancellationToken cancellationToken)
-            => _speechIntentService.GetNextToPrepareAsync(starId, cancellationToken);
+        public async Task<StarSpeechIntent?> GetNextSpeechIntentToPrepareAsync(string starId, CancellationToken cancellationToken)
+        {
+            await RepairUnavailablePreparedSpeechAsync(starId, cancellationToken).ConfigureAwait(false);
+            StarSpeechIntent? next = await _speechIntentService.GetNextToPrepareAsync(starId, cancellationToken).ConfigureAwait(false);
+            if (next != null) return next;
+
+            // A full cache of medium-priority audio must not permanently hide a newer high/critical
+            // thing the Star wants to say. Preserve anything already leased/playing, but recycle the
+            // weakest merely-ready lower-priority artifact so the high item gets a preparation slot.
+            StarSpeechIntent? urgent = await _speechIntentService.GetHighestEligibleUnpreparedAsync(starId, cancellationToken).ConfigureAwait(false);
+            if (urgent == null
+                || StarSpeechIntentPriorities.Rank(urgent.Priority) < StarSpeechIntentPriorities.Rank(StarSpeechIntentPriorities.High))
+            {
+                return null;
+            }
+
+            StarSpeechIntentManifest manifest = await _speechIntentService.GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+            StarSpeechIntent? replaceable = manifest.Intents
+                .Where(x => x.Status == StarSpeechIntentStatuses.Ready
+                    && StarSpeechIntentPriorities.Rank(x.Priority) < StarSpeechIntentPriorities.Rank(urgent.Priority))
+                .OrderBy(x => StarSpeechIntentPriorities.Rank(x.Priority))
+                .ThenBy(x => x.EffectiveScore)
+                .ThenByDescending(x => x.CreatedAt)
+                .FirstOrDefault();
+            if (replaceable == null) return null;
+
+            await _preparedSpeechStore.DeleteByIntentAsync(replaceable.IntentId, cancellationToken).ConfigureAwait(false);
+            await _speechIntentService.RequeueForPreparationAsync(
+                replaceable.IntentId,
+                "A higher-priority speech intention needed the limited prepared-audio slot; this lower-priority intention remains queued for later.",
+                cancellationToken).ConfigureAwait(false);
+            return urgent;
+        }
+
+        public async Task<StarSpeechIntent?> GetNextSpeechIntentForForegroundAsync(string starId, string? excludedIntentId, CancellationToken cancellationToken)
+        {
+            await RepairUnavailablePreparedSpeechAsync(starId, cancellationToken).ConfigureAwait(false);
+            return await _speechIntentService.GetNextForForegroundAsync(starId, excludedIntentId, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task RepairUnavailablePreparedSpeechAsync(string? starId, CancellationToken cancellationToken)
+        {
+            StarSpeechIntentManifest intents = await _speechIntentService.GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+            List<StarSpeechIntent> artifactBacked = intents.Intents
+                .Where(x => x.Status == StarSpeechIntentStatuses.Ready
+                    || x.Status == StarSpeechIntentStatuses.Leased
+                    || x.Status == StarSpeechIntentStatuses.Playing)
+                .ToList();
+            if (artifactBacked.Count == 0) return;
+
+            PreparedSpeechManifest prepared = await _preparedSpeechStore.GetManifestAsync(starId, cancellationToken).ConfigureAwait(false);
+            HashSet<string> availableArtifactIds = new HashSet<string>(
+                prepared.Artifacts
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.ArtifactId) && x.Chunks != null && x.Chunks.Count > 0)
+                    .Select(x => x.ArtifactId),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (StarSpeechIntent intent in artifactBacked)
+            {
+                if (!string.IsNullOrWhiteSpace(intent.PreparedArtifactId)
+                    && availableArtifactIds.Contains(intent.PreparedArtifactId)) continue;
+
+                await _preparedSpeechStore.DeleteByIntentAsync(intent.IntentId, cancellationToken).ConfigureAwait(false);
+                await _speechIntentService.RequeueForPreparationAsync(
+                    intent.IntentId,
+                    "The prepared speech artifact referenced by this intention is missing or expired; requeued for fresh voice generation.",
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
 
         public Task<StarSpeechIntent?> MarkSpeechIntentPreparingAsync(string intentId, CancellationToken cancellationToken)
             => _speechIntentService.MarkPreparingAsync(intentId, cancellationToken);
@@ -770,6 +840,73 @@ namespace Wds.SixStars.Api.Engine
             request.GameContext.Flags["foregroundRespectExplicitLength"] = _foregroundSpeechStyleOptions.RespectExplicitLengthRequests ? "true" : "false";
         }
 
+        private async Task AttachForegroundSpeechIntentAsync(StarInteractionRequest request, CancellationToken cancellationToken)
+        {
+            if (request == null || request.GameContext == null || request.GameContext.Flags == null) return;
+            if (request.RequestType == RequestType.StarInitiative
+                || request.RequestType == RequestType.Story
+                || request.RequestType == RequestType.Debug) return;
+            if (IsTruthy(GetGameContextFlag(request.GameContext, "preparedSpeechIntent", "false"))) return;
+            if (!string.IsNullOrWhiteSpace(GetGameContextFlag(request.GameContext, "preparedSpeechPrefixIntentId", string.Empty)))
+            {
+                request.GameContext.Flags["foregroundSpeechIntentSkipped"] = "prepared-prefix-already-speaking";
+                return;
+            }
+            if (IsTruthy(GetGameContextFlag(request.GameContext, "foregroundSpeechIntent", "false"))) return;
+
+            StarSpeechIntent? intent = await GetNextSpeechIntentForForegroundAsync(request.StarId, null, cancellationToken).ConfigureAwait(false);
+            if (intent == null) return;
+
+            request.GameContext.Flags["foregroundSpeechIntent"] = "true";
+            request.GameContext.Flags["foregroundSpeechIntentId"] = intent.IntentId ?? string.Empty;
+            request.GameContext.Flags["foregroundSpeechIntentGoal"] = intent.SpeechGoal ?? string.Empty;
+            request.GameContext.Flags["foregroundSpeechIntentTopic"] = intent.Topic ?? string.Empty;
+            request.GameContext.Flags["foregroundSpeechIntentPriority"] = intent.Priority ?? string.Empty;
+            request.GameContext.Flags["foregroundSpeechIntentScore"] = intent.EffectiveScore.ToString("0.00", CultureInfo.InvariantCulture);
+            request.GameContext.RecentEvents.Add(
+                request.StarId + " has an unresolved high-priority thing she wants to say. The foreground reply should answer the Last Cat and naturally fulfill that communication goal in the same spoken response.");
+        }
+
+        private static void ValidateAddressedSpeechIntents(StarInteractionRequest request, StarInteractionResponse response)
+        {
+            if (response == null) return;
+            string offeredIntentId = GetGameContextFlag(request?.GameContext, "foregroundSpeechIntentId", string.Empty);
+            if (string.IsNullOrWhiteSpace(offeredIntentId) || string.IsNullOrWhiteSpace(response.SpokenText))
+            {
+                response.AddressedSpeechIntentIds = new List<string>();
+                return;
+            }
+
+            response.AddressedSpeechIntentIds = (response.AddressedSpeechIntentIds ?? new List<string>())
+                .Where(x => string.Equals(x, offeredIntentId, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(1)
+                .ToList();
+            if (response.AddressedSpeechIntentIds.Count > 0)
+            {
+                response.Debug.Notes.Add("Foreground response explicitly fulfilled durable speech intention " + offeredIntentId + ".");
+            }
+            else
+            {
+                response.Debug.Notes.Add("A durable speech intention was offered to the foreground response but was not acknowledged by the model; it remains queued.");
+            }
+        }
+
+        private async Task CompleteAddressedSpeechIntentsAsync(StarInteractionResponse response, string reason, CancellationToken cancellationToken)
+        {
+            foreach (string intentId in (response?.AddressedSpeechIntentIds ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(2))
+            {
+                StarSpeechIntent? completed = await MarkSpeechIntentSpokenAsync(intentId, cancellationToken).ConfigureAwait(false);
+                if (completed != null)
+                {
+                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Completed foreground speech intention " + intentId + " after " + reason + ".");
+                }
+            }
+        }
+
         public async Task<StarInteractionResponse> ProcessAsync(StarInteractionRequest request, CancellationToken cancellationToken)
         {
             bool isStarInitiativeRequest = request != null && request.RequestType == RequestType.StarInitiative;
@@ -785,6 +922,7 @@ namespace Wds.SixStars.Api.Engine
                 if (!isBackgroundWorkerRequest)
                 {
                     ApplyForegroundSpeechStyle(request);
+                    await AttachForegroundSpeechIntentAsync(request, cancellationToken).ConfigureAwait(false);
                 }
                 else if (request?.GameContext?.Flags != null)
                 {
@@ -838,6 +976,7 @@ namespace Wds.SixStars.Api.Engine
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
+            ValidateAddressedSpeechIntents(request, response);
             ApplyVoiceDefaults(profile, response);
             response.UnityEvents.Add(new UnityEventEnvelope
             {
@@ -897,6 +1036,7 @@ namespace Wds.SixStars.Api.Engine
             }
 
             await ApplyAnalysisAndMemoryUpdateAsync(request, response, cancellationToken).ConfigureAwait(false);
+            await CompleteAddressedSpeechIntentsAsync(response, "foreground response completed without deferred analysis", cancellationToken).ConfigureAwait(false);
             return response;
             }
             finally
@@ -2956,6 +3096,17 @@ namespace Wds.SixStars.Api.Engine
             }
 
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after voice ready: " + reason);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await CompleteAddressedSpeechIntentsAsync(pending.ForegroundResponse, reason, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Could not complete addressed speech intention after voice ready: " + ex.Message);
+                }
+            });
             QueueBackgroundAnalysis(analysisId, pending.Analyzer, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }

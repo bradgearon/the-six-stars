@@ -114,7 +114,7 @@ namespace Wds.SixStars.Ui.Configuration
         public bool RespectExplicitLengthRequests { get; set; } = true;
         public bool SpeakBeforeReplyEnabled { get; set; } = true;
         public double SpeakBeforeReplyProbability { get; set; } = 0.30;
-        public double HighPrioritySpeakBeforeReplyProbability { get; set; } = 0.80;
+        public double HighPrioritySpeakBeforeReplyProbability { get; set; } = 1.00;
         public int SpeakBeforeReplyMaximumSeconds { get; set; } = 12;
         public int MinimumPageDwellSeconds { get; set; } = 8;
         public int MediumPriorityPageDwellSeconds { get; set; } = 18;

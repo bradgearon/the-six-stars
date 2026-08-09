@@ -340,7 +340,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
         _runtime.SpeechIntentChanged += (_, args) =>
         {
-            if (args.ChangeType == "upserted") _ = PrepareHighPrioritySpeechForStarAsync(args.Intent.StarId, "speech intention became eligible");
+            if (args.ChangeType == "upserted"
+                || args.ChangeType == "requeued"
+                || args.ChangeType == "spoken"
+                || args.ChangeType == "dismissed")
+            {
+                _ = PrepareHighPrioritySpeechForStarAsync(args.Intent.StarId, "speech intention queue changed: " + args.ChangeType);
+            }
         };
         _runtime.DailyStateUpdateFailed += (_, ex) => OnUiThread(() =>
         {
@@ -444,6 +450,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         InitializeBackgroundWritingLoop();
         _ = RefreshSelectedWritingStateAsync("startup");
         InitializeMobileBridgeCommandsAndMaybeStart();
+        _ = PrepareExistingSpeechIntentQueuesAsync("startup queue recovery");
         _services.StarInitiative.Start();
 
         if (GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_ALWAYS_LISTENING"), _appConfig.VoiceInput.AlwaysListeningOnStartup))
