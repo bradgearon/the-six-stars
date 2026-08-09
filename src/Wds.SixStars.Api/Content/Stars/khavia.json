@@ -946,6 +946,34 @@
       ]
     },
     {
+      "id": "intriguing-repeatable",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumScore": 72
+        },
+        {
+          "category": "WorthRetelling",
+          "minimumScore": 72
+        }
+      ]
+    },
+    {
+      "id": "clever-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 72
+        },
+        {
+          "category": "Clever",
+          "minimumScore": 72
+        }
+      ]
+    },
+    {
       "id": "friendly-play",
       "matchMode": "all",
       "requirements": [
