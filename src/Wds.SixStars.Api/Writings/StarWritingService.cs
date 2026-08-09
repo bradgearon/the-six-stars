@@ -145,7 +145,33 @@ namespace Wds.SixStars.Api.Writings
                 List<PersistedStarWriting> pending = state.PersistedWritings.Where(x => x != null && x.ToldCount <= 0).OrderByDescending(x => x.PersistedAt).ToList();
                 if (pending.Count == 0) return null;
 
-                StarWritingPerformancePlan plan = await _agent.PrepareWritingPerformanceAsync(profile, state, pending, cancellationToken).ConfigureAwait(false);
+                StarWritingPerformancePlan plan;
+                try
+                {
+                    plan = await _agent.PrepareWritingPerformanceAsync(profile, state, pending, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    // The writings are already durable and TTS-ready. A performance-planning LLM
+                    // failure must not turn the Play button into a failed bridge command with no
+                    // speech. Fall back to the five newest untold pieces verbatim.
+                    List<PersistedStarWriting> fallback = pending.Take(5).ToList();
+                    System.Diagnostics.Debug.WriteLine(
+                        "[StarWritingPerformance] " + profile.StarId
+                        + " performance plan failed; using exact-writing fallback: " + ex.Message);
+                    plan = new StarWritingPerformancePlan
+                    {
+                        StarId = profile.StarId,
+                        SelectedWritingIds = fallback.Select(x => x.Id).ToList(),
+                        SpokenText = fallback.Select(x => x.Writing).ToList(),
+                        RawModelJson = "fallback-after-performance-plan-error: " + ex.Message
+                    };
+                }
+
                 HashSet<string> pendingIds = new HashSet<string>(pending.Select(x => x.Id), StringComparer.OrdinalIgnoreCase);
                 int targetCount = Math.Min(5, pending.Count);
                 List<string> selectedIds = (plan.SelectedWritingIds ?? new List<string>())

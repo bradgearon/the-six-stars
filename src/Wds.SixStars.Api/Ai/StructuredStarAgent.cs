@@ -18,6 +18,9 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
+        private const int WritingPerformanceCandidateLimit = 12;
+        private const int WritingPerformanceTextLimit = 600;
+
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
         private readonly PromptTemplateRenderer _templates;
@@ -580,6 +583,16 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<PersistedStarWriting> pendingWritings,
             CancellationToken cancellationToken)
         {
+            // A Star can accumulate hundreds of untold shelf entries while the idle writing loop runs.
+            // Sending the entire shelf to a 16K model makes the performance request fail before it can
+            // return any text or start TTS. Give the model a small newest-first candidate window instead.
+            List<PersistedStarWriting> performanceCandidates = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Writing))
+                .OrderByDescending(x => x.PersistedAt)
+                .ThenByDescending(x => x.GeneratedAt)
+                .Take(WritingPerformanceCandidateLimit)
+                .ToList();
+
             object data = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -592,13 +605,12 @@ namespace Wds.SixStars.Api.Ai
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 voiceDirection = PromptText(profile.VoiceDirection, 900),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                pendingIds = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
-                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
+                totalPendingCount = (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
+                candidateCount = performanceCandidates.Count,
+                pendingIds = performanceCandidates
                     .Select(x => x.Id.Trim())
                     .ToList(),
-                persistedWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
-                    .Where(x => x != null)
-                    .OrderByDescending(x => x.PersistedAt)
+                persistedWritings = performanceCandidates
                     .Select(x => new
                     {
                         id = PromptText(x.Id, 160),
@@ -607,7 +619,7 @@ namespace Wds.SixStars.Api.Ai
                         toldCount = x.ToldCount,
                         words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
                         emotionalVector = StarWritingEmotionVector.Normalize(x.EmotionalVector, out _),
-                        writing = PromptText(x.Writing, 1800)
+                        writing = PromptText(x.Writing, WritingPerformanceTextLimit)
                     })
                     .ToList()
             };

@@ -10,12 +10,9 @@ Deep personality: {{ data.deepPersonality }}
 Speaking style: {{ data.speakingStyle }}
 Performance direction: {{ data.voiceDirection }}
 
-PENDING IDS ELIGIBLE TO TELL NOW
-{{ for id in data.pendingIds }}
-- {{ id }}
-{{ end }}
+LATEST PENDING CANDIDATE WINDOW
+There are {{ data.totalPendingCount }} untold shelf entries in total. To keep this request small and reliable, choose only from the {{ data.candidateCount }} newest candidates below.
 
-COMPLETE PERSISTED WRITING LIST
 The vector uses this fixed category order:
 {{ data.vectorOrder }}
 {{ for item in data.persistedWritings }}
@@ -27,6 +24,11 @@ Words: {{ item.words }}
 Emotional vector: {{ item.emotionalVector }}
 Writing: {{ item.writing }}
 ---
+{{ end }}
+
+ELIGIBLE IDS
+{{ for id in data.pendingIds }}
+- {{ id }}
 {{ end }}
 
 Choose the required pending writings and produce the one-to-one spokenText array. Return only JSON.
