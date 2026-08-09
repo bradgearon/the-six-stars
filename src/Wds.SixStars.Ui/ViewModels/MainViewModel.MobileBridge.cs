@@ -187,6 +187,8 @@ public sealed partial class MainViewModel
             audioClientCount = clients,
             webSocketClientCount = _services.MobileBridgeHost.WebSocketClientCount,
             selectedStarId = SelectedStarId,
+            backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
             streamingTts = _useStreamingTts,
             time = DateTimeOffset.Now
         };
@@ -218,6 +220,8 @@ public sealed partial class MainViewModel
             ok = true,
             selectedStarId = SelectedStarId,
             sessionId = safeSessionId,
+            backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
             stars = states,
             latestEventSequence = _mobileBridgeDispatcher.GetEventsAfter(long.MaxValue).LatestSequence,
             time = DateTimeOffset.Now
@@ -502,6 +506,20 @@ public sealed partial class MainViewModel
                 StarState state = await _runtime.ActivateGirlfriendCuteModeNowAsync(sessionId, starId, string.IsNullOrWhiteSpace(command.Reason) ? "Android Cute Now button" : command.Reason, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " is in cute mode now."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " entered girlfriend cute mode now.");
+            }
+
+            case "SetBackgroundWritingLoopEnabled":
+            {
+                bool enabled = command.BackgroundWritingLoopEnabled ?? BackgroundWritingLoopEnabled;
+                OnUiThread(() => BackgroundWritingLoopEnabled = enabled);
+
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                string message = enabled
+                    ? "Desktop automatic Star writing generation is enabled. It will resume after the runtime has been idle for a few seconds."
+                    : "Desktop automatic Star writing generation is off. The current background generation pass was cancelled for reliable voice playback.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
             }
 
             case "GenerateStarWriting":
@@ -1146,6 +1164,8 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
             PendingWritingCount = writingState?.PendingCount,
             PersistedWritingCount = writingState?.PersistedWritings?.Count,
             State = state,
@@ -1166,7 +1186,15 @@ public sealed partial class MainViewModel
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
-            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow") ? "GirlfriendCuteModeChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
+            EventType = commandType == "SelectStar"
+                ? "SelectedStarChanged"
+                : commandType == "SetBackgroundWritingLoopEnabled"
+                    ? "BackgroundWritingLoopChanged"
+                    : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow")
+                        ? "GirlfriendCuteModeChanged"
+                        : (commandType == "ClearHistory" || commandType == "ClearAllData")
+                            ? "StarHistoryCleared"
+                            : "StarStateChanged",
             CommandId = command.CommandId,
             SourceClientId = command.SourceClientId,
             SessionId = sessionId,
@@ -1178,6 +1206,8 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
             PendingWritingCount = writingState?.PendingCount,
             PersistedWritingCount = writingState?.PersistedWritings?.Count,
             Heart = state.Heart,
@@ -1390,6 +1420,8 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+                BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
                 PendingWritingCount = pendingWritingCount,
                 PersistedWritingCount = persistedWritingCount,
                 Heart = state.Heart,

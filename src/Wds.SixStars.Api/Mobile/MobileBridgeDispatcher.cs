@@ -161,6 +161,7 @@ public sealed class MobileBridgeDispatcher
         if (compact.Equals("ResumeSpeech", StringComparison.OrdinalIgnoreCase)) return "ResumeSpeech";
         if (compact.Equals("GenerateStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("GenerateWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("CreateStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("CreateJokesPoems", StringComparison.OrdinalIgnoreCase)) return "GenerateStarWriting";
         if (compact.Equals("TellStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("TellWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("TellBestLatestWriting", StringComparison.OrdinalIgnoreCase)) return "TellStarWriting";
+        if (compact.Equals("SetBackgroundWritingLoopEnabled", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetAutoWritingEnabled", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAutoWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetWritingLoopEnabled", StringComparison.OrdinalIgnoreCase)) return "SetBackgroundWritingLoopEnabled";
         if (compact.Equals("Refresh", StringComparison.OrdinalIgnoreCase) || compact.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)) return "RefreshState";
         return value.Trim();
     }
@@ -176,6 +177,7 @@ public sealed class MobileBridgeDispatchCommand
     public bool? IsMet { get; set; }
     public bool? IsAlly { get; set; }
     public bool? CuteModeEnabled { get; set; }
+    public bool? BackgroundWritingLoopEnabled { get; set; }
     public bool? PlaybackPaused { get; set; }
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
@@ -206,6 +208,8 @@ public sealed class MobileBridgeDispatchResult
     public bool IsGirlfriend { get; set; }
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
+    public bool BackgroundWritingLoopEnabled { get; set; }
+    public string BackgroundWritingLoopStatus { get; set; } = string.Empty;
     public bool PlaybackPaused { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
@@ -336,6 +340,8 @@ public sealed class MobileBridgeDispatchEvent
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
+    public bool BackgroundWritingLoopEnabled { get; set; }
+    public string BackgroundWritingLoopStatus { get; set; } = string.Empty;
     public bool PlaybackPaused { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
@@ -429,6 +435,8 @@ public sealed class MobileBridgeDispatchEvent
             GirlfriendCuteModeEnabled = state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = (state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled) && (state?.GirlfriendHourlyState?.CuteModeActive ?? result.GirlfriendCuteModeActive),
             GirlfriendCuteModeSignature = !string.IsNullOrWhiteSpace(result.GirlfriendCuteModeSignature) ? result.GirlfriendCuteModeSignature : (state?.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty),
+            BackgroundWritingLoopEnabled = result.BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = result.BackgroundWritingLoopStatus ?? string.Empty,
             PlaybackPaused = result.PlaybackPaused,
             Heart = state?.Heart ?? 0,
             Trust = state?.Trust ?? 0,

@@ -192,6 +192,9 @@ public final class MainActivity extends ComponentActivity {
     private Button prodSendTextButton;
     private Button prodGenerateWritingButton;
     private Button prodTellWritingButton;
+    private CheckBox prodBackgroundWritingLoopCheck;
+    private boolean desktopBackgroundWritingLoopEnabled;
+    private boolean suppressBackgroundWritingLoopToggleDispatch;
     private int selectedStarPendingWritingCount;
     private int selectedStarPersistedWritingCount;
     private boolean starWritingRequestRunning;
@@ -654,6 +657,9 @@ public final class MainActivity extends ComponentActivity {
         prodCancelVoiceButton = null;
         prodSendVoiceButton = null;
         prodSendTextButton = null;
+        prodGenerateWritingButton = null;
+        prodTellWritingButton = null;
+        prodBackgroundWritingLoopCheck = null;
         prodTextToggleButton = null;
         prodTextComposer = null;
         prodConversationText = null;
@@ -954,6 +960,16 @@ public final class MainActivity extends ComponentActivity {
         TextView writingLabel = prodText("Star Writing Shelf", 13, 0xFFFFC8F0, true);
         writingLabel.setPadding(0, dp(10), 0, dp(4));
         controls.addView(writingLabel);
+
+        prodBackgroundWritingLoopCheck = new CheckBox(this);
+        prodBackgroundWritingLoopCheck.setText("Generate Star writings automatically on the desktop while idle");
+        prodBackgroundWritingLoopCheck.setTextColor(0xFFEAF7FF);
+        prodBackgroundWritingLoopCheck.setChecked(desktopBackgroundWritingLoopEnabled);
+        controls.addView(prodBackgroundWritingLoopCheck);
+
+        TextView autoWritingHint = prodText("Turn this off before recording a quote when you want the most reliable voice playback. Disabling it immediately cancels the desktop's current background writing pass; manual writing buttons still work.", 11, 0xFFB6A7C8, false);
+        controls.addView(autoWritingHint);
+
         LinearLayout writingButtons = row();
         prodGenerateWritingButton = prodButton("Create 5 Jokes / Poems");
         prodTellWritingButton = prodButton("Tell Best / Latest (" + selectedStarPendingWritingCount + ")");
@@ -977,9 +993,15 @@ public final class MainActivity extends ComponentActivity {
                 .setView(dialogScroll)
                 .setNegativeButton("Close", null)
                 .create();
+        dialog.setOnDismissListener(d -> prodBackgroundWritingLoopCheck = null);
         dialog.setOnShowListener(d -> {
             dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            prodBackgroundWritingLoopCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (suppressBackgroundWritingLoopToggleDispatch) return;
+                dispatchBackgroundWritingLoopToggle(isChecked, prodBackgroundWritingLoopCheck, status);
+            });
+            fetchMobileState(false);
             save.setOnClickListener(v -> {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
                 baseUrl(); // Persist the manually editable IPv4/hostname fallback before reconnecting.
@@ -1048,6 +1070,7 @@ public final class MainActivity extends ComponentActivity {
         sb.append("IPv6 primary: ").append(settingsService == null || settingsService.useIpv6Primary() ? "enabled" : "disabled").append('\n');
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
+        sb.append("Desktop auto writing: ").append(desktopBackgroundWritingLoopEnabled ? "enabled" : "disabled").append('\n');
         sb.append("Writing shelf: ").append(Math.max(0, selectedStarPendingWritingCount)).append(" new, ")
                 .append(Math.max(0, selectedStarPersistedWritingCount)).append(" saved.\n\n");
         sb.append(currentDailyStarState == null ? "Today: no daily Star state yet." : currentDailyStarState).append("\n\n");
@@ -1993,6 +2016,65 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private void dispatchBackgroundWritingLoopToggle(boolean enabled, CheckBox checkBox, TextView status) {
+        final boolean previous = desktopBackgroundWritingLoopEnabled;
+        if (checkBox != null) checkBox.setEnabled(false);
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-auto-writing-" + System.currentTimeMillis());
+            json.put("commandType", "SetBackgroundWritingLoopEnabled");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("backgroundWritingLoopEnabled", enabled);
+            json.put("reason", enabled
+                    ? "Android Last Cat Console enabled desktop automatic Star writing generation."
+                    : "Android Last Cat Console disabled desktop automatic Star writing generation for reliable voice playback.");
+
+            appendVoiceDebug("Desktop auto writing toggle sent", enabled ? "enable" : "disable");
+            sendSocketRequest("dispatch", json, 30000L, response -> {
+                JSONObject event = response.optJSONObject("event");
+                runOnUiThread(() -> {
+                    applyBackgroundWritingLoopState(event == null ? response : event);
+                    if (checkBox != null) checkBox.setEnabled(true);
+                    if (status != null) status.setText(buildProdMenuStatusText());
+                    setDebug("Desktop auto writing updated", response.optString("message", response.toString()));
+                });
+            }, error -> runOnUiThread(() -> {
+                desktopBackgroundWritingLoopEnabled = previous;
+                setBackgroundWritingLoopCheckState(previous);
+                if (checkBox != null) checkBox.setEnabled(true);
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("Desktop auto writing toggle failed", error.toString());
+                appendVoiceDebug("Desktop auto writing toggle failed", error.toString());
+            }));
+        } catch (Exception ex) {
+            desktopBackgroundWritingLoopEnabled = previous;
+            setBackgroundWritingLoopCheckState(previous);
+            if (checkBox != null) checkBox.setEnabled(true);
+            if (status != null) status.setText(buildProdMenuStatusText());
+            setDebug("Desktop auto writing toggle failed", ex.toString());
+        }
+    }
+
+    private void setBackgroundWritingLoopCheckState(boolean enabled) {
+        desktopBackgroundWritingLoopEnabled = enabled;
+        if (prodBackgroundWritingLoopCheck == null) return;
+        suppressBackgroundWritingLoopToggleDispatch = true;
+        try {
+            prodBackgroundWritingLoopCheck.setChecked(enabled);
+        } finally {
+            suppressBackgroundWritingLoopToggleDispatch = false;
+        }
+    }
+
+    private void applyBackgroundWritingLoopState(JSONObject json) {
+        if (json == null) return;
+        if (!json.has("backgroundWritingLoopEnabled") && !json.has("BackgroundWritingLoopEnabled")) return;
+        boolean enabled = optBooleanEither(json, "backgroundWritingLoopEnabled", "BackgroundWritingLoopEnabled", desktopBackgroundWritingLoopEnabled);
+        setBackgroundWritingLoopCheckState(enabled);
+    }
+
     private void dispatchBridgeCommand(String commandType, String starId, Boolean isMet, Boolean isAlly, String reason) {
         dispatchBridgeCommand(commandType, starId, isMet, isAlly, reason, null);
     }
@@ -2081,6 +2163,7 @@ public final class MainActivity extends ComponentActivity {
             selected = optStringEither(json, "selectedStarId", "SelectedStarId", selectedStarName());
         }
         selectStarInSpinner(selected);
+        applyBackgroundWritingLoopState(json);
         JSONArray stars = json.optJSONArray("stars");
         if (stars != null) {
             for (int i = 0; i < stars.length(); i++) {
@@ -2109,6 +2192,9 @@ public final class MainActivity extends ComponentActivity {
         String starId = optStringEither(event, "starId", "StarId", selected.length() > 0 ? selected : selectedStarName());
         String message = optStringEither(event, "message", "Message", type);
         if (selected.length() > 0) selectStarInSpinner(selected);
+        if ("BackgroundWritingLoopChanged".equalsIgnoreCase(type)) {
+            applyBackgroundWritingLoopState(event);
+        }
 
         if ("PreparedSpeechReady".equalsIgnoreCase(type)
                 || "SpeechIntentReady".equalsIgnoreCase(type)
