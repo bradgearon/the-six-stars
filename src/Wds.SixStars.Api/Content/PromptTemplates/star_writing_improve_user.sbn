@@ -42,6 +42,21 @@ UNAVAILABLE HISTORICAL WORDS
 {{ data.allUsedWordsText }}
 {{ end }}
 
+VALUE-CALIBRATED REFERENCE SPARKS
+These are calibration anchors only. Do not imitate or recycle them.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
+
 CURRENT CANDIDATES
 {{ for item in data.candidates }}
 ID: {{ item.id }}
@@ -50,4 +65,4 @@ Writing: {{ item.writing }}
 ---
 {{ end }}
 
-Return only proposed replacements. Score each old and new version from 0 to 100 using the same standard; the runtime will keep the higher-scoring version.
+Return only proposed replacements. Value each old and new version on the same open-ended scale; the runtime will keep the higher-valued version.

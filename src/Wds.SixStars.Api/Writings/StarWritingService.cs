@@ -12,8 +12,8 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingService
     {
         private const string GlobalOverallRuleId = "global-overall-excellence";
-        private const double DefaultGlobalOverallThreshold = 80.0;
-        private static readonly double GlobalOverallThreshold = ReadGlobalOverallThreshold();
+        private const double DefaultGlobalOverallValueThreshold = 80.0;
+        private static readonly double GlobalOverallValueThreshold = ReadGlobalOverallValueThreshold();
 
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
@@ -107,8 +107,8 @@ namespace Wds.SixStars.Api.Writings
                 await SaveLatestPassStateAsync(state, generation).ConfigureAwait(false);
 
                 // Passes two and later reuse the selected method's critic/rewrite contract. Each proposed
-                // replacement includes an old and new score. Only a strictly higher-scoring rewrite
-                // becomes the input state for the next pass; ties and lower scores keep the old item.
+                // replacement includes an old and new value. Only a strictly higher-valued rewrite
+                // becomes the input state for the next pass; ties and lower values keep the old item.
                 for (int passNumber = 2; passNumber <= selectedPassCount; passNumber++)
                 {
                     StarWritingImprovementResult improvement = await _agent
@@ -344,6 +344,8 @@ namespace Wds.SixStars.Api.Writings
             development.CurrentPhase = phaseNumber;
             development.Title = outline.Title;
             development.Premise = outline.Premise;
+            development.Characters = (outline.Characters ?? new List<string>()).ToList();
+            development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
             development.OutlineBeats = outline.Beats.ToList();
             development.UpdatedAt = DateTimeOffset.UtcNow;
             development.Phases.Add(new StarWritingStoryDevelopmentPhase
@@ -351,12 +353,16 @@ namespace Wds.SixStars.Api.Writings
                 PhaseNumber = phaseNumber,
                 Stage = "outline",
                 StarId = viewpointProfile.StarId,
+                Characters = (outline.Characters ?? new List<string>()).ToList(),
+                StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
                 Summary = outline.Premise,
                 UpdatedAt = development.UpdatedAt
             });
             await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
             ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: outline ready — “" + outline.Title
-                + "” with " + outline.Beats.Count.ToString(CultureInfo.InvariantCulture) + " structural beats. Collaborative drafting begins.");
+                + "” with " + outline.Beats.Count.ToString(CultureInfo.InvariantCulture) + " structural beats, "
+                + (outline.Characters ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + " cast entries, and "
+                + (outline.StorySubjects ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + " story subjects. Collaborative drafting begins.");
 
             List<StarProfile> builders = ShuffleProfiles(allProfiles
                 .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)));
@@ -398,6 +404,14 @@ namespace Wds.SixStars.Api.Writings
 
                 currentStory = build.Story.Trim();
                 outline.Title = string.IsNullOrWhiteSpace(build.Title) ? outline.Title : build.Title.Trim();
+                if (build.Characters != null && build.Characters.Count > 0)
+                {
+                    outline.Characters = build.Characters.ToList();
+                }
+                if (build.StorySubjects != null && build.StorySubjects.Count > 0)
+                {
+                    outline.StorySubjects = build.StorySubjects.ToList();
+                }
                 if (build.RevisedBeats != null && build.RevisedBeats.Count > 0)
                 {
                     outline.Beats = build.RevisedBeats.ToList();
@@ -446,6 +460,8 @@ namespace Wds.SixStars.Api.Writings
                 phaseNumber++;
                 development.CurrentPhase = phaseNumber;
                 development.Title = outline.Title;
+                development.Characters = (outline.Characters ?? new List<string>()).ToList();
+                development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
                 development.OutlineBeats = outline.Beats.ToList();
                 development.CurrentStory = currentStory;
                 development.ContributingStarIds = buildContributors.ToList();
@@ -457,6 +473,8 @@ namespace Wds.SixStars.Api.Writings
                     PhaseNumber = phaseNumber,
                     Stage = wasPendingFinish ? "finish-audit" : "build",
                     StarId = contributor.StarId,
+                    Characters = (outline.Characters ?? new List<string>()).ToList(),
+                    StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
                     PendingFinish = wasPendingFinish,
                     CompletionDecision = decision,
                     Summary = string.Join("; ", build.AddedLayers ?? new List<string>()) + (string.IsNullOrWhiteSpace(build.CompletionReason) ? string.Empty : " Completion: " + build.CompletionReason),
@@ -470,7 +488,9 @@ namespace Wds.SixStars.Api.Writings
                 await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
                 ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: phase "
                     + buildPhaseCount.ToString(CultureInfo.InvariantCulture) + " complete — " + contributor.StarId
-                    + " returned " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture) + " words; decision=" + decision
+                    + " returned " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture) + " words; cast="
+                    + (outline.Characters ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + "; story subjects="
+                    + (outline.StorySubjects ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + "; decision=" + decision
                     + (pendingFinish ? ". A different Star will audit the pending finish next." : "."));
             }
 
@@ -500,6 +520,8 @@ namespace Wds.SixStars.Api.Writings
             phaseNumber++;
             development.CurrentPhase = phaseNumber;
             development.Title = final.Title;
+            development.Characters = (outline.Characters ?? new List<string>()).ToList();
+            development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
             development.CurrentStory = final.Story;
             development.ContributingStarIds = allContributors.ToList();
             development.PendingFinish = false;
@@ -512,6 +534,8 @@ namespace Wds.SixStars.Api.Writings
                 PhaseNumber = phaseNumber,
                 Stage = "final-revision",
                 StarId = viewpointProfile.StarId,
+                Characters = (outline.Characters ?? new List<string>()).ToList(),
+                StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
                 CompletionDecision = "final",
                 Summary = "Viewpoint Star completed the final funny/beautiful/deep/interesting revision with finalStep=true.",
                 StorySnapshot = final.Story,
@@ -530,11 +554,11 @@ namespace Wds.SixStars.Api.Writings
                 cancellationToken).ConfigureAwait(false);
             rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
             List<string> matchedRules = GetMatchedRuleIds(viewpointProfile, values);
-            double overallScore = values.TryGetValue("Overall", out StarWritingEmotionValue? overallValue) && overallValue != null
-                ? overallValue.Score
+            double overallValueNumber = values.TryGetValue("Overall", out StarWritingEmotionValue? overallValue) && overallValue != null
+                ? overallValue.Value
                 : 0.0;
             ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: review vector returned Overall "
-                + overallScore.ToString("0.0", CultureInfo.InvariantCulture) + "; persistence matches="
+                + overallValueNumber.ToString("0.0", CultureInfo.InvariantCulture) + " IU; persistence matches="
                 + (matchedRules.Count > 0 ? string.Join(", ", matchedRules) : "none") + ". Saving the completed development trace and shelf result.");
             phaseNumber++;
             development.CurrentPhase = phaseNumber;
@@ -955,18 +979,16 @@ namespace Wds.SixStars.Api.Writings
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
                 string writing = (replacement.NewWriting ?? string.Empty).Trim();
-                bool scoresAreValid = !double.IsNaN(replacement.OldScore)
-                    && !double.IsInfinity(replacement.OldScore)
-                    && !double.IsNaN(replacement.NewScore)
-                    && !double.IsInfinity(replacement.NewScore)
-                    && replacement.OldScore >= 0
-                    && replacement.OldScore <= 100
-                    && replacement.NewScore >= 0
-                    && replacement.NewScore <= 100;
+                bool valuesAreValid = !double.IsNaN(replacement.OldValue)
+                    && !double.IsInfinity(replacement.OldValue)
+                    && !double.IsNaN(replacement.NewValue)
+                    && !double.IsInfinity(replacement.NewValue)
+                    && replacement.OldValue >= 0
+                    && replacement.NewValue >= 0;
                 if (words.Count != 2
                     || string.IsNullOrWhiteSpace(writing)
-                    || !scoresAreValid
-                    || replacement.NewScore <= replacement.OldScore)
+                    || !valuesAreValid
+                    || replacement.NewValue <= replacement.OldValue)
                 {
                     changedIds.Remove(replacement.Id.Trim());
                     continue;
@@ -1253,7 +1275,7 @@ namespace Wds.SixStars.Api.Writings
                     out _))
                 {
                     throw new InvalidOperationException(
-                        "Writing review rating " + i + " did not contain 27 valid scores in category order.");
+                        "Writing review rating " + i + " did not contain 27 valid values in category order.");
                 }
 
                 rating.Index = i;
@@ -1280,7 +1302,7 @@ namespace Wds.SixStars.Api.Writings
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
             // The review model occasionally emits an inflated Overall value while craft dimensions remain low.
-            // Require a broader score consensus before any character route or the global backstop can persist it.
+            // Require a broader value consensus before any character route or the global backstop can persist it.
             if (!PassesPersistenceQualityGate(profile.WritingPersistenceQualityGate, values))
             {
                 return new List<string>();
@@ -1296,7 +1318,7 @@ namespace Wds.SixStars.Api.Writings
                         Id = "default-overall",
                         Requirements = new List<StarWritingPersistenceRequirement>
                         {
-                            new StarWritingPersistenceRequirement { Category = "Overall", MinimumScore = 75 }
+                            new StarWritingPersistenceRequirement { Category = "Overall", MinimumValue = 75 }
                         }
                     }
                 };
@@ -1308,7 +1330,7 @@ namespace Wds.SixStars.Api.Writings
                 IEnumerable<bool> checks = rule.Requirements.Select(requirement =>
                 {
                     if (!values.TryGetValue(requirement.Category ?? string.Empty, out StarWritingEmotionValue? value)) return false;
-                    return value.Score >= requirement.MinimumScore;
+                    return value.Value >= requirement.MinimumValue;
                 });
                 bool isAny = string.Equals(rule.MatchMode, "any", StringComparison.OrdinalIgnoreCase);
                 bool qualifies = isAny ? checks.Any(x => x) : checks.All(x => x);
@@ -1316,11 +1338,11 @@ namespace Wds.SixStars.Api.Writings
             }
 
             // Every Star also gets the same conservative excellence backstop. The comparison is
-            // deliberately strict: an Overall score of exactly 80 does not qualify at the default
+            // deliberately strict: an Overall value of exactly 80 does not qualify at the default
             // threshold, while 80.01 and above do. Character-specific rules remain the primary
             // route; this catches rare excellent pieces whose strengths do not fit their rule shape.
             if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
-                && overall.Score > GlobalOverallThreshold
+                && overall.Value > GlobalOverallValueThreshold
                 && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
             {
                 matched.Add(GlobalOverallRuleId);
@@ -1335,10 +1357,10 @@ namespace Wds.SixStars.Api.Writings
         {
             if (gate == null) return true;
 
-            if (gate.MinimumOverallScore > 0)
+            if (gate.MinimumOverallValue > 0)
             {
                 if (!values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
-                    || overall.Score < gate.MinimumOverallScore)
+                    || overall.Value < gate.MinimumOverallValue)
                 {
                     return false;
                 }
@@ -1355,20 +1377,21 @@ namespace Wds.SixStars.Api.Writings
                 : Math.Min(gate.MinimumSupportingMatches, supporting.Count);
             int matched = supporting.Count(requirement =>
                 values.TryGetValue(requirement.Category, out StarWritingEmotionValue? value)
-                && value.Score >= requirement.MinimumScore);
+                && value.Value >= requirement.MinimumValue);
             return matched >= requiredMatches;
         }
 
-        private static double ReadGlobalOverallThreshold()
+        private static double ReadGlobalOverallValueThreshold()
         {
-            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_THRESHOLD");
+            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_VALUE_THRESHOLD")
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_THRESHOLD");
             if (!string.IsNullOrWhiteSpace(configured)
                 && double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
             {
-                return Math.Max(0.0, Math.Min(100.0, parsed));
+                return Math.Max(0.0, parsed);
             }
 
-            return DefaultGlobalOverallThreshold;
+            return DefaultGlobalOverallValueThreshold;
         }
 
         private static IEnumerable<KeyValuePair<string, StarWritingEmotionValue>> ReadEmotionValues(PersistedStarWriting writing)
@@ -1391,12 +1414,12 @@ namespace Wds.SixStars.Api.Writings
                 var strongest = selected
                     .SelectMany(ReadEmotionValues)
                     .Where(x => speakableEmotions.Contains(x.Key))
-                    .OrderByDescending(x => x.Value.Score)
+                    .OrderByDescending(x => x.Value.Value)
                     .FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(strongest.Key))
                 {
                     primary = strongest.Key;
-                    intensity = Math.Max(0.25, Math.Min(1, strongest.Value.Score / 100.0));
+                    intensity = Math.Max(0.25, Math.Min(1, strongest.Value.Value / 100.0));
                 }
             }
             VoiceDirective directive = new VoiceDirective

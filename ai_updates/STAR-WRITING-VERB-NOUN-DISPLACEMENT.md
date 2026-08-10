@@ -25,7 +25,7 @@ This is the existing process:
 1. Privately select five pairs of substantially unrelated words.
 2. Write one concise finished piece from each pair.
 3. Run the configured number of review/improvement passes.
-4. Run the normal 27-score persistence review.
+4. Run the normal 27-value persistence review.
 
 Semantic collision keeps its existing optional mixed 100-word seed list and word-repetition history.
 

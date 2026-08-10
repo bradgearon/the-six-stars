@@ -229,12 +229,12 @@ namespace Wds.SixStars.Api.Writings
                     out string normalizedVector,
                     out Dictionary<string, StarWritingEmotionValue> values);
 
-                Dictionary<string, double> scores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, double> namedValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 foreach (string category in StarWritingEmotionVector.Categories)
                 {
                     if (values.TryGetValue(category, out StarWritingEmotionValue? value))
                     {
-                        scores[category] = value.Score;
+                        namedValues[category] = value.Value;
                     }
                 }
 
@@ -253,7 +253,8 @@ namespace Wds.SixStars.Api.Writings
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                     Statement = item.Writing ?? string.Empty,
                     EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? (item.EmotionalVector ?? string.Empty) : normalizedVector,
-                    Scores = scores,
+                    ValueUnit = StarWritingValueUnits.InformationUnits,
+                    Values = namedValues,
                     Persisted = item.Persisted,
                     MatchedPersistenceRuleIds = (item.MatchedPersistenceRuleIds ?? new List<string>()).ToList()
                 };
@@ -276,7 +277,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 10;
+            state.Version = 12;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
@@ -508,6 +509,16 @@ namespace Wds.SixStars.Api.Writings
                 .ToList();
         }
 
+
+        private static List<string> NormalizeStoryArchitectureList(IEnumerable<string>? values)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private static Dictionary<string, int> NormalizeTermUsageCounts(
             IDictionary<string, int>? counts,
             IEnumerable<string>? fallbackTerms)
@@ -538,6 +549,8 @@ namespace Wds.SixStars.Api.Writings
             development.ViewpointStarId ??= string.Empty;
             development.Title ??= string.Empty;
             development.Premise ??= string.Empty;
+            development.Characters = NormalizeStoryArchitectureList(development.Characters);
+            development.StorySubjects = NormalizeStoryArchitectureList(development.StorySubjects);
             development.OutlineBeats ??= new List<string>();
             development.CurrentStory ??= string.Empty;
             development.Subjects = NormalizeRecentTerms(development.Subjects, 100);
@@ -550,6 +563,8 @@ namespace Wds.SixStars.Api.Writings
             {
                 phase.Stage ??= string.Empty;
                 phase.StarId ??= string.Empty;
+                phase.Characters = NormalizeStoryArchitectureList(phase.Characters);
+                phase.StorySubjects = NormalizeStoryArchitectureList(phase.StorySubjects);
                 phase.CompletionDecision ??= string.Empty;
                 phase.Summary ??= string.Empty;
                 phase.StorySnapshot ??= string.Empty;

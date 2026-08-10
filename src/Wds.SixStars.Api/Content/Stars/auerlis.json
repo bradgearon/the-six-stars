@@ -937,11 +937,11 @@
       "requirements": [
         {
           "category": "Witty",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "Characterful",
-          "minimumScore": 70
+          "minimumValue": 70
         }
       ]
     },
@@ -951,11 +951,11 @@
       "requirements": [
         {
           "category": "Vivid",
-          "minimumScore": 80
+          "minimumValue": 80
         },
         {
           "category": "Surprising",
-          "minimumScore": 70
+          "minimumValue": 70
         }
       ]
     },
@@ -965,11 +965,11 @@
       "requirements": [
         {
           "category": "Hopeful",
-          "minimumScore": 80
+          "minimumValue": 80
         },
         {
           "category": "WorthRetelling",
-          "minimumScore": 75
+          "minimumValue": 75
         }
       ]
     },
@@ -979,11 +979,11 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
         }
       ]
     },
@@ -993,46 +993,46 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "Original",
-          "minimumScore": 60
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 58,
+    "minimumOverallValue": 58,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "Polished",
-        "minimumScore": 60
+        "minimumValue": 60
       },
       {
         "category": "Characterful",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "Original",
-        "minimumScore": 60
+        "minimumValue": 60
       },
       {
         "category": "Meaningful",
-        "minimumScore": 60
+        "minimumValue": 60
       },
       {
         "category": "WorthRetelling",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "Quotable",
-        "minimumScore": 55
+        "minimumValue": 55
       }
     ]
   }

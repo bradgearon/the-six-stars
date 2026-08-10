@@ -22,11 +22,38 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
+VALUED CONSTELLATION REFERENCES
+Quality anchors only; invent a meaningfully different story.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued Constellation references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Value vector: {{ item.valueVector }}
+FULL REFERENCE STORY:
+{{ item.writing }}
+--- END REFERENCE ---
+{{ end }}
+{{ end }}
+
 TITLE
 {{ data.title }}
 
 PREMISE
 {{ data.premise }}
+
+FINAL COLLABORATIVE CAST
+{{ for character in data.characters }}
+- {{ character }}
+{{ end }}
+
+FINAL STORY SUBJECTS
+{{ for subject in data.storySubjects }}
+- {{ subject }}
+{{ end }}
 
 OUTLINE
 {{ for beat in data.beats }}

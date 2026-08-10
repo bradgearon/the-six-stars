@@ -228,11 +228,11 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "id", "oldScore", "newWordSet", "newWriting", "newScore" } },
+                { "required", new[] { "id", "oldValue", "newWordSet", "newWriting", "newValue" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "id", StringProperty(80) },
-                        { "oldScore", NumberProperty(0, 100) },
+                        { "oldValue", NonNegativeNumberProperty() },
                         { "newWordSet", new Dictionary<string, object>
                             {
                                 { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
@@ -240,7 +240,7 @@ namespace Wds.SixStars.Api.Ai
                             }
                         },
                         { "newWriting", StringProperty(1400) },
-                        { "newScore", NumberProperty(0, 100) }
+                        { "newValue", NonNegativeNumberProperty() }
                     }
                 }
             };
@@ -286,12 +286,24 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "title", "premise", "beats" } },
+                { "required", new[] { "starId", "title", "premise", "characters", "storySubjects", "beats" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
                         { "title", StringProperty() },
                         { "premise", StringProperty() },
+                        { "characters", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "storySubjects", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
                         { "beats", new Dictionary<string, object>
                             {
                                 { "type", "array" },
@@ -309,11 +321,23 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "title", "revisedBeats", "story", "addedLayers", "completionDecision", "completionReason" } },
+                { "required", new[] { "starId", "title", "characters", "storySubjects", "revisedBeats", "story", "addedLayers", "completionDecision", "completionReason" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
                         { "title", StringProperty() },
+                        { "characters", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "storySubjects", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
                         { "revisedBeats", new Dictionary<string, object>
                             {
                                 { "type", "array" },
@@ -378,8 +402,8 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                // One compact score-only vector string per writing minimizes completion tokens.
-                // Each value contains exactly 27 semicolon-delimited scores.
+                // One compact value-only vector string per writing minimizes completion tokens.
+                // Each value contains exactly 27 semicolon-delimited open-ended values.
                 properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
             }
 
@@ -1082,6 +1106,11 @@ namespace Wds.SixStars.Api.Ai
         private static Dictionary<string, object> NumberProperty(double min, double max)
         {
             return new Dictionary<string, object> { { "type", "number" }, { "minimum", min }, { "maximum", max } };
+        }
+
+        private static Dictionary<string, object> NonNegativeNumberProperty()
+        {
+            return new Dictionary<string, object> { { "type", "number" }, { "minimum", 0 } };
         }
 
         private static Dictionary<string, object> DeltaObject()

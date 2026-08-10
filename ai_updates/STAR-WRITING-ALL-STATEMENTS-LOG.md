@@ -11,8 +11,8 @@ Each entry contains:
 - the writing and its two source words;
 - `StarId` and the human-readable `Speaker` name;
 - generation time, batch ID, item ID, and index;
-- the compact 27-score `EmotionalVector`;
-- a named `Scores` object containing all 27 category scores;
+- the compact 27-value `EmotionalVector`;
+- a named `Values` object containing all 27 category values;
 - whether the statement reached the shelf;
 - the persistence rules it matched.
 

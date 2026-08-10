@@ -1,10 +1,10 @@
-Your only task is to produce five valid compact score-vector strings.
+Your only task is to produce five valid compact value-vector strings.
 
 Return a single compact JSON object with exactly these properties: "0", "1", "2", "3", "4".
-Each property value must be one JSON string containing exactly 27 integer scores.
-Every score is from 0 through 100.
-Separate scores with semicolons, use no colons, and use no spaces inside a vector string.
-The final score is Overall.
+Each property value must be one JSON string containing exactly 27 non-negative integer VALUES.
+Values have no upper bound. {{ data.referenceValue }} is a reference for excellent known work, not a ceiling.
+Separate values with semicolons, use no colons, and use no spaces inside a vector string.
+The final value is Overall.
 Do not return starId, ratings, index, statementId, arrays, nested objects, commentary, or markdown.
-Do not use category positions 0 through 26 as scores.
+Do not use category positions 0 through 26 as values.
 Keep the JSON compact and preferably on one line.

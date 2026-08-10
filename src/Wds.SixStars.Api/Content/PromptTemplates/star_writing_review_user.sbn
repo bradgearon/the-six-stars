@@ -1,4 +1,4 @@
-RATE FIVE WRITINGS
+VALUE FIVE WRITINGS
 
 COMPACT CHARACTER CARD
 Name: {{ data.displayName }}
@@ -13,8 +13,21 @@ Signature imagery / behavior:
 - {{ item }}
 {{ end }}
 
-EXACT VECTOR CATEGORY ORDER (27)
+EXACT VALUE VECTOR CATEGORY ORDER (27)
 {{ data.vectorOrder }}
+
+VALUE-CALIBRATION REFERENCES
+Reference excellence value: {{ data.referenceValue }} IU (information units). It is not a maximum.
+{{ if data.valueReferences.size == 0 }}
+No valued shelf references are available yet. Bootstrap the scale with {{ data.referenceValue }} representing excellent shelf-worthy work, while still allowing values above it for exceptional work.
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
 
 CANDIDATES
 {{ for item in data.candidates }}
@@ -25,6 +38,6 @@ Writing: {{ item.writing }}
 Return only this outer JSON shape:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace each empty value with one compact string containing exactly 27 integer scores separated by semicolons.
-Example beginning: 35;72;68;...
+Replace each empty value with one compact string containing exactly 27 non-negative integer VALUES separated by semicolons.
+Example beginning only: 35;72;108;...
 The numeric property name identifies the writing; it is not a Star ID.

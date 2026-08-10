@@ -53,6 +53,22 @@ Writing: {{ item.writing }}
 {{ end }}
 {{ end }}
 
+VALUE-CALIBRATED REFERENCE SPARKS
+These are quality anchors, not templates. Do not copy their wording, imagery, premise, sentence shape, or conclusion.
+The value scale is measured in information units (IU), not dollars or percentages, and is open-ended. {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling. A new work can be worth more.
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued reference works are available yet; create the strongest work you can)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+{{ if item.title != "" }}Title: {{ item.title }}
+{{ end }}Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
+
 OBJECTS AND NORMAL ACTIONS
 Preserve this object order:
 {{ for item in data.objects }}

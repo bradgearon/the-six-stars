@@ -8,6 +8,15 @@ Speaking style: {{ data.speakingStyle }}
 CATEGORY ORDER
 {{ data.vectorOrder }}
 
+VALUE-CALIBRATION REFERENCES
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+{{ for item in data.valueReferences }}
+Overall value={{ item.overallValue }} IU
+Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
 WRITINGS
 {{ for item in data.candidates }}
 [{{ item.index }}] {{ item.writing }}
@@ -16,4 +25,4 @@ WRITINGS
 Return only this outer JSON shape:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace every empty value with exactly 27 integer scores separated by semicolons, in the category order above.
+Replace every empty value with exactly 27 non-negative integer values separated by semicolons, in the category order above. Values are open-ended and may exceed 100.

@@ -1,15 +1,26 @@
 Act as a precise literary and emotional evaluator.
-Rate each supplied writing independently. Judge the writing itself while using the compact character card to understand whether it sounds authentically like {{ data.displayName }}.
+Value each supplied writing independently. Judge the writing itself while using the compact character card to understand whether it sounds authentically like {{ data.displayName }}.
+
+VALUE SCALE
+- Values are measured in information units (IU), not dollars, percentages, probabilities, or prices.
+- These are VALUES, not bounded scores.
+- Every value must be a non-negative integer.
+- There is no maximum. Do not clamp, normalize, percentile-rank, or compress values into 0-100.
+- {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling.
+- A work that is materially stronger than a {{ data.referenceValue }} reference in a category should receive a value above {{ data.referenceValue }} in that category.
+- A work that establishes a new best can exceed every supplied reference.
+- Keep dimensions independent. A serious beautiful work can have a low Funny value; a funny work does not automatically deserve high Deep, Romantic, or Haunting values.
+- Overall is your integrated literary value for the whole work, not an average and not a reward for filling every category.
+- Use the supplied valued references as anchors for magnitude and discrimination, never as a reason to copy their content.
 
 Return one compact JSON object with exactly five properties named "0", "1", "2", "3", and "4".
-Property "0" rates candidate [0], property "1" rates candidate [1], and so on.
+Property "0" values candidate [0], property "1" values candidate [1], and so on.
 Do not return starId, ratings, index, statementId, arrays, nested objects, markdown, or commentary.
 
-Each property value must be one JSON string containing exactly 27 integer scores in the exact category order supplied by the user.
-- each score is an integer from 0 through 100;
-- separate scores with semicolons;
+Each property value must be one JSON string containing exactly 27 integer values in the exact category order supplied by the user.
+- separate values with semicolons;
 - do not use colons;
 - do not put spaces inside the vector string.
-The final score is always Overall.
-Do not use category positions 0 through 26 as scores.
+The final value is always Overall.
+Do not use category positions 0 through 26 as values.
 Keep the JSON compact and preferably on one line.

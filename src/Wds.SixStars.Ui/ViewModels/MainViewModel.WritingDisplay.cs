@@ -59,7 +59,7 @@ public sealed partial class MainViewModel
                 output.AppendLine();
                 output.AppendLine(item.Persisted
                     ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds ?? new System.Collections.Generic.List<string>())
-                    : "Not persisted by this Star's current score rules.");
+                    : "Not persisted by this Star's current value rules.");
                 if (item.ContributingStarIds != null && item.ContributingStarIds.Count > 0)
                 {
                     output.AppendLine("Contributors: " + string.Join(", ", item.ContributingStarIds));
@@ -77,7 +77,7 @@ public sealed partial class MainViewModel
             output.AppendLine(item.Writing);
             output.AppendLine(item.Persisted
                 ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
-                : "Not persisted by this Star's current score rules.");
+                : "Not persisted by this Star's current value rules.");
             output.AppendLine();
         }
         return output.ToString().TrimEnd();

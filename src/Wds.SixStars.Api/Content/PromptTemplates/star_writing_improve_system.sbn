@@ -11,15 +11,17 @@ For each replacement:
 - prefer fresh words when reasonable;
 - you may use the supplied seedWords array for word ideas; you do not need to use any particular seed word;
 - keep it concise and recognizably yours;
-- give the old writing and the new writing an overall score from 0 to 100 using the same standard.
+- give the old writing and the new writing an overall literary value using the same open-ended value scale.
 
-The runtime keeps the version with the higher score. A tie keeps the old version.
+Values are measured in information units (IU), not dollars or percentages. They must be non-negative and have no maximum. {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling. Use the supplied valued reference Sparks to keep the magnitude calibrated. A genuinely stronger rewrite may exceed the best reference value.
+
+The runtime keeps the version with the higher value. A tie keeps the old version.
 
 Return only a JSON array. Each item must contain exactly:
 - id
-- oldScore
+- oldValue
 - newWordSet
 - newWriting
-- newScore
+- newValue
 
 Omit unchanged candidates. Return [] when you propose no replacements. Do not return explanations, markdown, or extra fields.

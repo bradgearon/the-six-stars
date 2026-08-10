@@ -23,6 +23,23 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
+VALUED CONSTELLATION REFERENCES
+Quality anchors only; invent a meaningfully different story.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued Constellation references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Value vector: {{ item.valueVector }}
+FULL REFERENCE STORY:
+{{ item.writing }}
+--- END REFERENCE ---
+{{ end }}
+{{ end }}
+
 TEAM SUBJECT POOL
 {{ for word in data.subjects }}
 - {{ word }}
@@ -38,4 +55,5 @@ FRESH OPTIONAL SEEDS
 - {{ word }}
 {{ end }}
 
-Create the structural outline now. Return JSON only.
+Create the structural outline now. Return JSON only with starId, title, premise, characters, storySubjects, and beats.
+The characters list is the named cast you want the team to develop; the storySubjects list is what this particular story is actually about, not merely a repetition of the seed noun pool.

@@ -25,6 +25,7 @@ namespace Wds.SixStars.Api.Ai
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
         private readonly PromptTemplateRenderer _templates;
+        private readonly StarWritingValueBaselineCatalog _valueBaselines;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly int _speechMaxTokens;
         private readonly int _initiativeMaxTokens;
@@ -46,6 +47,7 @@ namespace Wds.SixStars.Api.Ai
             _client = client;
             _promptBuilder = new StarPromptBuilder(mainInstructions, promptOptions);
             _templates = PromptTemplateRenderer.CreateDefault();
+            _valueBaselines = StarWritingValueBaselineCatalog.CreateDefault();
             _speechMaxTokens = ResolveSpeechMaxTokens(speechMaxTokens);
             _initiativeMaxTokens = ResolveInitiativeMaxTokens();
             _storyPlanMaxTokens = ResolveStoryPlanMaxTokens();
@@ -150,6 +152,12 @@ namespace Wds.SixStars.Api.Ai
             wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
             wordPairResult.RawModelJson = wordPairJson;
 
+            List<StarWritingValueReference> sparkValueReferences = BuildValueReferences(
+                state,
+                StarWritingOutputTypes.Spark,
+                profile.StarId,
+                5);
+
             object compositionData = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -187,6 +195,9 @@ namespace Wds.SixStars.Api.Ai
                         writing = PromptText(x.Writing, 1200)
                     })
                     .ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = sparkValueReferences,
                 wordPairs = wordPairResult.WordPairs
                     .Select((pair, index) => new
                     {
@@ -310,6 +321,12 @@ namespace Wds.SixStars.Api.Ai
                     objectActionError);
             }
 
+            List<StarWritingValueReference> sparkValueReferences = BuildValueReferences(
+                state,
+                StarWritingOutputTypes.Spark,
+                profile.StarId,
+                5);
+
             object compositionData = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -347,6 +364,9 @@ namespace Wds.SixStars.Api.Ai
                         writing = PromptText(x.Writing, 1200)
                     })
                     .ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = sparkValueReferences,
                 objects = objectActionResult.Objects
                     .Select((item, index) => new
                     {
@@ -452,6 +472,9 @@ namespace Wds.SixStars.Api.Ai
                 seedWords = NormalizeSeedWords(generation.SeedWords),
                 passNumber = Math.Max(2, passNumber),
                 totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select(item => new
@@ -528,6 +551,8 @@ namespace Wds.SixStars.Api.Ai
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                referenceValue = _valueBaselines.ReferenceValue,
+                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select((item, index) => new
@@ -574,7 +599,7 @@ namespace Wds.SixStars.Api.Ai
             if (!HasCompleteWritingReview(result))
             {
                 throw new InvalidOperationException(
-                    "Writing review did not return five usable 27-entry score vectors. " +
+                    "Writing review did not return five usable 27-entry value vectors. " +
                     "No new writing batch was saved; try the generation again.");
             }
 
@@ -670,7 +695,10 @@ namespace Wds.SixStars.Api.Ai
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
-                seedWords = NormalizeSeedWords(seedWords)
+                seedWords = NormalizeSeedWords(seedWords),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
@@ -701,7 +729,8 @@ namespace Wds.SixStars.Api.Ai
                     "The outline is structurally incomplete because these required story components are empty: "
                     + string.Join(", ", missing)
                     + ". Complete this SAME outline now. Preserve every useful existing field, fill the missing components, and return the full JSON object again. "
-                    + "The beats property must be a JSON array of plain strings; each string may be as detailed as needed. Do not put objects inside beats. "
+                    + "The characters, storySubjects, and beats properties must be JSON arrays of plain strings. Characters should be named, memorable story characters; storySubjects should describe what the story is actually about. "
+                    + "Each beat string may be as detailed as needed. Do not put objects inside these arrays. "
                     + "Do not shorten the story architecture to satisfy a count or size target; let the story determine its structure."));
 
                 string completionJson = await _client.CompleteJsonAsync(
@@ -773,11 +802,16 @@ namespace Wds.SixStars.Api.Ai
                 title = PromptText(outline.Title, 0),
                 premise = PromptText(outline.Premise, 0),
                 beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                characters = NormalizeStoryTermsUnbounded(outline.Characters),
+                storySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects),
                 currentStory = PromptText(currentStory, 0),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
                 seedWords = NormalizeSeedWords(seedWords),
                 priorContributorStarIds = (priorContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = BuildValueReferences(viewpointState, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
                 phaseNumber = Math.Max(1, phaseNumber),
                 pendingFinish,
                 finishRequestedByStarId = PromptText(finishRequestedByStarId, 80)
@@ -827,11 +861,16 @@ namespace Wds.SixStars.Api.Ai
                 title = PromptText(outline.Title, 0),
                 premise = PromptText(outline.Premise, 0),
                 beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                characters = NormalizeStoryTermsUnbounded(outline.Characters),
+                storySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects),
                 currentStory = PromptText(currentStory, 0),
                 subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
                 verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                seedWords = NormalizeSeedWords(seedWords)
+                seedWords = NormalizeSeedWords(seedWords),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
             };
             List<ChatMessage> messages = new List<ChatMessage>
             {
@@ -883,6 +922,8 @@ namespace Wds.SixStars.Api.Ai
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                referenceValue = _valueBaselines.ReferenceValue,
+                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
                 title = PromptText(title, 0),
                 story = PromptText(story, 0)
             };
@@ -899,7 +940,7 @@ namespace Wds.SixStars.Api.Ai
                 {
                     attemptMessages.Add(new ChatMessage(
                         "user",
-                        "FORMAT REPAIR: Return only one JSON object with property \"0\". Its value must be exactly 27 scores from 0 through 100 separated by semicolons, in the supplied category order."));
+                        "FORMAT REPAIR: Return only one JSON object with property \"0\". Its value must be exactly 27 non-negative integer values separated by semicolons; values have no upper bound, in the supplied category order."));
                 }
 
                 lastJson = await _client.CompleteJsonAsync(
@@ -927,7 +968,7 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
-            throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry score vector after a format-repair retry.");
+            throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry value vector after a format-repair retry.");
         }
 
         private StarWritingStoryBuildResult? ParseAndNormalizeStoryBuildResult(
@@ -947,6 +988,8 @@ namespace Wds.SixStars.Api.Ai
                 {
                     StarId = ReadLooseJsonString(root, "starId"),
                     Title = ReadLooseJsonString(root, "title"),
+                    Characters = ReadLooseJsonStringList(root, "characters"),
+                    StorySubjects = ReadLooseJsonStringList(root, "storySubjects"),
                     RevisedBeats = ReadStoryBeatList(root, "revisedBeats"),
                     Story = ReadLooseJsonString(root, "story"),
                     AddedLayers = ReadLooseJsonStringList(root, "addedLayers"),
@@ -957,6 +1000,10 @@ namespace Wds.SixStars.Api.Ai
 
                 result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
                 result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+                result.Characters = NormalizeStoryTermsUnbounded(result.Characters);
+                if (result.Characters.Count == 0) result.Characters = NormalizeStoryTermsUnbounded(outline.Characters);
+                result.StorySubjects = NormalizeStoryTermsUnbounded(result.StorySubjects);
+                if (result.StorySubjects.Count == 0) result.StorySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects);
                 result.RevisedBeats = (result.RevisedBeats ?? new List<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(x => PromptText(x, 0))
@@ -1021,6 +1068,8 @@ namespace Wds.SixStars.Api.Ai
                     StarId = ReadLooseJsonString(root, "starId"),
                     Title = ReadLooseJsonString(root, "title"),
                     Premise = ReadLooseJsonString(root, "premise"),
+                    Characters = ReadLooseJsonStringList(root, "characters"),
+                    StorySubjects = ReadLooseJsonStringList(root, "storySubjects"),
                     Beats = ReadStoryBeatList(root),
                     RawModelJson = json
                 };
@@ -1028,6 +1077,8 @@ namespace Wds.SixStars.Api.Ai
                 result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
                 result.Title = PromptText(result.Title, 0);
                 result.Premise = PromptText(result.Premise, 0);
+                result.Characters = NormalizeStoryTermsUnbounded(result.Characters);
+                result.StorySubjects = NormalizeStoryTermsUnbounded(result.StorySubjects);
                 result.Beats = (result.Beats ?? new List<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(x => PromptText(x, 0))
@@ -1148,6 +1199,8 @@ namespace Wds.SixStars.Api.Ai
             List<string> missing = new List<string>();
             if (string.IsNullOrWhiteSpace(outline?.Title)) missing.Add("title");
             if (string.IsNullOrWhiteSpace(outline?.Premise)) missing.Add("premise");
+            if (outline?.Characters == null || outline.Characters.Count == 0) missing.Add("characters");
+            if (outline?.StorySubjects == null || outline.StorySubjects.Count == 0) missing.Add("storySubjects");
             if (outline?.Beats == null || outline.Beats.Count == 0) missing.Add("beats");
             return missing;
         }
@@ -1158,6 +1211,8 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(source.StarId)) target.StarId = source.StarId.Trim();
             if (!string.IsNullOrWhiteSpace(source.Title)) target.Title = source.Title.Trim();
             if (!string.IsNullOrWhiteSpace(source.Premise)) target.Premise = source.Premise.Trim();
+            if (source.Characters != null && source.Characters.Count > 0) target.Characters = source.Characters.ToList();
+            if (source.StorySubjects != null && source.StorySubjects.Count > 0) target.StorySubjects = source.StorySubjects.ToList();
             if (source.Beats != null && source.Beats.Count > 0) target.Beats = source.Beats.ToList();
         }
 
@@ -1332,9 +1387,9 @@ namespace Wds.SixStars.Api.Ai
 
             JsonElement[] entries = element.EnumerateArray().ToArray();
 
-            // Compatibility with numeric-array output. The current score-only shape is 27
+            // Compatibility with numeric-array output. The current value-only shape is 27
             // numbers. Older revisions used 54 alternating score/confidence numbers; keep
-            // only every score so old model responses remain readable.
+            // only every legacy score as its migrated value so old responses remain readable.
             bool flatNumericVector = entries.Length > 0 && entries.All(x => TryReadJsonDouble(x, out _));
             if (flatNumericVector)
             {
@@ -1344,7 +1399,7 @@ namespace Wds.SixStars.Api.Ai
                     foreach (JsonElement entry in entries)
                     {
                         if (!TryReadJsonDouble(entry, out double score)
-                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                            || !TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                         {
                             return string.Empty;
                         }
@@ -1356,7 +1411,7 @@ namespace Wds.SixStars.Api.Ai
                     for (int i = 0; i < entries.Length; i += 2)
                     {
                         if (!TryReadJsonDouble(entries[i], out double score)
-                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                            || !TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                         {
                             return string.Empty;
                         }
@@ -1377,7 +1432,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 if (entry.ValueKind == JsonValueKind.String)
                 {
-                    if (!TryNormalizeWritingScore(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
+                    if (!TryNormalizeWritingValue(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
                     arrayScores.Add(score);
                     continue;
                 }
@@ -1387,7 +1442,7 @@ namespace Wds.SixStars.Api.Ai
                     JsonElement[] numbers = entry.EnumerateArray().Take(2).ToArray();
                     if (numbers.Length >= 1
                         && TryReadJsonDouble(numbers[0], out double score)
-                        && TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        && TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                     {
                         arrayScores.Add(normalizedScore);
                         continue;
@@ -1416,7 +1471,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 foreach (string item in separated)
                 {
-                    if (!TryNormalizeWritingScore(item, out string score)) return string.Empty;
+                    if (!TryNormalizeWritingValue(item, out string score)) return string.Empty;
                     scores.Add(score);
                 }
             }
@@ -1425,10 +1480,10 @@ namespace Wds.SixStars.Api.Ai
                 string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
                 if (tokens.Length >= 26 && tokens.Length <= 28)
                 {
-                    // Defensive compatibility if a model uses colons between score-only items.
+                    // Defensive compatibility if a model uses colons between value-only items.
                     foreach (string token in tokens)
                     {
-                        if (!TryNormalizeWritingScore(token, out string score)) return string.Empty;
+                        if (!TryNormalizeWritingValue(token, out string score)) return string.Empty;
                         scores.Add(score);
                     }
                 }
@@ -1438,7 +1493,7 @@ namespace Wds.SixStars.Api.Ai
                     // score/confidence values. Confidence values are discarded.
                     for (int i = 0; i < tokens.Length; i += 2)
                     {
-                        if (!TryNormalizeWritingScore(tokens[i], out string score)) return string.Empty;
+                        if (!TryNormalizeWritingValue(tokens[i], out string score)) return string.Empty;
                         scores.Add(score);
                     }
                 }
@@ -1452,7 +1507,7 @@ namespace Wds.SixStars.Api.Ai
             // literary-quality categories rather than issuing a second full review.
             if (scores.Count == 26)
             {
-                scores.Add(DeriveOverallWritingScore(scores));
+                scores.Add(DeriveOverallWritingValue(scores));
             }
             else if (scores.Count > 27)
             {
@@ -1462,7 +1517,7 @@ namespace Wds.SixStars.Api.Ai
             return scores.Count == 27 ? string.Join(";", scores) : string.Empty;
         }
 
-        private static bool TryNormalizeWritingScore(string raw, out string normalized)
+        private static bool TryNormalizeWritingValue(string raw, out string normalized)
         {
             normalized = string.Empty;
             string text = (raw ?? string.Empty).Trim().Trim('"');
@@ -1472,22 +1527,22 @@ namespace Wds.SixStars.Api.Ai
             int colon = text.IndexOf(':');
             if (colon >= 0) text = text.Substring(0, colon).Trim();
 
-            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
-            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
-            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)) return false;
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) return false;
+            normalized = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             return true;
         }
 
-        private static string DeriveOverallWritingScore(IReadOnlyList<string> scores)
+        private static string DeriveOverallWritingValue(IReadOnlyList<string> scores)
         {
             int[] qualityIndices = { 4, 5, 6, 8, 9, 19, 20, 21, 22, 23, 24, 25 };
             List<double> values = new List<double>();
             foreach (int index in qualityIndices)
             {
                 if (index < 0 || index >= scores.Count) continue;
-                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
-                if (score < 0 || score > 100) continue;
-                values.Add(score);
+                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)) continue;
+                if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) continue;
+                values.Add(value);
             }
 
             double overall = values.Count == 0 ? 50 : values.Average();
@@ -1872,6 +1927,63 @@ namespace Wds.SixStars.Api.Ai
                     && x.IndexOf("story", StringComparison.OrdinalIgnoreCase) < 0
                     && x.IndexOf("aphorism", StringComparison.OrdinalIgnoreCase) < 0)
                 .ToList();
+        }
+
+        private List<StarWritingValueReference> BuildValueReferences(
+            StarWritingNotesState state,
+            string outputType,
+            string preferredStarId,
+            int maximum)
+        {
+            int take = Math.Max(0, maximum);
+            if (take == 0) return new List<StarWritingValueReference>();
+
+            string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
+            List<StarWritingValueReference> references = _valueBaselines
+                .GetCuratedReferences(normalizedOutputType, preferredStarId, take);
+            HashSet<string> seenText = new HashSet<string>(
+                references.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing)).Select(x => x.Writing.Trim()),
+                StringComparer.Ordinal);
+
+            if (references.Count < take)
+            {
+                List<PersistedStarWriting> shelf = StarWritingDeterministicRanker.TakeHighestRanked(
+                    (state?.PersistedWritings ?? new List<PersistedStarWriting>())
+                        .Where(x => x != null
+                            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(x.Writing)),
+                    Math.Max(take * 3, take));
+
+                foreach (PersistedStarWriting writing in shelf)
+                {
+                    if (references.Count >= take) break;
+                    string text = (writing.Writing ?? string.Empty).Trim();
+                    if (text.Length == 0 || !seenText.Add(text)) continue;
+                    if (!StarWritingEmotionVector.TryNormalizeUsable(
+                        writing.EmotionalVector,
+                        out string vector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                    {
+                        continue;
+                    }
+
+                    references.Add(new StarWritingValueReference
+                    {
+                        Source = "shelf-best",
+                        Id = writing.Id ?? string.Empty,
+                        StarId = preferredStarId ?? string.Empty,
+                        OutputType = normalizedOutputType,
+                        Title = writing.Title ?? string.Empty,
+                        Writing = text,
+                        ValueVector = vector,
+                        ValueUnit = StarWritingValueUnits.InformationUnits,
+                        OverallValue = StarWritingEmotionVector.ReadValue(values, "Overall"),
+                        PublicValue = StarWritingDeterministicRanker.PublicSharingValue(writing)
+                    });
+                }
+            }
+
+            return references.Take(take).ToList();
         }
 
         private static string PromptText(string? value, int maximumCharacters)

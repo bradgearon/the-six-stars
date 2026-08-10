@@ -966,11 +966,11 @@
       "requirements": [
         {
           "category": "Quotable",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "EmotionallyResonant",
-          "minimumScore": 75
+          "minimumValue": 75
         }
       ]
     },
@@ -980,11 +980,11 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
         }
       ]
     },
@@ -994,46 +994,46 @@
       "requirements": [
         {
           "category": "Funny",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
           "category": "Original",
-          "minimumScore": 60
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 60,
+    "minimumOverallValue": 60,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
         "category": "Coherent",
-        "minimumScore": 70
+        "minimumValue": 70
       },
       {
         "category": "Polished",
-        "minimumScore": 60
+        "minimumValue": 60
       },
       {
         "category": "Characterful",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "Original",
-        "minimumScore": 60
+        "minimumValue": 60
       },
       {
         "category": "Meaningful",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "WorthRetelling",
-        "minimumScore": 65
+        "minimumValue": 65
       },
       {
         "category": "Quotable",
-        "minimumScore": 60
+        "minimumValue": 60
       }
     ]
   }
