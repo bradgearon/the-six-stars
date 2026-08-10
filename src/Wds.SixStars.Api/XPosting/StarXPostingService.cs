@@ -22,6 +22,8 @@ namespace Wds.SixStars.Api.XPosting
         private readonly StarXPostingOptions _options;
         private readonly Random _random;
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
+        private readonly object _activeRunGate = new object();
+        private string _activeStarId = string.Empty;
 
         public StarXPostingService(
             IStarProfileProvider profiles,
@@ -45,6 +47,14 @@ namespace Wds.SixStars.Api.XPosting
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        public string ActiveStarId
+        {
+            get
+            {
+                lock (_activeRunGate) return _activeStarId;
+            }
+        }
+
         public bool HasConfiguredClient(string starId)
         {
             StarXAccountOptions? account = FindAccount(starId);
@@ -56,9 +66,11 @@ namespace Wds.SixStars.Api.XPosting
             // Deliberately no caller cancellation token: after a public-posting batch begins, UI activity,
             // Star selection, and runtime cancel commands must not interrupt or half-mark it.
             await _runGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            lock (_activeRunGate) _activeStarId = (starId ?? string.Empty).Trim();
             try
             {
                 StarProfile profile = _profiles.GetProfile(starId);
+                lock (_activeRunGate) _activeStarId = profile.StarId;
                 StarXAccountOptions? account = FindAccount(profile.StarId);
                 if (account == null || !account.Enabled)
                 {
@@ -95,6 +107,15 @@ namespace Wds.SixStars.Api.XPosting
                             + " unposted shelf writing(s); " + requestedCount.ToString(CultureInfo.InvariantCulture) + " are required for one X batch."
                     };
                 }
+
+                ReportProgress(progress, new StarXPostingProgress
+                {
+                    StarId = profile.StarId,
+                    Stage = "selecting",
+                    TotalPosts = requestedCount,
+                    Message = profile.StarId + " is selecting five writings from "
+                        + candidates.Count.ToString(CultureInfo.InvariantCulture) + " X candidates..."
+                });
 
                 StarXPostSelectionResult selection;
                 try
@@ -267,6 +288,7 @@ namespace Wds.SixStars.Api.XPosting
             }
             finally
             {
+                lock (_activeRunGate) _activeStarId = string.Empty;
                 _runGate.Release();
             }
         }

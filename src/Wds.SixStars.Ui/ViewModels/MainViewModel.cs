@@ -527,6 +527,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 UpdateSpeechOptions();
                 _ = RefreshSelectedStarStateForUiAsync("selected star changed");
                 _ = RefreshSelectedWritingStateAsync("selected star changed");
+                RefreshSelectedStarXPostingStatus();
                 if (!_suppressMobileBridgeSelectedStarBroadcast)
                 {
                     _ = PublishMobileSelectedStarUpdateAsync("desktop selected star changed");

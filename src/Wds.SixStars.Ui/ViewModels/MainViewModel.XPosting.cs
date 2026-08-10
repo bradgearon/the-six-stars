@@ -17,6 +17,8 @@ public sealed partial class MainViewModel
     private readonly object _xPostingLoopGate = new object();
     private readonly Dictionary<string, DateTimeOffset> _xPostingLastAttemptAt = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _xPostingScheduledInFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _xPostingStatusByStar = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _xPostingManualQueuedOrRunning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _xPostingLoopCts;
     private Task? _xPostingLoopTask;
     private bool _xPostingEnabled;
@@ -52,8 +54,16 @@ public sealed partial class MainViewModel
 
     private void InitializeXPostingLoop()
     {
-        AuthorizeSelectedStarForXCommand = new RelayCommand(parameter => { _ = AuthorizeSelectedStarForXAsync(); });
-        PostSelectedStarToXNowCommand = new RelayCommand(_ => QueueManualXPosting(SelectedStarId));
+        AuthorizeSelectedStarForXCommand = new RelayCommand(parameter =>
+        {
+            string starId = ResolveDefaultStarId(parameter?.ToString() ?? SelectedStarId);
+            _ = AuthorizeStarForXAsync(starId);
+        });
+        PostSelectedStarToXNowCommand = new RelayCommand(parameter =>
+        {
+            string starId = ResolveDefaultStarId(parameter?.ToString() ?? SelectedStarId);
+            QueueManualXPosting(starId);
+        });
         _xPostingEnabled = _xPostingOptions.Enabled;
         if (_xPostingEnabled)
         {
@@ -63,9 +73,9 @@ public sealed partial class MainViewModel
     }
 
 
-    private async Task AuthorizeSelectedStarForXAsync()
+    private async Task AuthorizeStarForXAsync(string requestedStarId)
     {
-        string starId = ResolveDefaultStarId(SelectedStarId);
+        string starId = ResolveDefaultStarId(requestedStarId);
         StarXAccountOptions? account = (_xPostingOptions.StarAccounts ?? new List<StarXAccountOptions>())
             .FirstOrDefault(x => x != null && string.Equals(x.Id, starId, StringComparison.OrdinalIgnoreCase));
         if (account == null || !account.Enabled)
@@ -79,25 +89,64 @@ public sealed partial class MainViewModel
             return;
         }
 
-        SetXPostingStatus("Opening X authorization for " + starId + ". Sign into the correct Star account and approve write access.");
+        SetXPostingStatusForStar(starId, "Opening X authorization for " + starId + ". Sign into the correct Star account and approve write access.");
         StarXOAuth2AuthorizationResult result = await _xOAuth2AuthorizationService.AuthorizeAsync(
             account,
             _xPostingOptions.OAuthScopes,
             _xPostingOptions.OAuthAuthorizationTimeoutSeconds,
             CancellationToken.None).ConfigureAwait(false);
-        SetXPostingStatus(result.Message);
+        SetXPostingStatusForStar(starId, result.Message);
         PublishXPostingStatusEvent(result.Success ? "StarXAuthorizationCompleted" : "StarXAuthorizationFailed", starId, result.Message);
     }
 
     private void QueueManualXPosting(string starId)
     {
         string resolved = ResolveDefaultStarId(starId);
-        SetXPostingStatus("Queued an uninterrupted five-post X batch for " + resolved + ".");
-        PublishXPostingStatusEvent("StarXPostingQueued", resolved, XPostingStatus);
+        string activeStarId = _xPostingService.ActiveStarId;
+        if (!string.IsNullOrWhiteSpace(activeStarId)
+            && string.Equals(ResolveDefaultStarId(activeStarId), resolved, StringComparison.OrdinalIgnoreCase))
+        {
+            string alreadyPostingMessage = resolved + " is already posting an X batch. A second five-post batch was not queued.";
+            SetXPostingStatusForStar(resolved, alreadyPostingMessage);
+            PublishXPostingStatusEvent("StarXPostingAlreadyActive", resolved, alreadyPostingMessage);
+            return;
+        }
+
+        lock (_xPostingLoopGate)
+        {
+            if (!_xPostingManualQueuedOrRunning.Add(resolved))
+            {
+                string duplicateMessage = resolved + " already has a manual X batch queued or running. A duplicate batch was not queued.";
+                SetXPostingStatusForStar(resolved, duplicateMessage);
+                PublishXPostingStatusEvent("StarXPostingAlreadyQueued", resolved, duplicateMessage);
+                return;
+            }
+        }
+
+        activeStarId = _xPostingService.ActiveStarId;
+        string queuedMessage = !string.IsNullOrWhiteSpace(activeStarId)
+            && !string.Equals(ResolveDefaultStarId(activeStarId), resolved, StringComparison.OrdinalIgnoreCase)
+                ? "Queued a manual five-post X batch for " + resolved + ". " + ResolveDefaultStarId(activeStarId)
+                    + " is already in an uninterrupted batch; " + resolved + " will run next before the scheduler starts another Star."
+                : "Queued a manual five-post X batch for " + resolved + ". It will run before the scheduler starts another Star.";
+        SetXPostingStatusForStar(resolved, queuedMessage);
+        PublishXPostingStatusEvent("StarXPostingQueued", resolved, queuedMessage);
         _ = Task.Run(async () =>
         {
-            await RunXPostingForStarAsync(resolved, null, null, false).ConfigureAwait(false);
+            try
+            {
+                await RunXPostingForStarAsync(resolved, null, null, false).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_xPostingLoopGate) _xPostingManualQueuedOrRunning.Remove(resolved);
+            }
         });
+    }
+
+    private bool HasPendingManualXPosting()
+    {
+        lock (_xPostingLoopGate) return _xPostingManualQueuedOrRunning.Count > 0;
     }
 
     private void EnsureXPostingLoopStarted()
@@ -128,6 +177,7 @@ public sealed partial class MainViewModel
                     foreach (string starAccountId in _xPostingService.ConfiguredStarIds)
                     {
                         if (cancellationToken.IsCancellationRequested || !_xPostingEnabled) return;
+                        if (HasPendingManualXPosting()) break;
                         string starId = ResolveDefaultStarId(starAccountId);
                         string attemptKey = localDate + "|" + slot.SlotId + "|" + starId;
                         if (ShouldWaitBeforeXPostingRetry(attemptKey, localNow)) continue;
@@ -142,6 +192,9 @@ public sealed partial class MainViewModel
                         {
                             lock (_xPostingLoopGate) _xPostingScheduledInFlight.Remove(attemptKey);
                         }
+
+                        // A manual button press gets the lane before the scheduler advances to another Star.
+                        if (HasPendingManualXPosting()) break;
                     }
                 }
             }
@@ -179,6 +232,7 @@ public sealed partial class MainViewModel
     {
         lock (_xPostingLoopGate)
         {
+            if (_xPostingManualQueuedOrRunning.Count > 0) return false;
             if (_xPostingScheduledInFlight.Contains(key)) return false;
             _xPostingScheduledInFlight.Add(key);
             _xPostingLastAttemptAt[key] = now;
@@ -190,21 +244,21 @@ public sealed partial class MainViewModel
     {
         try
         {
-            string prefix = scheduled && !string.IsNullOrWhiteSpace(slotId)
-                ? starId + " is selecting five writings for the " + slotId + " X batch."
-                : starId + " is selecting five writings for X now.";
-            SetXPostingStatus(prefix + " Once posting starts, foreground activity will not interrupt it.");
-            PublishXPostingStatusEvent("StarXPostingStarted", starId, XPostingStatus);
+            string startedMessage = scheduled && !string.IsNullOrWhiteSpace(slotId)
+                ? starId + " is queued for the " + slotId + " X batch. It will begin when the X posting lane is free."
+                : starId + " X batch is queued. It will begin when the X posting lane is free.";
+            SetXPostingStatusForStar(starId, startedMessage);
+            PublishXPostingStatusEvent("StarXPostingStarted", starId, startedMessage);
 
             StarXPostingRunResult result = await _xPostingService.PostForStarAsync(
                 starId,
                 progress =>
                 {
                     if (progress == null || string.IsNullOrWhiteSpace(progress.Message)) return;
-                    SetXPostingStatus(progress.Message);
+                    SetXPostingStatusForStar(starId, progress.Message);
                     PublishXPostingStatusEvent("StarXPostingProgress", starId, progress.Message);
                 }).ConfigureAwait(false);
-            SetXPostingStatus(result.Message);
+            SetXPostingStatusForStar(starId, result.Message);
 
             if (scheduled && result.BatchCompleted && !string.IsNullOrWhiteSpace(localDate) && !string.IsNullOrWhiteSpace(slotId))
             {
@@ -230,8 +284,9 @@ public sealed partial class MainViewModel
         }
         catch (Exception ex)
         {
-            SetXPostingStatus("X posting failed for " + starId + ": " + ex.Message + ". Unposted writings remain eligible.");
-            PublishXPostingStatusEvent("StarXPostingFailed", starId, XPostingStatus);
+            string failedMessage = "X posting failed for " + starId + ": " + ex.Message + ". Unposted writings remain eligible.";
+            SetXPostingStatusForStar(starId, failedMessage);
+            PublishXPostingStatusEvent("StarXPostingFailed", starId, failedMessage);
         }
     }
 
@@ -278,6 +333,43 @@ public sealed partial class MainViewModel
     private void SetXPostingStatus(string message)
     {
         OnUiThread(() => XPostingStatus = string.IsNullOrWhiteSpace(message) ? "X posting status unavailable." : message.Trim());
+    }
+
+    private void SetXPostingStatusForStar(string starId, string message)
+    {
+        string resolvedStarId = ResolveDefaultStarId(starId);
+        string normalizedMessage = string.IsNullOrWhiteSpace(message) ? "X posting status unavailable." : message.Trim();
+        lock (_xPostingLoopGate)
+        {
+            _xPostingStatusByStar[resolvedStarId] = normalizedMessage;
+        }
+
+        OnUiThread(() =>
+        {
+            if (string.Equals(ResolveDefaultStarId(SelectedStarId), resolvedStarId, StringComparison.OrdinalIgnoreCase))
+            {
+                XPostingStatus = normalizedMessage;
+            }
+        });
+    }
+
+    private void RefreshSelectedStarXPostingStatus()
+    {
+        string selectedStarId = ResolveDefaultStarId(SelectedStarId);
+        string? message;
+        lock (_xPostingLoopGate)
+        {
+            _xPostingStatusByStar.TryGetValue(selectedStarId, out message);
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            SetXPostingStatus(message);
+            return;
+        }
+
+        SetXPostingStatus(selectedStarId + " has no X posting activity recorded in this session. Automatic X posting is "
+            + (XPostingEnabled ? "enabled." : "off."));
     }
 
     private void PublishXPostingStatusEvent(
