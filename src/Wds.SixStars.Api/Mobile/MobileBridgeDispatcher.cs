@@ -184,6 +184,7 @@ public sealed class MobileBridgeDispatchCommand
     public bool? PlaybackPaused { get; set; }
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
+    public string WritingOutputType { get; set; } = "spark";
     public string PlayerText { get; set; } = string.Empty;
     public string Area { get; set; } = string.Empty;
     public string Quest { get; set; } = string.Empty;

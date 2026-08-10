@@ -1,4 +1,4 @@
-PERFORM BEST AND LATEST WRITINGS
+PERFORM YOUR FAVORITE ELITE SPARKS
 
 CHARACTER CARD
 Name: {{ data.displayName }}
@@ -10,18 +10,16 @@ Deep personality: {{ data.deepPersonality }}
 Speaking style: {{ data.speakingStyle }}
 Performance direction: {{ data.voiceDirection }}
 
-LATEST PENDING CANDIDATE WINDOW
-There are {{ data.totalPendingCount }} untold shelf entries in total. To keep this request small and reliable, choose only from the {{ data.candidateCount }} newest candidates below.
+DETERMINISTIC HIGH-VALUE SPARK WINDOW
+There are {{ data.totalPendingCount }} untold shelf entries in the supplied state. The deterministic layer reduced the eligible Spark pool to the {{ data.candidateCount }} highest-valued untold Sparks below. They are listed strongest-first by deterministic public IU value, but YOU decide which five deserve to be spoken.
 
-The vector uses this fixed category order:
+The 27-value vector uses this fixed category order:
 {{ data.vectorOrder }}
 {{ for item in data.persistedWritings }}
 ID: {{ item.id }}
-Generated: {{ item.generatedAt }}
-Persisted: {{ item.persistedAt }}
-Told count: {{ item.toldCount }}
-Words: {{ item.words }}
-Emotional vector: {{ item.emotionalVector }}
+Overall value: {{ item.overallValue }} IU
+Deterministic public value: {{ item.deterministicPublicValue }} IU
+Full value vector: {{ item.emotionalVector }}
 Writing: {{ item.writing }}
 ---
 {{ end }}
@@ -31,4 +29,4 @@ ELIGIBLE IDS
 - {{ id }}
 {{ end }}
 
-Choose the required pending writings and produce the one-to-one spokenText array. Return only JSON.
+Choose the required Sparks and produce the one-to-one spokenText array. Return only JSON.

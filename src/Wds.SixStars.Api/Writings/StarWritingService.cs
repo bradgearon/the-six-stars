@@ -13,6 +13,7 @@ namespace Wds.SixStars.Api.Writings
     {
         private const string GlobalOverallRuleId = "global-overall-excellence";
         private const double DefaultGlobalOverallValueThreshold = 80.0;
+        private const int SparkPerformanceCandidateLimit = 100;
         private static readonly double GlobalOverallValueThreshold = ReadGlobalOverallValueThreshold();
 
         private readonly IStarProfileProvider _profiles;
@@ -660,8 +661,19 @@ namespace Wds.SixStars.Api.Writings
             };
         }
 
-        public async Task<StarWritingPerformanceResult?> TellPendingAsync(string starId, CancellationToken cancellationToken)
+        public Task<StarWritingPerformanceResult?> TellPendingAsync(string starId, CancellationToken cancellationToken)
         {
+            return TellPendingAsync(starId, StarWritingOutputTypes.Spark, cancellationToken);
+        }
+
+        public async Task<StarWritingPerformanceResult?> TellPendingAsync(string starId, string outputType, CancellationToken cancellationToken)
+        {
+            string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
+            if (!string.Equals(normalizedOutputType, StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new NotSupportedException("Shelf performance currently supports compact Sparks only. Constellation Story playback has its own reader coming next.");
+            }
+
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -674,65 +686,68 @@ namespace Wds.SixStars.Api.Writings
                     .Where(x => x != null
                         && x.ToldCount <= 0
                         && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(x => x.PersistedAt)
                     .ToList();
                 if (pending.Count == 0) return null;
 
-                StarWritingPerformancePlan plan;
-                try
-                {
-                    plan = await _agent.PrepareWritingPerformanceAsync(profile, state, pending, cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // The writings are already durable and TTS-ready. A performance-planning LLM
-                    // failure must not turn the Play button into a failed bridge command with no
-                    // speech. Fall back to the five newest untold pieces verbatim.
-                    List<PersistedStarWriting> fallback = pending.Take(5).ToList();
-                    System.Diagnostics.Debug.WriteLine(
-                        "[StarWritingPerformance] " + profile.StarId
-                        + " performance plan failed; using exact-writing fallback: " + ex.Message);
-                    plan = new StarWritingPerformancePlan
-                    {
-                        StarId = profile.StarId,
-                        SelectedWritingIds = fallback.Select(x => x.Id).ToList(),
-                        SpokenText = fallback.Select(x => x.Writing).ToList(),
-                        RawModelJson = "fallback-after-performance-plan-error: " + ex.Message
-                    };
-                }
+                // Shelf performance is a two-stage choice: the deterministic IU layer first exposes
+                // only the strongest untold Sparks, then the Star chooses what she personally wants
+                // to perform from that elite window. This keeps large shelves cheap and repeatable
+                // without replacing the Star's own taste with a hard top-five rule.
+                List<PersistedStarWriting> performanceCandidates = StarWritingDeterministicRanker.TakeHighestRanked(
+                    pending,
+                    SparkPerformanceCandidateLimit);
 
-                HashSet<string> pendingIds = new HashSet<string>(pending.Select(x => x.Id), StringComparer.OrdinalIgnoreCase);
-                int targetCount = Math.Min(5, pending.Count);
-                List<string> selectedIds = (plan.SelectedWritingIds ?? new List<string>())
-                    .Where(x => !string.IsNullOrWhiteSpace(x) && pendingIds.Contains(x.Trim()))
+                // Do not silently substitute a deterministic top-five when the Star selection call
+                // fails or returns a malformed plan. The purpose of this stage is specifically to let
+                // her choose from the elite window; if that contract breaks, surface the real problem
+                // so the prompt/model can be fixed without consuming any shelf items.
+                StarWritingPerformancePlan plan = await _agent.PrepareWritingPerformanceAsync(
+                    profile,
+                    state,
+                    performanceCandidates,
+                    cancellationToken).ConfigureAwait(false);
+
+                HashSet<string> candidateIds = new HashSet<string>(performanceCandidates.Select(x => x.Id), StringComparer.OrdinalIgnoreCase);
+                int targetCount = Math.Min(5, performanceCandidates.Count);
+                List<string> requestedIds = (plan.SelectedWritingIds ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(x => x.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(targetCount)
                     .ToList();
-                if (selectedIds.Count < targetCount)
+                List<string> invalidIds = requestedIds
+                    .Where(id => !candidateIds.Contains(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                List<string> selectedIds = requestedIds
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (invalidIds.Count > 0 || selectedIds.Count != targetCount || requestedIds.Count != selectedIds.Count)
                 {
-                    selectedIds.AddRange(pending
-                        .Where(x => !selectedIds.Contains(x.Id, StringComparer.OrdinalIgnoreCase))
-                        .Take(targetCount - selectedIds.Count)
-                        .Select(x => x.Id));
+                    throw new InvalidOperationException(
+                        profile.StarId + " Spark performance selection was invalid. Expected "
+                        + targetCount.ToString(CultureInfo.InvariantCulture)
+                        + " distinct IDs from the top-IU candidate window, received "
+                        + requestedIds.Count.ToString(CultureInfo.InvariantCulture)
+                        + " entries / " + selectedIds.Count.ToString(CultureInfo.InvariantCulture)
+                        + " distinct; invalid IDs=" + (invalidIds.Count == 0 ? "none" : string.Join(",", invalidIds))
+                        + ". Raw model response: " + DiagnosticPreview(plan.RawModelJson));
                 }
 
                 List<PersistedStarWriting> selected = selectedIds
-                    .Select(id => pending.First(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)))
+                    .Select(id => performanceCandidates.First(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)))
                     .ToList();
 
                 List<string> spoken = (plan.SpokenText ?? new List<string>())
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(x => x.Trim())
-                    .Take(targetCount)
                     .ToList();
                 if (spoken.Count != selected.Count)
                 {
-                    spoken = selected.Select(x => x.Writing).ToList();
+                    throw new InvalidOperationException(
+                        profile.StarId + " Spark performance returned "
+                        + spoken.Count.ToString(CultureInfo.InvariantCulture)
+                        + " spoken parts for " + selected.Count.ToString(CultureInfo.InvariantCulture)
+                        + " selected Sparks. Raw model response: " + DiagnosticPreview(plan.RawModelJson));
                 }
 
                 DateTimeOffset toldAt = DateTimeOffset.UtcNow;
@@ -746,7 +761,7 @@ namespace Wds.SixStars.Api.Writings
                 StarInteractionResponse response = new StarInteractionResponse
                 {
                     StarId = profile.StarId,
-                    EmotionalPurpose = "share_best_latest_persisted_writing",
+                    EmotionalPurpose = "share_favorite_high_value_sparks",
                     VoiceDirective = CreateVoiceDirective(profile, selected)
                 };
                 response.SetSpokenParts(spoken);
@@ -755,6 +770,7 @@ namespace Wds.SixStars.Api.Writings
                 {
                     State = state,
                     SelectedWritings = selected,
+                    CandidateCount = performanceCandidates.Count,
                     Response = response
                 };
             }
@@ -766,6 +782,13 @@ namespace Wds.SixStars.Api.Writings
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try { await _store.ClearAsync(starId, cancellationToken).ConfigureAwait(false); }
             finally { _operationGate.Release(); }
+        }
+
+        private static string DiagnosticPreview(string? text, int maxChars = 1600)
+        {
+            string value = (text ?? string.Empty).Trim();
+            if (value.Length <= maxChars) return value;
+            return value.Substring(0, Math.Max(0, maxChars)) + "…";
         }
 
         private static void ReportProgress(Action<string>? progress, string message)

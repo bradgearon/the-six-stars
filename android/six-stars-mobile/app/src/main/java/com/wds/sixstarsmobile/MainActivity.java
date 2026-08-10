@@ -186,6 +186,11 @@ public final class MainActivity extends ComponentActivity {
     private ImageView prodTalkIcon;
     private View prodTalkButton;
     private View prodListenButton;
+    private View prodListenSubmenu;
+    private View prodListenThoughtOption;
+    private View prodListenSparkOption;
+    private View prodListenConstellationOption;
+    private TextView prodConstellationChoiceIcon;
     private View prodPhotoButton;
     private View prodVoiceActions;
     private Button prodCancelVoiceButton;
@@ -661,6 +666,11 @@ public final class MainActivity extends ComponentActivity {
         prodTalkIcon = null;
         prodTalkButton = null;
         prodListenButton = null;
+        prodListenSubmenu = null;
+        prodListenThoughtOption = null;
+        prodListenSparkOption = null;
+        prodListenConstellationOption = null;
+        prodConstellationChoiceIcon = null;
         prodPhotoButton = null;
         prodVoiceActions = null;
         prodCancelVoiceButton = null;
@@ -687,6 +697,11 @@ public final class MainActivity extends ComponentActivity {
         prodTalkIcon = findViewById(R.id.prod_talk_icon);
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodListenButton = findViewById(R.id.prod_listen_button);
+        prodListenSubmenu = findViewById(R.id.prod_listen_submenu);
+        prodListenThoughtOption = findViewById(R.id.prod_listen_thought_option);
+        prodListenSparkOption = findViewById(R.id.prod_listen_spark_option);
+        prodListenConstellationOption = findViewById(R.id.prod_listen_constellation_option);
+        prodConstellationChoiceIcon = findViewById(R.id.prod_constellation_choice_icon);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
         prodVoiceActions = findViewById(R.id.prod_voice_actions);
         prodCancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
@@ -717,6 +732,7 @@ public final class MainActivity extends ComponentActivity {
         prodStarSubtitleText.setContentDescription("Open Star selector");
         avatarFrame.setContentDescription("Open companion menu and status");
         catAvatar.setContentDescription("Open companion menu and status");
+        if (prodListenButton != null) prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story");
 
         prodSpriteView = findViewById(R.id.prod_sprite_view);
         if (prodSpriteView != null) {
@@ -726,7 +742,22 @@ public final class MainActivity extends ComponentActivity {
         }
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
-        if (prodListenButton != null) prodListenButton.setOnClickListener(v -> requestStarInitiativeFromListenButton());
+        if (prodListenButton != null) prodListenButton.setOnClickListener(v -> toggleProdListenSubmenu());
+        if (prodListenThoughtOption != null) prodListenThoughtOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            requestStarInitiativeFromListenButton();
+        });
+        if (prodListenSparkOption != null) prodListenSparkOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+        });
+        if (prodListenConstellationOption != null) prodListenConstellationOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            if (prodMiniStatusText != null) {
+                prodMiniStatusText.setText("Constellation listening is the next shelf reader; no story was consumed.");
+            }
+            appendVoiceDebug("Listen shelf menu", "Constellation Story was selected, but long-form shelf playback is intentionally not enabled yet.");
+        });
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
         prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
@@ -997,11 +1028,11 @@ public final class MainActivity extends ComponentActivity {
 
         LinearLayout writingButtons = row();
         prodGenerateWritingButton = prodButton("Create Shelf Work");
-        prodTellWritingButton = prodButton("Tell Best / Latest (" + selectedStarPendingWritingCount + ")");
+        prodTellWritingButton = prodButton("Tell Top Sparks (" + selectedStarPendingWritingCount + ")");
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("First chooses five word pairs without the writing task, composes five pieces, may refine them through configured review passes, then applies the final shelf ratings.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks deterministically narrows untold Sparks to the highest-valued IU window, then the Star chooses five favorites to perform.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 
@@ -1970,6 +2001,41 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private void toggleProdListenSubmenu() {
+        if (prodListenSubmenu == null) {
+            requestStarInitiativeFromListenButton();
+            return;
+        }
+        boolean opening = prodListenSubmenu.getVisibility() != View.VISIBLE;
+        if (!opening) {
+            hideProdListenSubmenu();
+            return;
+        }
+
+        if (prodConstellationChoiceIcon != null) {
+            String[] constellations = new String[]{
+                    "\u2726 \u00B7 \u2727",
+                    "\u22C6  \u2726  \u22C6",
+                    "\u2727 \u00B7 \u22C6",
+                    "\u2726  \u02DA  \u2727",
+                    "\u22C6 \u00B7 \u2736"
+            };
+            int constellationIndex = (int) Math.floorMod(System.nanoTime(), (long) constellations.length);
+            prodConstellationChoiceIcon.setText(constellations[constellationIndex]);
+        }
+        prodListenSubmenu.setVisibility(View.VISIBLE);
+        if (prodListenButton != null) {
+            prodListenButton.setContentDescription("Close Listen choices");
+        }
+    }
+
+    private void hideProdListenSubmenu() {
+        if (prodListenSubmenu != null) prodListenSubmenu.setVisibility(View.GONE);
+        if (prodListenButton != null) {
+            prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story");
+        }
+    }
+
     private void requestStarInitiativeFromListenButton() {
         if (!prodMode || destroyed) return;
         if (recording) {
@@ -2072,7 +2138,7 @@ public final class MainActivity extends ComponentActivity {
             if (prodMiniStatusText != null) {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
                         ? starId + " is choosing words, creating, and rating five writings…"
-                        : starId + " is choosing her best new writings…");
+                        : starId + " is choosing five favorites from her top 100 IU Sparks…");
             }
 
             JSONObject json = new JSONObject();
@@ -2081,9 +2147,12 @@ public final class MainActivity extends ComponentActivity {
             json.put("sourceClientId", "SixStarsMobileAndroid");
             json.put("sessionId", currentSessionId());
             json.put("starId", starId);
+            if ("TellStarWriting".equalsIgnoreCase(commandType)) {
+                json.put("writingOutputType", "spark");
+            }
             json.put("reason", "GenerateStarWriting".equalsIgnoreCase(commandType)
                     ? "Android cat popup requested five two-word jokes or poetic writings."
-                    : "Android cat popup requested the best and latest untold writing performance.");
+                    : "Android requested a Spark performance from the deterministic top-100 IU candidate window.");
             json.put("returnAudio", returnAudio);
             json.put("returnAudioInline", false);
             json.put("clientName", "SixStarsMobileAndroidWritingShelf");
@@ -2123,7 +2192,7 @@ public final class MainActivity extends ComponentActivity {
         }
         if (prodTellWritingButton != null) {
             prodTellWritingButton.setEnabled(!starWritingRequestRunning && selectedStarPendingWritingCount > 0);
-            prodTellWritingButton.setText("Tell Best / Latest (" + Math.max(0, selectedStarPendingWritingCount) + ")");
+            prodTellWritingButton.setText("Tell Top Sparks (" + Math.max(0, selectedStarPendingWritingCount) + ")");
         }
     }
 
@@ -2491,7 +2560,7 @@ public final class MainActivity extends ComponentActivity {
 
         String title = "StarWritingGenerated".equalsIgnoreCase(type) || "GenerateStarWriting".equalsIgnoreCase(type)
                 ? starId + " — five new writings"
-                : starId + " — best and latest writing";
+                : starId + " — favorite high-IU Sparks";
         responseText.setText(title + "\n\n" + (visible.length() > 0 ? visible.toString() : message)
                 + "\n\nNew: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount);
         if (prodMiniStatusText != null) {
@@ -3130,13 +3199,13 @@ public final class MainActivity extends ComponentActivity {
         }
         if (prodListenButton != null) {
             if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
-                prodListenButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought.");
+                prodListenButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought. Tap to open Listen choices.");
             } else if (item != null) {
-                prodListenButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ". Listen now.");
+                prodListenButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ". Tap to open Listen choices.");
             } else if (result != null && result.preparingCount > 0) {
-                prodListenButton.setContentDescription(selectedStarName() + " is preparing something to say.");
+                prodListenButton.setContentDescription(selectedStarName() + " is preparing something to say. Tap to open Listen choices.");
             } else {
-                prodListenButton.setContentDescription("Ask the selected Star if she has something to say.");
+                prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story.");
             }
         }
 

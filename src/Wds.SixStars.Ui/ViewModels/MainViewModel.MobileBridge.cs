@@ -648,12 +648,15 @@ public sealed partial class MainViewModel
             case "TellStarWriting":
             {
                 using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request for the Star to tell her writing");
-                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(
+                    starId,
+                    string.IsNullOrWhiteSpace(command.WritingOutputType) ? StarWritingOutputTypes.Spark : command.WritingOutputType,
+                    cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 if (performance == null)
                 {
                     StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
-                    string emptyMessage = starId + " has no new persisted writing waiting to be told.";
+                    string emptyMessage = starId + " has no untold persisted Sparks waiting to be told.";
                     OnUiThread(() =>
                     {
                         if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
@@ -700,7 +703,8 @@ public sealed partial class MainViewModel
                 }
 
                 List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
-                string message = starId + " selected " + items.Count + " writing(s) to tell; " + performance.State.PendingCount + " remain new.";
+                string message = starId + " chose " + items.Count + " Spark(s) from her deterministic top-"
+                    + performance.CandidateCount + " IU window; " + performance.State.PendingCount + " untold Sparks remain.";
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

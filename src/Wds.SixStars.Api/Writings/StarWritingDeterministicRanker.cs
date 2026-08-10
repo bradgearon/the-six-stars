@@ -44,6 +44,20 @@ namespace Wds.SixStars.Api.Writings
             "Vivid"
         };
 
+        public static double OverallValue(PersistedStarWriting? writing)
+        {
+            if (writing == null
+                || !StarWritingEmotionVector.TryNormalizeUsable(
+                    writing.EmotionalVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> values))
+            {
+                return -1.0;
+            }
+
+            return Value(values, "Overall");
+        }
+
         /// <summary>
         /// Computes an open-ended public-sharing value. Overall contributes 40%, broadly reusable
         /// craft/retellability 40%, and the strongest three expressive dimensions 20%. Multiple

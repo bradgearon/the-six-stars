@@ -19,8 +19,7 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
-        private const int WritingPerformanceCandidateLimit = 12;
-        private const int WritingPerformanceTextLimit = 600;
+        private const int WritingPerformanceCandidateLimit = 100;
 
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -1688,16 +1687,15 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<PersistedStarWriting> pendingWritings,
             CancellationToken cancellationToken)
         {
-            // A Star can accumulate hundreds of untold shelf entries while the idle writing loop runs.
-            // Sending the entire shelf to a 16K model makes the performance request fail before it can
-            // return any text or start TTS. Give the model a small newest-first candidate window instead.
+            // The service supplies these strongest-first from the deterministic IU ranking layer.
+            // Preserve that order here: this LLM call is the Star's aesthetic choice inside the elite
+            // window, not another shelf-ranking pass. Sparks are intentionally compact, so all 100
+            // complete texts can be shown without clipping their wording.
             List<PersistedStarWriting> performanceCandidates = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
                 .Where(x => x != null
                     && !string.IsNullOrWhiteSpace(x.Id)
                     && !string.IsNullOrWhiteSpace(x.Writing)
                     && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.PersistedAt)
-                .ThenByDescending(x => x.GeneratedAt)
                 .Take(WritingPerformanceCandidateLimit)
                 .ToList();
 
@@ -1713,7 +1711,7 @@ namespace Wds.SixStars.Api.Ai
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 voiceDirection = PromptText(profile.VoiceDirection, 900),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                totalPendingCount = (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
+                totalPendingCount = state?.PendingCount ?? (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
                 candidateCount = performanceCandidates.Count,
                 pendingIds = performanceCandidates
                     .Select(x => x.Id.Trim())
@@ -1726,8 +1724,11 @@ namespace Wds.SixStars.Api.Ai
                         persistedAt = x.PersistedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                         toldCount = x.ToldCount,
                         words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                        valueUnit = StarWritingValueUnits.InformationUnits,
+                        overallValue = Math.Round(StarWritingDeterministicRanker.OverallValue(x), 2),
+                        deterministicPublicValue = Math.Round(StarWritingDeterministicRanker.PublicSharingValue(x), 2),
                         emotionalVector = StarWritingEmotionVector.Normalize(x.EmotionalVector, out _),
-                        writing = PromptText(x.Writing, WritingPerformanceTextLimit)
+                        writing = (x.Writing ?? string.Empty).Trim()
                     })
                     .ToList()
             };

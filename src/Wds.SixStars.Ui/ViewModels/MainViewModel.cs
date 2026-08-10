@@ -743,7 +743,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string TellStarWritingButtonText => "Tell Best / Latest (" + PendingWritingCount + ")";
+    public string TellStarWritingButtonText => "Tell Top Sparks (" + PendingWritingCount + ")";
     public string WritingLibraryStatusText => "Writing shelf: " + PendingWritingCount + " new, " + PersistedWritingCount + " saved.";
 
     public string StarOutput
@@ -2515,11 +2515,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        CancellationToken token = _operationController.BeginNewOperation("Tell best and latest Star writing.");
+        CancellationToken token = _operationController.BeginNewOperation("Tell favorite high-IU Sparks.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing up to five of her best and latest untold writings.";
+            Status = starId + " is choosing five favorites from her deterministic top-100 untold Spark window.";
         });
         try
         {
