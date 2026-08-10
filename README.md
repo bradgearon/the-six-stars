@@ -77,7 +77,7 @@ Constellation Forge runs in deliberate phases. All six Stars first perform a lig
 
 Constellation Stories are kept out of the existing short-form X publisher and five-at-a-time spoken Spark action so a long work cannot be truncated and accidentally marked posted/told.
 
-`WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques.
+`WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques. The current experiment sets Constellation Forge to 100% (`1.0`) and both Spark technique weights to `0.0` so every shelf run exercises the collaborative story pipeline.
 
 ## Speech / hotword / Whisper pipeline
 

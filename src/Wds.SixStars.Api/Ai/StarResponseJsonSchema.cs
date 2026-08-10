@@ -294,7 +294,7 @@ namespace Wds.SixStars.Api.Ai
                         { "premise", StringProperty(1800) },
                         { "beats", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
+                                { "type", "array" }, { "minItems", 1 },
                                 { "items", StringProperty(1200) }
                             }
                         }
@@ -316,7 +316,7 @@ namespace Wds.SixStars.Api.Ai
                         { "title", StringProperty(180) },
                         { "revisedBeats", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
+                                { "type", "array" }, { "minItems", 1 },
                                 { "items", StringProperty(1200) }
                             }
                         },

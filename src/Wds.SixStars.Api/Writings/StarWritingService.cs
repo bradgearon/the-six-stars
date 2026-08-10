@@ -375,7 +375,7 @@ namespace Wds.SixStars.Api.Writings
 
                 currentStory = build.Story.Trim();
                 outline.Title = string.IsNullOrWhiteSpace(build.Title) ? outline.Title : build.Title.Trim();
-                if (build.RevisedBeats != null && build.RevisedBeats.Count >= 6)
+                if (build.RevisedBeats != null && build.RevisedBeats.Count > 0)
                 {
                     outline.Beats = build.RevisedBeats.ToList();
                 }
@@ -468,7 +468,7 @@ namespace Wds.SixStars.Api.Writings
                     "maximum-build-phase-audit",
                     cancellationToken).ConfigureAwait(false);
                 currentStory = audit.Story.Trim();
-                if (audit.RevisedBeats != null && audit.RevisedBeats.Count >= 6) outline.Beats = audit.RevisedBeats.ToList();
+                if (audit.RevisedBeats != null && audit.RevisedBeats.Count > 0) outline.Beats = audit.RevisedBeats.ToList();
                 if (!buildContributors.Contains(tail.StarId, StringComparer.OrdinalIgnoreCase)) buildContributors.Add(tail.StarId);
                 buildPhaseCount++;
                 string auditDecision = StarWritingStoryCompletionDecisions.Normalize(audit.CompletionDecision, true);

@@ -690,8 +690,8 @@ namespace Wds.SixStars.Api.Ai
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
             result.Title = PromptText(result.Title, 180);
             result.Premise = PromptText(result.Premise, 1800);
-            result.Beats = (result.Beats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
-            if (string.IsNullOrWhiteSpace(result.Title) || string.IsNullOrWhiteSpace(result.Premise) || result.Beats.Count < 6)
+            result.Beats = (result.Beats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).ToList();
+            if (string.IsNullOrWhiteSpace(result.Title) || string.IsNullOrWhiteSpace(result.Premise) || result.Beats.Count == 0)
             {
                 throw new InvalidOperationException("Constellation Forge outline was incomplete.");
             }
@@ -739,7 +739,7 @@ namespace Wds.SixStars.Api.Ai
                 viewpointPersonality = PromptText(viewpointProfile.DeepPersonality, 1600),
                 title = PromptText(outline.Title, 180),
                 premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 1200)).ToList(),
                 currentStory = PromptText(currentStory, 22000),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
@@ -764,8 +764,8 @@ namespace Wds.SixStars.Api.Ai
             if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? contributorProfile.StarId : result.StarId.Trim();
             result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
-            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
-            if (result.RevisedBeats.Count < 6) result.RevisedBeats = (outline.Beats ?? new List<string>()).Take(14).ToList();
+            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).ToList();
+            if (result.RevisedBeats.Count == 0) result.RevisedBeats = (outline.Beats ?? new List<string>()).ToList();
             result.Story = (result.Story ?? string.Empty).Trim();
             result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 500)).Take(8).ToList();
             result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
@@ -802,7 +802,7 @@ namespace Wds.SixStars.Api.Ai
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
                 title = PromptText(outline.Title, 180),
                 premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 1200)).ToList(),
                 currentStory = PromptText(currentStory, 22000),
                 subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
                 verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
