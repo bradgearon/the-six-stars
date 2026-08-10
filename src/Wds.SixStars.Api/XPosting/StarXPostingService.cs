@@ -51,7 +51,7 @@ namespace Wds.SixStars.Api.XPosting
             return account != null && account.Enabled && account.HasClientConfiguration;
         }
 
-        public async Task<StarXPostingRunResult> PostForStarAsync(string starId)
+        public async Task<StarXPostingRunResult> PostForStarAsync(string starId, Action<StarXPostingProgress>? progress = null)
         {
             // Deliberately no caller cancellation token: after a public-posting batch begins, UI activity,
             // Star selection, and runtime cancel commands must not interrupt or half-mark it.
@@ -130,6 +130,15 @@ namespace Wds.SixStars.Api.XPosting
                     };
                 }
 
+                ReportProgress(progress, new StarXPostingProgress
+                {
+                    StarId = profile.StarId,
+                    Stage = "selected",
+                    TotalPosts = requestedCount,
+                    Message = profile.StarId + " selected " + requestedCount.ToString(CultureInfo.InvariantCulture)
+                        + " writings for X. Posting will begin now."
+                });
+
                 StarXPostingRunResult result = new StarXPostingRunResult
                 {
                     StarId = profile.StarId,
@@ -140,6 +149,19 @@ namespace Wds.SixStars.Api.XPosting
                 for (int index = 0; index < posts.Count; index++)
                 {
                     StarXPostSelectionItem planned = posts[index];
+                    int postNumber = index + 1;
+                    ReportProgress(progress, new StarXPostingProgress
+                    {
+                        StarId = profile.StarId,
+                        Stage = "posting",
+                        CurrentPostNumber = postNumber,
+                        TotalPosts = posts.Count,
+                        PostedCount = result.PostedCount,
+                        FailedCount = result.FailedCount,
+                        Message = profile.StarId + " is posting " + postNumber.ToString(CultureInfo.InvariantCulture)
+                            + " of " + posts.Count.ToString(CultureInfo.InvariantCulture) + " to X..."
+                    });
+
                     StarXPostApiResult apiResult;
                     try
                     {
@@ -191,7 +213,48 @@ namespace Wds.SixStars.Api.XPosting
                     if (index + 1 < posts.Count)
                     {
                         int seconds = Math.Max(0, _options.DelayBetweenPostsSeconds);
+                        string attemptSummary = item.Success
+                            ? profile.StarId + " posted " + postNumber.ToString(CultureInfo.InvariantCulture) + " of "
+                                + posts.Count.ToString(CultureInfo.InvariantCulture) + " successfully."
+                            : profile.StarId + " post " + postNumber.ToString(CultureInfo.InvariantCulture) + " of "
+                                + posts.Count.ToString(CultureInfo.InvariantCulture) + " failed: " + (string.IsNullOrWhiteSpace(item.Error) ? "unknown error" : item.Error.Trim()) + ".";
+                        string waitSummary = seconds > 0
+                            ? " Waiting " + FormatDelay(seconds) + " before post " + (postNumber + 1).ToString(CultureInfo.InvariantCulture)
+                                + " of " + posts.Count.ToString(CultureInfo.InvariantCulture) + "."
+                            : " Continuing to post " + (postNumber + 1).ToString(CultureInfo.InvariantCulture) + " of "
+                                + posts.Count.ToString(CultureInfo.InvariantCulture) + ".";
+
+                        ReportProgress(progress, new StarXPostingProgress
+                        {
+                            StarId = profile.StarId,
+                            Stage = seconds > 0 ? "waiting" : "posted",
+                            CurrentPostNumber = postNumber,
+                            TotalPosts = posts.Count,
+                            PostedCount = result.PostedCount,
+                            FailedCount = result.FailedCount,
+                            DelaySeconds = seconds,
+                            Message = attemptSummary + waitSummary
+                        });
+
                         if (seconds > 0) await Task.Delay(TimeSpan.FromSeconds(seconds)).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        ReportProgress(progress, new StarXPostingProgress
+                        {
+                            StarId = profile.StarId,
+                            Stage = item.Success ? "posted" : "failed",
+                            CurrentPostNumber = postNumber,
+                            TotalPosts = posts.Count,
+                            PostedCount = result.PostedCount,
+                            FailedCount = result.FailedCount,
+                            Message = item.Success
+                                ? profile.StarId + " posted " + postNumber.ToString(CultureInfo.InvariantCulture) + " of "
+                                    + posts.Count.ToString(CultureInfo.InvariantCulture) + " successfully."
+                                : profile.StarId + " post " + postNumber.ToString(CultureInfo.InvariantCulture) + " of "
+                                    + posts.Count.ToString(CultureInfo.InvariantCulture) + " failed: "
+                                    + (string.IsNullOrWhiteSpace(item.Error) ? "unknown error" : item.Error.Trim()) + "."
+                        });
                     }
                 }
 
@@ -206,6 +269,30 @@ namespace Wds.SixStars.Api.XPosting
             {
                 _runGate.Release();
             }
+        }
+
+        private static void ReportProgress(Action<StarXPostingProgress>? progress, StarXPostingProgress value)
+        {
+            if (progress == null) return;
+            try
+            {
+                progress(value);
+            }
+            catch
+            {
+                // Status reporting is best-effort and must never interrupt a public-posting batch.
+            }
+        }
+
+        private static string FormatDelay(int seconds)
+        {
+            TimeSpan delay = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            if (delay.TotalMinutes >= 1)
+            {
+                return ((int)delay.TotalMinutes).ToString(CultureInfo.InvariantCulture) + ":"
+                    + delay.Seconds.ToString("00", CultureInfo.InvariantCulture);
+            }
+            return delay.Seconds.ToString(CultureInfo.InvariantCulture) + "s";
         }
 
         private async Task<bool> TryMarkPostedWithRetriesAsync(

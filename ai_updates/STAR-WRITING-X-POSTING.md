@@ -11,6 +11,8 @@ The writing shelf can publish five Star-selected writings to X at each of the fo
 5. Wait `DelayBetweenPostsSeconds` between attempts.
 6. Set `PostedAt`, `XPostId`, and `PostedText` only after X accepts that individual post.
 
+The desktop status text updates throughout a running batch: selection complete, posting `N of 5`, success/failure of each attempt, and the configured wait before the next post. Progress reporting is best-effort and cannot interrupt the batch if the UI/status callback fails.
+
 Spoken/told state is independent from posted state. A writing remains eligible until its post succeeds.
 
 ## OAuth 2.0 desktop authorization

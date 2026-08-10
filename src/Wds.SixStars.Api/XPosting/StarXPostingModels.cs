@@ -112,6 +112,18 @@ namespace Wds.SixStars.Api.XPosting
         public string Error { get; set; } = string.Empty;
     }
 
+    public sealed class StarXPostingProgress
+    {
+        public string StarId { get; set; } = string.Empty;
+        public string Stage { get; set; } = string.Empty;
+        public int CurrentPostNumber { get; set; }
+        public int TotalPosts { get; set; }
+        public int PostedCount { get; set; }
+        public int FailedCount { get; set; }
+        public int DelaySeconds { get; set; }
+        public string Message { get; set; } = string.Empty;
+    }
+
     public sealed class StarXPostingRunResult
     {
         public string StarId { get; set; } = string.Empty;

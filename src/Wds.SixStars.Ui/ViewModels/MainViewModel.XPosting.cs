@@ -196,7 +196,14 @@ public sealed partial class MainViewModel
             SetXPostingStatus(prefix + " Once posting starts, foreground activity will not interrupt it.");
             PublishXPostingStatusEvent("StarXPostingStarted", starId, XPostingStatus);
 
-            StarXPostingRunResult result = await _xPostingService.PostForStarAsync(starId).ConfigureAwait(false);
+            StarXPostingRunResult result = await _xPostingService.PostForStarAsync(
+                starId,
+                progress =>
+                {
+                    if (progress == null || string.IsNullOrWhiteSpace(progress.Message)) return;
+                    SetXPostingStatus(progress.Message);
+                    PublishXPostingStatusEvent("StarXPostingProgress", starId, progress.Message);
+                }).ConfigureAwait(false);
             SetXPostingStatus(result.Message);
 
             if (scheduled && result.BatchCompleted && !string.IsNullOrWhiteSpace(localDate) && !string.IsNullOrWhiteSpace(slotId))
