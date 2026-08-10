@@ -4,12 +4,13 @@ The writing shelf can publish five Star-selected writings to X at each of the fo
 
 ## Selection and posting behavior
 
-1. Load persisted shelf writings that do not have `PostedAt`.
-2. Randomly sample at most `CandidateLimit` (maximum 500).
-3. Ask the selected Star, through the dedicated Scriban templates, to choose exactly five source writings and provide the final post text.
-4. Post the five items in sequence through X API v2 `POST /2/tweets`.
-5. Wait `DelayBetweenPostsSeconds` between attempts.
-6. Set `PostedAt`, `XPostId`, and `PostedText` only after X accepts that individual post.
+1. Load persisted shelf writings that do not have `PostedAt`, have non-empty text, and fit X's 280-character limit.
+2. Rank the eligible shelf deterministically from each writing's saved 27-score review vector. Public ranking is 40% `Overall`, 40% the average of durable craft/retellability dimensions (`Memorable`, `Original`, `Coherent`, `Meaningful`, `Characterful`, `EmotionallyResonant`, `Polished`, `Quotable`, `WorthRetelling`), and 20% the average of that writing's three strongest expressive dimensions. Writings that matched multiple non-global persistence routes receive a small bonus.
+3. Take the strongest `CandidateLimit` writings (maximum 500), strongest first. There is no random shelf sampling in this stage.
+4. Ask the selected Star, through the dedicated Scriban templates, to choose exactly five favorites from that already-high-quality window. The selected persisted writing text is returned unchanged; no hashtags or extra copy are added.
+5. Post the five items in sequence through X API v2 `POST /2/tweets`.
+6. Wait `DelayBetweenPostsSeconds` between attempts.
+7. Set `PostedAt`, `XPostId`, and `PostedText` only after X accepts that individual post.
 
 The desktop status text updates throughout a running batch: selection complete, posting `N of 5`, success/failure of each attempt, and the configured wait before the next post. Progress reporting is best-effort and cannot interrupt the batch if the UI/status callback fails.
 

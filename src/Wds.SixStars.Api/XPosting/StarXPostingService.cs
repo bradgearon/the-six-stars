@@ -20,7 +20,6 @@ namespace Wds.SixStars.Api.XPosting
         private readonly StarWritingFileStore _writingStore;
         private readonly IXPostClient _xClient;
         private readonly StarXPostingOptions _options;
-        private readonly Random _random;
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private readonly object _activeRunGate = new object();
         private string _activeStarId = string.Empty;
@@ -30,15 +29,13 @@ namespace Wds.SixStars.Api.XPosting
             IStarWritingAgent agent,
             StarWritingFileStore writingStore,
             IXPostClient xClient,
-            StarXPostingOptions options,
-            Random? random = null)
+            StarXPostingOptions options)
         {
             _profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
             _agent = agent ?? throw new ArgumentNullException(nameof(agent));
             _writingStore = writingStore ?? throw new ArgumentNullException(nameof(writingStore));
             _xClient = xClient ?? throw new ArgumentNullException(nameof(xClient));
             _options = options ?? new StarXPostingOptions();
-            _random = random ?? new Random();
         }
 
         public IReadOnlyList<string> ConfiguredStarIds => (_options.StarAccounts ?? new List<StarXAccountOptions>())
@@ -90,12 +87,13 @@ namespace Wds.SixStars.Api.XPosting
                     .Where(x => x != null
                         && !x.PostedAt.HasValue
                         && !string.IsNullOrWhiteSpace(x.Id)
-                        && !string.IsNullOrWhiteSpace(x.Writing))
+                        && !string.IsNullOrWhiteSpace(x.Writing)
+                        && x.Writing.Trim().Length <= 280)
                     .ToList();
 
                 int requestedCount = 5;
                 int candidateLimit = Math.Max(requestedCount, Math.Min(500, _options.CandidateLimit <= 0 ? 500 : _options.CandidateLimit));
-                List<PersistedStarWriting> candidates = TakeRandom(unposted, candidateLimit);
+                List<PersistedStarWriting> candidates = StarWritingDeterministicRanker.TakeHighestRanked(unposted, candidateLimit);
                 if (candidates.Count < requestedCount)
                 {
                     return new StarXPostingRunResult
@@ -113,8 +111,8 @@ namespace Wds.SixStars.Api.XPosting
                     StarId = profile.StarId,
                     Stage = "selecting",
                     TotalPosts = requestedCount,
-                    Message = profile.StarId + " is selecting five writings from "
-                        + candidates.Count.ToString(CultureInfo.InvariantCulture) + " X candidates..."
+                    Message = profile.StarId + " is selecting five writings from her "
+                        + candidates.Count.ToString(CultureInfo.InvariantCulture) + " highest-ranked unposted X candidates..."
                 });
 
                 StarXPostSelectionResult selection;
@@ -307,7 +305,7 @@ namespace Wds.SixStars.Api.XPosting
                     : profile.StarId + " completed an X batch: "
                         + result.PostedCount.ToString(CultureInfo.InvariantCulture) + " posted, "
                         + result.FailedCount.ToString(CultureInfo.InvariantCulture) + " failed, from "
-                        + result.CandidateCount.ToString(CultureInfo.InvariantCulture) + " randomly sampled unposted writings.";
+                        + result.CandidateCount.ToString(CultureInfo.InvariantCulture) + " deterministically top-ranked unposted writings.";
                 return result;
             }
             finally
@@ -375,19 +373,6 @@ namespace Wds.SixStars.Api.XPosting
             string id = (starId ?? string.Empty).Trim().ToLowerInvariant();
             return (_options.StarAccounts ?? new List<StarXAccountOptions>())
                 .FirstOrDefault(x => x != null && string.Equals((x.Id ?? string.Empty).Trim(), id, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private List<PersistedStarWriting> TakeRandom(List<PersistedStarWriting> source, int maximum)
-        {
-            List<PersistedStarWriting> copy = source.ToList();
-            for (int i = copy.Count - 1; i > 0; i--)
-            {
-                int swap = _random.Next(i + 1);
-                PersistedStarWriting temp = copy[i];
-                copy[i] = copy[swap];
-                copy[swap] = temp;
-            }
-            return copy.Take(maximum).ToList();
         }
 
         private static List<StarXPostSelectionItem> ValidateSelection(

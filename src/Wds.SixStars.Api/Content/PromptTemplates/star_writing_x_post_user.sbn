@@ -15,8 +15,8 @@ Character attributes: {{ data.characterAttributes }}
 - {{ behavior }}
 {{ end }}
 
-There are {{ data.totalUnpostedCount }} unposted persisted writings. This request contains a random candidate window of {{ data.candidateCount }} writings.
-Choose exactly {{ data.requestedCount }} distinct IDs from this window and provide the final public post text for each.
+There are {{ data.totalUnpostedCount }} unposted persisted writings. The deterministic shelf-ranking layer has already reduced them to the {{ data.candidateCount }} strongest eligible writings using their saved review vectors. This candidate window is listed strongest-first.
+Choose exactly {{ data.requestedCount }} distinct IDs from this high-quality window and provide the final public post text for each.
 
 ELIGIBLE UNPOSTED WRITINGS
 {{ for item in data.unpostedWritings }}
