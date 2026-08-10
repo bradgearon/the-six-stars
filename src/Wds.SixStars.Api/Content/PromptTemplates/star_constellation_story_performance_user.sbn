@@ -1,0 +1,12 @@
+PREPARE THIS COMPLETE CONSTELLATION STORY FOR SPOKEN PLAYBACK
+
+Star: {{ data.displayName }}
+Story ID: {{ data.storyId }}
+Title: {{ data.title }}
+Overall value: {{ data.overallValue }} {{ data.valueUnit }}
+Deterministic public value: {{ data.publicValue }} {{ data.valueUnit }}
+
+COMPLETE STORY
+{{ data.story }}
+
+Return the exact story as ordered spokenText chunks and the supplied story ID as the sole selectedWritingIds item. Return only JSON.

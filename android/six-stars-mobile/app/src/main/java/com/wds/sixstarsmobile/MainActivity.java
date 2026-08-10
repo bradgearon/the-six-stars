@@ -749,14 +749,11 @@ public final class MainActivity extends ComponentActivity {
         });
         if (prodListenSparkOption != null) prodListenSparkOption.setOnClickListener(v -> {
             hideProdListenSubmenu();
-            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
+            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked(), "spark");
         });
         if (prodListenConstellationOption != null) prodListenConstellationOption.setOnClickListener(v -> {
             hideProdListenSubmenu();
-            if (prodMiniStatusText != null) {
-                prodMiniStatusText.setText("Constellation listening is the next shelf reader; no story was consumed.");
-            }
-            appendVoiceDebug("Listen shelf menu", "Constellation Story was selected, but long-form shelf playback is intentionally not enabled yet.");
+            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked(), "constellation-story");
         });
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
@@ -1032,7 +1029,7 @@ public final class MainActivity extends ComponentActivity {
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks builds a 25-item weighted-IU listening set from the top 100 untold Sparks, includes a little medium-value contrast, then the Star chooses five favorites to perform.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks builds a 25-item weighted-IU listening set from the top 100 untold Sparks. The main Listen → Constellation choice deterministically plays the highest-Overall-IU unplayed story and queues its full narration in spoken chunks.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 
@@ -2130,15 +2127,22 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void dispatchStarWritingCommand(String commandType, boolean returnAudio) {
+        dispatchStarWritingCommand(commandType, returnAudio, "spark");
+    }
+
+    private void dispatchStarWritingCommand(String commandType, boolean returnAudio, String writingOutputType) {
         if (starWritingRequestRunning) return;
         try {
             final String starId = selectedStarName();
+            final boolean constellationPlayback = "constellation-story".equalsIgnoreCase(writingOutputType);
             starWritingRequestRunning = true;
             updateProdWritingButtons();
             if (prodMiniStatusText != null) {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
-                        ? starId + " is choosing words, creating, and rating five writings…"
-                        : starId + " is reading a weighted set of 25 from her top 100 IU Sparks, then choosing five…");
+                        ? starId + " is choosing words, creating, and rating shelf work…"
+                        : constellationPlayback
+                            ? starId + " is loading her highest-IU unplayed Constellation Story and preparing the complete spoken queue…"
+                            : starId + " is reading a weighted set of 25 from her top 100 IU Sparks, then choosing five…");
             }
 
             JSONObject json = new JSONObject();
@@ -2148,16 +2152,18 @@ public final class MainActivity extends ComponentActivity {
             json.put("sessionId", currentSessionId());
             json.put("starId", starId);
             if ("TellStarWriting".equalsIgnoreCase(commandType)) {
-                json.put("writingOutputType", "spark");
+                json.put("writingOutputType", constellationPlayback ? "constellation-story" : "spark");
             }
             json.put("reason", "GenerateStarWriting".equalsIgnoreCase(commandType)
-                    ? "Android cat popup requested five two-word jokes or poetic writings."
-                    : "Android requested a Spark performance from a 25-item weighted-IU listening set drawn from the top-100 untold Sparks.");
+                    ? "Android requested new writing shelf work."
+                    : constellationPlayback
+                        ? "Android requested the highest-Overall-IU unplayed Constellation Story, formatted into a complete spokenText queue for phone narration."
+                        : "Android requested a Spark performance from a 25-item weighted-IU listening set drawn from the top-100 untold Sparks.");
             json.put("returnAudio", returnAudio);
             json.put("returnAudioInline", false);
             json.put("clientName", "SixStarsMobileAndroidWritingShelf");
 
-            appendVoiceDebug("Writing shelf command sent", commandType + " for " + starId);
+            appendVoiceDebug("Writing shelf command sent", commandType + " for " + starId + ("TellStarWriting".equalsIgnoreCase(commandType) ? " outputType=" + (constellationPlayback ? "constellation-story" : "spark") : ""));
             sendSocketRequest("dispatch", json, 240000L, response -> {
                 JSONObject event = response.optJSONObject("event");
                 runOnUiThread(() -> {
@@ -2544,6 +2550,8 @@ public final class MainActivity extends ComponentActivity {
 
         JSONArray items = optJsonArrayEither(event, "writingItems", "WritingItems");
         String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        String storyTitle = optStringEither(event, "storyTitle", "StoryTitle", "").trim();
+        boolean constellationPlayback = storyTitle.length() > 0;
         StringBuilder visible = new StringBuilder();
         if (items != null) {
             for (int i = 0; i < items.length(); i++) {
@@ -2559,12 +2567,14 @@ public final class MainActivity extends ComponentActivity {
         }
 
         String title = "StarWritingGenerated".equalsIgnoreCase(type) || "GenerateStarWriting".equalsIgnoreCase(type)
-                ? starId + " — five new writings"
-                : starId + " — favorite high-IU Sparks";
+                ? starId + " — new shelf work"
+                : constellationPlayback
+                    ? starId + " — Constellation Story: " + storyTitle
+                    : starId + " — favorite high-IU Sparks";
         responseText.setText(title + "\n\n" + (visible.length() > 0 ? visible.toString() : message)
-                + "\n\nNew: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount);
+                + (constellationPlayback ? "" : "\n\nNew Sparks: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount));
         if (prodMiniStatusText != null) {
-            prodMiniStatusText.setText(message + " New writing: " + selectedStarPendingWritingCount + ".");
+            prodMiniStatusText.setText(constellationPlayback ? message : message + " New Sparks: " + selectedStarPendingWritingCount + ".");
         }
         appendVoiceDebug("Writing shelf updated", "#" + seq + " " + type + ", pending=" + selectedStarPendingWritingCount + ", saved=" + selectedStarPersistedWritingCount);
     }

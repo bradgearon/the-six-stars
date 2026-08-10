@@ -409,8 +409,11 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingPerformanceResult
     {
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public List<PersistedStarWriting> SelectedWritings { get; set; } = new List<PersistedStarWriting>();
+        public double SelectedOverallValue { get; set; }
+        public double SelectedPublicValue { get; set; }
         public int CandidateCount { get; set; }
         public int ElitePoolCount { get; set; }
         public int AnchorCount { get; set; }

@@ -471,6 +471,30 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_writing_performance", schema);
         }
 
+        public static object CreateConstellationStoryPerformanceResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "selectedWritingIds", "spokenText" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "selectedWritingIds", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 1 }, { "items", StringProperty(160) }
+                            }
+                        },
+                        // Story length is governed by the story itself and the model context, not an
+                        // arbitrary shelf-reader item/character ceiling. The prompt asks for natural
+                        // TTS chunks while this schema simply requires a non-empty ordered array.
+                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_constellation_story_performance", schema);
+        }
+
         public static object CreateDailyStarStateResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

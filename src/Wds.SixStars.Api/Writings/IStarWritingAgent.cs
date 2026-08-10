@@ -17,6 +17,7 @@ namespace Wds.SixStars.Api.Writings
         Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken);
         Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken);
         Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> pendingWritings, CancellationToken cancellationToken);
+        Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(StarProfile profile, StarWritingNotesState state, PersistedStarWriting story, CancellationToken cancellationToken);
         Task<StarXPostSelectionResult> PrepareXPostsAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> unpostedWritings, int requestedCount, CancellationToken cancellationToken);
     }
 }

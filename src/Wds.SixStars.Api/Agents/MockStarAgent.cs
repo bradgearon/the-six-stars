@@ -194,6 +194,19 @@ namespace Wds.SixStars.Api.Agents
             return Task.FromResult(result);
         }
 
+        public Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(StarProfile profile, StarWritingNotesState state, PersistedStarWriting story, CancellationToken cancellationToken)
+        {
+            StarWritingPerformancePlan result = new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = new List<string> { story.Id },
+                RawModelJson = "mock"
+            };
+            result.SpokenText.AddRange(Wds.SixStars.Api.Stories.StarStorySpeechAdapter.SplitStoryChunkForSpeech(story.Writing));
+            if (result.SpokenText.Count == 0 && !string.IsNullOrWhiteSpace(story.Writing)) result.SpokenText.Add(story.Writing.Trim());
+            return Task.FromResult(result);
+        }
+
         public Task<StarXPostSelectionResult> PrepareXPostsAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> unpostedWritings, int requestedCount, CancellationToken cancellationToken)
         {
             List<PersistedStarWriting> selected = (unpostedWritings ?? Array.Empty<PersistedStarWriting>())

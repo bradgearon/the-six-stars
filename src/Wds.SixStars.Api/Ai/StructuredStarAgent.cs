@@ -1747,6 +1747,47 @@ namespace Wds.SixStars.Api.Ai
             return result;
         }
 
+        public async Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            PersistedStarWriting story,
+            CancellationToken cancellationToken)
+        {
+            if (story == null) throw new ArgumentNullException(nameof(story));
+            if (string.IsNullOrWhiteSpace(story.Id)) throw new InvalidOperationException("Constellation Story playback requires a persisted writing ID.");
+            if (string.IsNullOrWhiteSpace(story.Writing)) throw new InvalidOperationException("Constellation Story playback requires story text.");
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                storyId = PromptText(story.Id, 160),
+                title = string.IsNullOrWhiteSpace(story.Title) ? "Untitled Constellation Story" : story.Title.Trim(),
+                valueUnit = StarWritingValueUnits.InformationUnits,
+                overallValue = Math.Round(StarWritingDeterministicRanker.OverallValue(story), 2),
+                publicValue = Math.Round(StarWritingDeterministicRanker.PublicSharingValue(story), 2),
+                story = story.Writing.Trim()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_constellation_story_performance_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_constellation_story_performance_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateConstellationStoryPerformanceResponseFormat(),
+                0,
+                "star-writing-constellation-perform",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Constellation Story playback formatting returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.RawModelJson = json;
+            return result;
+        }
+
         private static List<string> NormalizeSeedWords(IEnumerable<string>? seedWords)
         {
             return (seedWords ?? Enumerable.Empty<string>())

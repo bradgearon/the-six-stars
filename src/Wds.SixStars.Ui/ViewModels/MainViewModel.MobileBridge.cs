@@ -656,7 +656,13 @@ public sealed partial class MainViewModel
                 if (performance == null)
                 {
                     StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
-                    string emptyMessage = starId + " has no untold persisted Sparks waiting to be told.";
+                    bool requestedConstellation = string.Equals(
+                        StarWritingOutputTypes.Normalize(command.WritingOutputType),
+                        StarWritingOutputTypes.ConstellationStory,
+                        StringComparison.OrdinalIgnoreCase);
+                    string emptyMessage = requestedConstellation
+                        ? starId + " has no unplayed persisted Constellation Stories waiting on the shelf."
+                        : starId + " has no untold persisted Sparks waiting to be told.";
                     OnUiThread(() =>
                     {
                         if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
@@ -702,11 +708,26 @@ public sealed partial class MainViewModel
                     };
                 }
 
-                List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
-                string message = starId + " chose " + items.Count + " Spark(s) from a weighted "
-                    + performance.CandidateCount + "-item listening set drawn from her top " + performance.ElitePoolCount
-                    + " IU Sparks (" + performance.AnchorCount + " peak anchors, " + performance.ContrastCount
-                    + " contrast picks); " + performance.State.PendingCount + " untold Sparks remain.";
+                bool isConstellation = string.Equals(
+                    StarWritingOutputTypes.Normalize(performance.OutputType),
+                    StarWritingOutputTypes.ConstellationStory,
+                    StringComparison.OrdinalIgnoreCase);
+                List<string> items = isConstellation
+                    ? performance.SelectedWritings.Select(x =>
+                        (string.IsNullOrWhiteSpace(x.Title) ? "Constellation Story" : x.Title)
+                        + " — " + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " IU")
+                        .ToList()
+                    : performance.SelectedWritings.Select(x => x.Writing).ToList();
+                string message = isConstellation
+                    ? starId + " selected the highest-Overall-IU unplayed Constellation Story, “"
+                        + (performance.Response.StoryTitle ?? "Constellation Story") + "” at "
+                        + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                        + " IU, and split the complete story into " + performance.Response.SpokenParts.Count
+                        + " spoken queue chunks. " + performance.State.PendingConstellationStoryCount + " unplayed Constellation Stories remain."
+                    : starId + " chose " + items.Count + " Spark(s) from a weighted "
+                        + performance.CandidateCount + "-item listening set drawn from her top " + performance.ElitePoolCount
+                        + " IU Sparks (" + performance.AnchorCount + " peak anchors, " + performance.ContrastCount
+                        + " contrast picks); " + performance.State.PendingCount + " untold Sparks remain.";
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
@@ -732,6 +753,10 @@ public sealed partial class MainViewModel
                     PersistedWritingCount = performance.State.PersistedWritings.Count,
                     WritingItems = items,
                     SpokenText = performance.Response.SpokenText,
+                    StoryId = performance.Response.StoryId ?? string.Empty,
+                    StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                    StoryIsFinished = performance.Response.StoryIsFinished,
+                    StoryChunkCount = performance.Response.SpokenParts.Count,
                     Message = message
                 });
                 MobileBridgeDispatchResult dispatchResult = new MobileBridgeDispatchResult
@@ -749,6 +774,10 @@ public sealed partial class MainViewModel
                     WritingItems = items,
                     SpokenText = performance.Response.SpokenText,
                     StarOutput = performance.Response.SpokenText,
+                    StoryId = performance.Response.StoryId ?? string.Empty,
+                    StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                    StoryIsFinished = performance.Response.StoryIsFinished,
+                    StoryChunkCount = performance.Response.SpokenParts.Count,
                     VoiceRequested = command.ReturnAudio,
                     VoiceSocketConnected = _services.MobileVoice.IsConnected,
                     State = state,
@@ -762,8 +791,12 @@ public sealed partial class MainViewModel
                     {
                         Ok = true,
                         StarId = starId,
-                        RequestType = "StarWritingPerformance",
+                        RequestType = isConstellation ? "ConstellationStoryPerformance" : "StarWritingPerformance",
                         SpokenText = performance.Response.SpokenText,
+                        StoryId = performance.Response.StoryId ?? string.Empty,
+                        StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                        StoryIsFinished = performance.Response.StoryIsFinished,
+                        StoryChunkCount = performance.Response.SpokenParts.Count,
                         StarOutput = performance.Response.SpokenText,
                         VoiceRequested = true,
                         VoiceSocketConnected = _services.MobileVoice.IsConnected
