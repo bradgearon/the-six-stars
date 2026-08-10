@@ -53,16 +53,6 @@ Writing: {{ item.writing }}
 {{ end }}
 {{ end }}
 
-SEED WORDS
-These are optional ideas for displaced verbs or completions. Use any that help, or ignore them.
-{{ if data.seedWords.size == 0 }}
-(disabled)
-{{ else }}
-{{ for word in data.seedWords }}
-- {{ word }}
-{{ end }}
-{{ end }}
-
 OBJECTS AND NORMAL ACTIONS
 Preserve this object order:
 {{ for item in data.objects }}
@@ -72,4 +62,4 @@ Preserve this object order:
 {{ end }}
 {{ end }}
 
-For each object, replace one ordinary action with an unexpected verb and finish the statement. Return only JSON.
+For each object, replace one ordinary action with an unexpected verb and finish the statement. Use five different displaced verbs, and do not reuse any supplied normal-action verb as a displaced verb. Return only JSON.

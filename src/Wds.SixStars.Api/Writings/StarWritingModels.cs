@@ -211,7 +211,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 8;
+        public int Version { get; set; } = 9;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -226,6 +226,13 @@ namespace Wds.SixStars.Api.Writings
         public List<StarWritingGeneratedWordSet> RecentGeneratedWordSets { get; set; } = new List<StarWritingGeneratedWordSet>();
         /// <summary>Cumulative usage count for words selected by the initial word-pair request.</summary>
         public Dictionary<string, int> GeneratedWordUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>
+        /// The 50 most recently selected nouns from verb/noun displacement setup, newest first.
+        /// These are recorded when the noun/object list is chosen, before later writing improvements.
+        /// </summary>
+        public List<string> RecentGeneratedNouns { get; set; } = new List<string>();
+        /// <summary>Cumulative usage count for nouns selected by verb/noun displacement setup.</summary>
+        public Dictionary<string, int> GeneratedNounUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         public List<string> AllUsedWords { get; set; } = new List<string>();
         public List<PersistedStarWriting> PersistedWritings { get; set; } = new List<PersistedStarWriting>();
 

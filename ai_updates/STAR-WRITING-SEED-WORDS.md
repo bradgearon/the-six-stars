@@ -1,16 +1,24 @@
 # Star writing seed words
 
-Each writing cycle can now receive one optional array of 100 random seed words. The same array is included in the initial private word-pair selection request and in every later improvement pass, so a Star can use it for fresh vocabulary without being required to copy any seed.
+Writing cycles can receive an optional array of 100 random seed words from `CrypticWizard.RandomWordGenerator` 0.9.5.
 
-The desktop host generates the words with `CrypticWizard.RandomWordGenerator` 0.9.5. For each slot it selects a part of speech by relative weight:
+## Semantic collision
+
+Semantic collision keeps the original mixed seed vocabulary. For each slot the provider selects a part of speech by relative weight:
 
 - noun: `0.50`
 - adjective: `0.25`
 - verb: `0.40`
 
-The weights are normalized before selection. Duplicate words are avoided while the list is assembled, and the completed list is shuffled before it is sent to the writing agent.
+The weights are normalized before selection. Duplicate seed words are avoided and the completed 100-word list is shuffled.
 
-Enable or disable the feature in the existing writing configuration:
+## Verb/noun displacement
+
+Verb/noun displacement now requests a separate seed list of **100 nouns only** from the same provider. This list is used as optional inspiration for the initial object/noun selection and as optional noun inspiration in later improvement passes. It is not presented as a replacement-verb list.
+
+The displacement noun-selection prompt also receives the most recent 50 selected nouns and the top 100 selected nouns with cumulative use counts, so seed variety is combined with explicit repetition avoidance.
+
+Enable or disable seed generation in the existing writing configuration:
 
 ```json
 "WritingPasses": {

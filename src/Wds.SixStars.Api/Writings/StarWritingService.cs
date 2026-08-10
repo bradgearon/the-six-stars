@@ -73,13 +73,22 @@ namespace Wds.SixStars.Api.Writings
                 // chooses unrelated word pairs; verb/noun displacement privately chooses objects
                 // and their ordinary actions before making a deliberately displaced completion.
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
-                IReadOnlyList<string> seedWords = _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>();
+                IReadOnlyList<string> seedWords = string.Equals(
+                        writingMethod,
+                        StarWritingMethods.VerbNounDisplacement,
+                        StringComparison.OrdinalIgnoreCase)
+                    ? (_seedWordProvider?.CreateNounSeedWords() ?? Array.Empty<string>())
+                    : (_seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>());
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, seedWords, writingMethod, cancellationToken).ConfigureAwait(false);
                 generation.WritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
                 NormalizeGeneration(generation);
                 if (string.Equals(generation.WritingMethod, StarWritingMethods.SemanticCollision, StringComparison.OrdinalIgnoreCase))
                 {
                     RecordGeneratedWordSet(state, generation.UsedWords);
+                }
+                else if (string.Equals(generation.WritingMethod, StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase))
+                {
+                    RecordGeneratedNouns(state, generation.UsedWords.Select(words => words.FirstOrDefault() ?? string.Empty));
                 }
                 generation.SelectedPassCount = selectedPassCount;
                 generation.CompletedPassCount = 1;
@@ -342,6 +351,42 @@ namespace Wds.SixStars.Api.Writings
             state.GeneratedWordUsageCounts = usageCounts;
         }
 
+        private static void RecordGeneratedNouns(StarWritingNotesState state, IEnumerable<string>? nouns)
+        {
+            List<string> normalizedNouns = (nouns ?? Enumerable.Empty<string>())
+                .Where(noun => !string.IsNullOrWhiteSpace(noun))
+                .Select(noun => noun.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .ToList();
+            if (normalizedNouns.Count == 0) return;
+
+            state.RecentGeneratedNouns ??= new List<string>();
+            state.RecentGeneratedNouns = normalizedNouns
+                .Concat(state.RecentGeneratedNouns)
+                .Where(noun => !string.IsNullOrWhiteSpace(noun))
+                .Select(noun => noun.Trim())
+                .Take(50)
+                .ToList();
+
+            Dictionary<string, int> usageCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, int> entry in state.GeneratedNounUsageCounts ?? new Dictionary<string, int>())
+            {
+                string noun = (entry.Key ?? string.Empty).Trim();
+                if (noun.Length == 0 || entry.Value <= 0) continue;
+                usageCounts[noun] = usageCounts.TryGetValue(noun, out int current)
+                    ? current + entry.Value
+                    : entry.Value;
+            }
+            foreach (string noun in normalizedNouns)
+            {
+                usageCounts[noun] = usageCounts.TryGetValue(noun, out int current)
+                    ? current + 1
+                    : 1;
+            }
+            state.GeneratedNounUsageCounts = usageCounts;
+        }
+
         private async Task SaveLatestPassStateAsync(StarWritingNotesState state, StarWritingGenerationResult generation)
         {
             state.LatestWritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
@@ -356,6 +401,10 @@ namespace Wds.SixStars.Api.Writings
         private static int ApplyImprovementReplacements(StarWritingGenerationResult generation, StarWritingImprovementResult improvement)
         {
             if (improvement?.Replacements == null || improvement.Replacements.Count == 0) return 0;
+            bool displacementMethod = string.Equals(
+                StarWritingMethods.Normalize(generation.WritingMethod),
+                StarWritingMethods.VerbNounDisplacement,
+                StringComparison.OrdinalIgnoreCase);
             Dictionary<string, StarWritingCandidate> candidates = generation.Items
                 .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
                 .ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
@@ -391,6 +440,21 @@ namespace Wds.SixStars.Api.Writings
                 {
                     changedIds.Remove(replacement.Id.Trim());
                     continue;
+                }
+
+                if (displacementMethod)
+                {
+                    string proposedVerb = words[1];
+                    bool duplicatesAnotherVerb = generation.Items
+                        .Where(x => x != null && !ReferenceEquals(x, candidate))
+                        .Select(x => x.WordsUsed != null && x.WordsUsed.Count > 1 ? x.WordsUsed[1] : string.Empty)
+                        .Any(existingVerb => !string.IsNullOrWhiteSpace(existingVerb)
+                            && string.Equals(existingVerb.Trim(), proposedVerb, StringComparison.OrdinalIgnoreCase));
+                    if (duplicatesAnotherVerb)
+                    {
+                        changedIds.Remove(replacement.Id.Trim());
+                        continue;
+                    }
                 }
 
                 candidate.WordsUsed = words;

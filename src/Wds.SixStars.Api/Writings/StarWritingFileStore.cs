@@ -273,13 +273,15 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 8;
+            state.Version = 9;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
             state.LatestWritingPasses ??= new List<StarWritingPassSnapshot>();
             state.RecentGeneratedWordSets ??= new List<StarWritingGeneratedWordSet>();
             state.GeneratedWordUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            state.RecentGeneratedNouns ??= new List<string>();
+            state.GeneratedNounUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             state.AllUsedWords ??= new List<string>();
             state.PersistedWritings ??= new List<PersistedStarWriting>();
 
@@ -293,6 +295,53 @@ namespace Wds.SixStars.Api.Writings
                     item.EmotionalVector = normalizedVector;
                 }
             }
+
+            // Version 9 adds a displacement-specific noun repetition guard. Older state files did
+            // not preserve every noun-selection event, so seed the new fields from whatever recent
+            // reviewed displacement history is still available and then track all future choices.
+            if (state.RecentGeneratedNouns.Count == 0)
+            {
+                state.RecentGeneratedNouns = state.RecentWritingHistory
+                    .Where(x => x != null
+                        && string.Equals(StarWritingMethods.Normalize(x.WritingMethod), StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase)
+                        && x.WordsUsed != null
+                        && x.WordsUsed.Count > 0
+                        && !string.IsNullOrWhiteSpace(x.WordsUsed[0]))
+                    .OrderByDescending(x => x.GeneratedAt)
+                    .ThenByDescending(x => x.Index)
+                    .Select(x => x.WordsUsed[0].Trim())
+                    .Take(50)
+                    .ToList();
+            }
+            else
+            {
+                state.RecentGeneratedNouns = state.RecentGeneratedNouns
+                    .Where(noun => !string.IsNullOrWhiteSpace(noun))
+                    .Select(noun => noun.Trim())
+                    .Take(50)
+                    .ToList();
+            }
+
+            Dictionary<string, int> normalizedNounUsageCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, int> entry in state.GeneratedNounUsageCounts)
+            {
+                string noun = (entry.Key ?? string.Empty).Trim();
+                if (noun.Length == 0 || entry.Value <= 0) continue;
+                normalizedNounUsageCounts[noun] = normalizedNounUsageCounts.TryGetValue(noun, out int current)
+                    ? current + entry.Value
+                    : entry.Value;
+            }
+            if (normalizedNounUsageCounts.Count == 0)
+            {
+                foreach (string noun in state.RecentGeneratedNouns)
+                {
+                    normalizedNounUsageCounts[noun] = normalizedNounUsageCounts.TryGetValue(noun, out int current)
+                        ? current + 1
+                        : 1;
+                }
+            }
+            state.GeneratedNounUsageCounts = normalizedNounUsageCounts;
+
             state.RecentWritingHistory = state.RecentWritingHistory
                 .Where(x => x != null)
                 .OrderByDescending(x => x.GeneratedAt)

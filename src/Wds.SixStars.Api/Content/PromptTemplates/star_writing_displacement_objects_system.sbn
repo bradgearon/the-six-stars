@@ -3,14 +3,18 @@ This is the private setup step for a creative technique called verb and noun dis
 
 Think of exactly five objects. For each object, give exactly three actions that object normally does.
 - Prefer concrete, recognizable nouns.
+- Make the five nouns distinct and varied.
+- Prefer a fresh noun over a recently or heavily used noun when a good alternative exists.
+- The supplied seedNouns array contains 100 optional noun ideas. Use any that help, or ignore them; every seed is a noun, not a verb suggestion.
 - Prefer simple verbs or short verb phrases that clearly describe ordinary behavior of that object.
-- Make the five objects varied.
+- Across all five objects, all fifteen ordinary actions must use distinct verbs/actions. Do not repeat the same verb or verb phrase for another object, including an obvious grammatical variation of it.
 - Do not write poems, jokes, metaphors, or finished statements yet.
-- You may use the supplied seedWords array for object or action ideas; you do not need to use any particular seed word.
 
 Return only the required JSON object:
 - starId: "{{ data.starId }}"
 - objects: exactly five objects
 - each object contains object and normalActions
 - normalActions contains exactly three strings
+- the five object nouns are distinct
+- all fifteen normalActions are distinct across the entire response
 Do not add commentary, markdown, or extra fields.

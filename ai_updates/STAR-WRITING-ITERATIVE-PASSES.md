@@ -88,6 +88,6 @@ from available recent writing history.
 
 ## Optional random seed words
 
-When `SeedWordsEnabled` is true, the desktop host creates one array of 100 optional word ideas at the start of the writing cycle. The selected creative method receives the same array during its setup/composition flow and later improvement passes. The prompt only tells the Star that she may use the words for ideas; it does not require any seed to appear in the result.
+When `SeedWordsEnabled` is true, the desktop host creates a 100-word optional seed list at the start of the writing cycle. Semantic collision receives the existing mixed noun/adjective/verb list. Verb/noun displacement receives 100 nouns only; those noun seeds are supplied to the noun/object setup and remain available to later improvement passes as noun ideas. The displacement composition step does not treat the noun seeds as replacement-verb suggestions.
 
 The generator uses relative weights of `0.50` noun, `0.25` adjective, and `0.40` verb. Because those values total `1.15`, they are normalized during random selection.

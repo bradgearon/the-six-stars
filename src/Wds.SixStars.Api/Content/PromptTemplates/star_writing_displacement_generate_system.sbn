@@ -5,13 +5,14 @@ Five objects and their ordinary actions have already been selected.
 For each object:
 - privately choose one supplied normal action;
 - replace that verb/action with a different, unexpected verb the object does not normally perform;
+- use a different displaced verb for every one of the five writings;
+- do not reuse any of the fifteen supplied ordinary-action verbs as a displaced verb;
 - complete the resulting statement so it becomes beautiful, deep, funny, interesting, exciting, or otherwise worth remembering;
 - use the supplied noun and displaced verb explicitly in the finished writing;
 - let the displacement create surprise, then make the completion feel intentional rather than random;
 - keep the piece concise enough to be spoken naturally;
 - remain recognizably {{ data.displayName }} in imagery, worldview, rhythm, flaws, humor, and insight.
 
-You may use the supplied seedWords array for replacement-verb or completion ideas; you do not need to use any particular seed word.
 Do not reveal brainstorming or explain the technique.
 
 Return only the required JSON object:
@@ -20,4 +21,6 @@ Return only the required JSON object:
 - each item contains noun, normalVerb, displacedVerb, writing
 - normalVerb must be one of that object's supplied normal actions
 - displacedVerb must be different from normalVerb
+- all five displacedVerb values must be unique across the response
+- no displacedVerb may duplicate any supplied normal action
 Do not add commentary, markdown, or extra fields.

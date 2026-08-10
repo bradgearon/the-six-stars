@@ -227,7 +227,7 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
         {
-            List<string> normalizedSeedWords = NormalizeSeedWords(seedWords);
+            List<string> normalizedSeedNouns = NormalizeSeedWords(seedWords);
             object objectActionData = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -244,26 +244,70 @@ namespace Wds.SixStars.Api.Ai
                         .Concat(profile.LibraryCanonNotes ?? new List<string>()),
                     8,
                     600),
-                seedWords = normalizedSeedWords
+                seedNouns = normalizedSeedNouns,
+                recentGeneratedNouns = (state.RecentGeneratedNouns ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 80))
+                    .Take(50)
+                    .ToList(),
+                topUsedNouns = (state.GeneratedNounUsageCounts ?? new Dictionary<string, int>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Value > 0)
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(100)
+                    .Select(x => new
+                    {
+                        noun = PromptText(x.Key, 80),
+                        count = x.Value
+                    })
+                    .ToList()
             };
 
-            IReadOnlyList<ChatMessage> objectActionMessages = new List<ChatMessage>
+            List<ChatMessage> objectActionMessages = new List<ChatMessage>
             {
                 new ChatMessage("system", _templates.Render("star_writing_displacement_objects_system.sbn", objectActionData)),
                 new ChatMessage("user", _templates.Render("star_writing_displacement_objects_user.sbn", objectActionData))
             };
 
-            string objectActionJson = await _client.CompleteJsonAsync(
-                objectActionMessages,
-                StarResponseJsonSchema.CreateStarWritingObjectActionResponseFormat(),
-                0,
-                "star-writing-displacement-objects",
-                cancellationToken).ConfigureAwait(false);
-            StarWritingObjectActionResult? objectActionResult = JsonSerializer.Deserialize<StarWritingObjectActionResult>(ExtractJson(objectActionJson), _jsonOptions);
-            if (objectActionResult == null) throw new InvalidOperationException("Verb/noun displacement object selection returned empty JSON.");
-            objectActionResult.StarId = string.IsNullOrWhiteSpace(objectActionResult.StarId) ? profile.StarId : objectActionResult.StarId;
-            objectActionResult.Objects = NormalizeObjectActionItems(objectActionResult.Objects);
-            objectActionResult.RawModelJson = objectActionJson;
+            string objectActionJson = string.Empty;
+            StarWritingObjectActionResult? objectActionResult = null;
+            Exception? objectActionError = null;
+            for (int attempt = 0; attempt < 2 && objectActionResult == null; attempt++)
+            {
+                List<ChatMessage> attemptMessages = objectActionMessages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage(
+                        "user",
+                        "Regenerate the entire JSON set. The previous response violated the uniqueness contract. Use five distinct nouns and fifteen globally distinct ordinary-action verbs/verb phrases; no normal action may repeat anywhere in the five objects."));
+                }
+
+                objectActionJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingObjectActionResponseFormat(),
+                    0,
+                    "star-writing-displacement-objects" + (attempt == 0 ? string.Empty : "-retry"),
+                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    StarWritingObjectActionResult? parsed = JsonSerializer.Deserialize<StarWritingObjectActionResult>(ExtractJson(objectActionJson), _jsonOptions);
+                    if (parsed == null) throw new InvalidOperationException("Verb/noun displacement object selection returned empty JSON.");
+                    parsed.StarId = string.IsNullOrWhiteSpace(parsed.StarId) ? profile.StarId : parsed.StarId;
+                    parsed.Objects = NormalizeObjectActionItems(parsed.Objects);
+                    parsed.RawModelJson = objectActionJson;
+                    objectActionResult = parsed;
+                }
+                catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+                {
+                    objectActionError = ex;
+                }
+            }
+            if (objectActionResult == null)
+            {
+                throw new InvalidOperationException(
+                    "Verb/noun displacement object selection could not produce five nouns with fifteen unique ordinary actions after one retry.",
+                    objectActionError);
+            }
 
             object compositionData = new
             {
@@ -289,7 +333,6 @@ namespace Wds.SixStars.Api.Ai
                         .Concat(profile.LibraryCanonNotes ?? new List<string>()),
                     10,
                     800),
-                seedWords = normalizedSeedWords,
                 recentWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
                     .Where(x => x != null)
                     .OrderByDescending(x => x.PersistedAt)
@@ -312,23 +355,51 @@ namespace Wds.SixStars.Api.Ai
                     .ToList()
             };
 
-            IReadOnlyList<ChatMessage> compositionMessages = new List<ChatMessage>
+            List<ChatMessage> compositionMessages = new List<ChatMessage>
             {
                 new ChatMessage("system", _templates.Render("star_writing_displacement_generate_system.sbn", compositionData)),
                 new ChatMessage("user", _templates.Render("star_writing_displacement_generate_user.sbn", compositionData))
             };
 
-            string compositionJson = await _client.CompleteJsonAsync(
-                compositionMessages,
-                StarResponseJsonSchema.CreateStarWritingDisplacementCompositionResponseFormat(),
-                0,
-                "star-writing-displacement-compose",
-                cancellationToken).ConfigureAwait(false);
-            StarWritingDisplacementCompositionResult? composition = JsonSerializer.Deserialize<StarWritingDisplacementCompositionResult>(ExtractJson(compositionJson), _jsonOptions);
-            if (composition == null) throw new InvalidOperationException("Verb/noun displacement composition returned empty JSON.");
-            composition.StarId = string.IsNullOrWhiteSpace(composition.StarId) ? profile.StarId : composition.StarId;
-            composition.Items = NormalizeDisplacementCompositionItems(composition.Items, objectActionResult.Objects);
-            composition.RawModelJson = compositionJson;
+            string compositionJson = string.Empty;
+            StarWritingDisplacementCompositionResult? composition = null;
+            Exception? compositionError = null;
+            for (int attempt = 0; attempt < 2 && composition == null; attempt++)
+            {
+                List<ChatMessage> attemptMessages = compositionMessages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage(
+                        "user",
+                        "Regenerate all five items. The previous response reused a verb. Every displacedVerb must be unique across the five writings and must not duplicate any of the fifteen supplied normal-action verbs."));
+                }
+
+                compositionJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingDisplacementCompositionResponseFormat(),
+                    0,
+                    "star-writing-displacement-compose" + (attempt == 0 ? string.Empty : "-retry"),
+                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    StarWritingDisplacementCompositionResult? parsed = JsonSerializer.Deserialize<StarWritingDisplacementCompositionResult>(ExtractJson(compositionJson), _jsonOptions);
+                    if (parsed == null) throw new InvalidOperationException("Verb/noun displacement composition returned empty JSON.");
+                    parsed.StarId = string.IsNullOrWhiteSpace(parsed.StarId) ? profile.StarId : parsed.StarId;
+                    parsed.Items = NormalizeDisplacementCompositionItems(parsed.Items, objectActionResult.Objects);
+                    parsed.RawModelJson = compositionJson;
+                    composition = parsed;
+                }
+                catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+                {
+                    compositionError = ex;
+                }
+            }
+            if (composition == null)
+            {
+                throw new InvalidOperationException(
+                    "Verb/noun displacement composition could not produce five unique displaced verbs after one retry.",
+                    compositionError);
+            }
 
             return new StarWritingGenerationResult
             {
@@ -336,7 +407,7 @@ namespace Wds.SixStars.Api.Ai
                 WritingMethod = StarWritingMethods.VerbNounDisplacement,
                 Jokes = composition.Items.Select(x => x.Writing).ToList(),
                 UsedWords = composition.Items.Select(x => new List<string> { x.Noun, x.DisplacedVerb }).ToList(),
-                SeedWords = normalizedSeedWords,
+                SeedWords = normalizedSeedNouns,
                 RawModelJson = "--- VERB/NOUN DISPLACEMENT OBJECTS ---" + Environment.NewLine
                     + objectActionJson + Environment.NewLine
                     + "--- VERB/NOUN DISPLACEMENT COMPOSITION ---" + Environment.NewLine
@@ -1038,9 +1109,10 @@ namespace Wds.SixStars.Api.Ai
 
             if (normalized.Count != 5
                 || normalized.Any(x => string.IsNullOrWhiteSpace(x.Object) || x.NormalActions.Count != 3)
-                || normalized.Select(x => x.Object).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 5)
+                || normalized.Select(x => x.Object).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 5
+                || normalized.SelectMany(x => x.NormalActions).Select(NormalizeVerbComparisonKey).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 15)
             {
-                throw new InvalidOperationException("Verb/noun displacement setup must contain exactly five distinct objects with three ordinary actions each.");
+                throw new InvalidOperationException("Verb/noun displacement setup must contain exactly five distinct objects with three globally distinct ordinary actions each (15 unique verbs/actions total).");
             }
 
             return normalized;
@@ -1059,6 +1131,10 @@ namespace Wds.SixStars.Api.Ai
                 throw new InvalidOperationException("Verb/noun displacement composition must return exactly five writings.");
             }
 
+            HashSet<string> ordinaryVerbKeys = new HashSet<string>(
+                sourceObjects.SelectMany(x => x.NormalActions ?? new List<string>()).Select(NormalizeVerbComparisonKey),
+                StringComparer.OrdinalIgnoreCase);
+            HashSet<string> displacedVerbKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             List<StarWritingDisplacementCompositionItem> normalized = new List<StarWritingDisplacementCompositionItem>();
             for (int i = 0; i < 5; i++)
             {
@@ -1079,9 +1155,11 @@ namespace Wds.SixStars.Api.Ai
                 }
                 if (string.IsNullOrWhiteSpace(displacedVerb)
                     || string.Equals(displacedVerb, normalVerb, StringComparison.OrdinalIgnoreCase)
+                    || ordinaryVerbKeys.Contains(NormalizeVerbComparisonKey(displacedVerb))
+                    || !displacedVerbKeys.Add(NormalizeVerbComparisonKey(displacedVerb))
                     || string.IsNullOrWhiteSpace(writing))
                 {
-                    throw new InvalidOperationException("Verb/noun displacement composition must replace the ordinary verb with a different non-empty verb and complete the writing.");
+                    throw new InvalidOperationException("Verb/noun displacement composition must use five unique displaced verbs, none of which duplicates any ordinary action verb, and complete every writing.");
                 }
 
                 normalized.Add(new StarWritingDisplacementCompositionItem
@@ -1094,6 +1172,26 @@ namespace Wds.SixStars.Api.Ai
             }
 
             return normalized;
+        }
+
+        private static string NormalizeVerbComparisonKey(string? value)
+        {
+            string text = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (text.StartsWith("to ", StringComparison.Ordinal))
+            {
+                text = text.Substring(3).TrimStart();
+            }
+            string[] tokens = text.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0) return string.Empty;
+
+            HashSet<string> auxiliaries = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "is", "are", "was", "were", "be", "being", "been",
+                "can", "could", "may", "might", "will", "would", "shall", "should",
+                "do", "does", "did"
+            };
+            int verbIndex = tokens.Length > 1 && auxiliaries.Contains(tokens[0]) ? 1 : 0;
+            return tokens[verbIndex].Trim('"', '\'', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}');
         }
 
         private static List<List<string>> NormalizeWritingWordPairs(IEnumerable<List<string>>? wordPairs)

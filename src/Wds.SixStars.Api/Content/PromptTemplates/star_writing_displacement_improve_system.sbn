@@ -8,9 +8,10 @@ For each replacement:
 - treat newWordSet as exactly [noun, displacedVerb];
 - you may switch the noun, the displaced verb, or both;
 - the noun and verb should still create an unexpected displacement rather than an ordinary default action;
+- the proposed displaced verb must not duplicate the displaced verb of any other current candidate;
 - rewrite the completion so the whole piece is beautiful, deep, funny, interesting, exciting, or otherwise stronger;
 - explicitly use both returned words;
-- you may use the supplied seedWords array for ideas;
+- the supplied seedWords array contains nouns only; you may use it for a fresh noun idea, not as a verb list;
 - keep it concise and recognizably yours;
 - score the old and new versions from 0 to 100 using the same standard.
 

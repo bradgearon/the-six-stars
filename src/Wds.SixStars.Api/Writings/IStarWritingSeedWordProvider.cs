@@ -6,5 +6,6 @@ namespace Wds.SixStars.Api.Writings
     public interface IStarWritingSeedWordProvider
     {
         IReadOnlyList<string> CreateSeedWords();
+        IReadOnlyList<string> CreateNounSeedWords();
     }
 }
