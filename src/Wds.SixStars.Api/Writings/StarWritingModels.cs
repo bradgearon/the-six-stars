@@ -412,6 +412,9 @@ namespace Wds.SixStars.Api.Writings
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public List<PersistedStarWriting> SelectedWritings { get; set; } = new List<PersistedStarWriting>();
         public int CandidateCount { get; set; }
+        public int ElitePoolCount { get; set; }
+        public int AnchorCount { get; set; }
+        public int ContrastCount { get; set; }
         public Wds.SixStars.Api.Models.StarInteractionResponse Response { get; set; } = new Wds.SixStars.Api.Models.StarInteractionResponse();
     }
 

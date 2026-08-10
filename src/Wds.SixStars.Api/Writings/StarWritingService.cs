@@ -13,7 +13,11 @@ namespace Wds.SixStars.Api.Writings
     {
         private const string GlobalOverallRuleId = "global-overall-excellence";
         private const double DefaultGlobalOverallValueThreshold = 80.0;
-        private const int SparkPerformanceCandidateLimit = 100;
+        private const int SparkPerformanceElitePoolLimit = 100;
+        private const int SparkPerformanceCandidateLimit = 25;
+        private const int SparkPerformanceTopAnchorCount = 5;
+        private const int SparkPerformanceContrastCount = 2;
+        private const double SparkPerformanceContrastBandStart = 0.60;
         private static readonly double GlobalOverallValueThreshold = ReadGlobalOverallValueThreshold();
 
         private readonly IStarProfileProvider _profiles;
@@ -685,17 +689,22 @@ namespace Wds.SixStars.Api.Writings
                 List<PersistedStarWriting> pending = state.PersistedWritings
                     .Where(x => x != null
                         && x.ToldCount <= 0
+                        && !string.IsNullOrWhiteSpace(x.Id)
+                        && !string.IsNullOrWhiteSpace(x.Writing)
                         && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 if (pending.Count == 0) return null;
 
-                // Shelf performance is a two-stage choice: the deterministic IU layer first exposes
-                // only the strongest untold Sparks, then the Star chooses what she personally wants
-                // to perform from that elite window. This keeps large shelves cheap and repeatable
-                // without replacing the Star's own taste with a hard top-five rule.
-                List<PersistedStarWriting> performanceCandidates = StarWritingDeterministicRanker.TakeHighestRanked(
+                // Shelf performance now builds a compact listening set from the strongest 100 untold Sparks.
+                // The top few are always present as quality anchors, most of the remaining slots are sampled
+                // without replacement with IU-weighted odds from the upper part of that elite pool, and a small
+                // contrast band deliberately contributes a couple of medium-valued elite Sparks. The final 25
+                // are shuffled before the Star sees them so list position cannot become an accidental ranking hint.
+                List<PersistedStarWriting> elitePool = StarWritingDeterministicRanker.TakeHighestRanked(
                     pending,
-                    SparkPerformanceCandidateLimit);
+                    SparkPerformanceElitePoolLimit);
+                SparkPerformanceCandidateSet candidateSet = BuildSparkPerformanceCandidateSet(elitePool);
+                List<PersistedStarWriting> performanceCandidates = candidateSet.Items;
 
                 // Do not silently substitute a deterministic top-five when the Star selection call
                 // fails or returns a malformed plan. The purpose of this stage is specifically to let
@@ -726,7 +735,7 @@ namespace Wds.SixStars.Api.Writings
                     throw new InvalidOperationException(
                         profile.StarId + " Spark performance selection was invalid. Expected "
                         + targetCount.ToString(CultureInfo.InvariantCulture)
-                        + " distinct IDs from the top-IU candidate window, received "
+                        + " distinct IDs from the weighted IU listening set, received "
                         + requestedIds.Count.ToString(CultureInfo.InvariantCulture)
                         + " entries / " + selectedIds.Count.ToString(CultureInfo.InvariantCulture)
                         + " distinct; invalid IDs=" + (invalidIds.Count == 0 ? "none" : string.Join(",", invalidIds))
@@ -771,10 +780,170 @@ namespace Wds.SixStars.Api.Writings
                     State = state,
                     SelectedWritings = selected,
                     CandidateCount = performanceCandidates.Count,
+                    ElitePoolCount = candidateSet.ElitePoolCount,
+                    AnchorCount = candidateSet.AnchorCount,
+                    ContrastCount = candidateSet.ContrastCount,
                     Response = response
                 };
             }
             finally { _operationGate.Release(); }
+        }
+
+        private SparkPerformanceCandidateSet BuildSparkPerformanceCandidateSet(IReadOnlyList<PersistedStarWriting> rankedElitePool)
+        {
+            List<PersistedStarWriting> elite = (rankedElitePool ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null)
+                .ToList();
+            int targetCount = Math.Min(SparkPerformanceCandidateLimit, elite.Count);
+            if (targetCount <= 0)
+            {
+                return new SparkPerformanceCandidateSet();
+            }
+
+            // If the elite pool itself is already small enough, keep all of it. Shuffling still avoids
+            // teaching the model that the first item is necessarily the best item.
+            if (elite.Count <= targetCount)
+            {
+                List<PersistedStarWriting> all = elite.ToList();
+                ShuffleInPlace(all);
+                return new SparkPerformanceCandidateSet
+                {
+                    Items = all,
+                    ElitePoolCount = elite.Count,
+                    AnchorCount = Math.Min(SparkPerformanceTopAnchorCount, all.Count),
+                    ContrastCount = 0
+                };
+            }
+
+            int anchorCount = Math.Min(SparkPerformanceTopAnchorCount, targetCount);
+            int contrastCount = Math.Min(SparkPerformanceContrastCount, Math.Max(0, targetCount - anchorCount));
+            int contrastStartIndex = Math.Max(
+                anchorCount,
+                Math.Min(elite.Count, (int)Math.Floor(elite.Count * SparkPerformanceContrastBandStart)));
+
+            List<PersistedStarWriting> selected = elite.Take(anchorCount).ToList();
+            HashSet<string> selectedIds = new HashSet<string>(
+                selected.Where(x => !string.IsNullOrWhiteSpace(x.Id)).Select(x => x.Id),
+                StringComparer.OrdinalIgnoreCase);
+
+            List<PersistedStarWriting> upperPool = elite
+                .Skip(anchorCount)
+                .Take(Math.Max(0, contrastStartIndex - anchorCount))
+                .Where(x => !selectedIds.Contains(x.Id))
+                .ToList();
+            List<PersistedStarWriting> contrastPool = elite
+                .Skip(contrastStartIndex)
+                .Where(x => !selectedIds.Contains(x.Id))
+                .ToList();
+
+            int upperTarget = Math.Max(0, targetCount - anchorCount - contrastCount);
+            AddUnique(selected, selectedIds, WeightedSampleWithoutReplacement(upperPool, upperTarget));
+
+            // These are intentionally sampled from the lower portion of the *top-100* pool, not from bad work.
+            // They provide a little quality contrast so the truly exceptional Sparks are easier for the Star to
+            // recognize instead of presenting twenty-five nearly indistinguishable peak-value candidates.
+            List<PersistedStarWriting> contrastSelections = WeightedSampleWithoutReplacement(contrastPool, contrastCount);
+            int countBeforeContrast = selected.Count;
+            AddUnique(selected, selectedIds, contrastSelections);
+            int actualContrastCount = selected.Count - countBeforeContrast;
+
+            if (selected.Count < targetCount)
+            {
+                List<PersistedStarWriting> remaining = elite
+                    .Where(x => !selectedIds.Contains(x.Id))
+                    .ToList();
+                AddUnique(selected, selectedIds, WeightedSampleWithoutReplacement(remaining, targetCount - selected.Count));
+            }
+
+            // Randomize presentation order. IU values remain attached to each Spark, so the Star can compare
+            // quality from the content/value evidence rather than inheriting an ordering bias from the ranker.
+            ShuffleInPlace(selected);
+            return new SparkPerformanceCandidateSet
+            {
+                Items = selected.Take(targetCount).ToList(),
+                ElitePoolCount = elite.Count,
+                AnchorCount = anchorCount,
+                ContrastCount = actualContrastCount
+            };
+        }
+
+        private List<PersistedStarWriting> WeightedSampleWithoutReplacement(
+            IReadOnlyList<PersistedStarWriting> source,
+            int requestedCount)
+        {
+            List<PersistedStarWriting> pool = (source ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null)
+                .ToList();
+            int take = Math.Min(Math.Max(0, requestedCount), pool.Count);
+            List<PersistedStarWriting> result = new List<PersistedStarWriting>(take);
+
+            while (result.Count < take && pool.Count > 0)
+            {
+                double minValue = pool.Min(x => StarWritingDeterministicRanker.PublicSharingValue(x));
+                double maxValue = pool.Max(x => StarWritingDeterministicRanker.PublicSharingValue(x));
+                double span = Math.Max(0.0001, maxValue - minValue);
+                double totalWeight = 0.0;
+                double[] weights = new double[pool.Count];
+
+                for (int i = 0; i < pool.Count; i++)
+                {
+                    double value = StarWritingDeterministicRanker.PublicSharingValue(pool[i]);
+                    double normalized = Math.Max(0.0, Math.Min(1.0, (value - minValue) / span));
+                    // A curved 1x..10x weight keeps every item possible while giving the larger-IU works a
+                    // materially better chance of entering the listening set.
+                    double weight = 1.0 + (9.0 * normalized * normalized);
+                    weights[i] = weight;
+                    totalWeight += weight;
+                }
+
+                double roll = _random.NextDouble() * totalWeight;
+                int chosenIndex = pool.Count - 1;
+                for (int i = 0; i < pool.Count; i++)
+                {
+                    roll -= weights[i];
+                    if (roll <= 0.0)
+                    {
+                        chosenIndex = i;
+                        break;
+                    }
+                }
+
+                result.Add(pool[chosenIndex]);
+                pool.RemoveAt(chosenIndex);
+            }
+
+            return result;
+        }
+
+        private static void AddUnique(
+            ICollection<PersistedStarWriting> destination,
+            ISet<string> selectedIds,
+            IEnumerable<PersistedStarWriting> additions)
+        {
+            foreach (PersistedStarWriting item in additions ?? Enumerable.Empty<PersistedStarWriting>())
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.Id) || !selectedIds.Add(item.Id)) continue;
+                destination.Add(item);
+            }
+        }
+
+        private void ShuffleInPlace(IList<PersistedStarWriting> items)
+        {
+            for (int i = items.Count - 1; i > 0; i--)
+            {
+                int j = _random.Next(i + 1);
+                PersistedStarWriting temp = items[i];
+                items[i] = items[j];
+                items[j] = temp;
+            }
+        }
+
+        private sealed class SparkPerformanceCandidateSet
+        {
+            public List<PersistedStarWriting> Items { get; set; } = new List<PersistedStarWriting>();
+            public int ElitePoolCount { get; set; }
+            public int AnchorCount { get; set; }
+            public int ContrastCount { get; set; }
         }
 
         public async Task ClearAsync(string starId, CancellationToken cancellationToken)

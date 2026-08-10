@@ -703,8 +703,10 @@ public sealed partial class MainViewModel
                 }
 
                 List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
-                string message = starId + " chose " + items.Count + " Spark(s) from her deterministic top-"
-                    + performance.CandidateCount + " IU window; " + performance.State.PendingCount + " untold Sparks remain.";
+                string message = starId + " chose " + items.Count + " Spark(s) from a weighted "
+                    + performance.CandidateCount + "-item listening set drawn from her top " + performance.ElitePoolCount
+                    + " IU Sparks (" + performance.AnchorCount + " peak anchors, " + performance.ContrastCount
+                    + " contrast picks); " + performance.State.PendingCount + " untold Sparks remain.";
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

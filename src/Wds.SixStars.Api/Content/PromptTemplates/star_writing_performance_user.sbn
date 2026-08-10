@@ -1,4 +1,4 @@
-PERFORM YOUR FAVORITE ELITE SPARKS
+PERFORM YOUR FAVORITE SPARKS
 
 CHARACTER CARD
 Name: {{ data.displayName }}
@@ -10,23 +10,17 @@ Deep personality: {{ data.deepPersonality }}
 Speaking style: {{ data.speakingStyle }}
 Performance direction: {{ data.voiceDirection }}
 
-DETERMINISTIC HIGH-VALUE SPARK WINDOW
-There are {{ data.totalPendingCount }} untold shelf entries in the supplied state. The deterministic layer reduced the eligible Spark pool to the {{ data.candidateCount }} highest-valued untold Sparks below. They are listed strongest-first by deterministic public IU value, but YOU decide which five deserve to be spoken.
+WEIGHTED HIGH-VALUE LISTENING SET
+There are {{ data.totalPendingCount }} untold shelf entries in the supplied state. The shelf layer first considered the highest-valued untold Sparks, then built the {{ data.candidateCount }}-item mixed listening set below so you have enough context room to read the stronger pieces carefully while still seeing a little contrast.
+The order below is randomized. Judge the actual work and its IU evidence rather than its position.
 
-The 27-value vector uses this fixed category order:
-{{ data.vectorOrder }}
+The two IU values beside each Spark are calibration evidence. The deterministic public value already summarizes its saved review vector, so spend your attention on reading the actual writing rather than reconstructing the review math.
 {{ for item in data.persistedWritings }}
 ID: {{ item.id }}
 Overall value: {{ item.overallValue }} IU
 Deterministic public value: {{ item.deterministicPublicValue }} IU
-Full value vector: {{ item.emotionalVector }}
 Writing: {{ item.writing }}
 ---
 {{ end }}
 
-ELIGIBLE IDS
-{{ for id in data.pendingIds }}
-- {{ id }}
-{{ end }}
-
-Choose the required Sparks and produce the one-to-one spokenText array. Return only JSON.
+Choose the required Sparks by their exact IDs and produce the one-to-one spokenText array. Return only JSON.

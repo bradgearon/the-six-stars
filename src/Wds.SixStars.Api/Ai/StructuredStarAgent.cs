@@ -19,7 +19,7 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
-        private const int WritingPerformanceCandidateLimit = 100;
+        private const int WritingPerformanceCandidateLimit = 25;
 
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
@@ -1687,10 +1687,10 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<PersistedStarWriting> pendingWritings,
             CancellationToken cancellationToken)
         {
-            // The service supplies these strongest-first from the deterministic IU ranking layer.
-            // Preserve that order here: this LLM call is the Star's aesthetic choice inside the elite
-            // window, not another shelf-ranking pass. Sparks are intentionally compact, so all 100
-            // complete texts can be shown without clipping their wording.
+            // The service supplies a compact mixed listening set from the top-100 IU pool. Presentation
+            // order is intentionally shuffled; the saved IU values and the writing itself are the useful
+            // evidence. Keeping this request to 25 complete Sparks leaves the model room to actually read
+            // and compare the strongest pieces inside a 16k context window.
             List<PersistedStarWriting> performanceCandidates = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
                 .Where(x => x != null
                     && !string.IsNullOrWhiteSpace(x.Id)
@@ -1710,12 +1710,8 @@ namespace Wds.SixStars.Api.Ai
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 voiceDirection = PromptText(profile.VoiceDirection, 900),
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
                 totalPendingCount = state?.PendingCount ?? (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
                 candidateCount = performanceCandidates.Count,
-                pendingIds = performanceCandidates
-                    .Select(x => x.Id.Trim())
-                    .ToList(),
                 persistedWritings = performanceCandidates
                     .Select(x => new
                     {
@@ -1727,7 +1723,6 @@ namespace Wds.SixStars.Api.Ai
                         valueUnit = StarWritingValueUnits.InformationUnits,
                         overallValue = Math.Round(StarWritingDeterministicRanker.OverallValue(x), 2),
                         deterministicPublicValue = Math.Round(StarWritingDeterministicRanker.PublicSharingValue(x), 2),
-                        emotionalVector = StarWritingEmotionVector.Normalize(x.EmotionalVector, out _),
                         writing = (x.Writing ?? string.Empty).Trim()
                     })
                     .ToList()

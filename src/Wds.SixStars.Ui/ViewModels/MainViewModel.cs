@@ -2519,7 +2519,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing five favorites from her deterministic top-100 untold Spark window.";
+            Status = starId + " is choosing five favorites from a 25-Spark weighted-IU listening set drawn from her top 100 untold Sparks.";
         });
         try
         {
@@ -2547,7 +2547,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     response = result.Response,
                     pendingAfter = PendingWritingCount
                 }, _jsonOptions);
-                Status = starId + " selected " + result.SelectedWritings.Count + " writing(s) to tell. " + PendingWritingCount + " remain new.";
+                Status = starId + " selected " + result.SelectedWritings.Count + " Spark(s) from a weighted " + result.CandidateCount + "-item set drawn from the top " + result.ElitePoolCount + " IU pool (" + result.AnchorCount + " peak anchors, " + result.ContrastCount + " contrast picks). " + PendingWritingCount + " remain new.";
             });
 
             await PublishWritingShelfEventAsync("StarWritingPerformanceReady", starId, result.State, result.Response.SpokenParts, Status).ConfigureAwait(false);
