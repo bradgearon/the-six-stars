@@ -2674,7 +2674,7 @@ public sealed partial class MainViewModel
                 return;
             }
 
-            await _services.MobileVoice.SendControlAsync(voiceStream.AudioSession, "start", "Starting fresh Android voice stream " + voiceStream.StreamId + ". The phone should clear stale queued speech before accepting this stream.", voiceToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendControlAsync(voiceStream.AudioSession, "start", "Starting ordered Android voice stream " + voiceStream.StreamId + ". Audio already accepted by the phone remains queued and finishes before newer speech.", voiceToken).ConfigureAwait(false);
 
             if (_storySpeechAdapter.ShouldUseStoryAutoplay(starResponse))
             {

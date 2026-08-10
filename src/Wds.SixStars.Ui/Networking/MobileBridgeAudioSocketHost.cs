@@ -26,6 +26,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
     private const byte FrameStatus = 1;
     private const byte FrameAudioWav = 2;
     private const byte FrameError = 3;
+    private const int StreamReconnectGraceMilliseconds = 8000;
 
     private readonly object _gate = new object();
     private readonly List<ClientConnection> _clients = new List<ClientConnection>();
@@ -81,7 +82,7 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             startedAtUtc = session.StartedAtUtc,
             sentAtUtc = DateTimeOffset.UtcNow
         }, _jsonOptions));
-        return await BroadcastFrameAsync(FrameStatus, payload, cancellationToken, session.TargetClientIds).ConfigureAwait(false);
+        return await BroadcastFrameAsync(FrameStatus, payload, cancellationToken, ResolveLiveStreamTargets(session)).ConfigureAwait(false);
     }
 
     public void Start(int port)
@@ -198,7 +199,51 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         Buffer.BlockCopy(headerBytes, 0, payload, 4, headerBytes.Length);
         Buffer.BlockCopy(wavCopy, 0, payload, 4 + headerBytes.Length, wavCopy.Length);
 
-        return await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken, streamSession?.TargetClientIds).ConfigureAwait(false);
+        IReadOnlyCollection<int>? targets = await ResolveLiveStreamTargetsWithGraceAsync(streamSession, cancellationToken).ConfigureAwait(false);
+        MobileAudioSendResult sent = await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken, targets).ConfigureAwait(false);
+        if (streamSession == null || sent.SentClients > 0) return sent;
+
+        // A socket can disappear after target resolution but before the frame write. Give the
+        // same phone time to reconnect, rebind the stream when it is the sole client, and retry
+        // this exact WAV once so a transient route drop does not remove a sentence.
+        targets = await ResolveLiveStreamTargetsWithGraceAsync(streamSession, cancellationToken).ConfigureAwait(false);
+        return await BroadcastFrameAsync(FrameAudioWav, payload, cancellationToken, targets).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyCollection<int>?> ResolveLiveStreamTargetsWithGraceAsync(MobileAudioStreamSession? session, CancellationToken cancellationToken)
+    {
+        if (session == null) return null;
+        long deadline = Environment.TickCount64 + StreamReconnectGraceMilliseconds;
+        while (true)
+        {
+            IReadOnlyCollection<int> targets = ResolveLiveStreamTargets(session);
+            if (targets.Count > 0 || Environment.TickCount64 >= deadline) return targets;
+            await Task.Delay(150, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private IReadOnlyCollection<int> ResolveLiveStreamTargets(MobileAudioStreamSession session)
+    {
+        List<int> liveTargets;
+        int reboundClientId = 0;
+        lock (_gate)
+        {
+            HashSet<int> requested = new HashSet<int>(session.TargetClientIds);
+            liveTargets = _clients.Where(x => requested.Contains(x.Id)).Select(x => x.Id).ToList();
+            if (liveTargets.Count == 0 && _clients.Count == 1)
+            {
+                reboundClientId = _clients[0].Id;
+                session.TargetClientIds.Clear();
+                session.TargetClientIds.Add(reboundClientId);
+                liveTargets.Add(reboundClientId);
+            }
+        }
+
+        if (reboundClientId != 0)
+        {
+            PublishStatus("Rebound Android voice stream " + session.StreamOrdinal + " to reconnected phone audio client " + reboundClientId + ".");
+        }
+        return liveTargets;
     }
 
     private async Task AcceptLoopAsync(CancellationToken cancellationToken)

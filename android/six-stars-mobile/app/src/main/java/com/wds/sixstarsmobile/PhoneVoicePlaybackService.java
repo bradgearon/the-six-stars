@@ -152,6 +152,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private Thread audioSocketThread;
     private String connectedHost = "";
     private int connectedPort = -1;
+    private String desiredHost = "";
+    private int desiredPort = -1;
+    private boolean reconnectScheduled;
+    private int reconnectAttempt;
     private String activeStreamId = "";
     private long activeStreamOrdinal;
     private volatile boolean desktopStreamActive;
@@ -184,24 +188,55 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void enqueue(PhoneVoiceClip clip) { playbackQueue.enqueue(clip); }
 
     void disconnect() {
-        synchronized (socketLock) { closeSocketLocked(); }
-        resetForReconnect();
+        synchronized (socketLock) {
+            desiredHost = "";
+            desiredPort = -1;
+            reconnectScheduled = false;
+            reconnectAttempt = 0;
+            closeSocketLocked();
+        }
+        resetTransportState(true);
         post(() -> listener.onSocketStatus("Phone voice socket disconnected."));
     }
 
     void connect(String host, int port) {
         if (host == null || host.trim().isEmpty() || port <= 0) return;
+        final String normalizedHost = host.trim();
         synchronized (socketLock) {
-            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
-                    && host.equals(connectedHost) && port == connectedPort) return;
-            closeSocketLocked();
-            connectedHost = host;
-            connectedPort = port;
-            listener.onDebug("Phone voice socket", "Connecting to " + host + ":" + port
-                    + (localNetwork == null ? "" : " via " + localNetwork.routeDescription(host)));
-            audioSocketThread = new Thread(() -> socketLoop(host, port), "six-stars-phone-audio-socket");
-            audioSocketThread.start();
+            desiredHost = normalizedHost;
+            desiredPort = port;
+
+            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()) {
+                if (normalizedHost.equals(connectedHost) && port == connectedPort) return;
+
+                // A healthy audio route does not need to follow every control-WebSocket route
+                // promotion immediately. Switching between IPv4 and IPv6 while a sentence is
+                // playing used to close the socket and flush AudioTrack. Keep the working route
+                // until the current stream and playback queue are truly idle.
+                if (desktopStreamActive || !playbackQueue.isIdle()) {
+                    String currentRoute = connectedHost + ":" + connectedPort;
+                    String requestedRoute = normalizedHost + ":" + port;
+                    post(() -> listener.onDebug("Phone voice route change deferred",
+                            "Keeping " + currentRoute + " until queued speech finishes; next route=" + requestedRoute + "."));
+                    return;
+                }
+            }
+
+            if (audioSocketThread != null && audioSocketThread.isAlive()
+                    && normalizedHost.equals(connectedHost) && port == connectedPort) return;
+
+            startSocketLocked(normalizedHost, port);
         }
+    }
+
+    private void startSocketLocked(String host, int port) {
+        closeSocketLocked();
+        connectedHost = host;
+        connectedPort = port;
+        listener.onDebug("Phone voice socket", "Connecting to " + host + ":" + port
+                + (localNetwork == null ? "" : " via " + localNetwork.routeDescription(host)));
+        audioSocketThread = new Thread(() -> socketLoop(host, port), "six-stars-phone-audio-socket");
+        audioSocketThread.start();
     }
 
     private void socketLoop(String host, int port) {
@@ -217,8 +252,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     return;
                 }
                 audioSocket = socket;
+                reconnectScheduled = false;
+                reconnectAttempt = 0;
             }
-            resetForReconnect();
+            markTransportConnected();
             post(() -> listener.onSocketStatus("Phone voice socket connected: " + host + ":" + port));
             DataInputStream input = new DataInputStream(socket.getInputStream());
             while (!closed && !socket.isClosed()) {
@@ -234,15 +271,27 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             if (!closed) post(() -> listener.onError("Phone voice socket disconnected", error));
         } finally {
             boolean wasCurrent;
+            boolean shouldReconnect;
             synchronized (socketLock) {
                 wasCurrent = socket != null && audioSocket == socket;
                 if (wasCurrent) audioSocket = null;
+                if (audioSocketThread == Thread.currentThread()) audioSocketThread = null;
+                shouldReconnect = !closed
+                        && audioSocket == null
+                        && host.equals(desiredHost)
+                        && port == desiredPort;
             }
             if (socket != null) try { socket.close(); } catch (Exception ignored) { }
             if (wasCurrent) {
                 desktopStreamActive = false;
-                post(() -> { listener.onStreamState(false, "Star", "disconnected"); listener.onQueueIdle(); });
+                post(() -> {
+                    listener.onStreamState(false, "Star", "disconnected");
+                    if (playbackQueue.isIdle()) listener.onQueueIdle();
+                });
             }
+            if (shouldReconnect) scheduleReconnect(wasCurrent
+                    ? "the phone voice socket disconnected"
+                    : "the phone voice socket could not connect");
         }
     }
 
@@ -268,7 +317,15 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             }
             PhoneVoiceClip clip = new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks,
                     checksum, true, streamId, ordinal, sequence, segments);
-            int queued = enqueueDesktopInOrder(clip);
+            int queued;
+            if (ordinal <= 0L || streamId.isEmpty()) {
+                // Unscoped one-off audio such as the desktop test tone does not participate in a
+                // logical response stream and must not inherit the previous stream's sequence.
+                playbackQueue.enqueue(clip);
+                queued = 1;
+            } else {
+                queued = enqueueDesktopInOrder(clip);
+            }
             post(() -> listener.onSocketStatus((queued > 0 ? "Queued" : "Buffered") + " phone voice chunk " + chunkNumber + "/" + totalChunks));
             return;
         }
@@ -288,6 +345,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private boolean acceptStreamFrame(String streamId, long ordinal, String starId) {
         if (ordinal <= 0L || streamId == null || streamId.isEmpty()) return true;
         boolean started = false;
+        boolean reactivated = false;
         synchronized (voiceStreamLock) {
             boolean same = streamId.equals(activeStreamId);
             if (!same && !activeStreamId.isEmpty() && ordinal < activeStreamOrdinal) return false;
@@ -298,11 +356,16 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 resetOrderedQueue();
                 resetSavedAccumulator();
             }
+            if (!desktopStreamActive) {
+                desktopStreamActive = true;
+                reactivated = !started;
+            }
         }
         if (started) {
-            desktopStreamActive = true;
             playbackQueue.prepareForDesktopStream();
             post(() -> listener.onStreamState(true, starId, "start"));
+        } else if (reactivated) {
+            post(() -> listener.onStreamState(true, starId, "resume"));
         }
         return true;
     }
@@ -315,10 +378,16 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         String starId = status.optString("starId", "Star");
         if (ordinal <= 0L) return;
         boolean clear = false;
+        boolean accepted = false;
+        boolean activeAfter;
         synchronized (voiceStreamLock) {
             if ("start".equalsIgnoreCase(action)) {
-                desktopStreamActive = true;
-                if (ordinal != activeStreamOrdinal || !streamId.equals(activeStreamId)) {
+                boolean same = streamId.equals(activeStreamId) && ordinal == activeStreamOrdinal;
+                if (same || activeStreamId.isEmpty() || ordinal >= activeStreamOrdinal) {
+                    desktopStreamActive = true;
+                    accepted = true;
+                }
+                if (accepted && !same) {
                     activeStreamOrdinal = ordinal;
                     activeStreamId = streamId;
                     resetOrderedQueue();
@@ -326,17 +395,25 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     clear = true;
                 }
             } else if ("end".equalsIgnoreCase(action) || "cancel".equalsIgnoreCase(action)) {
-                desktopStreamActive = false;
                 if (streamId.equals(activeStreamId) || ordinal >= activeStreamOrdinal) {
+                    desktopStreamActive = false;
+                    accepted = true;
                     activeStreamOrdinal = ordinal;
                     activeStreamId = streamId;
                     clear = "cancel".equalsIgnoreCase(action);
                     if (clear) { resetOrderedQueue(); resetSavedAccumulator(); }
                 }
             }
+            activeAfter = desktopStreamActive;
+        }
+        if (!accepted) {
+            post(() -> listener.onDebug("Stale voice control ignored",
+                    "action=" + action + ", stream=" + ordinal + ", active=" + activeStreamOrdinal + "."));
+            return;
         }
         if (clear) playbackQueue.prepareForDesktopStream();
-        post(() -> listener.onStreamState(desktopStreamActive, starId, action));
+        post(() -> listener.onStreamState(activeAfter, starId, action));
+        if (!activeAfter) maybeConnectDesiredRoute();
     }
 
     private int enqueueDesktopInOrder(PhoneVoiceClip clip) {
@@ -375,7 +452,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
     private void resetSavedAccumulator() { synchronized (this) { savedPcm = null; } }
 
-    private void resetForReconnect() {
+    private void resetTransportState(boolean clearPlayback) {
         desktopStreamActive = false;
         synchronized (voiceStreamLock) {
             activeStreamId = "";
@@ -384,7 +461,57 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
         resetOrderedQueue();
         resetSavedAccumulator();
-        playbackQueue.clearForNewStream();
+        if (clearPlayback) playbackQueue.clearForNewStream();
+    }
+
+    private void markTransportConnected() {
+        // A TCP reconnect can occur in the middle of one logical voice stream. Preserve the
+        // stream id, next expected audio sequence, saved WAV accumulator, and accepted playback
+        // queue so the desktop can resume at the next chunk instead of buffering forever for
+        // sequence zero or cutting off what the phone already received.
+        droppedStaleFrames = 0;
+    }
+
+    private void scheduleReconnect(String reason) {
+        final String host;
+        final int port;
+        final long delayMs;
+        synchronized (socketLock) {
+            if (closed || desiredHost.isEmpty() || desiredPort <= 0 || reconnectScheduled) return;
+            reconnectScheduled = true;
+            host = desiredHost;
+            port = desiredPort;
+            int shift = Math.min(4, Math.max(0, reconnectAttempt++));
+            delayMs = Math.min(15000L, 1000L << shift);
+        }
+
+        post(() -> listener.onDebug("Phone voice reconnect scheduled",
+                reason + "; retrying " + host + ":" + port + " in " + delayMs + " ms without clearing queued speech."));
+        mainHandler.postDelayed(() -> {
+            final String latestHost;
+            final int latestPort;
+            synchronized (socketLock) {
+                reconnectScheduled = false;
+                if (closed || desiredHost.isEmpty() || desiredPort <= 0) return;
+                latestHost = desiredHost;
+                latestPort = desiredPort;
+            }
+            connect(latestHost, latestPort);
+        }, delayMs);
+    }
+
+    private void maybeConnectDesiredRoute() {
+        final String host;
+        final int port;
+        synchronized (socketLock) {
+            if (closed || desiredHost.isEmpty() || desiredPort <= 0) return;
+            if (desktopStreamActive || !playbackQueue.isIdle()) return;
+            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
+                    && desiredHost.equals(connectedHost) && desiredPort == connectedPort) return;
+            host = desiredHost;
+            port = desiredPort;
+        }
+        connect(host, port);
     }
 
     void playSavedVoice() {
@@ -474,10 +601,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
 
         void prepareForDesktopStream() {
-            queue.removeIf(clip -> clip != null && clip.fromDesktop);
-            PhoneVoiceClip current = activeClip;
-            if (current != null && current.fromDesktop) stopTrack(activeTrack);
-            resetOrderedQueue();
+            // Stream ordering is reset by the transport layer before new frames are accepted.
+            // Already accepted audio belongs to the durable playback queue and must finish even
+            // if a newer stream starts or the network route changes.
         }
 
         void clearForNewStream() {
@@ -496,7 +622,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                         synchronized (preparedLock) { if (preparedPrefixPending && running) preparedLock.wait(100L); }
                         continue;
                     }
-                    if (!isCurrent(clip)) continue;
                     playWav(clip);
                 } catch (InterruptedException ignored) {
                 } catch (Throwable error) {
@@ -529,7 +654,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             try {
                 track.play();
                 watcher = startPlaybackWatcher(track, clip, parsed.sampleRate, durationMs, started, finished);
-                while (offset < parsed.pcm.length && running && isCurrent(clip)) {
+                while (offset < parsed.pcm.length && running) {
                     waitWhilePaused(track);
                     int count = Math.min(parsed.pcm.length - offset, Math.max(1024, bufferSize));
                     int written = track.write(parsed.pcm, offset, count, AudioTrack.WRITE_BLOCKING);
@@ -538,11 +663,11 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 }
                 long waitStarted = System.currentTimeMillis();
                 long maxWait = Math.max(250L, durationMs + 750L);
-                while (running && isCurrent(clip) && Integer.toUnsignedLong(track.getPlaybackHeadPosition()) < expectedFrames
+                while (running && Integer.toUnsignedLong(track.getPlaybackHeadPosition()) < expectedFrames
                         && System.currentTimeMillis() - waitStarted < maxWait) {
                     try { Thread.sleep(12L); } catch (InterruptedException interrupted) { break; }
                 }
-                completed = running && isCurrent(clip) && offset >= parsed.pcm.length;
+                completed = running && offset >= parsed.pcm.length;
             } finally {
                 finished.set(true);
                 if (watcher != null) watcher.interrupt();
@@ -553,9 +678,19 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 if (completed && clip.fromDesktop) appendToSavedVoice(clip);
                 if (completed && clip.onCompleted != null) post(clip.onCompleted);
                 boolean finalCompleted = completed;
+                int finalOffset = offset;
+                int totalPcmBytes = parsed.pcm.length;
                 post(() -> {
+                    if (!finalCompleted) {
+                        listener.onDebug("Phone voice playback interrupted",
+                                clip.label + ", wrote=" + finalOffset + "/" + totalPcmBytes
+                                        + " PCM bytes. Check the preceding voice journal entry for an explicit clear, service shutdown, or AudioTrack failure.");
+                    }
                     listener.onPlaybackFinished(clip, finalCompleted);
-                    if (isIdle()) listener.onQueueIdle();
+                    if (isIdle()) {
+                        listener.onQueueIdle();
+                        maybeConnectDesiredRoute();
+                    }
                 });
             }
         }
@@ -573,7 +708,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             Thread watcher = new Thread(() -> {
                 AudioTimestamp timestamp = new AudioTimestamp();
                 long deadline = SystemClock.elapsedRealtime() + Math.max(5000L, Math.min(30000L, durationMs + 5000L));
-                while (running && !finished.get() && !started.get() && isCurrent(clip) && SystemClock.elapsedRealtime() < deadline) {
+                while (running && !finished.get() && !started.get() && SystemClock.elapsedRealtime() < deadline) {
                     long frame = 0L;
                     try {
                         frame = track.getTimestamp(timestamp) && timestamp.framePosition > 0L
@@ -644,7 +779,12 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
     @Override public void close() {
         closed = true;
-        synchronized (socketLock) { closeSocketLocked(); }
+        synchronized (socketLock) {
+            desiredHost = "";
+            desiredPort = -1;
+            reconnectScheduled = false;
+            closeSocketLocked();
+        }
         playbackQueue.stop();
         fileExecutor.shutdownNow();
     }

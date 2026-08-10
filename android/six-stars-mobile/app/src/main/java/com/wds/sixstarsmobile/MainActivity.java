@@ -374,7 +374,8 @@ public final class MainActivity extends ComponentActivity {
 
             @Override public void onQueueIdle() {
                 runOnUiThread(() -> {
-                    if (!isDesktopVoiceStreamActive()) {
+                    if (!isDesktopVoiceStreamActive()
+                            && (phoneVoiceService == null || phoneVoiceService.isIdle())) {
                         starVoicePlaybackActive = false;
                         setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, false, "Phone voice queue is idle.");
                         maybePlayPendingShirtOffAnimation();
@@ -1527,7 +1528,13 @@ public final class MainActivity extends ComponentActivity {
 
     private void ensureBridgeWebSocket() {
         if (destroyed || bridgeConnectionService == null) return;
-        bridgeConnectionService.reconnect(baseUrl());
+
+        // Do not force a reconnect for every request. Prepared-speech reconciliation and other
+        // foreground/background calls pass through this method frequently; reconnecting here used
+        // to churn both the control WebSocket and the separate phone-audio socket every few seconds.
+        // A phone-audio reconnect clears transport state and could cut a playing sentence short.
+        if (viewModel != null) viewModel.ensureConnected();
+        else bridgeConnectionService.ensureConnected();
     }
 
     private void sendSocketRequest(String operation, JSONObject payload, long timeoutMs, Consumer<JSONObject> onSuccess, Consumer<Throwable> onFailure) {
@@ -1569,6 +1576,11 @@ public final class MainActivity extends ComponentActivity {
 
     private void testConnection(boolean manual) {
         syncStarInitiativeRuntimePrefs();
+        if (manual && bridgeConnectionService != null) {
+            // Manual testing is the one place where the editable fallback URL should be applied
+            // immediately. Routine requests only ensure the existing socket is alive.
+            bridgeConnectionService.reconnect(baseUrl());
+        }
         sendSocketRequest("health", new JSONObject(), 10000L, json -> {
             try {
                 boolean promoted = viewModel != null && viewModel.acceptHealthNetworkInfo(json, true);
@@ -1776,6 +1788,11 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private boolean playPrefetchedInitiativeIfAvailable() {
+        if (isDesktopVoiceStreamActive() || (phoneVoiceService != null && !phoneVoiceService.isIdle())) {
+            appendVoiceDebug("Prepared Listen held",
+                    "Existing Star speech is still playing, so the prepared at-rest line remains queued instead of clearing the voice queue.");
+            return false;
+        }
         String sessionId = currentSessionId();
         String starId = selectedStarName();
         PrefetchedInitiativeStore.CachedInitiative prepared = prefetchedInitiative;
@@ -1913,6 +1930,12 @@ public final class MainActivity extends ComponentActivity {
         if (recording) {
             setDebug("Listen button waiting", "Finish or cancel the current voice recording before asking the Star if she has something to say.");
             appendVoiceDebug("Listen button", "Voice recording is active, so no initiative request was sent.");
+            return;
+        }
+        if (isDesktopVoiceStreamActive() || (phoneVoiceService != null && !phoneVoiceService.isIdle())) {
+            if (prodMiniStatusText != null) prodMiniStatusText.setText("The current Star voice is still speaking.");
+            appendVoiceDebug("Listen button waiting",
+                    "The existing Star voice queue must finish before a new at-rest response is requested.");
             return;
         }
 
