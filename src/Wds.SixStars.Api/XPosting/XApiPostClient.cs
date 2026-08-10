@@ -16,6 +16,7 @@ namespace Wds.SixStars.Api.XPosting
     public sealed class XApiPostClient : IXPostClient, IDisposable
     {
         private const string CreatePostUrl = "https://api.x.com/2/tweets";
+        private const string CurrentUserUrl = "https://api.x.com/2/users/me?user.fields=username,name";
         private const string TokenUrl = "https://api.x.com/2/oauth2/token";
         private readonly IXOAuth2TokenStore _tokenStore;
         private readonly HttpClient _httpClient;
@@ -70,18 +71,37 @@ namespace Wds.SixStars.Api.XPosting
             }
 
             StarXPostApiResult first = await SendCreatePostAsync(token.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
-            if (first.StatusCode != (int)HttpStatusCode.Unauthorized) return first;
+            if (first.Success) return first;
+
+            // 401 is the normal expired/rejected-token signal. A 403 can occasionally be returned for an
+            // authorization state that a fresh access token can clear, so refresh exactly once for either.
+            // If a fresh token still receives 403, diagnose the token with /2/users/me rather than repeatedly
+            // hammering the create-post endpoint or telling the user to keep reauthorizing.
+            if (first.StatusCode != (int)HttpStatusCode.Unauthorized
+                && first.StatusCode != (int)HttpStatusCode.Forbidden) return first;
 
             StarXOAuth2Token? refreshed = await RefreshTokenAsync(account, forceRefresh: true, cancellationToken).ConfigureAwait(false);
             if (refreshed == null)
             {
-                first.Error = string.IsNullOrWhiteSpace(first.Error)
-                    ? "X rejected the OAuth 2.0 token and it could not be refreshed. Reauthorize this Star account."
-                    : first.Error;
+                if (first.StatusCode == (int)HttpStatusCode.Forbidden)
+                {
+                    first.PermissionDenied = true;
+                    first.Error = "X returned HTTP 403 for POST /2/tweets and the one forced OAuth refresh attempt also failed. The batch has been stopped. Reauthorize this Star account before testing again. X response: "
+                        + (string.IsNullOrWhiteSpace(first.Error) ? "Forbidden." : first.Error.Trim());
+                }
+                else
+                {
+                    first.Error = string.IsNullOrWhiteSpace(first.Error)
+                        ? "X rejected the OAuth 2.0 token and it could not be refreshed. Reauthorize this Star account."
+                        : first.Error;
+                }
                 return first;
             }
 
-            return await SendCreatePostAsync(refreshed.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+            StarXPostApiResult second = await SendCreatePostAsync(refreshed.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+            if (second.StatusCode != (int)HttpStatusCode.Forbidden) return second;
+
+            return await DiagnoseForbiddenAsync(refreshed.AccessToken, second, timeoutSeconds, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task<StarXOAuth2Token?> GetUsableTokenAsync(
@@ -124,7 +144,7 @@ namespace Wds.SixStars.Api.XPosting
                 string responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode) return null;
 
-                StarXOAuth2Token? refreshed = ParseTokenResponse(account.Id, account.ClientId, responseText, current.RefreshToken);
+                StarXOAuth2Token? refreshed = ParseTokenResponse(account.Id, account.ClientId, responseText, current.RefreshToken, current.Scope);
                 if (refreshed == null || string.IsNullOrWhiteSpace(refreshed.AccessToken) || !refreshed.HasRefreshToken) return null;
                 await _tokenStore.SaveAsync(refreshed, cancellationToken).ConfigureAwait(false);
                 return refreshed;
@@ -137,6 +157,69 @@ namespace Wds.SixStars.Api.XPosting
             {
                 gate.Release();
             }
+        }
+
+
+        private async Task<StarXPostApiResult> DiagnoseForbiddenAsync(
+            string accessToken,
+            StarXPostApiResult forbidden,
+            int timeoutSeconds,
+            CancellationToken cancellationToken)
+        {
+            forbidden.PermissionDenied = true;
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, CurrentUserUrl);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(5, Math.Min(20, timeoutSeconds))));
+            try
+            {
+                using HttpResponseMessage response = await _httpClient.SendAsync(request, timeout.Token).ConfigureAwait(false);
+                string responseText = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    string username = ParseCurrentUsername(responseText);
+                    forbidden.AuthenticatedUsername = username;
+                    string who = string.IsNullOrWhiteSpace(username) ? "the authorized X user" : "@" + username;
+                    string raw = string.IsNullOrWhiteSpace(forbidden.Error) ? "" : " X response: " + forbidden.Error.Trim();
+                    forbidden.Error = "X accepted the OAuth token for " + who
+                        + " but refused POST /2/tweets with HTTP 403. This is an X-side account/app posting permission restriction, not an expired token; the batch has been stopped to avoid repeated denied posts."
+                        + raw;
+                    return forbidden;
+                }
+
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh, and the refreshed token could not validate with /2/users/me (HTTP "
+                    + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)
+                    + "). Reauthorize this Star account before trying again. X response: " + forbidden.Error;
+                return forbidden;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh. The follow-up OAuth identity check timed out, so the batch was stopped. X response: " + forbidden.Error;
+                return forbidden;
+            }
+            catch (Exception ex)
+            {
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh. The follow-up OAuth identity check failed (" + ex.Message + "), so the batch was stopped. X response: " + forbidden.Error;
+                return forbidden;
+            }
+        }
+
+        private static string ParseCurrentUsername(string responseText)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(responseText);
+                if (document.RootElement.TryGetProperty("data", out JsonElement data)
+                    && data.TryGetProperty("username", out JsonElement username))
+                {
+                    return username.GetString() ?? string.Empty;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+            return string.Empty;
         }
 
         private async Task<StarXPostApiResult> SendCreatePostAsync(
@@ -205,7 +288,8 @@ namespace Wds.SixStars.Api.XPosting
             string accountId,
             string clientId,
             string responseText,
-            string existingRefreshToken = "")
+            string existingRefreshToken = "",
+            string existingScope = "")
         {
             try
             {
@@ -214,7 +298,9 @@ namespace Wds.SixStars.Api.XPosting
                 string accessToken = root.TryGetProperty("access_token", out JsonElement access) ? access.GetString() ?? string.Empty : string.Empty;
                 string refreshToken = root.TryGetProperty("refresh_token", out JsonElement refresh) ? refresh.GetString() ?? string.Empty : existingRefreshToken;
                 string tokenType = root.TryGetProperty("token_type", out JsonElement type) ? type.GetString() ?? "bearer" : "bearer";
-                string scope = root.TryGetProperty("scope", out JsonElement scopeElement) ? scopeElement.GetString() ?? string.Empty : string.Empty;
+                string scope = root.TryGetProperty("scope", out JsonElement scopeElement)
+                    ? scopeElement.GetString() ?? existingScope
+                    : existingScope;
                 int expiresIn = root.TryGetProperty("expires_in", out JsonElement expires) && expires.TryGetInt32(out int parsed) ? parsed : 7200;
                 if (string.IsNullOrWhiteSpace(accessToken)) return null;
                 DateTimeOffset now = DateTimeOffset.UtcNow;

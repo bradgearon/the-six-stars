@@ -101,6 +101,9 @@ namespace Wds.SixStars.Api.XPosting
         public string Text { get; set; } = string.Empty;
         public int StatusCode { get; set; }
         public string Error { get; set; } = string.Empty;
+        /// <summary>True when X accepted the OAuth user token but refused the create-post capability.</summary>
+        public bool PermissionDenied { get; set; }
+        public string AuthenticatedUsername { get; set; } = string.Empty;
     }
 
     public sealed class StarXPostingRunItemResult
@@ -133,6 +136,8 @@ namespace Wds.SixStars.Api.XPosting
         public int PostedCount { get; set; }
         public int FailedCount { get; set; }
         public bool BatchCompleted { get; set; }
+        /// <summary>True when the batch stopped early because X returned a hard account/app posting denial.</summary>
+        public bool PermissionDenied { get; set; }
         public string Message { get; set; } = string.Empty;
         public List<StarXPostingRunItemResult> Items { get; set; } = new List<StarXPostingRunItemResult>();
     }

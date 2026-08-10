@@ -260,7 +260,11 @@ public sealed partial class MainViewModel
                 }).ConfigureAwait(false);
             SetXPostingStatusForStar(starId, result.Message);
 
-            if (scheduled && result.BatchCompleted && !string.IsNullOrWhiteSpace(localDate) && !string.IsNullOrWhiteSpace(slotId))
+            // A hard 403 is not helped by retrying every few minutes. Treat the current scheduled slot
+            // as handled so automatic posting waits until the next slot; manual posting remains available
+            // for an immediate test after the account/app restriction is resolved.
+            if (scheduled && (result.BatchCompleted || result.PermissionDenied)
+                && !string.IsNullOrWhiteSpace(localDate) && !string.IsNullOrWhiteSpace(slotId))
             {
                 await _xPostingScheduleStore.RecordCompletedAsync(
                     localDate,
@@ -280,7 +284,10 @@ public sealed partial class MainViewModel
                     PersistedWritingCount = state.PersistedWritings?.Count ?? 0;
                 }
             });
-            PublishXPostingStatusEvent(result.BatchCompleted ? "StarXPostingCompleted" : "StarXPostingDeferred", starId, result.Message, result, state);
+            string resultEventType = result.PermissionDenied
+                ? "StarXPostingBlocked"
+                : result.BatchCompleted ? "StarXPostingCompleted" : "StarXPostingDeferred";
+            PublishXPostingStatusEvent(resultEventType, starId, result.Message, result, state);
         }
         catch (Exception ex)
         {

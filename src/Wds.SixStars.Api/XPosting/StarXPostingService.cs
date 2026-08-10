@@ -231,6 +231,25 @@ namespace Wds.SixStars.Api.XPosting
                         result.FailedCount++;
                     }
 
+                    if (apiResult.PermissionDenied)
+                    {
+                        result.PermissionDenied = true;
+                        ReportProgress(progress, new StarXPostingProgress
+                        {
+                            StarId = profile.StarId,
+                            Stage = "blocked",
+                            CurrentPostNumber = postNumber,
+                            TotalPosts = posts.Count,
+                            PostedCount = result.PostedCount,
+                            FailedCount = result.FailedCount,
+                            Message = profile.StarId + " X posting was blocked by X on post "
+                                + postNumber.ToString(CultureInfo.InvariantCulture) + " of "
+                                + posts.Count.ToString(CultureInfo.InvariantCulture) + ". The remaining posts in this batch were not attempted. "
+                                + (string.IsNullOrWhiteSpace(apiResult.Error) ? "HTTP 403 Forbidden." : apiResult.Error.Trim())
+                        });
+                        break;
+                    }
+
                     if (index + 1 < posts.Count)
                     {
                         int seconds = Math.Max(0, _options.DelayBetweenPostsSeconds);
@@ -280,10 +299,15 @@ namespace Wds.SixStars.Api.XPosting
                 }
 
                 result.BatchCompleted = result.AttemptedCount == requestedCount;
-                result.Message = profile.StarId + " completed an X batch: "
-                    + result.PostedCount.ToString(CultureInfo.InvariantCulture) + " posted, "
-                    + result.FailedCount.ToString(CultureInfo.InvariantCulture) + " failed, from "
-                    + result.CandidateCount.ToString(CultureInfo.InvariantCulture) + " randomly sampled unposted writings.";
+                result.Message = result.PermissionDenied
+                    ? profile.StarId + " stopped its X batch after X returned HTTP 403. "
+                        + result.PostedCount.ToString(CultureInfo.InvariantCulture) + " post(s) were published before the denial; "
+                        + (requestedCount - result.AttemptedCount).ToString(CultureInfo.InvariantCulture)
+                        + " remaining selected post(s) were left unattempted and remain eligible for a future batch."
+                    : profile.StarId + " completed an X batch: "
+                        + result.PostedCount.ToString(CultureInfo.InvariantCulture) + " posted, "
+                        + result.FailedCount.ToString(CultureInfo.InvariantCulture) + " failed, from "
+                        + result.CandidateCount.ToString(CultureInfo.InvariantCulture) + " randomly sampled unposted writings.";
                 return result;
             }
             finally

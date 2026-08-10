@@ -183,6 +183,7 @@ public final class MainActivity extends ComponentActivity {
     private TextView prodMiniStatusText;
     private PixelStarAnimationView prodSpriteView;
     private TextView prodTalkButtonText;
+    private ImageView prodTalkIcon;
     private View prodTalkButton;
     private View prodListenButton;
     private View prodPhotoButton;
@@ -657,6 +658,7 @@ public final class MainActivity extends ComponentActivity {
         prodMiniStatusText = null;
         prodSpriteView = null;
         prodTalkButtonText = null;
+        prodTalkIcon = null;
         prodTalkButton = null;
         prodListenButton = null;
         prodPhotoButton = null;
@@ -682,6 +684,7 @@ public final class MainActivity extends ComponentActivity {
         prodRelationshipText = findViewById(R.id.prod_relationship);
         prodPreparedSpeechIndicatorText = findViewById(R.id.prod_prepared_speech_indicator);
         prodTalkButtonText = findViewById(R.id.prod_talk_text);
+        prodTalkIcon = findViewById(R.id.prod_talk_icon);
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodListenButton = findViewById(R.id.prod_listen_button);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
@@ -1145,8 +1148,9 @@ public final class MainActivity extends ComponentActivity {
         TextView title = prodText("Choose a Star", 22, 0xFFEAF7FF, true);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(title);
-        TextView sub = prodText("Tap a portrait to switch companions. Use the X button on any Star to queue a five-post set without changing companions.", 12, 0xFFB6E6F2, false);
+        TextView sub = prodText("Choose a companion.", 12, 0xFFB6E6F2, false);
         sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        sub.setPadding(0, dp(2), 0, dp(4));
         outer.addView(sub);
 
         TextView quickXStatus = prodText("Quick X posting: choose any Star below.", 11, 0xFF9DEBFF, false);
@@ -1156,7 +1160,7 @@ public final class MainActivity extends ComponentActivity {
 
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(2);
-        grid.setPadding(0, dp(10), 0, dp(6));
+        grid.setPadding(0, dp(8), 0, dp(6));
         for (String starId : STAR_IDS) {
             StarMeta meta = starMeta(starId);
             LinearLayout card = starSelectionCard(meta, quickXStatus);
@@ -1164,15 +1168,16 @@ public final class MainActivity extends ComponentActivity {
             lp.width = 0;
             lp.height = GridLayout.LayoutParams.WRAP_CONTENT;
             lp.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-            lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+            lp.setMargins(dp(5), dp(5), dp(5), dp(5));
             grid.addView(card, lp);
         }
         outer.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        ScrollView popupScroll = new ScrollView(this);
-        popupScroll.addView(outer);
+        ScrollView dialogScroll = new ScrollView(this);
+        dialogScroll.addView(outer);
+
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(popupScroll)
+                .setView(dialogScroll)
                 .setNegativeButton("Close", null)
                 .create();
         activeStarSelectionDialog = dialog;
@@ -1188,31 +1193,31 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.setPadding(dp(8), dp(8), dp(8), dp(8));
-        card.setBackground(makeProdPanel(0xDD111827, meta.accentColor, 16));
-        ImageView portrait = new ImageView(this);
-        portrait.setImageResource(meta.portraitResId);
-        portrait.setAdjustViewBounds(true);
-        portrait.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        card.addView(portrait, new LinearLayout.LayoutParams(dp(96), dp(96)));
-        TextView name = prodText(meta.id, 15, 0xFFFFFFFF, true);
-        name.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.addView(name);
-        TextView sub = prodText(meta.element + " • " + meta.domain, 11, 0xFFCFFAFE, false);
-        sub.setGravity(Gravity.CENTER_HORIZONTAL);
-        card.addView(sub);
+        card.setPadding(dp(10), dp(10), dp(10), dp(12));
+        card.setMinimumHeight(dp(224));
+        card.setBackground(makeProdPanel(0xE0111828, meta.accentColor, 18));
 
-        Button postX = prodButton("Post 5 to X");
-        postX.setTextSize(11);
-        postX.setContentDescription("Queue five X posts for " + meta.id);
-        LinearLayout.LayoutParams postParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        postParams.setMargins(0, dp(6), 0, 0);
-        card.addView(postX, postParams);
-        postX.setOnClickListener(v -> {
-            if (quickXStatus != null) quickXStatus.setText("Queuing a five-post X set for " + meta.id + "…");
-            dispatchXPostingNowForStar(meta.id, postX, quickXStatus, false);
-        });
+        FrameLayout portraitFrame = new FrameLayout(this);
+        portraitFrame.setBackground(makeProdPanel(0xAA0A1220, meta.accentColor, 16));
+        portraitFrame.setPadding(dp(6), dp(6), dp(6), dp(6));
+
+        ImageView portrait = new ImageView(this);
+        portrait.setImageResource(meta.previewResId());
+        portrait.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        portrait.setAdjustViewBounds(false);
+        portraitFrame.addView(portrait, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
+        LinearLayout.LayoutParams portraitParams = new LinearLayout.LayoutParams(dp(132), dp(140));
+        card.addView(portraitFrame, portraitParams);
+
+        TextView name = prodText(meta.id, 17, 0xFFFFFFFF, true);
+        name.setGravity(Gravity.CENTER_HORIZONTAL);
+        name.setPadding(0, dp(10), 0, 0);
+        card.addView(name);
+
+        TextView sub = prodText(meta.element + " • " + meta.domain, 12, 0xFFCFFAFE, false);
+        sub.setGravity(Gravity.CENTER_HORIZONTAL);
+        sub.setPadding(0, dp(2), 0, 0);
+        card.addView(sub);
 
         card.setOnClickListener(v -> {
             selectStarInSpinner(meta.id);
@@ -1262,6 +1267,7 @@ public final class MainActivity extends ComponentActivity {
     private void updateProdRecordingUi() {
         if (prodTalkButtonText != null) prodTalkButtonText.setText(recording ? "Send Voice" : "Talk");
         if (prodVoiceActions != null) prodVoiceActions.setVisibility(recording ? View.VISIBLE : View.GONE);
+        refreshProdTalkButtonDecor();
     }
 
     private void setProdAnimationState(String state) {
@@ -1367,7 +1373,7 @@ public final class MainActivity extends ComponentActivity {
         if (prodConversationText == null) return;
         ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
         if (lines == null || lines.size() == 0) {
-            prodConversationText.setText("No conversation yet. Tap Talk or open Text.");
+            prodConversationText.setText("No conversation yet.");
             if (prodConversationScroll != null) {
                 prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
             }
@@ -1389,7 +1395,8 @@ public final class MainActivity extends ComponentActivity {
         if (prodStarNameText == null) return;
         StarMeta meta = starMeta(starId);
         prodStarNameText.setText(meta.id);
-        prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain + " • tap to switch");
+        prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain);
+        prodStarSubtitleText.setContentDescription("Current Star: " + meta.id + ". Open Star selector.");
         if (prodSpriteView != null && !shirtOffAnimationActive) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
         refreshProdConversationWindow();
     }
@@ -1414,8 +1421,8 @@ public final class MainActivity extends ComponentActivity {
         tv.setText(text);
         tv.setTextSize(sp);
         tv.setTextColor(color);
-        if (bold) tv.setTypeface(Typeface.DEFAULT_BOLD);
-        tv.setIncludeFontPadding(true);
+        tv.setTypeface(Typeface.MONOSPACE, bold ? Typeface.BOLD : Typeface.NORMAL);
+        tv.setIncludeFontPadding(false);
         return tv;
     }
 
@@ -1424,6 +1431,9 @@ public final class MainActivity extends ComponentActivity {
         view.setText(text);
         view.setTextColor(0xFFE5E7EB);
         view.setTextSize(12);
+        view.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        view.setIncludeFontPadding(false);
+        view.setLineSpacing(0f, 1.08f);
         view.setMinLines(minLines);
         view.setPadding(dp(10), dp(8), dp(10), dp(8));
         view.setBackground(makeProdPanel(0xB90B1220, 0x6656D3E8, 14));
@@ -1434,6 +1444,8 @@ public final class MainActivity extends ComponentActivity {
         Button button = new Button(this);
         button.setText(text);
         button.setTextColor(0xFFEAF7FF);
+        button.setTextSize(14);
+        button.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         button.setAllCaps(false);
         button.setBackground(makeProdPanel(0xCC172033, 0xFF00D5D7, 14));
         return button;
@@ -3094,38 +3106,83 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void updatePreparedSpeechIndicator() {
-        if (prodPreparedSpeechIndicatorText == null) return;
         PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
         PreparedSpeechStore.SyncResult result = preparedSpeechSyncResult;
-        if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
-            prodPreparedSpeechIndicatorText.setText("▶ " + activePreparedSpeechItem.starId + " is saying her prepared thought");
-            prodPreparedSpeechIndicatorText.setTextColor(0xFF9EE8F0);
-            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
+
+        if (prodPreparedSpeechIndicatorText != null) {
+            prodPreparedSpeechIndicatorText.setText("");
+            prodPreparedSpeechIndicatorText.setVisibility(View.GONE);
             prodPreparedSpeechIndicatorText.setClickable(false);
             prodPreparedSpeechIndicatorText.setFocusable(false);
             prodPreparedSpeechIndicatorText.setOnClickListener(null);
-        } else if (item != null) {
-            String marker = item.priorityRank() >= 3 ? "●" : "○";
-            prodPreparedSpeechIndicatorText.setText(marker + " " + capitalize(item.priority) + " thought ready — "
-                    + String.format(Locale.US, "%.0f", item.effectiveScore)
-                    + (item.topic.length() > 0 ? " • " + clip(item.topic, 70) : ""));
-            prodPreparedSpeechIndicatorText.setTextColor(item.priorityRank() >= 3 ? 0xFFFFD27A : 0xFF9EE8F0);
-            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
-            prodPreparedSpeechIndicatorText.setClickable(true);
-            prodPreparedSpeechIndicatorText.setFocusable(true);
-            prodPreparedSpeechIndicatorText.setContentDescription("Prepared Star thought ready. Tap to listen.");
-            prodPreparedSpeechIndicatorText.setOnClickListener(v -> playPreparedSpeech(item, "indicator tapped"));
-        } else if (result != null && result.preparingCount > 0) {
-            prodPreparedSpeechIndicatorText.setText("⋯ " + selectedStarName() + " is preparing something to say");
-            prodPreparedSpeechIndicatorText.setTextColor(0xFF9EE8F0);
-            prodPreparedSpeechIndicatorText.setVisibility(View.VISIBLE);
-            prodPreparedSpeechIndicatorText.setClickable(false);
-            prodPreparedSpeechIndicatorText.setOnClickListener(null);
-        } else {
-            prodPreparedSpeechIndicatorText.setText("");
-            prodPreparedSpeechIndicatorText.setVisibility(View.GONE);
-            prodPreparedSpeechIndicatorText.setOnClickListener(null);
         }
+
+        if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
+            if (prodTalkButton != null) {
+                prodTalkButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought.");
+            }
+        } else if (item != null) {
+            if (prodTalkButton != null) {
+                prodTalkButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ".");
+            }
+        } else if (result != null && result.preparingCount > 0) {
+            if (prodTalkButton != null) {
+                prodTalkButton.setContentDescription(selectedStarName() + " is preparing something to say.");
+            }
+        } else if (prodTalkButton != null) {
+            prodTalkButton.setContentDescription("Talk to the selected Star.");
+        }
+
+        refreshProdTalkButtonDecor();
+    }
+
+    private void refreshProdTalkButtonDecor() {
+        if (prodTalkButton == null || prodTalkButtonText == null) return;
+
+        PreparedSpeechStore.CachedItem item = bestPreparedSpeechForSelectedStar();
+        PreparedSpeechStore.SyncResult result = preparedSpeechSyncResult;
+        boolean activePrepared = preparedSpeechPlaybackActive && activePreparedSpeechItem != null;
+        boolean readyPrepared = !activePrepared && item != null;
+        boolean preparingPrepared = !activePrepared && !readyPrepared && result != null && result.preparingCount > 0;
+        boolean highPriorityReady = readyPrepared && item.priorityRank() >= 3;
+
+        int strokeColor = 0xFFB8ACFF;
+        int fillColor = 0xDD171933;
+        int textColor = 0xFFECE9FF;
+        float scale = 1.0f;
+
+        if (recording) {
+            strokeColor = 0xFF38E8FF;
+            fillColor = 0xEE1E2840;
+            textColor = 0xFFFFFFFF;
+            scale = 1.01f;
+        } else if (activePrepared) {
+            strokeColor = 0xFF7CF0FF;
+            fillColor = 0xEE22304A;
+            textColor = 0xFFFFFFFF;
+            scale = 1.03f;
+        } else if (highPriorityReady) {
+            strokeColor = 0xFFFFD27A;
+            fillColor = 0xEE322744;
+            textColor = 0xFFFFFFFF;
+            scale = 1.03f;
+        } else if (readyPrepared) {
+            strokeColor = 0xFF7CF0FF;
+            fillColor = 0xEE1B2340;
+            textColor = 0xFFFFFFFF;
+            scale = 1.02f;
+        } else if (preparingPrepared) {
+            strokeColor = 0xFF50D7E8;
+            fillColor = 0xE0172037;
+            textColor = 0xFFF4FBFF;
+            scale = 1.01f;
+        }
+
+        prodTalkButton.setBackground(makeProdPanel(fillColor, strokeColor, 16));
+        prodTalkButton.setScaleX(scale);
+        prodTalkButton.setScaleY(scale);
+        prodTalkButtonText.setTextColor(textColor);
+        if (prodTalkIcon != null) prodTalkIcon.setColorFilter(strokeColor);
     }
 
     private static String capitalize(String value) {
@@ -3903,6 +3960,9 @@ public final class MainActivity extends ComponentActivity {
             this.accentColor = accentColor;
             this.portraitResId = portraitResId;
             this.frameResIds = frameResIds;
+        }
+        int previewResId() {
+            return frameResIds != null && frameResIds.length > 0 ? frameResIds[0] : portraitResId;
         }
     }
 
