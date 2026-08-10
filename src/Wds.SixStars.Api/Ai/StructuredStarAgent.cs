@@ -637,12 +637,10 @@ namespace Wds.SixStars.Api.Ai
             usedSubjects.UnionWith(viewpointState.RecentStoryNouns ?? new List<string>());
             HashSet<string> usedVerbs = new HashSet<string>(verbsSoFar ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             usedVerbs.UnionWith(viewpointState.RecentStoryVerbs ?? new List<string>());
-            result.Subjects = NormalizeStoryTerms(result.Subjects, 5).Where(x => !usedSubjects.Contains(x)).Take(5).ToList();
-            result.Verbs = NormalizeStoryTerms(result.Verbs, 5).Where(x => !usedVerbs.Contains(x)).Take(5).ToList();
-            if (result.Subjects.Count < 3 || result.Verbs.Count < 3)
-            {
-                throw new InvalidOperationException("Constellation Forge term contribution did not contain at least three fresh subjects and verbs.");
-            }
+            result.Subjects = NormalizeStoryTermsUnbounded(result.Subjects).Where(x => !usedSubjects.Contains(x)).ToList();
+            result.Verbs = NormalizeStoryTermsUnbounded(result.Verbs).Where(x => !usedVerbs.Contains(x)).ToList();
+            // The prompt asks for a useful handful of each. Do not reject a valid contribution merely
+            // because the model chose a different count; the six-Star pass naturally accumulates material.
             result.RawModelJson = json;
             return result;
         }
@@ -685,17 +683,51 @@ namespace Wds.SixStars.Api.Ai
                 0,
                 "star-writing-story-outline",
                 cancellationToken).ConfigureAwait(false);
-            StarWritingStoryOutlineResult? result = JsonSerializer.Deserialize<StarWritingStoryOutlineResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Constellation Forge outline returned empty JSON.");
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
-            result.Title = PromptText(result.Title, 180);
-            result.Premise = PromptText(result.Premise, 1800);
-            result.Beats = (result.Beats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).ToList();
-            if (string.IsNullOrWhiteSpace(result.Title) || string.IsNullOrWhiteSpace(result.Premise) || result.Beats.Count == 0)
+            StarWritingStoryOutlineResult? result = ParseAndNormalizeStoryOutline(json, viewpointProfile.StarId);
+            if (result == null)
             {
-                throw new InvalidOperationException("Constellation Forge outline was incomplete.");
+                throw new InvalidOperationException("Constellation Forge outline returned empty or unreadable JSON.");
             }
-            result.RawModelJson = json;
+
+            List<string> missing = GetMissingStoryOutlineFields(result);
+            if (missing.Count > 0)
+            {
+                List<ChatMessage> completionMessages = messages.ToList();
+                completionMessages.Add(new ChatMessage(
+                    "assistant",
+                    ExtractJson(json)));
+                completionMessages.Add(new ChatMessage(
+                    "user",
+                    "The outline is structurally incomplete because these required story components are empty: "
+                    + string.Join(", ", missing)
+                    + ". Complete this SAME outline now. Preserve every useful existing field, fill the missing components, and return the full JSON object again. "
+                    + "Do not shorten the story architecture to satisfy a count or size target; let the story determine its structure."));
+
+                string completionJson = await _client.CompleteJsonAsync(
+                    completionMessages,
+                    StarResponseJsonSchema.CreateStarWritingStoryOutlineResponseFormat(),
+                    0,
+                    "star-writing-story-outline-completion",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingStoryOutlineResult? completed = ParseAndNormalizeStoryOutline(completionJson, viewpointProfile.StarId);
+                if (completed != null)
+                {
+                    MergeStoryOutline(result, completed);
+                    result.RawModelJson = json + Environment.NewLine + "--- OUTLINE COMPLETION ---" + Environment.NewLine + completionJson;
+                }
+                missing = GetMissingStoryOutlineFields(result);
+            }
+
+            if (missing.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Constellation Forge outline remained incomplete after asking the viewpoint Star to complete the same outline. Missing: "
+                    + string.Join(", ", missing)
+                    + ". This is a generation/instruction failure, not a length-limit rejection. Raw outline response preview: "
+                    + PromptText(result.RawModelJson, 1600));
+            }
+
+            if (string.IsNullOrWhiteSpace(result.RawModelJson)) result.RawModelJson = json;
             return result;
         }
 
@@ -737,10 +769,10 @@ namespace Wds.SixStars.Api.Ai
                 viewpointDomain = PromptText(viewpointProfile.Domain, 120),
                 viewpointCoreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 viewpointPersonality = PromptText(viewpointProfile.DeepPersonality, 1600),
-                title = PromptText(outline.Title, 180),
-                premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 1200)).ToList(),
-                currentStory = PromptText(currentStory, 22000),
+                title = PromptText(outline.Title, 0),
+                premise = PromptText(outline.Premise, 0),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                currentStory = PromptText(currentStory, 0),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
                 seedWords = NormalizeSeedWords(seedWords),
@@ -763,13 +795,13 @@ namespace Wds.SixStars.Api.Ai
             StarWritingStoryBuildResult? result = JsonSerializer.Deserialize<StarWritingStoryBuildResult>(ExtractJson(json), _jsonOptions);
             if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? contributorProfile.StarId : result.StarId.Trim();
-            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
-            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).ToList();
+            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 0)).ToList();
             if (result.RevisedBeats.Count == 0) result.RevisedBeats = (outline.Beats ?? new List<string>()).ToList();
             result.Story = (result.Story ?? string.Empty).Trim();
-            result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 500)).Take(8).ToList();
+            result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 0)).ToList();
             result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
-            result.CompletionReason = PromptText(result.CompletionReason, 1000);
+            result.CompletionReason = PromptText(result.CompletionReason, 0);
             if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft.");
             result.RawModelJson = json;
             return result;
@@ -800,10 +832,10 @@ namespace Wds.SixStars.Api.Ai
                 characterAttributes = BuildCharacterAttributeSummary(viewpointProfile),
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 12, 700),
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
-                title = PromptText(outline.Title, 180),
-                premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 1200)).ToList(),
-                currentStory = PromptText(currentStory, 22000),
+                title = PromptText(outline.Title, 0),
+                premise = PromptText(outline.Premise, 0),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                currentStory = PromptText(currentStory, 0),
                 subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
                 verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
@@ -831,7 +863,7 @@ namespace Wds.SixStars.Api.Ai
                 StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(lastJson), _jsonOptions);
                 if (result == null) continue;
                 result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
-                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
+                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
                 result.Story = (result.Story ?? string.Empty).Trim();
                 result.RawModelJson = lastJson;
                 if (result.FinalStep && !string.IsNullOrWhiteSpace(result.Story)) return result;
@@ -859,8 +891,8 @@ namespace Wds.SixStars.Api.Ai
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                title = PromptText(title, 180),
-                story = PromptText(story, 24000)
+                title = PromptText(title, 0),
+                story = PromptText(story, 0)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
@@ -904,6 +936,56 @@ namespace Wds.SixStars.Api.Ai
             }
 
             throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry score vector after a format-repair retry.");
+        }
+
+        private StarWritingStoryOutlineResult? ParseAndNormalizeStoryOutline(string json, string fallbackStarId)
+        {
+            StarWritingStoryOutlineResult? result;
+            try
+            {
+                result = JsonSerializer.Deserialize<StarWritingStoryOutlineResult>(ExtractJson(json), _jsonOptions);
+            }
+            catch
+            {
+                return null;
+            }
+            if (result == null) return null;
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
+            result.Title = PromptText(result.Title, 0);
+            result.Premise = PromptText(result.Premise, 0);
+            result.Beats = (result.Beats ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 0))
+                .ToList();
+            result.RawModelJson = json;
+            return result;
+        }
+
+        private static List<string> GetMissingStoryOutlineFields(StarWritingStoryOutlineResult outline)
+        {
+            List<string> missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(outline?.Title)) missing.Add("title");
+            if (string.IsNullOrWhiteSpace(outline?.Premise)) missing.Add("premise");
+            if (outline?.Beats == null || outline.Beats.Count == 0) missing.Add("beats");
+            return missing;
+        }
+
+        private static void MergeStoryOutline(StarWritingStoryOutlineResult target, StarWritingStoryOutlineResult source)
+        {
+            if (target == null || source == null) return;
+            if (!string.IsNullOrWhiteSpace(source.StarId)) target.StarId = source.StarId.Trim();
+            if (!string.IsNullOrWhiteSpace(source.Title)) target.Title = source.Title.Trim();
+            if (!string.IsNullOrWhiteSpace(source.Premise)) target.Premise = source.Premise.Trim();
+            if (source.Beats != null && source.Beats.Count > 0) target.Beats = source.Beats.ToList();
+        }
+
+        private static List<string> NormalizeStoryTermsUnbounded(IEnumerable<string>? terms)
+        {
+            return (terms ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 0))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static List<string> NormalizeStoryTerms(IEnumerable<string>? terms, int limit)

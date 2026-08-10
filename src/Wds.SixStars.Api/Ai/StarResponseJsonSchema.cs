@@ -265,14 +265,14 @@ namespace Wds.SixStars.Api.Ai
                         { "starId", StringProperty(80) },
                         { "subjects", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
-                                { "items", StringProperty(80) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
                         { "verbs", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
-                                { "items", StringProperty(80) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         }
                     }
@@ -290,12 +290,12 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
-                        { "premise", StringProperty(1800) },
+                        { "title", StringProperty() },
+                        { "premise", StringProperty() },
                         { "beats", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 1 },
-                                { "items", StringProperty(1200) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         }
                     }
@@ -313,18 +313,18 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
+                        { "title", StringProperty() },
                         { "revisedBeats", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 1 },
-                                { "items", StringProperty(1200) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
-                        { "story", StringProperty(24000) },
+                        { "story", StringProperty() },
                         { "addedLayers", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 8 },
-                                { "items", StringProperty(500) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
                         { "completionDecision", new Dictionary<string, object>
@@ -333,7 +333,7 @@ namespace Wds.SixStars.Api.Ai
                                 { "enum", new[] { "continue", "request-finish", "approve-pending-finish", "deny-pending-finish" } }
                             }
                         },
-                        { "completionReason", StringProperty(1000) }
+                        { "completionReason", StringProperty() }
                     }
                 }
             };
@@ -349,8 +349,8 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
-                        { "story", StringProperty(24000) },
+                        { "title", StringProperty() },
+                        { "story", StringProperty() },
                         { "finalStep", new Dictionary<string, object> { { "type", "boolean" } } }
                     }
                 }

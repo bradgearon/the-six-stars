@@ -2469,7 +2469,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         });
         try
         {
-            StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, token).ConfigureAwait(false);
+            StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(
+                starId,
+                token,
+                message => OnUiThread(() => Status = message)).ConfigureAwait(false);
             string output = BuildWritingGenerationDisplay(starId, result);
 
             OnUiThread(() =>

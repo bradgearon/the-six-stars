@@ -190,7 +190,10 @@ public sealed partial class MainViewModel
             try
             {
                 SetBackgroundWritingLoopStatus("Generating a writing-shelf work and running its selected development process for " + starId + " in the background...");
-                StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, iterationCts.Token).ConfigureAwait(false);
+                StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(
+                    starId,
+                    iterationCts.Token,
+                    message => SetBackgroundWritingLoopStatus(message)).ConfigureAwait(false);
                 completed = true;
 
                 OnUiThread(() =>
@@ -217,9 +220,10 @@ public sealed partial class MainViewModel
             }
             catch (Exception ex)
             {
-                completed = true;
+                completed = false;
                 failed = true;
-                SetBackgroundWritingLoopStatus("Background writing failed for " + starId + ": " + ex.Message + ". The loop will continue with the next Star.");
+                SetBackgroundWritingLoopStatus("Background writing failed for " + starId + ": " + ex.Message
+                    + ". The loop will keep " + starId + " as the current Star and retry the same work path after the error delay; it will not skip ahead.");
                 System.Diagnostics.Debug.WriteLine("[WritingLoop] " + starId + " failed: " + ex);
             }
             finally

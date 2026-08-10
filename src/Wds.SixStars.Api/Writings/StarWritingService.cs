@@ -14,7 +14,6 @@ namespace Wds.SixStars.Api.Writings
         private const string GlobalOverallRuleId = "global-overall-excellence";
         private const double DefaultGlobalOverallThreshold = 80.0;
         private static readonly double GlobalOverallThreshold = ReadGlobalOverallThreshold();
-        private const int StoryMaximumBuildPhases = 10;
 
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
@@ -50,7 +49,10 @@ namespace Wds.SixStars.Api.Writings
             return _store.LoadAsync(starId, cancellationToken);
         }
 
-        public async Task<StarWritingCreateResult> GenerateAndReviewAsync(string starId, CancellationToken cancellationToken)
+        public async Task<StarWritingCreateResult> GenerateAndReviewAsync(
+            string starId,
+            CancellationToken cancellationToken,
+            Action<string>? progress = null)
         {
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
@@ -59,6 +61,7 @@ namespace Wds.SixStars.Api.Writings
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
                 string writingMethod = _methodOptions.SelectMethod(_random);
+                ReportProgress(progress, profile.StarId + " writing shelf: selected " + writingMethod + ".");
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingMethod] " + profile.StarId + " selected " + writingMethod + ".");
 
@@ -69,7 +72,7 @@ namespace Wds.SixStars.Api.Writings
 
                 if (string.Equals(writingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase))
                 {
-                    return await GenerateConstellationStoryAsync(profile, state, repairedRatingCount, cancellationToken).ConfigureAwait(false);
+                    return await GenerateConstellationStoryAsync(profile, state, repairedRatingCount, progress, cancellationToken).ConfigureAwait(false);
                 }
 
                 int selectedPassCount = _passOptions.SelectPassCount(_random);
@@ -226,6 +229,7 @@ namespace Wds.SixStars.Api.Writings
             StarProfile viewpointProfile,
             StarWritingNotesState state,
             int repairedRatingCount,
+            Action<string>? progress,
             CancellationToken cancellationToken)
         {
             DateTimeOffset startedAt = DateTimeOffset.UtcNow;
@@ -267,9 +271,15 @@ namespace Wds.SixStars.Api.Writings
             int phaseNumber = 0;
 
             // Light pass: every Star contributes fresh subjects and verbs before anyone writes prose.
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: starting the six-Star light vocabulary pass.");
+            int lightPassIndex = 0;
             foreach (StarProfile termProfile in lightPassProfiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                lightPassIndex++;
+                ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: vocabulary "
+                    + lightPassIndex.ToString(CultureInfo.InvariantCulture) + "/" + lightPassProfiles.Count.ToString(CultureInfo.InvariantCulture)
+                    + " — " + termProfile.StarId + " is choosing fresh subjects and verbs.");
                 StarWritingStoryTermContributionResult? contribution = null;
                 Exception? lastError = null;
                 for (int attempt = 0; attempt < 2 && contribution == null; attempt++)
@@ -313,9 +323,16 @@ namespace Wds.SixStars.Api.Writings
                     UpdatedAt = development.UpdatedAt
                 });
                 await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+                ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: " + termProfile.StarId
+                    + " added " + newSubjects.Count.ToString(CultureInfo.InvariantCulture) + " subjects and "
+                    + newVerbs.Count.ToString(CultureInfo.InvariantCulture) + " verbs; team pool is now "
+                    + subjects.Count.ToString(CultureInfo.InvariantCulture) + " subjects / "
+                    + verbs.Count.ToString(CultureInfo.InvariantCulture) + " verbs.");
             }
 
             // The viewpoint Star owns the initial architecture.
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: vocabulary pass complete. "
+                + viewpointProfile.StarId + " is building the story architecture now.");
             StarWritingStoryOutlineResult outline = await _agent.CreateStoryOutlineAsync(
                 viewpointProfile,
                 state,
@@ -338,6 +355,8 @@ namespace Wds.SixStars.Api.Writings
                 UpdatedAt = development.UpdatedAt
             });
             await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: outline ready — “" + outline.Title
+                + "” with " + outline.Beats.Count.ToString(CultureInfo.InvariantCulture) + " structural beats. Collaborative drafting begins.");
 
             List<StarProfile> builders = ShuffleProfiles(allProfiles
                 .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)));
@@ -354,10 +373,14 @@ namespace Wds.SixStars.Api.Writings
             string lastBuilderId = string.Empty;
             int buildPhaseCount = 0;
 
-            while (buildPhaseCount < StoryMaximumBuildPhases && !completionApproved)
+            while (!completionApproved)
             {
                 StarProfile contributor = SelectStoryBuilder(builders, buildPhaseCount, lastBuilderId, finishRequestedByStarId);
                 bool wasPendingFinish = pendingFinish;
+                string buildStage = wasPendingFinish ? "finish audit" : (string.IsNullOrWhiteSpace(currentStory) ? "first full draft" : "development pass");
+                ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: phase "
+                    + (buildPhaseCount + 1).ToString(CultureInfo.InvariantCulture) + " — " + contributor.StarId
+                    + " is running the " + buildStage + ". Current draft: " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture) + " words.");
                 StarWritingStoryBuildResult build = await _agent.BuildStoryPhaseAsync(
                     contributor,
                     viewpointProfile,
@@ -445,64 +468,14 @@ namespace Wds.SixStars.Api.Writings
                 state.LatestAppliedImprovementCount = buildPhaseCount;
                 state.LatestPassUpdatedAt = development.UpdatedAt;
                 await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+                ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: phase "
+                    + buildPhaseCount.ToString(CultureInfo.InvariantCulture) + " complete — " + contributor.StarId
+                    + " returned " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture) + " words; decision=" + decision
+                    + (pendingFinish ? ". A different Star will audit the pending finish next." : "."));
             }
 
-            // Safety cap: ask one different tail Star for a final explicit finish audit rather than
-            // silently assuming the story is done. A denial leaves the development trace on disk and
-            // prevents an unfinished work from reaching the shelf.
-            if (!completionApproved)
-            {
-                StarProfile tail = SelectStoryBuilder(builders, buildPhaseCount + 1, lastBuilderId, lastBuilderId);
-                StarWritingStoryBuildResult audit = await _agent.BuildStoryPhaseAsync(
-                    tail,
-                    viewpointProfile,
-                    state,
-                    outline,
-                    currentStory,
-                    subjects,
-                    verbs,
-                    _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
-                    buildContributors,
-                    buildPhaseCount + 1,
-                    true,
-                    "maximum-build-phase-audit",
-                    cancellationToken).ConfigureAwait(false);
-                currentStory = audit.Story.Trim();
-                if (audit.RevisedBeats != null && audit.RevisedBeats.Count > 0) outline.Beats = audit.RevisedBeats.ToList();
-                if (!buildContributors.Contains(tail.StarId, StringComparer.OrdinalIgnoreCase)) buildContributors.Add(tail.StarId);
-                buildPhaseCount++;
-                string auditDecision = StarWritingStoryCompletionDecisions.Normalize(audit.CompletionDecision, true);
-                completionApproved = string.Equals(auditDecision, StarWritingStoryCompletionDecisions.ApprovePendingFinish, StringComparison.OrdinalIgnoreCase);
-                phaseNumber++;
-                development.CurrentPhase = phaseNumber;
-                development.CurrentStory = currentStory;
-                development.OutlineBeats = outline.Beats.ToList();
-                development.ContributingStarIds = buildContributors.ToList();
-                development.PendingFinish = !completionApproved;
-                development.FinishRequestedByStarId = "maximum-build-phase-audit";
-                development.UpdatedAt = DateTimeOffset.UtcNow;
-                development.Phases.Add(new StarWritingStoryDevelopmentPhase
-                {
-                    PhaseNumber = phaseNumber,
-                    Stage = "finish-audit",
-                    StarId = tail.StarId,
-                    PendingFinish = true,
-                    CompletionDecision = auditDecision,
-                    Summary = string.Join("; ", audit.AddedLayers ?? new List<string>()) + (string.IsNullOrWhiteSpace(audit.CompletionReason) ? string.Empty : " Completion: " + audit.CompletionReason),
-                    StorySnapshot = currentStory,
-                    UpdatedAt = development.UpdatedAt
-                });
-                state.LatestSelectedPassCount = Math.Max(1, buildPhaseCount);
-                state.LatestCompletedPassCount = buildPhaseCount;
-                state.LatestAppliedImprovementCount = buildPhaseCount;
-                state.LatestPassUpdatedAt = development.UpdatedAt;
-                await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
-                if (!completionApproved)
-                {
-                    throw new InvalidOperationException("Constellation Forge reached its safety cap and the independent tail Star denied completion. The latest development trace was saved and no unfinished story was persisted.");
-                }
-            }
-
+            // The building loop has no arbitrary phase ceiling. It ends only when one Star requests
+            // completion and a different Star explicitly approves that pending finish.
             List<string> allContributors = new[] { viewpointProfile.StarId }
                 .Concat(lightPassProfiles.Select(x => x.StarId))
                 .Concat(buildContributors)
@@ -511,6 +484,9 @@ namespace Wds.SixStars.Api.Writings
                 .ToList();
 
             // Return the completed collaborative draft to the viewpoint Star for the final authorial pass.
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: collaborative build approved after "
+                + buildPhaseCount.ToString(CultureInfo.InvariantCulture) + " phases. Returning the complete draft to "
+                + viewpointProfile.StarId + " for the final authorial revision.");
             StarWritingStoryFinalResult final = await _agent.FinalizeStoryAsync(
                 viewpointProfile,
                 state,
@@ -542,6 +518,8 @@ namespace Wds.SixStars.Api.Writings
                 UpdatedAt = development.UpdatedAt
             });
             await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: final revision complete — “" + final.Title
+                + "”, " + CountWords(final.Story).ToString(CultureInfo.InvariantCulture) + " words. Running the 27-value review vector now.");
 
             StarWritingRating rating = await _agent.RateStoryAsync(
                 viewpointProfile,
@@ -552,6 +530,12 @@ namespace Wds.SixStars.Api.Writings
                 cancellationToken).ConfigureAwait(false);
             rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
             List<string> matchedRules = GetMatchedRuleIds(viewpointProfile, values);
+            double overallScore = values.TryGetValue("Overall", out StarWritingEmotionValue? overallValue) && overallValue != null
+                ? overallValue.Score
+                : 0.0;
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: review vector returned Overall "
+                + overallScore.ToString("0.0", CultureInfo.InvariantCulture) + "; persistence matches="
+                + (matchedRules.Count > 0 ? string.Join(", ", matchedRules) : "none") + ". Saving the completed development trace and shelf result.");
             phaseNumber++;
             development.CurrentPhase = phaseNumber;
             development.UpdatedAt = DateTimeOffset.UtcNow;
@@ -635,6 +619,8 @@ namespace Wds.SixStars.Api.Writings
             state.LatestPassUpdatedAt = now;
             RebuildUsedWordsFromPersistedWritings(state);
             await _store.SaveGeneratedBatchAsync(state, viewpointProfile.DisplayName, batch, CancellationToken.None).ConfigureAwait(false);
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: complete — “" + final.Title + "” "
+                + (persistedCount > 0 ? "was persisted to the shelf." : "was reviewed but did not meet the current persistence rules."));
 
             return new StarWritingCreateResult
             {
@@ -758,6 +744,19 @@ namespace Wds.SixStars.Api.Writings
             finally { _operationGate.Release(); }
         }
 
+        private static void ReportProgress(Action<string>? progress, string message)
+        {
+            if (progress == null || string.IsNullOrWhiteSpace(message)) return;
+            try { progress(message.Trim()); }
+            catch { /* UI progress is observational and must never break generation. */ }
+        }
+
+        private static int CountWords(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return 0;
+            return text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        }
+
         private List<StarProfile> ShuffleProfiles(IEnumerable<StarProfile> profiles)
         {
             List<StarProfile> values = (profiles ?? Enumerable.Empty<StarProfile>()).Where(x => x != null).ToList();
@@ -783,7 +782,6 @@ namespace Wds.SixStars.Api.Writings
                 if (builders.Count > 1 && string.Equals(candidate.StarId, lastBuilderId, StringComparison.OrdinalIgnoreCase)) continue;
                 if (builders.Count > 1 && !string.IsNullOrWhiteSpace(finishRequestedByStarId)
                     && !string.Equals(finishRequestedByStarId, "team-completion-check", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(finishRequestedByStarId, "maximum-build-phase-audit", StringComparison.OrdinalIgnoreCase)
                     && string.Equals(candidate.StarId, finishRequestedByStarId, StringComparison.OrdinalIgnoreCase)) continue;
                 return candidate;
             }
