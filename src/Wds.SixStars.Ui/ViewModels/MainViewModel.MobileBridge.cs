@@ -539,6 +539,33 @@ public sealed partial class MainViewModel
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
             }
 
+            case "PostAllStarWritingsToXNow":
+            {
+                List<string> configuredStars = _xPostingService.ConfiguredStarIds
+                    .Select(ResolveDefaultStarId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                if (configuredStars.Count == 0)
+                {
+                    string unavailable = "No enabled/configured X Star accounts are available to queue.";
+                    OnUiThread(() => Status = unavailable);
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, state, unavailable, writingState);
+                }
+
+                foreach (string configuredStar in configuredStars)
+                {
+                    QueueManualXPosting(configuredStar);
+                }
+
+                string message = "Queued background five-post X batches for " + configuredStars.Count + " configured Stars: "
+                    + string.Join(", ", configuredStars)
+                    + ". They will run one Star at a time through the uninterrupted X posting lane.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
             case "PostStarWritingsToXNow":
             {
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
