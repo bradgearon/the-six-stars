@@ -8,6 +8,8 @@ using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
+using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.XPosting;
 
 namespace Wds.SixStars.Api.Agents
 {
@@ -15,8 +17,201 @@ namespace Wds.SixStars.Api.Agents
     /// Deterministic starter agent for the desktop harness. Replace this with an LLM-backed agent later,
     /// but keep the same IStarAgent contract so Unity does not change.
     /// </summary>
-    public sealed class MockStarAgent : IStarAgent
+    public sealed class MockStarAgent : IStarAgent, IStarWritingAgent
     {
+        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<string> seedWords, string writingMethod, CancellationToken cancellationToken)
+        {
+            string normalizedMethod = StarWritingMethods.Normalize(writingMethod);
+            string[][] pairs;
+            string[] lines;
+            if (string.Equals(normalizedMethod, StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase))
+            {
+                pairs = new[]
+                {
+                    new[] { "Sky", "Hums" },
+                    new[] { "Stone", "Remembers" },
+                    new[] { "Lantern", "Drinks" },
+                    new[] { "River", "Laughs" },
+                    new[] { "Clock", "Dreams" }
+                };
+                lines = new[]
+                {
+                    "The sky hums a blue song above the sleeping roofs.",
+                    "Stone remembers every hand that once believed it could become a home.",
+                    "The lantern drinks the dark until its little flame is full.",
+                    "The river laughs against the bridge and carries the joke downstream.",
+                    "The clock dreams between ticks of a minute nobody has spent yet."
+                };
+            }
+            else
+            {
+                pairs = new[]
+                {
+                    new[] { "Starlight", "Pebble" },
+                    new[] { "Void", "Teacup" },
+                    new[] { "Shadow", "Tapestry" },
+                    new[] { "Fragment", "Echo" },
+                    new[] { "Stone", "Whisper" }
+                };
+                lines = new[]
+                {
+                    "Why did the starlight refuse to sit on the pebble? It found the weight of its own brilliance too heavy.",
+                    "What did the void say to the teacup? You hold such fragile containment; I prefer the beautiful, endless spill.",
+                    "Why did the shadow refuse to join the tapestry? It did not want to be defined by any single thread.",
+                    "How does a fragment greet an echo? With a quiet, knowing nod; they both know something is missing.",
+                    "What did the stone whisper to the wind? You have no memory of my silence."
+                };
+            }
+
+            StarWritingGenerationResult result = new StarWritingGenerationResult
+            {
+                StarId = profile.StarId,
+                WritingMethod = normalizedMethod,
+                Jokes = lines.ToList(),
+                UsedWords = pairs.Select(x => x.ToList()).ToList(),
+                SeedWords = (seedWords ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(100).ToList(),
+                RawModelJson = "mock"
+            };
+            return Task.FromResult(result);
+        }
+
+        public Task<StarWritingImprovementResult> ImproveWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, StarWritingGenerationResult generation, int passNumber, int totalPasses, CancellationToken cancellationToken)
+        {
+            // Deterministic mock keeps strong candidates unchanged while still exercising the reusable pass contract.
+            return Task.FromResult(new StarWritingImprovementResult
+            {
+                Replacements = new List<StarWritingImprovementReplacement>(),
+                RawModelJson = "[]"
+            });
+        }
+
+        public Task<StarWritingReviewResult> RateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, StarWritingGenerationResult generation, CancellationToken cancellationToken)
+        {
+            StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
+            for (int i = 0; i < 5; i++)
+            {
+                List<string> scores = new List<string>();
+                for (int category = 0; category < StarWritingEmotionVector.Categories.Length; category++)
+                {
+                    string name = StarWritingEmotionVector.Categories[category];
+                    double score = name == "Funny" ? 72 + i : name == "Poetic" || name == "Characterful" || name == "Overall" ? 86 + Math.Min(i, 4) : 78;
+                    scores.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                string vector = string.Join(";", scores);
+                vector = StarWritingEmotionVector.Normalize(vector, out _);
+                result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector });
+            }
+            return Task.FromResult(result);
+        }
+
+        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, int phaseNumber, CancellationToken cancellationToken)
+        {
+            string prefix = string.IsNullOrWhiteSpace(profile.Element) ? profile.StarId : profile.Element;
+            return Task.FromResult(new StarWritingStoryTermContributionResult
+            {
+                StarId = profile.StarId,
+                Subjects = new List<string> { prefix + " bell", prefix + " bridge", prefix + " moth" },
+                Verbs = new List<string> { "wanders", "unfolds", "remembers" },
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new StarWritingStoryOutlineResult
+            {
+                StarId = viewpointProfile.StarId,
+                Title = "The Six Bells",
+                Premise = "Six strange bells lead one traveler through a city that has forgotten why it was built.",
+                Beats = new List<string>
+                {
+                    "A traveler finds the first bell under a broken bridge.",
+                    "The bell points toward a city that cannot remember its own name.",
+                    "A second bell reveals a lie the traveler has been carrying.",
+                    "The city's guardians mistake memory for trespass.",
+                    "The traveler learns the bells are pieces of one unfinished promise.",
+                    "The final bell rings only when the traveler chooses what should be remembered."
+                },
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
+        {
+            string story = string.IsNullOrWhiteSpace(currentStory)
+                ? "Under a broken bridge, a traveler found a bell that rang without being touched. Each note seemed to remember a street the city had forgotten."
+                : currentStory + " " + contributorProfile.DisplayName + " added another turn to the road, and the city answered with a stranger memory.";
+            string decision = pendingFinish
+                ? StarWritingStoryCompletionDecisions.ApprovePendingFinish
+                : phaseNumber >= 5 ? StarWritingStoryCompletionDecisions.RequestFinish : StarWritingStoryCompletionDecisions.Continue;
+            return Task.FromResult(new StarWritingStoryBuildResult
+            {
+                StarId = contributorProfile.StarId,
+                Title = outline.Title,
+                RevisedBeats = outline.Beats.ToList(),
+                Story = story,
+                AddedLayers = new List<string> { "mock contribution from " + contributorProfile.DisplayName },
+                CompletionDecision = decision,
+                CompletionReason = pendingFinish ? "The mock story has a complete arc." : "Continue until the team has contributed.",
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new StarWritingStoryFinalResult
+            {
+                StarId = viewpointProfile.StarId,
+                Title = outline.Title,
+                Story = currentStory + " In the end, the last bell laughed softly: memory had never needed permission to come home.",
+                FinalStep = true,
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken)
+        {
+            List<string> scores = StarWritingEmotionVector.Categories.Select(name => name == "Overall" ? "90" : "84").ToList();
+            return Task.FromResult(new StarWritingRating
+            {
+                Index = 0,
+                EmotionalVector = StarWritingEmotionVector.Normalize(string.Join(";", scores), out _)
+            });
+        }
+
+        public Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> pendingWritings, CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> selected = pendingWritings.OrderByDescending(x => x.PersistedAt).Take(5).ToList();
+            StarWritingPerformancePlan result = new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = selected.Select(x => x.Id).ToList(),
+                RawModelJson = "mock"
+            };
+            result.SpokenText.AddRange(selected.Select((x, index) => index == 0
+                ? "I kept a few small fragments from the dark. Listen. " + x.Writing
+                : x.Writing));
+            return Task.FromResult(result);
+        }
+
+        public Task<StarXPostSelectionResult> PrepareXPostsAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> unpostedWritings, int requestedCount, CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> selected = (unpostedWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing))
+                .Take(Math.Max(1, requestedCount))
+                .ToList();
+            return Task.FromResult(new StarXPostSelectionResult
+            {
+                StarId = profile.StarId,
+                Posts = selected.Select(x => new StarXPostSelectionItem
+                {
+                    WritingId = x.Id,
+                    Text = x.Writing.Length <= 280 ? x.Writing : x.Writing.Substring(0, 277) + "..."
+                }).ToList(),
+                RawModelJson = "mock"
+            });
+        }
+
         public Task<StarInteractionResponse> GenerateAsync(StarProfile profile, StarInteractionRequest request, StarState state, CancellationToken cancellationToken)
         {
             StarInteractionResponse response = new StarInteractionResponse

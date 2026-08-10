@@ -164,9 +164,10 @@ final class PreparedSpeechStore {
     private PreparedSpeechStore() { }
 
     static SyncResult sync(Context context, String baseUrl, String starId) throws Exception {
-        retryPendingCompletions(context, baseUrl);
+        LocalNetworkBindingService localNetwork = new LocalNetworkBindingService(context);
+        retryPendingCompletions(context, localNetwork, baseUrl);
         String url = trimBase(baseUrl) + "/api/prepared-speech/manifest?starId=" + Uri.encode(safeText(starId));
-        JSONObject manifest = new JSONObject(readText(url));
+        JSONObject manifest = new JSONObject(readText(localNetwork, url));
         JSONArray intents = manifest.optJSONArray("intents");
         JSONArray artifacts = manifest.optJSONArray("artifacts");
         Map<String, JSONObject> intentsById = new HashMap<>();
@@ -218,7 +219,7 @@ final class PreparedSpeechStore {
                         String segments = chunk.optString("speechActivitySegmentsMs", "");
                         File finalFile = new File(folder, String.format(Locale.US, "chunk-%03d.wav", chunkIndex));
                         if (!isValid(finalFile, byteLength, sha)) {
-                            byte[] data = readBytes(resolveUrl(baseUrl, chunkUrl));
+                            byte[] data = readBytes(localNetwork, resolveUrl(baseUrl, chunkUrl));
                             if (byteLength > 0 && data.length != byteLength) {
                                 throw new IllegalStateException("Prepared speech byte length mismatch for " + artifactId + " chunk " + chunkIndex);
                             }
@@ -318,9 +319,13 @@ final class PreparedSpeechStore {
         }
     }
 
-    static JSONObject postAction(String baseUrl, String intentId, String action) throws Exception {
+    static JSONObject postAction(Context context, String baseUrl, String intentId, String action) throws Exception {
+        return postAction(new LocalNetworkBindingService(context), baseUrl, intentId, action);
+    }
+
+    private static JSONObject postAction(LocalNetworkBindingService localNetwork, String baseUrl, String intentId, String action) throws Exception {
         String url = trimBase(baseUrl) + "/api/prepared-speech/" + Uri.encode(intentId) + "/" + Uri.encode(action);
-        HttpURLConnection connection = (HttpURLConnection)new URL(url).openConnection();
+        HttpURLConnection connection = localNetwork.openHttpConnection(new URL(url));
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(20000);
         connection.setRequestMethod("POST");
@@ -356,14 +361,14 @@ final class PreparedSpeechStore {
         }
     }
 
-    private static void retryPendingCompletions(Context context, String baseUrl) {
+    private static void retryPendingCompletions(Context context, LocalNetworkBindingService localNetwork, String baseUrl) {
         File[] folders = root(context).listFiles(File::isDirectory);
         if (folders == null) return;
         for (File folder : folders) {
             try {
                 CachedItem item = readItem(folder);
                 if (item == null || !item.completionPending || item.intentId.length() == 0) continue;
-                postAction(baseUrl, item.intentId, "completed");
+                postAction(localNetwork, baseUrl, item.intentId, "completed");
                 deleteRecursively(folder);
             } catch (Exception ignored) {
                 // Keep the local marker. The next reconciliation will retry without replaying the audio.
@@ -437,12 +442,12 @@ final class PreparedSpeechStore {
         return trimBase(baseUrl) + (relative.startsWith("/") ? relative : "/" + relative);
     }
 
-    private static String readText(String url) throws Exception {
-        return new String(readBytes(url), StandardCharsets.UTF_8);
+    private static String readText(LocalNetworkBindingService localNetwork, String url) throws Exception {
+        return new String(readBytes(localNetwork, url), StandardCharsets.UTF_8);
     }
 
-    private static byte[] readBytes(String url) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection)new URL(url).openConnection();
+    private static byte[] readBytes(LocalNetworkBindingService localNetwork, String url) throws Exception {
+        HttpURLConnection connection = localNetwork.openHttpConnection(new URL(url));
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(45000);
         connection.setRequestMethod("GET");

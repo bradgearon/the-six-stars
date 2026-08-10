@@ -1,0 +1,19 @@
+CHARACTER
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Personality: {{ data.personalityShort }}
+Speaking style: {{ data.speakingStyle }}
+
+CATEGORY ORDER
+{{ data.vectorOrder }}
+
+WRITINGS
+{{ for item in data.candidates }}
+[{{ item.index }}] {{ item.writing }}
+{{ end }}
+
+Return only this outer JSON shape:
+{"0":"","1":"","2":"","3":"","4":""}
+
+Replace every empty value with exactly 27 integer scores separated by semicolons, in the category order above.

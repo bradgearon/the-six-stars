@@ -94,7 +94,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
     {
         if (_listener != null) return;
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, Port);
+        _listener = CreateDualStackListener(Port);
         _listener.Start();
         _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
         PublishStatus("Mobile HTTP/WebSocket bridge listening on port " + Port + ".");
@@ -170,7 +170,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
                 if (request.Method == "GET" && request.Path == "/health")
                 {
-                    await WriteJsonAsync(stream, 200, _healthFactory(), serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, 200, CreateConnectionAwareHealthPayload(MobileBridgeNetworkAddressDiscovery.Discover(client, Port)), serverToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -451,7 +451,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
         client.ReceiveTimeout = 0;
         client.SendTimeout = 0;
-        MobileBridgeWebSocketConnection connection = new MobileBridgeWebSocketConnection(Interlocked.Increment(ref _lastWebSocketClientId), client);
+        MobileBridgeWebSocketConnection connection = new MobileBridgeWebSocketConnection(Interlocked.Increment(ref _lastWebSocketClientId), client, Port);
         lock (_webSocketGate) _webSocketClients.Add(connection);
         PublishStatus("Android mobile WebSocket connected. Clients=" + WebSocketClientCount + ".");
 
@@ -465,7 +465,9 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 protocolVersion = 1,
                 clientId = connection.Id,
                 latestSequence,
-                connectedAtUtc = DateTimeOffset.UtcNow
+                connectedAtUtc = DateTimeOffset.UtcNow,
+                preferredIpv6Address = connection.NetworkInfo.PreferredIpv6Address,
+                preferredIpv6BridgeUrl = connection.NetworkInfo.PreferredIpv6BridgeUrl
             }, _jsonOptions, connectionCts.Token).ConfigureAwait(false);
 
             while (!connectionCts.IsCancellationRequested)
@@ -543,7 +545,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
 
         try
         {
-            SocketOperationResult result = await ExecuteSocketOperationAsync(operation, payload, cancellationToken).ConfigureAwait(false);
+            SocketOperationResult result = await ExecuteSocketOperationAsync(connection, operation, payload, cancellationToken).ConfigureAwait(false);
             bool sent = await SafeSendSocketAsync(connection, new
             {
                 type = "response",
@@ -582,7 +584,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         }
     }
 
-    private async Task<SocketOperationResult> ExecuteSocketOperationAsync(string operation, JsonElement payload, CancellationToken cancellationToken)
+    private async Task<SocketOperationResult> ExecuteSocketOperationAsync(MobileBridgeWebSocketConnection connection, string operation, JsonElement payload, CancellationToken cancellationToken)
     {
         string normalized = (operation ?? string.Empty).Trim().ToLowerInvariant();
         switch (normalized)
@@ -612,11 +614,54 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 return new SocketOperationResult(true, response, string.Empty);
             }
             case "health":
-                return new SocketOperationResult(true, _healthFactory(), string.Empty);
+                return new SocketOperationResult(true, CreateConnectionAwareHealthPayload(connection.NetworkInfo), string.Empty);
             case "stars":
                 return new SocketOperationResult(true, _starsFactory(), string.Empty);
             default:
                 return new SocketOperationResult(false, new { }, "Unknown mobile WebSocket operation: " + operation);
+        }
+    }
+
+    private object CreateConnectionAwareHealthPayload(MobileBridgeConnectionNetworkInfo networkInfo)
+    {
+        Dictionary<string, object?> payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        JsonElement basePayload = JsonSerializer.SerializeToElement(_healthFactory(), _jsonOptions);
+        if (basePayload.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty property in basePayload.EnumerateObject()) payload[property.Name] = property.Value.Clone();
+        }
+
+        payload["connectionLocalAddress"] = networkInfo.LocalAddress;
+        payload["connectionRemoteAddress"] = networkInfo.RemoteAddress;
+        payload["connectionAddressFamily"] = networkInfo.AddressFamily;
+        payload["localAdapterName"] = networkInfo.AdapterName;
+        payload["localAdapterDescription"] = networkInfo.AdapterDescription;
+        payload["localConnection"] = networkInfo.IsLocalConnection;
+        payload["ipv6Available"] = networkInfo.HasPreferredIpv6;
+        payload["preferredIpv6Address"] = networkInfo.PreferredIpv6Address;
+        payload["preferredIpv6Host"] = networkInfo.PreferredIpv6Host;
+        payload["preferredIpv6AudioHost"] = networkInfo.PreferredIpv6Host;
+        payload["preferredIpv6BridgeUrl"] = networkInfo.PreferredIpv6BridgeUrl;
+        payload["preferredIpv6Addresses"] = networkInfo.PreferredIpv6Addresses;
+        payload["addressDiscoverySource"] = networkInfo.DiscoverySource;
+        return payload;
+    }
+
+    private static TcpListener CreateDualStackListener(int port)
+    {
+        try
+        {
+            TcpListener listener = new TcpListener(IPAddress.IPv6Any, port);
+            listener.Server.DualMode = true;
+            return listener;
+        }
+        catch (SocketException)
+        {
+            return new TcpListener(IPAddress.Any, port);
+        }
+        catch (NotSupportedException)
+        {
+            return new TcpListener(IPAddress.Any, port);
         }
     }
 

@@ -209,7 +209,18 @@ public final class StarInitiativeBackgroundService extends Service {
         json.put("clientName", "SixStarsMobileAndroid-PreparedListenCache");
         json.put("reason", "prepare one private at-rest line and voice for the next Android Listen tap; " + reason);
 
-        String body = postJson(baseUrl() + "/api/mobile/dispatch", json.toString(), 240000);
+        MobileSettingsService networkSettings = new MobileSettingsService(this);
+        String primaryBaseUrl = networkSettings.preferredBridgeUrl();
+        String body;
+        try {
+            body = postJson(primaryBaseUrl + "/api/mobile/dispatch", json.toString(), 240000);
+        } catch (Exception primaryError) {
+            String fallbackBaseUrl = networkSettings.bridgeUrl();
+            if (BridgeAddressService.normalizeBaseUrl(primaryBaseUrl).equalsIgnoreCase(BridgeAddressService.normalizeBaseUrl(fallbackBaseUrl))) {
+                throw primaryError;
+            }
+            body = postJson(fallbackBaseUrl + "/api/mobile/dispatch", json.toString(), 240000);
+        }
         if (stopped
                 || cacheGeneration != prefs.getLong(PREF_PREPARED_LISTEN_GENERATION, 0L)
                 || !starId.equalsIgnoreCase(selectedStarId())) {
@@ -242,16 +253,7 @@ public final class StarInitiativeBackgroundService extends Service {
     }
 
     private String baseUrl() {
-        SharedPreferences preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String value = preferences.getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
-        if (value == null) value = DEFAULT_BRIDGE_URL;
-        value = value.trim();
-        if (LEGACY_BRIDGE_URL.equalsIgnoreCase(value)) {
-            value = DEFAULT_BRIDGE_URL;
-            preferences.edit().putString(PREF_BRIDGE_URL, value).apply();
-        }
-        if (value.endsWith("/")) value = value.substring(0, value.length() - 1);
-        return value.length() == 0 ? DEFAULT_BRIDGE_URL : value;
+        return new MobileSettingsService(this).preferredBridgeUrl();
     }
 
     private void broadcastStatus(String status, String message, String starId) {
@@ -276,7 +278,8 @@ public final class StarInitiativeBackgroundService extends Service {
 
     private String postJson(String urlText, String json, int timeoutMs) throws Exception {
         byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection connection = (HttpURLConnection) new URL(urlText).openConnection();
+        URL url = new URL(urlText);
+        HttpURLConnection connection = new LocalNetworkBindingService(this).openHttpConnection(url);
         connection.setConnectTimeout(6000);
         connection.setReadTimeout(timeoutMs);
         connection.setRequestMethod("POST");

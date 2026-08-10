@@ -946,5 +946,125 @@
     "High insight and patience make her perceptive, but high despair and fear can freeze her future.",
     "Low hope and zeal mean she may withdraw, delay, or assume change is impossible.",
     "Benaveil pressure should mostly sharpen despair, fear, fatalism, and cold distance."
-  ]
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "fatal-beauty",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunting",
+          "minimumScore": 80
+        },
+        {
+          "category": "Original",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "cold-cleverness",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Clever",
+          "minimumScore": 70
+        },
+        {
+          "category": "Characterful",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "musical-mystery",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Musical",
+          "minimumScore": 70
+        },
+        {
+          "category": "Mysterious",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "hopeful-vivid",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Hopeful",
+          "minimumScore": 70
+        },
+        {
+          "category": "Vivid",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
+    }
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 65
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

@@ -1,0 +1,53 @@
+CONSTELLATION FORGE — FINAL VIEWPOINT REVISION
+
+VIEWPOINT STAR
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory: {{ data.backstorySummary }}
+Writing style: {{ data.speakingStyle }}
+Character attributes: {{ data.characterAttributes }}
+
+BEHAVIORS / IMAGERY
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORYTELLING RULES
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+TITLE
+{{ data.title }}
+
+PREMISE
+{{ data.premise }}
+
+OUTLINE
+{{ for beat in data.beats }}
+- {{ beat }}
+{{ end }}
+
+COLLABORATIVE DRAFT
+{{ data.currentStory }}
+
+SUBJECT / VERB MATERIAL
+Subjects: {{ data.subjectsText }}
+Verbs: {{ data.verbsText }}
+
+CONTRIBUTING STARS
+{{ for id in data.contributorStarIds }}
+- {{ id }}
+{{ end }}
+
+FRESH OPTIONAL FINAL-PASS SEEDS
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+
+Return the final revised work. finalStep must be true.

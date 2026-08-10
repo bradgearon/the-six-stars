@@ -40,9 +40,27 @@ public sealed class MobileBridgeServer : IDisposable
 
         Port = port <= 0 ? 8066 : port;
         _cts = new CancellationTokenSource();
-        _listener = new TcpListener(IPAddress.Any, Port);
+        _listener = CreateDualStackListener(Port);
         _listener.Start(backlog: 16);
         _acceptTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
+    }
+
+    private static TcpListener CreateDualStackListener(int port)
+    {
+        try
+        {
+            TcpListener listener = new TcpListener(IPAddress.IPv6Any, port);
+            listener.Server.DualMode = true;
+            return listener;
+        }
+        catch (SocketException)
+        {
+            return new TcpListener(IPAddress.Any, port);
+        }
+        catch (NotSupportedException)
+        {
+            return new TcpListener(IPAddress.Any, port);
+        }
     }
 
     public void Stop()

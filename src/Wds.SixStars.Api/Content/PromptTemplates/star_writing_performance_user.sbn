@@ -1,0 +1,34 @@
+PERFORM BEST AND LATEST WRITINGS
+
+CHARACTER CARD
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Speaking style: {{ data.speakingStyle }}
+Performance direction: {{ data.voiceDirection }}
+
+LATEST PENDING CANDIDATE WINDOW
+There are {{ data.totalPendingCount }} untold shelf entries in total. To keep this request small and reliable, choose only from the {{ data.candidateCount }} newest candidates below.
+
+The vector uses this fixed category order:
+{{ data.vectorOrder }}
+{{ for item in data.persistedWritings }}
+ID: {{ item.id }}
+Generated: {{ item.generatedAt }}
+Persisted: {{ item.persistedAt }}
+Told count: {{ item.toldCount }}
+Words: {{ item.words }}
+Emotional vector: {{ item.emotionalVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+ELIGIBLE IDS
+{{ for id in data.pendingIds }}
+- {{ id }}
+{{ end }}
+
+Choose the required pending writings and produce the one-to-one spokenText array. Return only JSON.

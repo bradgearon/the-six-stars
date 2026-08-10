@@ -958,5 +958,83 @@
     "High mercy and zeal make her protective, but pride can make her too certain when innocents seem harmed.",
     "Patience, humility, and insight are the traits that help her delay judgment and investigate.",
     "Benaveil pressure should mostly sharpen pride, zeal, justice, and wrath."
-  ]
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "radiant-resonance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Quotable",
+          "minimumScore": 70
+        },
+        {
+          "category": "EmotionallyResonant",
+          "minimumScore": 75
+        }
+      ]
+    },
+    {
+      "id": "gentle-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
+    }
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 60
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

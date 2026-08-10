@@ -70,6 +70,383 @@ namespace Wds.SixStars.Api.Ai
         }
 
 
+        public static object CreateStarWritingWordPairResponseFormat()
+        {
+            Dictionary<string, object> twoWords = new Dictionary<string, object>
+            {
+                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                { "items", StringProperty(80) }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "wordPairs" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "wordPairs", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", twoWords }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_word_pairs", schema);
+        }
+
+        public static object CreateStarWritingObjectActionResponseFormat()
+        {
+            Dictionary<string, object> objectAction = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "object", "normalActions" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "object", StringProperty(80) },
+                        { "normalActions", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 3 },
+                                { "items", StringProperty(80) }
+                            }
+                        }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "objects" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "objects", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", objectAction }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_object_actions", schema);
+        }
+
+        public static object CreateStarWritingDisplacementCompositionResponseFormat()
+        {
+            Dictionary<string, object> item = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "noun", "normalVerb", "displacedVerb", "writing" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "noun", StringProperty(80) },
+                        { "normalVerb", StringProperty(80) },
+                        { "displacedVerb", StringProperty(80) },
+                        { "writing", StringProperty(1400) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "items" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "items", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", item }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_verb_noun_displacement", schema);
+        }
+
+        public static object CreateStarWritingCompositionResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "jokes" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "jokes", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", StringProperty(1400) }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_composition", schema);
+        }
+
+        public static object CreateStarWritingGenerationResponseFormat()
+        {
+            Dictionary<string, object> twoWords = new Dictionary<string, object>
+            {
+                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                { "items", StringProperty(80) }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "jokes", "usedWords" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "jokes", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", StringProperty(1400) }
+                            }
+                        },
+                        { "usedWords", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", twoWords }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_generation", schema);
+        }
+
+        public static object CreateStarWritingImprovementResponseFormat()
+        {
+            Dictionary<string, object> replacement = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "id", "oldScore", "newWordSet", "newWriting", "newScore" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "id", StringProperty(80) },
+                        { "oldScore", NumberProperty(0, 100) },
+                        { "newWordSet", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
+                                { "items", StringProperty(80) }
+                            }
+                        },
+                        { "newWriting", StringProperty(1400) },
+                        { "newScore", NumberProperty(0, 100) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "array" },
+                { "minItems", 0 },
+                { "maxItems", 5 },
+                { "items", replacement }
+            };
+            return WrapSchema("six_stars_writing_improvement_pass", schema);
+        }
+
+        public static object CreateStarWritingStoryTermContributionResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "subjects", "verbs" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "subjects", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
+                                { "items", StringProperty(80) }
+                            }
+                        },
+                        { "verbs", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
+                                { "items", StringProperty(80) }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_term_contribution", schema);
+        }
+
+        public static object CreateStarWritingStoryOutlineResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "title", "premise", "beats" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "title", StringProperty(180) },
+                        { "premise", StringProperty(1800) },
+                        { "beats", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
+                                { "items", StringProperty(1200) }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_outline", schema);
+        }
+
+        public static object CreateStarWritingStoryBuildResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "title", "revisedBeats", "story", "addedLayers", "completionDecision", "completionReason" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "title", StringProperty(180) },
+                        { "revisedBeats", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
+                                { "items", StringProperty(1200) }
+                            }
+                        },
+                        { "story", StringProperty(24000) },
+                        { "addedLayers", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 8 },
+                                { "items", StringProperty(500) }
+                            }
+                        },
+                        { "completionDecision", new Dictionary<string, object>
+                            {
+                                { "type", "string" },
+                                { "enum", new[] { "continue", "request-finish", "approve-pending-finish", "deny-pending-finish" } }
+                            }
+                        },
+                        { "completionReason", StringProperty(1000) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_build_phase", schema);
+        }
+
+        public static object CreateStarWritingStoryFinalResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "title", "story", "finalStep" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "title", StringProperty(180) },
+                        { "story", StringProperty(24000) },
+                        { "finalStep", new Dictionary<string, object> { { "type", "boolean" } } }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_final", schema);
+        }
+
+        public static object CreateStarWritingStoryReviewResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "0" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "0", StringProperty(512) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_review", schema);
+        }
+
+        public static object CreateStarWritingReviewResponseFormat()
+        {
+            Dictionary<string, object> properties = new Dictionary<string, object>();
+            for (int i = 0; i < 5; i++)
+            {
+                // One compact score-only vector string per writing minimizes completion tokens.
+                // Each value contains exactly 27 semicolon-delimited scores.
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
+            }
+
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "0", "1", "2", "3", "4" } },
+                { "properties", properties }
+            };
+            return WrapSchema("six_stars_writing_review", schema);
+        }
+
+        public static object CreateStarXPostSelectionResponseFormat()
+        {
+            Dictionary<string, object> post = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "writingId", "text" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "writingId", StringProperty(160) },
+                        { "text", StringProperty(280) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "starId", "posts" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "posts", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 }, { "items", post }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_x_post_selection", schema);
+        }
+
+        public static object CreateStarWritingPerformanceResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "selectedWritingIds", "spokenText" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "selectedWritingIds", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 5 }, { "items", StringProperty(120) }
+                            }
+                        },
+                        { "spokenText", SpokenTextArray(5, 1800) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_performance", schema);
+        }
+
         public static object CreateDailyStarStateResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

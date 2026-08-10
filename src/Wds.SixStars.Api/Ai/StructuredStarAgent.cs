@@ -12,13 +12,19 @@ using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.SpeechIntents;
+using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.XPosting;
 
 namespace Wds.SixStars.Api.Ai
 {
-    public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent
+    public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
+        private const int WritingPerformanceCandidateLimit = 12;
+        private const int WritingPerformanceTextLimit = 600;
+
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
+        private readonly PromptTemplateRenderer _templates;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly int _speechMaxTokens;
         private readonly int _initiativeMaxTokens;
@@ -39,6 +45,7 @@ namespace Wds.SixStars.Api.Ai
         {
             _client = client;
             _promptBuilder = new StarPromptBuilder(mainInstructions, promptOptions);
+            _templates = PromptTemplateRenderer.CreateDefault();
             _speechMaxTokens = ResolveSpeechMaxTokens(speechMaxTokens);
             _initiativeMaxTokens = ResolveInitiativeMaxTokens();
             _storyPlanMaxTokens = ResolveStoryPlanMaxTokens();
@@ -56,6 +63,1559 @@ namespace Wds.SixStars.Api.Ai
             _jsonOptions.Converters.Add(new FlexibleListJsonConverterFactory());
         }
 
+
+        public async Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<string> seedWords,
+            string writingMethod,
+            CancellationToken cancellationToken)
+        {
+            writingMethod = StarWritingMethods.Normalize(writingMethod);
+            if (string.Equals(writingMethod, StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase))
+            {
+                return await GenerateVerbNounDisplacementAsync(profile, state, seedWords, cancellationToken).ConfigureAwait(false);
+            }
+
+            string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 120))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+
+            object wordPairData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    8,
+                    600),
+                allUsedWordsText,
+                seedWords = NormalizeSeedWords(seedWords),
+                recentGeneratedWordSets = (state.RecentGeneratedWordSets ?? new List<StarWritingGeneratedWordSet>())
+                    .Where(x => x != null)
+                    .OrderByDescending(x => x.GeneratedAt)
+                    .Take(10)
+                    .Select((set, index) => new
+                    {
+                        index = index + 1,
+                        generatedAt = set.GeneratedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture),
+                        pairs = (set.WordPairs ?? new List<List<string>>())
+                            .Where(pair => pair != null && pair.Count >= 2)
+                            .Take(5)
+                            .Select(pair => new
+                            {
+                                first = PromptText(pair[0], 80),
+                                second = PromptText(pair[1], 80)
+                            })
+                            .ToList()
+                    })
+                    .ToList(),
+                topUsedWords = (state.GeneratedWordUsageCounts ?? new Dictionary<string, int>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Value > 0)
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(10)
+                    .Select(x => new
+                    {
+                        word = PromptText(x.Key, 80),
+                        count = x.Value
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> wordPairMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_word_pairs_system.sbn", wordPairData)),
+                new ChatMessage("user", _templates.Render("star_writing_word_pairs_user.sbn", wordPairData))
+            };
+
+            string wordPairJson = await _client.CompleteJsonAsync(
+                wordPairMessages,
+                StarResponseJsonSchema.CreateStarWritingWordPairResponseFormat(),
+                0,
+                "star-writing-word-pairs",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingWordPairResult? wordPairResult = JsonSerializer.Deserialize<StarWritingWordPairResult>(ExtractJson(wordPairJson), _jsonOptions);
+            if (wordPairResult == null) throw new InvalidOperationException("Writing word-pair selection returned empty JSON.");
+            wordPairResult.StarId = string.IsNullOrWhiteSpace(wordPairResult.StarId) ? profile.StarId : wordPairResult.StarId;
+            wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
+            wordPairResult.RawModelJson = wordPairJson;
+
+            object compositionData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                backstorySummary = PromptText(profile.BackstorySummary, 1400),
+                completeBackgroundStory = PromptText(profile.CompleteBackgroundStory, 2200),
+                voiceArchetype = PromptText(profile.VoiceArchetype, 700),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                characterAttributeNotes = PromptList(profile.CharacterAttributeNotes, 8, 700),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                storytellingRules = PromptList(profile.StorytellingRules, 8, 700),
+                quotes = PromptList(profile.Quotes, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                recentWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
+                    .Where(x => x != null
+                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.PersistedAt)
+                    .ThenByDescending(x => x.GeneratedAt)
+                    .Take(10)
+                    .Select(x => new
+                    {
+                        generatedAt = x.GeneratedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture),
+                        words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                        writing = PromptText(x.Writing, 1200)
+                    })
+                    .ToList(),
+                wordPairs = wordPairResult.WordPairs
+                    .Select((pair, index) => new
+                    {
+                        index = index + 1,
+                        first = PromptText(pair[0], 80),
+                        second = PromptText(pair[1], 80)
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> compositionMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_generate_system.sbn", compositionData)),
+                new ChatMessage("user", _templates.Render("star_writing_generate_user.sbn", compositionData))
+            };
+
+            string compositionJson = await _client.CompleteJsonAsync(
+                compositionMessages,
+                StarResponseJsonSchema.CreateStarWritingCompositionResponseFormat(),
+                0,
+                "star-writing-compose",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(compositionJson), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing composition returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.WritingMethod = StarWritingMethods.SemanticCollision;
+            result.UsedWords = wordPairResult.WordPairs.Select(pair => pair.ToList()).ToList();
+            result.SeedWords = NormalizeSeedWords(seedWords);
+            result.RawModelJson = "--- SEMANTIC COLLISION WORD PAIR SELECTION ---" + Environment.NewLine
+                + wordPairJson + Environment.NewLine
+                + "--- SEMANTIC COLLISION COMPOSITION ---" + Environment.NewLine
+                + compositionJson;
+            return result;
+        }
+
+        private async Task<StarWritingGenerationResult> GenerateVerbNounDisplacementAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<string> seedWords,
+            CancellationToken cancellationToken)
+        {
+            List<string> normalizedSeedNouns = NormalizeSeedWords(seedWords);
+            object objectActionData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    8,
+                    600),
+                seedNouns = normalizedSeedNouns,
+                recentGeneratedNouns = (state.RecentGeneratedNouns ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 80))
+                    .Take(50)
+                    .ToList(),
+                topUsedNouns = (state.GeneratedNounUsageCounts ?? new Dictionary<string, int>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Value > 0)
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(100)
+                    .Select(x => new
+                    {
+                        noun = PromptText(x.Key, 80),
+                        count = x.Value
+                    })
+                    .ToList()
+            };
+
+            List<ChatMessage> objectActionMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_displacement_objects_system.sbn", objectActionData)),
+                new ChatMessage("user", _templates.Render("star_writing_displacement_objects_user.sbn", objectActionData))
+            };
+
+            string objectActionJson = string.Empty;
+            StarWritingObjectActionResult? objectActionResult = null;
+            Exception? objectActionError = null;
+            for (int attempt = 0; attempt < 2 && objectActionResult == null; attempt++)
+            {
+                List<ChatMessage> attemptMessages = objectActionMessages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage(
+                        "user",
+                        "Regenerate the entire JSON set. The previous response violated the uniqueness contract. Use five distinct nouns and fifteen globally distinct ordinary-action verbs/verb phrases; no normal action may repeat anywhere in the five objects."));
+                }
+
+                objectActionJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingObjectActionResponseFormat(),
+                    0,
+                    "star-writing-displacement-objects" + (attempt == 0 ? string.Empty : "-retry"),
+                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    StarWritingObjectActionResult? parsed = JsonSerializer.Deserialize<StarWritingObjectActionResult>(ExtractJson(objectActionJson), _jsonOptions);
+                    if (parsed == null) throw new InvalidOperationException("Verb/noun displacement object selection returned empty JSON.");
+                    parsed.StarId = string.IsNullOrWhiteSpace(parsed.StarId) ? profile.StarId : parsed.StarId;
+                    parsed.Objects = NormalizeObjectActionItems(parsed.Objects);
+                    parsed.RawModelJson = objectActionJson;
+                    objectActionResult = parsed;
+                }
+                catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+                {
+                    objectActionError = ex;
+                }
+            }
+            if (objectActionResult == null)
+            {
+                throw new InvalidOperationException(
+                    "Verb/noun displacement object selection could not produce five nouns with fifteen unique ordinary actions after one retry.",
+                    objectActionError);
+            }
+
+            object compositionData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                backstorySummary = PromptText(profile.BackstorySummary, 1400),
+                completeBackgroundStory = PromptText(profile.CompleteBackgroundStory, 2200),
+                voiceArchetype = PromptText(profile.VoiceArchetype, 700),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                characterAttributeNotes = PromptList(profile.CharacterAttributeNotes, 8, 700),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                storytellingRules = PromptList(profile.StorytellingRules, 8, 700),
+                quotes = PromptList(profile.Quotes, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                recentWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
+                    .Where(x => x != null
+                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.PersistedAt)
+                    .ThenByDescending(x => x.GeneratedAt)
+                    .Take(10)
+                    .Select(x => new
+                    {
+                        generatedAt = x.GeneratedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture),
+                        words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                        writing = PromptText(x.Writing, 1200)
+                    })
+                    .ToList(),
+                objects = objectActionResult.Objects
+                    .Select((item, index) => new
+                    {
+                        index = index + 1,
+                        @object = PromptText(item.Object, 80),
+                        normalActions = (item.NormalActions ?? new List<string>()).Select(x => PromptText(x, 80)).ToList()
+                    })
+                    .ToList()
+            };
+
+            List<ChatMessage> compositionMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_displacement_generate_system.sbn", compositionData)),
+                new ChatMessage("user", _templates.Render("star_writing_displacement_generate_user.sbn", compositionData))
+            };
+
+            string compositionJson = string.Empty;
+            StarWritingDisplacementCompositionResult? composition = null;
+            Exception? compositionError = null;
+            for (int attempt = 0; attempt < 2 && composition == null; attempt++)
+            {
+                List<ChatMessage> attemptMessages = compositionMessages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage(
+                        "user",
+                        "Regenerate all five items. The previous response reused a verb. Every displacedVerb must be unique across the five writings and must not duplicate any of the fifteen supplied normal-action verbs."));
+                }
+
+                compositionJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingDisplacementCompositionResponseFormat(),
+                    0,
+                    "star-writing-displacement-compose" + (attempt == 0 ? string.Empty : "-retry"),
+                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    StarWritingDisplacementCompositionResult? parsed = JsonSerializer.Deserialize<StarWritingDisplacementCompositionResult>(ExtractJson(compositionJson), _jsonOptions);
+                    if (parsed == null) throw new InvalidOperationException("Verb/noun displacement composition returned empty JSON.");
+                    parsed.StarId = string.IsNullOrWhiteSpace(parsed.StarId) ? profile.StarId : parsed.StarId;
+                    parsed.Items = NormalizeDisplacementCompositionItems(parsed.Items, objectActionResult.Objects);
+                    parsed.RawModelJson = compositionJson;
+                    composition = parsed;
+                }
+                catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException)
+                {
+                    compositionError = ex;
+                }
+            }
+            if (composition == null)
+            {
+                throw new InvalidOperationException(
+                    "Verb/noun displacement composition could not produce five unique displaced verbs after one retry.",
+                    compositionError);
+            }
+
+            return new StarWritingGenerationResult
+            {
+                StarId = profile.StarId,
+                WritingMethod = StarWritingMethods.VerbNounDisplacement,
+                Jokes = composition.Items.Select(x => x.Writing).ToList(),
+                UsedWords = composition.Items.Select(x => new List<string> { x.Noun, x.DisplacedVerb }).ToList(),
+                SeedWords = normalizedSeedNouns,
+                RawModelJson = "--- VERB/NOUN DISPLACEMENT OBJECTS ---" + Environment.NewLine
+                    + objectActionJson + Environment.NewLine
+                    + "--- VERB/NOUN DISPLACEMENT COMPOSITION ---" + Environment.NewLine
+                    + compositionJson
+            };
+        }
+
+        public async Task<StarWritingImprovementResult> ImproveWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            StarWritingGenerationResult generation,
+            int passNumber,
+            int totalPasses,
+            CancellationToken cancellationToken)
+        {
+            string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 120))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                allUsedWordsText,
+                seedWords = NormalizeSeedWords(generation.SeedWords),
+                passNumber = Math.Max(2, passNumber),
+                totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
+                candidates = (generation.Items ?? new List<StarWritingCandidate>())
+                    .Take(5)
+                    .Select(item => new
+                    {
+                        id = PromptText(item.Id, 80),
+                        words = string.Join(" + ", (item.WordsUsed ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(2)),
+                        writing = PromptText(item.Writing, 1600)
+                    })
+                    .ToList()
+            };
+
+            bool displacementMethod = string.Equals(
+                StarWritingMethods.Normalize(generation.WritingMethod),
+                StarWritingMethods.VerbNounDisplacement,
+                StringComparison.OrdinalIgnoreCase);
+            string improveSystemTemplate = displacementMethod
+                ? "star_writing_displacement_improve_system.sbn"
+                : "star_writing_improve_system.sbn";
+            string improveUserTemplate = displacementMethod
+                ? "star_writing_displacement_improve_user.sbn"
+                : "star_writing_improve_user.sbn";
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render(improveSystemTemplate, data)),
+                new ChatMessage("user", _templates.Render(improveUserTemplate, data))
+            };
+
+            string improvementRequestName = (displacementMethod
+                ? "star-writing-displacement-improve-pass-"
+                : "star-writing-improve-pass-")
+                + passNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingImprovementResponseFormat(),
+                0,
+                improvementRequestName,
+                cancellationToken).ConfigureAwait(false);
+
+            List<StarWritingImprovementReplacement>? replacements;
+            try
+            {
+                replacements = JsonSerializer.Deserialize<List<StarWritingImprovementReplacement>>(ExtractJsonArray(json), _jsonOptions);
+            }
+            catch (JsonException)
+            {
+                // A malformed optional improvement pass must not discard the valid working set.
+                // Treat it as no replacements and allow later passes/final scoring to continue.
+                replacements = new List<StarWritingImprovementReplacement>();
+            }
+
+            return new StarWritingImprovementResult
+            {
+                Replacements = replacements ?? new List<StarWritingImprovementReplacement>(),
+                RawModelJson = json
+            };
+        }
+
+        public async Task<StarWritingReviewResult> RateWritingCandidatesAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            StarWritingGenerationResult generation,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                candidates = (generation.Items ?? new List<StarWritingCandidate>())
+                    .Take(5)
+                    .Select((item, index) => new
+                    {
+                        index,
+                        words = string.Join(" + ", (item.WordsUsed ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(2)),
+                        writing = PromptText(item.Writing, 1600)
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_review_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_review_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
+                0,
+                "star-writing-rate",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
+
+            if (!HasCompleteWritingReview(result))
+            {
+                IReadOnlyList<ChatMessage> repairMessages = new List<ChatMessage>
+                {
+                    new ChatMessage("system", _templates.Render("star_writing_review_repair_system.sbn", data)),
+                    new ChatMessage("user", _templates.Render("star_writing_review_repair_user.sbn", data))
+                };
+                string repairJson = await _client.CompleteJsonAsync(
+                    repairMessages,
+                    StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
+                    0,
+                    "star-writing-rate-repair",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
+                repaired.RawModelJson = json + Environment.NewLine + "--- RATING FORMAT REPAIR ---" + Environment.NewLine + repairJson;
+                result = repaired;
+            }
+
+            if (!HasCompleteWritingReview(result))
+            {
+                throw new InvalidOperationException(
+                    "Writing review did not return five usable 27-entry score vectors. " +
+                    "No new writing batch was saved; try the generation again.");
+            }
+
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            if (string.IsNullOrWhiteSpace(result.RawModelJson)) result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(
+            StarProfile profile,
+            StarWritingNotesState viewpointState,
+            IReadOnlyList<string> nounSeeds,
+            IReadOnlyList<string> verbSeeds,
+            IReadOnlyList<string> subjectsSoFar,
+            IReadOnlyList<string> verbsSoFar,
+            int phaseNumber,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>()).Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    8,
+                    600),
+                phaseNumber = Math.Max(1, phaseNumber),
+                nounSeeds = NormalizeSeedWords(nounSeeds),
+                verbSeeds = NormalizeSeedWords(verbSeeds),
+                subjectsSoFar = NormalizeStoryTerms(subjectsSoFar, 40),
+                verbsSoFar = NormalizeStoryTerms(verbsSoFar, 40),
+                recentStoryNouns = NormalizeStoryTerms(viewpointState.RecentStoryNouns, 50),
+                recentStoryVerbs = NormalizeStoryTerms(viewpointState.RecentStoryVerbs, 50),
+                topStoryNouns = BuildTopStoryTermCounts(viewpointState.StoryNounUsageCounts),
+                topStoryVerbs = BuildTopStoryTermCounts(viewpointState.StoryVerbUsageCounts)
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_story_terms_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_story_terms_user.sbn", data))
+            };
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingStoryTermContributionResponseFormat(),
+                0,
+                "star-writing-story-terms-" + PromptText(profile.StarId, 40).ToLowerInvariant(),
+                cancellationToken).ConfigureAwait(false);
+            StarWritingStoryTermContributionResult? result = JsonSerializer.Deserialize<StarWritingStoryTermContributionResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Constellation Forge term contribution returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId.Trim();
+            HashSet<string> usedSubjects = new HashSet<string>(subjectsSoFar ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            usedSubjects.UnionWith(viewpointState.RecentStoryNouns ?? new List<string>());
+            HashSet<string> usedVerbs = new HashSet<string>(verbsSoFar ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            usedVerbs.UnionWith(viewpointState.RecentStoryVerbs ?? new List<string>());
+            result.Subjects = NormalizeStoryTerms(result.Subjects, 5).Where(x => !usedSubjects.Contains(x)).Take(5).ToList();
+            result.Verbs = NormalizeStoryTerms(result.Verbs, 5).Where(x => !usedVerbs.Contains(x)).Take(5).ToList();
+            if (result.Subjects.Count < 3 || result.Verbs.Count < 3)
+            {
+                throw new InvalidOperationException("Constellation Forge term contribution did not contain at least three fresh subjects and verbs.");
+            }
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(
+            StarProfile viewpointProfile,
+            StarWritingNotesState state,
+            IReadOnlyList<string> subjects,
+            IReadOnlyList<string> verbs,
+            IReadOnlyList<string> seedWords,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                starId = PromptText(viewpointProfile.StarId, 80),
+                displayName = PromptText(viewpointProfile.DisplayName, 120),
+                element = PromptText(viewpointProfile.Element, 80),
+                domain = PromptText(viewpointProfile.Domain, 120),
+                coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
+                personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
+                deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
+                completeBackgroundStory = PromptText(viewpointProfile.CompleteBackgroundStory, 2200),
+                speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
+                characterAttributes = BuildCharacterAttributeSummary(viewpointProfile),
+                behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
+                storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
+                subjects = NormalizeStoryTerms(subjects, 40),
+                verbs = NormalizeStoryTerms(verbs, 40),
+                seedWords = NormalizeSeedWords(seedWords)
+            };
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_story_outline_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_story_outline_user.sbn", data))
+            };
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingStoryOutlineResponseFormat(),
+                0,
+                "star-writing-story-outline",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingStoryOutlineResult? result = JsonSerializer.Deserialize<StarWritingStoryOutlineResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Constellation Forge outline returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
+            result.Title = PromptText(result.Title, 180);
+            result.Premise = PromptText(result.Premise, 1800);
+            result.Beats = (result.Beats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
+            if (string.IsNullOrWhiteSpace(result.Title) || string.IsNullOrWhiteSpace(result.Premise) || result.Beats.Count < 6)
+            {
+                throw new InvalidOperationException("Constellation Forge outline was incomplete.");
+            }
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(
+            StarProfile contributorProfile,
+            StarProfile viewpointProfile,
+            StarWritingNotesState viewpointState,
+            StarWritingStoryOutlineResult outline,
+            string currentStory,
+            IReadOnlyList<string> subjects,
+            IReadOnlyList<string> verbs,
+            IReadOnlyList<string> seedWords,
+            IReadOnlyList<string> priorContributorStarIds,
+            int phaseNumber,
+            bool pendingFinish,
+            string finishRequestedByStarId,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                starId = PromptText(contributorProfile.StarId, 80),
+                displayName = PromptText(contributorProfile.DisplayName, 120),
+                element = PromptText(contributorProfile.Element, 80),
+                domain = PromptText(contributorProfile.Domain, 120),
+                coreQuote = PromptText(contributorProfile.CoreQuote, 500),
+                personalityShort = PromptText(contributorProfile.PersonalityShort, 900),
+                deepPersonality = PromptText(contributorProfile.DeepPersonality, 1800),
+                backstorySummary = PromptText(contributorProfile.BackstorySummary, 1400),
+                speakingStyle = PromptText(contributorProfile.SpeakingStyle, 1200),
+                characterAttributes = BuildCharacterAttributeSummary(contributorProfile),
+                behaviors = PromptWritingBehaviorList(contributorProfile.Behaviors, 10, 700),
+                storytellingRules = PromptList(contributorProfile.StorytellingRules, 10, 700),
+                relevantSecrets = PromptList(
+                    (contributorProfile.StarSecrets ?? new List<string>()).Concat(contributorProfile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                viewpointDisplayName = PromptText(viewpointProfile.DisplayName, 120),
+                viewpointElement = PromptText(viewpointProfile.Element, 80),
+                viewpointDomain = PromptText(viewpointProfile.Domain, 120),
+                viewpointCoreQuote = PromptText(viewpointProfile.CoreQuote, 500),
+                viewpointPersonality = PromptText(viewpointProfile.DeepPersonality, 1600),
+                title = PromptText(outline.Title, 180),
+                premise = PromptText(outline.Premise, 1800),
+                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
+                currentStory = PromptText(currentStory, 22000),
+                subjects = NormalizeStoryTerms(subjects, 40),
+                verbs = NormalizeStoryTerms(verbs, 40),
+                seedWords = NormalizeSeedWords(seedWords),
+                priorContributorStarIds = (priorContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                phaseNumber = Math.Max(1, phaseNumber),
+                pendingFinish,
+                finishRequestedByStarId = PromptText(finishRequestedByStarId, 80)
+            };
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_story_build_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_story_build_user.sbn", data))
+            };
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingStoryBuildResponseFormat(),
+                0,
+                "star-writing-story-build-" + phaseNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                cancellationToken).ConfigureAwait(false);
+            StarWritingStoryBuildResult? result = JsonSerializer.Deserialize<StarWritingStoryBuildResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? contributorProfile.StarId : result.StarId.Trim();
+            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
+            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
+            if (result.RevisedBeats.Count < 6) result.RevisedBeats = (outline.Beats ?? new List<string>()).Take(14).ToList();
+            result.Story = (result.Story ?? string.Empty).Trim();
+            result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 500)).Take(8).ToList();
+            result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
+            result.CompletionReason = PromptText(result.CompletionReason, 1000);
+            if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft.");
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingStoryFinalResult> FinalizeStoryAsync(
+            StarProfile viewpointProfile,
+            StarWritingNotesState state,
+            StarWritingStoryOutlineResult outline,
+            string currentStory,
+            IReadOnlyList<string> subjects,
+            IReadOnlyList<string> verbs,
+            IReadOnlyList<string> contributorStarIds,
+            IReadOnlyList<string> seedWords,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                starId = PromptText(viewpointProfile.StarId, 80),
+                displayName = PromptText(viewpointProfile.DisplayName, 120),
+                element = PromptText(viewpointProfile.Element, 80),
+                domain = PromptText(viewpointProfile.Domain, 120),
+                coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
+                personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
+                deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
+                speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
+                characterAttributes = BuildCharacterAttributeSummary(viewpointProfile),
+                behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 12, 700),
+                storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
+                title = PromptText(outline.Title, 180),
+                premise = PromptText(outline.Premise, 1800),
+                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
+                currentStory = PromptText(currentStory, 22000),
+                subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
+                verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
+                contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                seedWords = NormalizeSeedWords(seedWords)
+            };
+            List<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_story_final_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_story_final_user.sbn", data))
+            };
+            string lastJson = string.Empty;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                List<ChatMessage> attemptMessages = messages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage("user", "Return the final revised story now. The finalStep field must be true. Do not return planning or another intermediate draft."));
+                }
+                lastJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingStoryFinalResponseFormat(),
+                    0,
+                    attempt == 0 ? "star-writing-story-final" : "star-writing-story-final-retry",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(lastJson), _jsonOptions);
+                if (result == null) continue;
+                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
+                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
+                result.Story = (result.Story ?? string.Empty).Trim();
+                result.RawModelJson = lastJson;
+                if (result.FinalStep && !string.IsNullOrWhiteSpace(result.Story)) return result;
+            }
+            throw new InvalidOperationException("Constellation Forge final viewpoint revision did not return finalStep=true with a finished story.");
+        }
+
+        public async Task<StarWritingRating> RateStoryAsync(
+            StarProfile viewpointProfile,
+            StarWritingNotesState state,
+            string title,
+            string story,
+            IReadOnlyList<string> contributorStarIds,
+            CancellationToken cancellationToken)
+        {
+            object data = new
+            {
+                displayName = PromptText(viewpointProfile.DisplayName, 120),
+                element = PromptText(viewpointProfile.Element, 80),
+                domain = PromptText(viewpointProfile.Domain, 120),
+                coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
+                personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
+                deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
+                behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
+                contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                title = PromptText(title, 180),
+                story = PromptText(story, 24000)
+            };
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_story_review_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_story_review_user.sbn", data))
+            };
+            string lastJson = string.Empty;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                List<ChatMessage> attemptMessages = messages.ToList();
+                if (attempt > 0)
+                {
+                    attemptMessages.Add(new ChatMessage(
+                        "user",
+                        "FORMAT REPAIR: Return only one JSON object with property \"0\". Its value must be exactly 27 scores from 0 through 100 separated by semicolons, in the supplied category order."));
+                }
+
+                lastJson = await _client.CompleteJsonAsync(
+                    attemptMessages,
+                    StarResponseJsonSchema.CreateStarWritingStoryReviewResponseFormat(),
+                    0,
+                    attempt == 0 ? "star-writing-story-rate" : "star-writing-story-rate-repair",
+                    cancellationToken).ConfigureAwait(false);
+                string vector = string.Empty;
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(ExtractJson(lastJson));
+                    if (TryGetPropertyIgnoreCase(document.RootElement, "0", out JsonElement value))
+                    {
+                        vector = ReadWritingVector(value);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+
+                if (StarWritingEmotionVector.TryNormalizeUsable(vector, out string normalized, out _))
+                {
+                    return new StarWritingRating { Index = 0, EmotionalVector = normalized };
+                }
+            }
+
+            throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry score vector after a format-repair retry.");
+        }
+
+        private static List<string> NormalizeStoryTerms(IEnumerable<string>? terms, int limit)
+        {
+            return (terms ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 80))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(1, limit))
+                .ToList();
+        }
+
+        private static List<object> BuildTopStoryTermCounts(IDictionary<string, int>? counts)
+        {
+            return (counts ?? new Dictionary<string, int>())
+                .Where(x => !string.IsNullOrWhiteSpace(x.Key) && x.Value > 0)
+                .OrderByDescending(x => x.Value)
+                .ThenBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                .Take(100)
+                .Select(x => (object)new { word = PromptText(x.Key, 80), count = x.Value })
+                .ToList();
+        }
+
+        private StarWritingReviewResult ParseWritingReviewResult(string rawContent, string fallbackStarId)
+        {
+            StarWritingReviewResult result = new StarWritingReviewResult
+            {
+                StarId = fallbackStarId,
+                RawModelJson = rawContent
+            };
+            string json = ExtractJson(rawContent);
+            if (string.IsNullOrWhiteSpace(json)) return result;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryGetPropertyIgnoreCase(root, "starId", out JsonElement starIdElement)
+                        && starIdElement.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(starIdElement.GetString()))
+                    {
+                        result.StarId = starIdElement.GetString()!.Trim();
+                    }
+
+                    if (TryGetPropertyIgnoreCase(root, "ratings", out JsonElement ratingsElement))
+                    {
+                        ReadWritingRatings(ratingsElement, result.Ratings);
+                    }
+
+                    // Compact preferred shape: {"0":"vector",...,"4":"vector"}.
+                    if (result.Ratings.Count == 0)
+                    {
+                        ReadNumericWritingRatingProperties(root, result.Ratings);
+                    }
+                }
+                else if (root.ValueKind == JsonValueKind.Array)
+                {
+                    ReadWritingRatings(root, result.Ratings);
+                }
+            }
+            catch (JsonException)
+            {
+                // The caller will make one strict repair request. Do not silently create zero vectors.
+            }
+
+            return result;
+        }
+
+        private static void ReadWritingRatings(JsonElement element, List<StarWritingRating> ratings)
+        {
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                int fallbackIndex = 0;
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    AddWritingRating(item, fallbackIndex++, ratings);
+                }
+                return;
+            }
+
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                ReadNumericWritingRatingProperties(element, ratings);
+            }
+        }
+
+        private static void ReadNumericWritingRatingProperties(JsonElement element, List<StarWritingRating> ratings)
+        {
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (!int.TryParse(
+                    property.Name,
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out int index)
+                    || index < 0
+                    || index > 4)
+                {
+                    continue;
+                }
+
+                AddWritingRating(property.Value, index, ratings);
+            }
+        }
+
+        private static void AddWritingRating(JsonElement item, int fallbackIndex, List<StarWritingRating> ratings)
+        {
+            int index = fallbackIndex;
+            string vector = ReadWritingVector(item);
+
+            if (item.ValueKind == JsonValueKind.Object)
+            {
+                if (TryGetPropertyIgnoreCase(item, "index", out JsonElement indexElement)
+                    && TryReadJsonInt(indexElement, out int explicitIndex))
+                {
+                    index = explicitIndex;
+                }
+                else if (TryGetPropertyIgnoreCase(item, "statementId", out JsonElement statementIdElement)
+                    && TryReadJsonInt(statementIdElement, out int statementIndex))
+                {
+                    index = statementIndex;
+                }
+                else if (TryGetPropertyIgnoreCase(item, "starId", out JsonElement legacyIndexElement)
+                    && TryReadJsonInt(legacyIndexElement, out int legacyIndex))
+                {
+                    // Older local-model output confused the zero-based writing index with starId.
+                    index = legacyIndex;
+                }
+
+                if (TryGetPropertyIgnoreCase(item, "emotionalVector", out JsonElement vectorElement)
+                    || TryGetPropertyIgnoreCase(item, "vector", out vectorElement)
+                    || TryGetPropertyIgnoreCase(item, "value", out vectorElement))
+                {
+                    vector = ReadWritingVector(vectorElement);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(vector))
+            {
+                ratings.Add(new StarWritingRating
+                {
+                    Index = index,
+                    EmotionalVector = vector.Trim()
+                });
+            }
+        }
+
+        private static string ReadWritingVector(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return CompleteNearExpectedWritingVector(element.GetString() ?? string.Empty);
+            }
+
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                return string.Empty;
+            }
+
+            JsonElement[] entries = element.EnumerateArray().ToArray();
+
+            // Compatibility with numeric-array output. The current score-only shape is 27
+            // numbers. Older revisions used 54 alternating score/confidence numbers; keep
+            // only every score so old model responses remain readable.
+            bool flatNumericVector = entries.Length > 0 && entries.All(x => TryReadJsonDouble(x, out _));
+            if (flatNumericVector)
+            {
+                List<string> scores = new List<string>();
+                if (entries.Length >= 26 && entries.Length <= 28)
+                {
+                    foreach (JsonElement entry in entries)
+                    {
+                        if (!TryReadJsonDouble(entry, out double score)
+                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        {
+                            return string.Empty;
+                        }
+                        scores.Add(normalizedScore);
+                    }
+                }
+                else if (entries.Length >= 52 && entries.Length <= 56 && entries.Length % 2 == 0)
+                {
+                    for (int i = 0; i < entries.Length; i += 2)
+                    {
+                        if (!TryReadJsonDouble(entries[i], out double score)
+                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        {
+                            return string.Empty;
+                        }
+                        scores.Add(normalizedScore);
+                    }
+                }
+                else
+                {
+                    return string.Empty;
+                }
+
+                return CompleteNearExpectedWritingVector(string.Join(";", scores));
+            }
+
+            // Compatibility with arrays of strings and old nested [score, confidence] pairs.
+            List<string> arrayScores = new List<string>();
+            foreach (JsonElement entry in entries)
+            {
+                if (entry.ValueKind == JsonValueKind.String)
+                {
+                    if (!TryNormalizeWritingScore(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
+                    arrayScores.Add(score);
+                    continue;
+                }
+
+                if (entry.ValueKind == JsonValueKind.Array)
+                {
+                    JsonElement[] numbers = entry.EnumerateArray().Take(2).ToArray();
+                    if (numbers.Length >= 1
+                        && TryReadJsonDouble(numbers[0], out double score)
+                        && TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                    {
+                        arrayScores.Add(normalizedScore);
+                        continue;
+                    }
+                }
+
+                return string.Empty;
+            }
+
+            return CompleteNearExpectedWritingVector(string.Join(";", arrayScores));
+        }
+
+        private static string CompleteNearExpectedWritingVector(string raw)
+        {
+            string text = (raw ?? string.Empty).Trim().Trim('"').Trim('[', ']');
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+
+            List<string> scores = new List<string>();
+            string[] separated = text.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (separated.Length == 1)
+            {
+                separated = text.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            }
+
+            if (separated.Length > 1)
+            {
+                foreach (string item in separated)
+                {
+                    if (!TryNormalizeWritingScore(item, out string score)) return string.Empty;
+                    scores.Add(score);
+                }
+            }
+            else
+            {
+                string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+                if (tokens.Length >= 26 && tokens.Length <= 28)
+                {
+                    // Defensive compatibility if a model uses colons between score-only items.
+                    foreach (string token in tokens)
+                    {
+                        if (!TryNormalizeWritingScore(token, out string score)) return string.Empty;
+                        scores.Add(score);
+                    }
+                }
+                else if (tokens.Length >= 52 && tokens.Length <= 56 && tokens.Length % 2 == 0)
+                {
+                    // Legacy compatibility for one colon chain containing alternating
+                    // score/confidence values. Confidence values are discarded.
+                    for (int i = 0; i < tokens.Length; i += 2)
+                    {
+                        if (!TryNormalizeWritingScore(tokens[i], out string score)) return string.Empty;
+                        scores.Add(score);
+                    }
+                }
+                else
+                {
+                    return string.Empty;
+                }
+            }
+
+            // Gemma has omitted only Overall in some responses. Derive it from the core
+            // literary-quality categories rather than issuing a second full review.
+            if (scores.Count == 26)
+            {
+                scores.Add(DeriveOverallWritingScore(scores));
+            }
+            else if (scores.Count > 27)
+            {
+                scores = scores.Take(27).ToList();
+            }
+
+            return scores.Count == 27 ? string.Join(";", scores) : string.Empty;
+        }
+
+        private static bool TryNormalizeWritingScore(string raw, out string normalized)
+        {
+            normalized = string.Empty;
+            string text = (raw ?? string.Empty).Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(text)) return false;
+
+            // Former output used score:confidence. Retain only the score.
+            int colon = text.IndexOf(':');
+            if (colon >= 0) text = text.Substring(0, colon).Trim();
+
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
+            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
+            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        private static string DeriveOverallWritingScore(IReadOnlyList<string> scores)
+        {
+            int[] qualityIndices = { 4, 5, 6, 8, 9, 19, 20, 21, 22, 23, 24, 25 };
+            List<double> values = new List<double>();
+            foreach (int index in qualityIndices)
+            {
+                if (index < 0 || index >= scores.Count) continue;
+                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
+                if (score < 0 || score > 100) continue;
+                values.Add(score);
+            }
+
+            double overall = values.Count == 0 ? 50 : values.Average();
+            return overall.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryReadJsonDouble(JsonElement element, out double value)
+        {
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out value)) return true;
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return double.TryParse(
+                    element.GetString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value);
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryReadJsonInt(JsonElement element, out int value)
+        {
+            if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value)) return true;
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                return int.TryParse(
+                    element.GetString(),
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value);
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string name, out JsonElement value)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+
+            value = default;
+            return false;
+        }
+
+        private static bool HasCompleteWritingReview(StarWritingReviewResult result)
+        {
+            if (result.Ratings == null || result.Ratings.Count < 5) return false;
+            HashSet<StarWritingRating> used = new HashSet<StarWritingRating>();
+            for (int i = 0; i < 5; i++)
+            {
+                StarWritingRating? rating = result.Ratings.FirstOrDefault(x => !used.Contains(x) && x.Index == i)
+                    ?? result.Ratings.FirstOrDefault(x => !used.Contains(x));
+                if (rating == null
+                    || !StarWritingEmotionVector.TryNormalizeUsable(
+                        rating.EmotionalVector,
+                        out _,
+                        out _))
+                {
+                    return false;
+                }
+
+                used.Add(rating);
+            }
+
+            return true;
+        }
+
+        public async Task<StarXPostSelectionResult> PrepareXPostsAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<PersistedStarWriting> unpostedWritings,
+            int requestedCount,
+            CancellationToken cancellationToken)
+        {
+            List<PersistedStarWriting> candidates = (unpostedWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id) && !string.IsNullOrWhiteSpace(x.Writing))
+                .Take(500)
+                .ToList();
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                backstorySummary = PromptText(profile.BackstorySummary, 1600),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 12, 700),
+                totalUnpostedCount = (state.PersistedWritings ?? new List<PersistedStarWriting>()).Count(x => x != null
+                    && !x.PostedAt.HasValue
+                    && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase)),
+                candidateCount = candidates.Count,
+                requestedCount = Math.Max(1, Math.Min(5, requestedCount)),
+                unpostedWritings = candidates.Select(x => new
+                {
+                    id = PromptText(x.Id, 160),
+                    generatedAt = x.GeneratedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                    writing = PromptText(x.Writing, 600)
+                }).ToList()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_x_post_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_x_post_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarXPostSelectionResponseFormat(),
+                0,
+                "star-writing-x-post-select",
+                cancellationToken).ConfigureAwait(false);
+            StarXPostSelectionResult? result = JsonSerializer.Deserialize<StarXPostSelectionResult>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("X post selection returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.Posts ??= new List<StarXPostSelectionItem>();
+            result.RawModelJson = json;
+            return result;
+        }
+
+        public async Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<PersistedStarWriting> pendingWritings,
+            CancellationToken cancellationToken)
+        {
+            // A Star can accumulate hundreds of untold shelf entries while the idle writing loop runs.
+            // Sending the entire shelf to a 16K model makes the performance request fail before it can
+            // return any text or start TTS. Give the model a small newest-first candidate window instead.
+            List<PersistedStarWriting> performanceCandidates = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
+                .Where(x => x != null
+                    && !string.IsNullOrWhiteSpace(x.Id)
+                    && !string.IsNullOrWhiteSpace(x.Writing)
+                    && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.PersistedAt)
+                .ThenByDescending(x => x.GeneratedAt)
+                .Take(WritingPerformanceCandidateLimit)
+                .ToList();
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                totalPendingCount = (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
+                candidateCount = performanceCandidates.Count,
+                pendingIds = performanceCandidates
+                    .Select(x => x.Id.Trim())
+                    .ToList(),
+                persistedWritings = performanceCandidates
+                    .Select(x => new
+                    {
+                        id = PromptText(x.Id, 160),
+                        generatedAt = x.GeneratedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                        persistedAt = x.PersistedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                        toldCount = x.ToldCount,
+                        words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                        emotionalVector = StarWritingEmotionVector.Normalize(x.EmotionalVector, out _),
+                        writing = PromptText(x.Writing, WritingPerformanceTextLimit)
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_performance_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_writing_performance_user.sbn", data))
+            };
+
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingPerformanceResponseFormat(),
+                0,
+                "star-writing-perform",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);
+            if (result == null) throw new InvalidOperationException("Writing performance returned empty JSON.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.RawModelJson = json;
+            return result;
+        }
+
+        private static List<string> NormalizeSeedWords(IEnumerable<string>? seedWords)
+        {
+            return (seedWords ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 80))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Take(100)
+                .ToList();
+        }
+
+        private static List<StarWritingObjectActionItem> NormalizeObjectActionItems(IEnumerable<StarWritingObjectActionItem>? items)
+        {
+            List<StarWritingObjectActionItem> normalized = (items ?? Enumerable.Empty<StarWritingObjectActionItem>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Object))
+                .Select(x => new StarWritingObjectActionItem
+                {
+                    Object = PromptText(x.Object, 80),
+                    NormalActions = (x.NormalActions ?? new List<string>())
+                        .Where(action => !string.IsNullOrWhiteSpace(action))
+                        .Select(action => PromptText(action, 80))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3)
+                        .ToList()
+                })
+                .Take(5)
+                .ToList();
+
+            if (normalized.Count != 5
+                || normalized.Any(x => string.IsNullOrWhiteSpace(x.Object) || x.NormalActions.Count != 3)
+                || normalized.Select(x => x.Object).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 5
+                || normalized.SelectMany(x => x.NormalActions).Select(NormalizeVerbComparisonKey).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 15)
+            {
+                throw new InvalidOperationException("Verb/noun displacement setup must contain exactly five distinct objects with three globally distinct ordinary actions each (15 unique verbs/actions total).");
+            }
+
+            return normalized;
+        }
+
+        private static List<StarWritingDisplacementCompositionItem> NormalizeDisplacementCompositionItems(
+            IEnumerable<StarWritingDisplacementCompositionItem>? items,
+            IReadOnlyList<StarWritingObjectActionItem> sourceObjects)
+        {
+            List<StarWritingDisplacementCompositionItem> raw = (items ?? Enumerable.Empty<StarWritingDisplacementCompositionItem>())
+                .Where(x => x != null)
+                .Take(5)
+                .ToList();
+            if (raw.Count != 5 || sourceObjects == null || sourceObjects.Count != 5)
+            {
+                throw new InvalidOperationException("Verb/noun displacement composition must return exactly five writings.");
+            }
+
+            HashSet<string> ordinaryVerbKeys = new HashSet<string>(
+                sourceObjects.SelectMany(x => x.NormalActions ?? new List<string>()).Select(NormalizeVerbComparisonKey),
+                StringComparer.OrdinalIgnoreCase);
+            HashSet<string> displacedVerbKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            List<StarWritingDisplacementCompositionItem> normalized = new List<StarWritingDisplacementCompositionItem>();
+            for (int i = 0; i < 5; i++)
+            {
+                StarWritingObjectActionItem source = sourceObjects[i];
+                StarWritingDisplacementCompositionItem item = raw[i];
+                string noun = PromptText(item.Noun, 80);
+                string normalVerb = PromptText(item.NormalVerb, 80);
+                string displacedVerb = PromptText(item.DisplacedVerb, 80);
+                string writing = PromptText(item.Writing, 1400);
+
+                if (!string.Equals(noun, source.Object, StringComparison.OrdinalIgnoreCase))
+                {
+                    noun = source.Object;
+                }
+                if (!source.NormalActions.Contains(normalVerb, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalVerb = source.NormalActions[0];
+                }
+                if (string.IsNullOrWhiteSpace(displacedVerb)
+                    || string.Equals(displacedVerb, normalVerb, StringComparison.OrdinalIgnoreCase)
+                    || ordinaryVerbKeys.Contains(NormalizeVerbComparisonKey(displacedVerb))
+                    || !displacedVerbKeys.Add(NormalizeVerbComparisonKey(displacedVerb))
+                    || string.IsNullOrWhiteSpace(writing))
+                {
+                    throw new InvalidOperationException("Verb/noun displacement composition must use five unique displaced verbs, none of which duplicates any ordinary action verb, and complete every writing.");
+                }
+
+                normalized.Add(new StarWritingDisplacementCompositionItem
+                {
+                    Noun = noun,
+                    NormalVerb = normalVerb,
+                    DisplacedVerb = displacedVerb,
+                    Writing = writing
+                });
+            }
+
+            return normalized;
+        }
+
+        private static string NormalizeVerbComparisonKey(string? value)
+        {
+            string text = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (text.StartsWith("to ", StringComparison.Ordinal))
+            {
+                text = text.Substring(3).TrimStart();
+            }
+            string[] tokens = text.Split(new[] { ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0) return string.Empty;
+
+            HashSet<string> auxiliaries = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "is", "are", "was", "were", "be", "being", "been",
+                "can", "could", "may", "might", "will", "would", "shall", "should",
+                "do", "does", "did"
+            };
+            int verbIndex = tokens.Length > 1 && auxiliaries.Contains(tokens[0]) ? 1 : 0;
+            return tokens[verbIndex].Trim('"', '\'', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}');
+        }
+
+        private static List<List<string>> NormalizeWritingWordPairs(IEnumerable<List<string>>? wordPairs)
+        {
+            List<List<string>> normalized = (wordPairs ?? Enumerable.Empty<List<string>>())
+                .Where(pair => pair != null)
+                .Select(pair => pair
+                    .Where(word => !string.IsNullOrWhiteSpace(word))
+                    .Select(word => word.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .ToList())
+                .Take(5)
+                .ToList();
+
+            if (normalized.Count != 5 || normalized.Any(pair => pair.Count != 2))
+            {
+                throw new InvalidOperationException("Writing word-pair selection must contain exactly five pairs of two non-empty words.");
+            }
+
+            return normalized;
+        }
+
+        private static string BuildCharacterAttributeSummary(StarProfile profile)
+        {
+            List<int> values = StarCharacterAttributeSchema.ParseCompactScores(
+                profile.CharacterAttributes,
+                StarCharacterAttributeSchema.AttributeOrder.Length);
+            while (values.Count < StarCharacterAttributeSchema.AttributeOrder.Length) values.Add(0);
+            return string.Join(", ", StarCharacterAttributeSchema.AttributeOrder.Select((name, index) => name + "=" + values[index]));
+        }
+
+        private static List<string> PromptList(IEnumerable<string>? values, int maximumItems, int maximumCharactersPerItem)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, maximumCharactersPerItem))
+                .Where(x => x.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, maximumItems))
+                .ToList();
+        }
+
+        private static List<string> PromptWritingBehaviorList(IEnumerable<string>? values, int maximumItems, int maximumCharactersPerItem)
+        {
+            return PromptList(
+                (values ?? Enumerable.Empty<string>()).Where(x =>
+                    x.IndexOf("romance mode", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("girlfriend", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("relationship mode", StringComparison.OrdinalIgnoreCase) < 0),
+                maximumItems,
+                maximumCharactersPerItem);
+        }
+
+        private static List<string> PromptWordSelectionBehaviorList(IEnumerable<string>? values, int maximumItems, int maximumCharactersPerItem)
+        {
+            return PromptWritingBehaviorList(values, maximumItems, maximumCharactersPerItem)
+                .Where(x => x.IndexOf("joke", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("poem", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("poet", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("writing", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("story", StringComparison.OrdinalIgnoreCase) < 0
+                    && x.IndexOf("aphorism", StringComparison.OrdinalIgnoreCase) < 0)
+                .ToList();
+        }
+
+        private static string PromptText(string? value, int maximumCharacters)
+        {
+            string text = (value ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+            if (maximumCharacters <= 0 || text.Length <= maximumCharacters) return text;
+            return text.Substring(0, maximumCharacters).TrimEnd() + "…";
+        }
 
         public async Task<InformationNeedSelectionResult> AnalyzeInformationNeedAsync(
             StarProfile profile,
@@ -1504,6 +3064,53 @@ namespace Wds.SixStars.Api.Ai
             if (value < 0) return 0;
             if (value > 100) return 100;
             return value;
+        }
+
+        private static string ExtractJsonArray(string rawContent)
+        {
+            if (string.IsNullOrWhiteSpace(rawContent)) return "[]";
+            string text = rawContent.Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewLine = text.IndexOf('\n');
+                int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (firstNewLine >= 0 && lastFence > firstNewLine)
+                {
+                    text = text.Substring(firstNewLine + 1, lastFence - firstNewLine - 1).Trim();
+                }
+            }
+            if (text.StartsWith("[", StringComparison.Ordinal) && text.EndsWith("]", StringComparison.Ordinal)) return text;
+
+            int start = -1;
+            for (int candidateStart = text.IndexOf('['); candidateStart >= 0; candidateStart = text.IndexOf('[', candidateStart + 1))
+            {
+                int next = candidateStart + 1;
+                while (next < text.Length && char.IsWhiteSpace(text[next])) next++;
+                if (next >= text.Length || text[next] == '{' || text[next] == ']')
+                {
+                    start = candidateStart;
+                    break;
+                }
+            }
+            if (start < 0) return "[]";
+            bool inString = false;
+            bool escaped = false;
+            int depth = 0;
+            for (int i = start; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (escaped) { escaped = false; continue; }
+                if (c == '\\' && inString) { escaped = true; continue; }
+                if (c == '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (c == '[') depth++;
+                else if (c == ']')
+                {
+                    depth--;
+                    if (depth == 0) return text.Substring(start, i - start + 1).Trim();
+                }
+            }
+            return text.Substring(start).Trim();
         }
 
         private static string ExtractJson(string rawContent)

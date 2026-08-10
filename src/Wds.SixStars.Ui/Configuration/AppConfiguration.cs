@@ -22,6 +22,9 @@ namespace Wds.SixStars.Ui.Configuration
         public StarSpeechIntentConfig StarSpeechIntents { get; set; } = new StarSpeechIntentConfig();
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
+        public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
+        public WritingMethodsConfig WritingMethods { get; set; } = new WritingMethodsConfig();
+        public XPostingConfig XPosting { get; set; } = new XPostingConfig();
     }
 
 
@@ -121,6 +124,83 @@ namespace Wds.SixStars.Ui.Configuration
         public double HighConnectionMediumSpeakProbability { get; set; } = 0.30;
         public double HighConnectionThreshold { get; set; } = 70;
         public int MinimumMinutesBetweenAutoSpeech { get; set; } = 8;
+    }
+
+    public sealed class WritingPassesConfig
+    {
+        /// <summary>When false, compact Spark techniques run only their first pass. Constellation Forge uses its own collaborative phase protocol.</summary>
+        public bool Enabled { get; set; } = true;
+        /// <summary>When true, writing techniques can draw 100-word seed pools; Constellation Forge also draws separate noun and verb pools for its light pass.</summary>
+        public bool SeedWordsEnabled { get; set; } = true;
+        public int MinimumPasses { get; set; } = 1;
+        public int MaximumPasses { get; set; } = 6;
+        public double OnePassWeight { get; set; } = 0.50;
+        public double TwoToThreePassWeight { get; set; } = 0.30;
+        public double FourOrMorePassWeight { get; set; } = 0.20;
+    }
+
+    public sealed class WritingMethodsConfig
+    {
+        /// <summary>Relative weight for the existing two-word semantic collision technique.</summary>
+        public double SemanticCollisionWeight { get; set; } = 0.70;
+        /// <summary>Relative weight for the verb and noun displacement technique.</summary>
+        public double VerbNounDisplacementWeight { get; set; } = 0.30;
+        /// <summary>Relative weight for the collaborative long-form Constellation Forge technique.</summary>
+        public double ConstellationForgeWeight { get; set; } = 0.10;
+    }
+
+    public sealed class XPostingConfig
+    {
+        /// <summary>Enables the four-times-daily scheduler. Manual Post Now remains available when false.</summary>
+        public bool Enabled { get; set; } = false;
+        public string StateRoot { get; set; } = "state/x-posting";
+        public int CandidateLimit { get; set; } = 500;
+        public int DelayBetweenPostsSeconds { get; set; } = 120;
+        public int RequestTimeoutSeconds { get; set; } = 45;
+        public int PollSeconds { get; set; } = 60;
+        public int RetryDelaySeconds { get; set; } = 300;
+        public int OAuthAuthorizationTimeoutSeconds { get; set; } = 180;
+        public int OAuthTokenRefreshSkewSeconds { get; set; } = 120;
+        public string OAuthScopes { get; set; } = "tweet.read tweet.write users.read offline.access";
+        public List<XPostingSlotConfig> RefreshSlots { get; set; } = new List<XPostingSlotConfig>
+        {
+            new XPostingSlotConfig { SlotId = "overnight", StartsAt = "00:00", RefreshBefore = "06:00" },
+            new XPostingSlotConfig { SlotId = "morning", StartsAt = "06:00", RefreshBefore = "12:00" },
+            new XPostingSlotConfig { SlotId = "afternoon", StartsAt = "12:00", RefreshBefore = "18:00" },
+            new XPostingSlotConfig { SlotId = "evening", StartsAt = "18:00", RefreshBefore = "00:00" }
+        };
+        public List<XPostingStarAccountConfig> StarAccounts { get; set; } = CreateDefaultAccounts();
+
+        private static List<XPostingStarAccountConfig> CreateDefaultAccounts()
+        {
+            return new List<XPostingStarAccountConfig>
+            {
+                new XPostingStarAccountConfig { Id = "elusiaa" },
+                new XPostingStarAccountConfig { Id = "kaelia" },
+                new XPostingStarAccountConfig { Id = "maera" },
+                new XPostingStarAccountConfig { Id = "khavia" },
+                new XPostingStarAccountConfig { Id = "auerlis" },
+                new XPostingStarAccountConfig { Id = "nyxari" }
+            };
+        }
+    }
+
+    public sealed class XPostingSlotConfig
+    {
+        public string SlotId { get; set; } = string.Empty;
+        public string StartsAt { get; set; } = string.Empty;
+        public string RefreshBefore { get; set; } = string.Empty;
+    }
+
+    public sealed class XPostingStarAccountConfig
+    {
+        /// <summary>Lower-case Star id used to choose this account.</summary>
+        public string Id { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+        /// <summary>OAuth 2.0 Client ID from the X Developer Console.</summary>
+        public string ClientId { get; set; } = string.Empty;
+        /// <summary>Exact loopback callback registered for this X app.</summary>
+        public string RedirectUri { get; set; } = "http://127.0.0.1:47837/x-oauth2/callback/";
     }
 
     public sealed class DailyStarStateConfig

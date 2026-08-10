@@ -66,6 +66,19 @@ The model interprets emotions, stories, and intent. The app code calculates rela
 
 That keeps Elusiaa and Kaelia expressive while keeping the actual game state deterministic and testable.
 
+## Writing shelf artifacts
+
+The writing shelf now distinguishes the artifact from the technique that produced it:
+
+- **Spark** (`spark`) — the existing compact joke, aphorism, tiny poem, or poetic fragment. Semantic Collision and Verb/Noun Displacement produce Sparks.
+- **Constellation Story** (`constellation-story`) — a larger collaborative story produced by **Constellation Forge** (`constellation-forge`).
+
+Constellation Forge runs in deliberate phases. All six Stars first perform a light vocabulary pass using separate deterministic noun and verb seed pools; the viewpoint Star then makes the outline. The other five Stars take rotating build passes with fresh seeds and are explicitly encouraged to all contribute before completion. A finish request becomes `pendingFinish` and must be approved by a different tail Star. After approval, the viewpoint Star performs the final funny/beautiful/deep/interesting revision and must return `finalStep=true`. The completed story is reviewed with the same 27-score vector and the same persistence rules used by Sparks. Story noun/verb recency and cumulative usage totals are persisted separately to discourage repetition across future Constellation Forge runs.
+
+Constellation Stories are kept out of the existing short-form X publisher and five-at-a-time spoken Spark action so a long work cannot be truncated and accidentally marked posted/told.
+
+`WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques.
+
 ## Speech / hotword / Whisper pipeline
 
 The reusable speech code lives in `Wds.SixStars.Api`, not in the WPF UI.

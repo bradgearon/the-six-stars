@@ -929,5 +929,97 @@
     "High mercy, patience, humility, and hope make her seek friendship and reconnection first.",
     "Her flaw is over-connection: she may force unity or closeness before truth and boundaries are understood.",
     "Benaveil pressure should mostly sharpen denial, forced reconciliation, fear of separation, and over-mercy."
-  ]
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "shared-meaning",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Meaningful",
+          "minimumScore": 70
+        },
+        {
+          "category": "Characterful",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "friendly-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 75
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
+    },
+    {
+      "id": "intriguing-repeatable",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumScore": 75
+        },
+        {
+          "category": "WorthRetelling",
+          "minimumScore": 75
+        }
+      ]
+    }
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 65
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 60
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 60
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

@@ -14,6 +14,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import javax.net.SocketFactory;
+
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -37,6 +39,7 @@ final class MobileBridgeWebSocketClient implements AutoCloseable {
     private static final long RECONNECT_MAX_MS = 10000L;
 
     private final Listener listener;
+    private final LocalNetworkBindingService localNetwork;
     private final OkHttpClient httpClient;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "six-stars-mobile-bridge-scheduler");
@@ -58,7 +61,8 @@ final class MobileBridgeWebSocketClient implements AutoCloseable {
     private volatile boolean closed;
     private volatile long reconnectDelayMs = RECONNECT_MIN_MS;
 
-    MobileBridgeWebSocketClient(Listener listener) {
+    MobileBridgeWebSocketClient(LocalNetworkBindingService localNetwork, Listener listener) {
+        this.localNetwork = localNetwork;
         this.listener = listener;
         this.httpClient = new OkHttpClient.Builder()
                 .pingInterval(20, TimeUnit.SECONDS)
@@ -107,7 +111,20 @@ final class MobileBridgeWebSocketClient implements AutoCloseable {
         }
 
         Request request = new Request.Builder().url(target).build();
-        httpClient.newWebSocket(request, new SocketListener(target, generation));
+        OkHttpClient connectionClient = httpClient;
+        try {
+            String host = request.url().host();
+            SocketFactory boundFactory = localNetwork == null ? null : localNetwork.socketFactoryForHost(host);
+            if (boundFactory != null) {
+                connectionClient = httpClient.newBuilder().socketFactory(boundFactory).build();
+                listener.onProtocolDebug("Binding bridge socket for " + host + " to " + localNetwork.routeDescription(host) + ".");
+            } else if (localNetwork != null) {
+                listener.onProtocolDebug("No Wi-Fi LAN route was available for " + host + "; Android will use its default network.");
+            }
+        } catch (Exception routeError) {
+            listener.onProtocolDebug("Could not bind bridge socket to Wi-Fi: " + routeError.getMessage());
+        }
+        connectionClient.newWebSocket(request, new SocketListener(target, generation));
     }
 
     CompletableFuture<JSONObject> request(String operation, JSONObject payload, long timeoutMs) {

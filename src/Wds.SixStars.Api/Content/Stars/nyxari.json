@@ -927,5 +927,97 @@
     "High control, justice, fear, and fragmented insight make her tactical, severe, and tempted to treat people as pieces.",
     "She can see roles and formations before she sees whole persons, especially when under threat.",
     "Benaveil pressure should mostly sharpen control, fear, fragmentation, harsh judgment, and acceptable-loss thinking."
-  ]
+  ],
+  "writingPersistenceRules": [
+    {
+      "id": "fragmentary-metaphysical-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunting",
+          "minimumScore": 75
+        },
+        {
+          "category": "Clever",
+          "minimumScore": 70
+        }
+      ]
+    },
+    {
+      "id": "shadow-aphorism",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Quotable",
+          "minimumScore": 60
+        },
+        {
+          "category": "Original",
+          "minimumScore": 80
+        }
+      ]
+    },
+    {
+      "id": "original-joke",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Original",
+          "minimumScore": 60
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Funny",
+          "minimumScore": 70
+        },
+        {
+          "category": "Playful",
+          "minimumScore": 65
+        }
+      ]
+    }
+  ],
+  "writingPersistenceQualityGate": {
+    "minimumOverallScore": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Coherent",
+        "minimumScore": 70
+      },
+      {
+        "category": "Polished",
+        "minimumScore": 65
+      },
+      {
+        "category": "Characterful",
+        "minimumScore": 65
+      },
+      {
+        "category": "Original",
+        "minimumScore": 65
+      },
+      {
+        "category": "Meaningful",
+        "minimumScore": 65
+      },
+      {
+        "category": "WorthRetelling",
+        "minimumScore": 65
+      },
+      {
+        "category": "Quotable",
+        "minimumScore": 60
+      }
+    ]
+  }
 }

@@ -1,0 +1,80 @@
+CONSTELLATION FORGE — BUILD PHASE {{ data.phaseNumber }}
+
+VIEWPOINT STAR
+{{ data.viewpointDisplayName }} — {{ data.viewpointElement }} / {{ data.viewpointDomain }}
+Core line: {{ data.viewpointCoreQuote }}
+Viewpoint personality: {{ data.viewpointPersonality }}
+
+CURRENT CONTRIBUTING STAR
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory: {{ data.backstorySummary }}
+Speaking / writing style: {{ data.speakingStyle }}
+Character attributes: {{ data.characterAttributes }}
+
+BEHAVIORS / SIGNATURE INSTINCTS
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORYTELLING RULES
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+RELEVANT CANON
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+TITLE
+{{ data.title }}
+
+PREMISE
+{{ data.premise }}
+
+CURRENT OUTLINE
+{{ for beat in data.beats }}
+- {{ beat }}
+{{ end }}
+
+CURRENT STORY
+{{ if data.currentStory == "" }}
+No prose draft exists yet. Write the first complete draft from the outline, then improve it as your phase contribution.
+{{ else }}
+{{ data.currentStory }}
+{{ end }}
+
+TEAM SUBJECTS
+{{ for word in data.subjects }}
+- {{ word }}
+{{ end }}
+
+TEAM VERBS
+{{ for word in data.verbs }}
+- {{ word }}
+{{ end }}
+
+FRESH WORD SEEDS FOR THIS PHASE
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+
+PRIOR BUILD CONTRIBUTORS
+{{ if data.priorContributorStarIds.size == 0 }}
+(none yet)
+{{ else }}
+{{ for id in data.priorContributorStarIds }}
+- {{ id }}
+{{ end }}
+{{ end }}
+
+Pending finish: {{ data.pendingFinish }}
+Finish requested by: {{ data.finishRequestedByStarId }}
+
+Return the fully revised story and required phase metadata as JSON only.

@@ -19,17 +19,16 @@ using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Writings;
 using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
+using Wds.SixStars.Ui.Services;
 using Wds.SixStars.Api.State;
 
 namespace Wds.SixStars.Ui.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private MobileBridgeHttpServer? _mobileBridgeServer;
-    private MobileBridgeAudioSocketHost? _mobileBridgeAudioHost;
-    private readonly SemaphoreSlim _mobileBridgeRuntimeGate = new SemaphoreSlim(1, 1);
     private readonly object _mobileVoiceStreamGate = new object();
     private CancellationTokenSource? _mobileVoiceStreamCts;
     private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
@@ -124,26 +123,15 @@ public sealed partial class MainViewModel
 
     private void StartMobileBridgeServer()
     {
-        if (_mobileBridgeServer != null && _mobileBridgeServer.IsRunning)
+        if (_services.MobileBridgeHost.IsRunning)
         {
             MobileBridgeStatus = "Android bridge is already running. HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + "; archive " + ConversationArchiveUrl + ".";
             return;
         }
 
-        int port = ResolveMobileBridgePort();
-        int audioPort = ResolveMobileBridgeAudioPort();
-        _mobileBridgeAudioHost?.Dispose();
-        _mobileBridgeAudioHost = new MobileBridgeAudioSocketHost();
-        _mobileBridgeAudioHost.StatusChanged += (_, message) => OnUiThread(() =>
-        {
-            MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
-            AppendMobileBridgeVoiceDebug("Audio socket status", message);
-        });
-        _mobileBridgeAudioHost.Start(audioPort);
-
-        _mobileBridgeServer?.Dispose();
-        _mobileBridgeServer = new MobileBridgeHttpServer(
-            port,
+        _services.MobileBridgeHost.Start(
+            ResolveMobileBridgePort(),
+            ResolveMobileBridgeAudioPort(),
             ProcessMobileMessageAsync,
             ProcessMobileAudioAsync,
             ProcessMobileTestAudioAsync,
@@ -157,12 +145,6 @@ public sealed partial class MainViewModel
             _appConfig.ConversationArchive.Enabled,
             _runtime,
             FirstNonEmptyForMobile(Environment.GetEnvironmentVariable("SIX_STARS_WORLD_EVENT_API_KEY"), _appConfig.WorldEvents.ApiKey));
-        _mobileBridgeServer.StatusChanged += (_, message) => OnUiThread(() =>
-        {
-            MobileBridgeStatus = message + " HTTP/WebSocket " + MobileBridgeUrl + "; audio " + MobileBridgeAudioUrl + ".";
-            AppendMobileBridgeVoiceDebug("HTTP/WebSocket bridge status", message);
-        });
-        _mobileBridgeServer.Start();
 
         MobileBridgeEnabled = true;
         MobileBridgeStatus = "Android bridge running. HTTP/WebSocket " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP base URL in the Android app.";
@@ -170,10 +152,7 @@ public sealed partial class MainViewModel
 
     private void StopMobileBridgeServer(string reason)
     {
-        try { _mobileBridgeServer?.Dispose(); } catch { }
-        try { _mobileBridgeAudioHost?.Dispose(); } catch { }
-        _mobileBridgeServer = null;
-        _mobileBridgeAudioHost = null;
+        _services.MobileBridgeHost.Stop();
         MobileBridgeEnabled = false;
         MobileBridgeStatus = reason;
     }
@@ -195,7 +174,7 @@ public sealed partial class MainViewModel
 
     private object CreateMobileHealthPayload()
     {
-        int clients = _mobileBridgeAudioHost?.ClientCount ?? 0;
+        int clients = _services.MobileVoice.ConnectedClients;
         return new
         {
             ok = true,
@@ -206,8 +185,12 @@ public sealed partial class MainViewModel
             audioPort = ResolveMobileBridgeAudioPort(),
             audioSocketConnected = clients > 0,
             audioClientCount = clients,
-            webSocketClientCount = _mobileBridgeServer?.WebSocketClientCount ?? 0,
+            webSocketClientCount = _services.MobileBridgeHost.WebSocketClientCount,
             selectedStarId = SelectedStarId,
+            backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            xPostingEnabled = XPostingEnabled,
+            xPostingStatus = XPostingStatus,
             streamingTts = _useStreamingTts,
             time = DateTimeOffset.Now
         };
@@ -229,8 +212,9 @@ public sealed partial class MainViewModel
         List<object> states = new List<object>();
         foreach (string starId in StarIds)
         {
-            StarState state = await _runtime.GetStarStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
-            states.Add(CreateMobileStarStateDto(state));
+            StarState state = await _services.MobileConversation.GetStateAsync(safeSessionId, starId, cancellationToken).ConfigureAwait(false);
+            StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+            states.Add(CreateMobileStarStateDto(state, writingState));
         }
 
         return new
@@ -238,6 +222,10 @@ public sealed partial class MainViewModel
             ok = true,
             selectedStarId = SelectedStarId,
             sessionId = safeSessionId,
+            backgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            backgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            xPostingEnabled = XPostingEnabled,
+            xPostingStatus = XPostingStatus,
             stars = states,
             latestEventSequence = _mobileBridgeDispatcher.GetEventsAfter(long.MaxValue).LatestSequence,
             time = DateTimeOffset.Now
@@ -412,7 +400,7 @@ public sealed partial class MainViewModel
 
     private void OpenConversationArchive()
     {
-        if (_mobileBridgeServer == null || !_mobileBridgeServer.IsRunning)
+        if (!_services.MobileBridgeHost.IsRunning)
         {
             StartMobileBridgeServer();
         }
@@ -461,34 +449,38 @@ public sealed partial class MainViewModel
                         _suppressMobileBridgeSelectedStarBroadcast = false;
                     }
                 });
-                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Android selected " + starId + "."));
-                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Elusiaa shifted the phone focus to " + starId + ".");
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(state, "Android selected " + starId + ".");
+                    PendingWritingCount = writingState.PendingCount;
+                    PersistedWritingCount = writingState.PersistedWritings.Count;
+                });
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Elusiaa shifted the phone focus to " + starId + ".", writingState);
             }
             case "SetMet":
             {
                 bool isMet = command.IsMet ?? true;
-                StarState state = await _runtime.SetStarMetAsync(sessionId, starId, isMet, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.StarState.SetMetAsync(sessionId, starId, isMet, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " met=" + state.IsMet + ", ally=" + state.IsAlly + "."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + (state.IsMet ? " is now marked met." : " is no longer marked met."));
             }
             case "SetAlly":
             {
                 bool isAlly = command.IsAlly ?? true;
-                StarState state = await _runtime.SetStarWorldStateAsync(new StarWorldStateUpdateRequest
-                {
-                    SessionId = sessionId,
-                    StarId = starId,
-                    IsAlly = isAlly,
-                    IsMet = isAlly ? true : (bool?)null,
-                    Reason = string.IsNullOrWhiteSpace(command.Reason) ? "Android bridge ally toggle" : command.Reason
-                }, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.StarState.SetAllyAsync(
+                    sessionId,
+                    starId,
+                    isAlly,
+                    string.IsNullOrWhiteSpace(command.Reason) ? "Android bridge ally toggle" : command.Reason,
+                    cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " ally=" + state.IsAlly + ", met=" + state.IsMet + "."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + (state.IsAlly ? " joined as an ally." : " ally flag was removed."));
             }
             case "BreakupGirlfriend":
             {
-                StarState state = await _runtime.SetExclusiveGirlfriendAsync(sessionId, starId, false, string.IsNullOrWhiteSpace(command.Reason) ? "Android prod breakup button" : command.Reason, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.StarState.SetExclusiveGirlfriendAsync(sessionId, starId, false, string.IsNullOrWhiteSpace(command.Reason) ? "Android prod breakup button" : command.Reason, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " girlfriend relationship ended."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " is no longer marked as girlfriend.");
             }
@@ -496,20 +488,20 @@ public sealed partial class MainViewModel
             case "SetGirlfriendCuteMode":
             {
                 bool enabled = command.CuteModeEnabled ?? true;
-                StarState current = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState current = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 if (!current.IsGirlfriend)
                 {
                     return PublishMobileCommandResult(command, false, commandType, starId, sessionId, current, starId + " is not currently the girlfriend Star, so cute mode settings were not changed.");
                 }
 
-                StarState state = await _runtime.SetGirlfriendCuteModeEnabledAsync(sessionId, starId, enabled, string.IsNullOrWhiteSpace(command.Reason) ? "Android girlfriend settings cute mode toggle" : command.Reason, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.StarState.SetCuteModeEnabledAsync(sessionId, starId, enabled, string.IsNullOrWhiteSpace(command.Reason) ? "Android girlfriend settings cute mode toggle" : command.Reason, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, starId + " cute mode " + (enabled ? "enabled" : "disabled") + "."));
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " girlfriend cute mode " + (enabled ? "enabled." : "disabled."));
             }
 
             case "ActivateCuteModeNow":
             {
-                StarState current = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState current = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 if (!current.IsGirlfriend)
                 {
                     return PublishMobileCommandResult(command, false, commandType, starId, sessionId, current, starId + " is not currently the girlfriend Star, so cute mode could not be activated now.");
@@ -520,11 +512,266 @@ public sealed partial class MainViewModel
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, starId + " entered girlfriend cute mode now.");
             }
 
+            case "SetBackgroundWritingLoopEnabled":
+            {
+                bool enabled = command.BackgroundWritingLoopEnabled ?? BackgroundWritingLoopEnabled;
+                OnUiThread(() => BackgroundWritingLoopEnabled = enabled);
+
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                string message = enabled
+                    ? "Desktop automatic Star writing generation is enabled. It will resume after the runtime has been idle for a few seconds."
+                    : "Desktop automatic Star writing generation is off. The current background generation pass was cancelled for reliable voice playback.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "SetXPostingEnabled":
+            {
+                bool enabled = command.XPostingEnabled ?? XPostingEnabled;
+                OnUiThread(() => XPostingEnabled = enabled);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                string message = enabled
+                    ? "Automatic X posting is enabled for the four daily slots. A batch that starts will not be interrupted by foreground activity."
+                    : "Automatic X posting is off. Any public-posting batch already in progress will finish.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "PostAllStarWritingsToXNow":
+            {
+                List<string> configuredStars = _xPostingService.ConfiguredStarIds
+                    .Select(ResolveDefaultStarId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                if (configuredStars.Count == 0)
+                {
+                    string unavailable = "No enabled/configured X Star accounts are available to queue.";
+                    OnUiThread(() => Status = unavailable);
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, state, unavailable, writingState);
+                }
+
+                foreach (string configuredStar in configuredStars)
+                {
+                    QueueManualXPosting(configuredStar);
+                }
+
+                string message = "Queued background five-post X batches for " + configuredStars.Count + " configured Stars: "
+                    + string.Join(", ", configuredStars)
+                    + ". They will run one Star at a time through the uninterrupted X posting lane.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "PostStarWritingsToXNow":
+            {
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                if (!_xPostingService.HasConfiguredClient(starId))
+                {
+                    string unavailable = "No enabled X account with a ClientId and loopback RedirectUri is configured for " + starId + ".";
+                    OnUiThread(() => Status = unavailable);
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, state, unavailable, writingState);
+                }
+
+                QueueManualXPosting(starId);
+                string message = "Queued an uninterrupted five-post X batch for " + starId + ". Progress will arrive through bridge events.";
+                OnUiThread(() => Status = message);
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);
+            }
+
+            case "GenerateStarWriting":
+            {
+                using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request to generate Star writing");
+                StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                List<string> items = IsConstellationStory(writingResult)
+                    ? writingResult.Batch.Items.Select(x =>
+                        (string.IsNullOrWhiteSpace(x.Title) ? "Constellation Story" : x.Title) + Environment.NewLine + x.Writing +
+                        (x.Persisted ? " (saved)" : " (not saved)"))
+                        .ToList()
+                    : writingResult.Batch.Items.Select((x, i) =>
+                        (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ". [" + string.Join(" + ", x.WordsUsed) + "] " + x.Writing +
+                        (x.Persisted ? " (saved)" : " (not saved)"))
+                        .ToList();
+                string message = BuildWritingGenerationStatus(starId, writingResult);
+                OnUiThread(() =>
+                {
+                    if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PendingWritingCount = writingResult.State.PendingCount;
+                        PersistedWritingCount = writingResult.State.PersistedWritings.Count;
+                        StarOutput = string.Join(Environment.NewLine + Environment.NewLine, items);
+                        Status = message;
+                    }
+                });
+                MobileBridgeDispatchEvent evt = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "StarWritingGenerated",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = writingResult.State.PendingCount,
+                    PersistedWritingCount = writingResult.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    Message = message
+                });
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = writingResult.State.PendingCount,
+                    PersistedWritingCount = writingResult.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    StarOutput = string.Join(Environment.NewLine + Environment.NewLine, items),
+                    State = state,
+                    Event = evt,
+                    Message = message,
+                    SuppressEventPublication = true
+                };
+            }
+
+            case "TellStarWriting":
+            {
+                using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request for the Star to tell her writing");
+                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (performance == null)
+                {
+                    StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                    string emptyMessage = starId + " has no new persisted writing waiting to be told.";
+                    OnUiThread(() =>
+                    {
+                        if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                        {
+                            PendingWritingCount = writingState.PendingCount;
+                            PersistedWritingCount = writingState.PersistedWritings.Count;
+                            Status = emptyMessage;
+                        }
+                    });
+                    MobileBridgeDispatchEvent emptyEvent = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                    {
+                        EventType = "StarWritingPerformanceReady",
+                        CommandId = command.CommandId,
+                        SourceClientId = command.SourceClientId,
+                        SessionId = sessionId,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        IsMet = state.IsMet,
+                        IsAlly = state.IsAlly,
+                        IsGirlfriend = state.IsGirlfriend,
+                        PendingWritingCount = writingState.PendingCount,
+                        PersistedWritingCount = writingState.PersistedWritings.Count,
+                        WritingItems = new List<string>(),
+                        Message = emptyMessage
+                    });
+                    return new MobileBridgeDispatchResult
+                    {
+                        Ok = true,
+                        CommandId = command.CommandId,
+                        CommandType = commandType,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        IsMet = state.IsMet,
+                        IsAlly = state.IsAlly,
+                        IsGirlfriend = state.IsGirlfriend,
+                        PendingWritingCount = writingState.PendingCount,
+                        PersistedWritingCount = writingState.PersistedWritings.Count,
+                        WritingItems = new List<string>(),
+                        State = state,
+                        Event = emptyEvent,
+                        Message = emptyMessage,
+                        SuppressEventPublication = true
+                    };
+                }
+
+                List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
+                string message = starId + " selected " + items.Count + " writing(s) to tell; " + performance.State.PendingCount + " remain new.";
+                OnUiThread(() =>
+                {
+                    if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        PendingWritingCount = performance.State.PendingCount;
+                        PersistedWritingCount = performance.State.PersistedWritings.Count;
+                        StarOutput = performance.Response.SpokenText;
+                        Status = message;
+                    }
+                });
+                MobileBridgeDispatchEvent evt = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                {
+                    EventType = "StarWritingPerformanceReady",
+                    CommandId = command.CommandId,
+                    SourceClientId = command.SourceClientId,
+                    SessionId = sessionId,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = performance.State.PendingCount,
+                    PersistedWritingCount = performance.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    SpokenText = performance.Response.SpokenText,
+                    Message = message
+                });
+                MobileBridgeDispatchResult dispatchResult = new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    IsMet = state.IsMet,
+                    IsAlly = state.IsAlly,
+                    IsGirlfriend = state.IsGirlfriend,
+                    PendingWritingCount = performance.State.PendingCount,
+                    PersistedWritingCount = performance.State.PersistedWritings.Count,
+                    WritingItems = items,
+                    SpokenText = performance.Response.SpokenText,
+                    StarOutput = performance.Response.SpokenText,
+                    VoiceRequested = command.ReturnAudio,
+                    VoiceSocketConnected = _services.MobileVoice.IsConnected,
+                    State = state,
+                    Event = evt,
+                    Message = message,
+                    SuppressEventPublication = true
+                };
+                if (command.ReturnAudio)
+                {
+                    MobileBridgeResponse mobileVoiceResponse = new MobileBridgeResponse
+                    {
+                        Ok = true,
+                        StarId = starId,
+                        RequestType = "StarWritingPerformance",
+                        SpokenText = performance.Response.SpokenText,
+                        StarOutput = performance.Response.SpokenText,
+                        VoiceRequested = true,
+                        VoiceSocketConnected = _services.MobileVoice.IsConnected
+                    };
+                    dispatchResult.AfterTransportResponseAsync = () => SendMobileVoiceAsync(performance.Response, mobileVoiceResponse, CancellationToken.None);
+                }
+                return dispatchResult;
+            }
+
             case "SetSpeechPlaybackPaused":
             case "ResumeSpeech":
             {
                 bool paused = command.PlaybackPaused ?? !commandType.Equals("ResumeSpeech", StringComparison.OrdinalIgnoreCase);
-                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 MobileBridgeDispatchEvent playbackEvent = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
                     EventType = "SetSpeechPlaybackPaused",
@@ -555,16 +802,19 @@ public sealed partial class MainViewModel
             {
                 StarState state = await ResetStarEverywhereAsync(starId, sessionId, cancellationToken).ConfigureAwait(false);
                 _stateChangeTracker.Reset(starId);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() =>
                 {
                     ApplyMobileStateToSelectedStarUi(state, "Cleared Android bridge history for " + starId + ".");
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
                     {
+                        PendingWritingCount = writingState.PendingCount;
+                        PersistedWritingCount = writingState.PersistedWritings.Count;
                         StarOutput = string.Empty;
                         LastTranscript = string.Empty;
                     }
                 });
-                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Khavia washed the Android conversation history clean for " + starId + ".");
+                return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, "Khavia washed the Android conversation history clean for " + starId + ".", writingState);
             }
 
             case "ClearAllData":
@@ -592,6 +842,8 @@ public sealed partial class MainViewModel
                         GirlfriendCuteModeEnabled = reset.GirlfriendCuteModeEnabled,
                         GirlfriendCuteModeActive = reset.GirlfriendCuteModeEnabled && (reset.GirlfriendHourlyState?.CuteModeActive ?? false),
                         GirlfriendCuteModeSignature = reset.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                        PendingWritingCount = 0,
+                        PersistedWritingCount = 0,
                         Heart = reset.Heart,
                         Trust = reset.Trust,
                         Romance = reset.Romance,
@@ -600,14 +852,17 @@ public sealed partial class MainViewModel
                         Message = "Elusiaa helped fully clear the shared local Star state for " + star + ", including daily JSON/XML cache, relationship scores, and conversation history."
                     });
                 }
-                if (selectedState == null) selectedState = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                if (selectedState == null) selectedState = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState selectedWritingState = await _writingService.GetStateAsync(selectedState.StarId, cancellationToken).ConfigureAwait(false);
                 OnUiThread(() =>
                 {
                     ApplyMobileStateToSelectedStarUi(selectedState, "Cleared all Android bridge Star data.");
+                    PendingWritingCount = selectedWritingState.PendingCount;
+                    PersistedWritingCount = selectedWritingState.PersistedWritings.Count;
                     StarOutput = string.Empty;
                     LastTranscript = string.Empty;
                 });
-                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept the shared Star memory shelf clean and refreshed the state.");
+                return PublishMobileCommandResult(command, true, commandType, selectedState.StarId, sessionId, selectedState, "Elusiaa swept the shared Star memory shelf clean and refreshed the state.", selectedWritingState);
             }
             case "SendPhoto":
             {
@@ -629,7 +884,7 @@ public sealed partial class MainViewModel
                 };
 
                 MobileBridgeResponse photoResponse = await ProcessMobileConversationAsync(photoRequest, string.Empty, cancellationToken).ConfigureAwait(false);
-                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "SendPhoto", sessionId, starId, state, photoResponse);
                 result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
@@ -689,7 +944,7 @@ public sealed partial class MainViewModel
                     Reason = string.IsNullOrWhiteSpace(command.Reason) ? "mobile at-rest initiative" : command.Reason
                 };
                 MobileBridgeResponse initiativeResponse = await ProcessMobileConversationAsync(initiativeRequest, string.Empty, cancellationToken).ConfigureAwait(false);
-                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 MobileBridgeDispatchResult result = CreateConversationDispatchResult(command, "MaybeStarInitiative", sessionId, starId, state, initiativeResponse);
                 if (command.PrefetchForListen)
                 {
@@ -759,9 +1014,15 @@ public sealed partial class MainViewModel
             case "RefreshState":
             default:
             {
-                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                OnUiThread(() => ApplyMobileStateToSelectedStarUi(state, "Refreshed Android bridge state for " + starId + "."));
-                return PublishMobileCommandResult(command, true, "RefreshState", starId, sessionId, state, "Nyxari checked the current state for " + starId + ".");
+                StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                OnUiThread(() =>
+                {
+                    ApplyMobileStateToSelectedStarUi(state, "Refreshed Android bridge state for " + starId + ".");
+                    PendingWritingCount = writingState.PendingCount;
+                    PersistedWritingCount = writingState.PersistedWritings.Count;
+                });
+                return PublishMobileCommandResult(command, true, "RefreshState", starId, sessionId, state, "Nyxari checked the current state for " + starId + ".", writingState);
             }
         }
     }
@@ -951,7 +1212,7 @@ public sealed partial class MainViewModel
         };
     }
 
-    private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message)
+    private MobileBridgeDispatchResult PublishMobileCommandResult(MobileBridgeDispatchCommand command, bool ok, string commandType, string starId, string sessionId, StarState state, string message, StarWritingNotesState? writingState = null)
     {
         MobileBridgeDispatchResult result = new MobileBridgeDispatchResult
         {
@@ -966,6 +1227,13 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            XPostingEnabled = XPostingEnabled,
+            XPostingStatus = XPostingStatus,
+            PendingWritingCount = writingState?.PendingCount,
+            PersistedWritingCount = writingState?.PersistedWritings?.Count,
+            UnpostedWritingCount = writingState?.UnpostedCount,
             State = state,
             DailyStateSlotId = state.TodayState?.SlotId ?? string.Empty,
             DailyStateLocalDate = state.TodayState?.LocalDate ?? string.Empty,
@@ -978,13 +1246,23 @@ public sealed partial class MainViewModel
             EmotionalEffectVector = state.LastEmotionalEffectVector ?? string.Empty,
             NegativeEmotionVector = state.LastNegativeEmotionVector ?? string.Empty,
             LastEmotionVectorsText = FormatEmotionVectors(state.LastEmotionalEffectVector, state.LastNegativeEmotionVector),
-                InterstarStatusText = InterstarStatusText,
-                Message = message
+            InterstarStatusText = InterstarStatusText,
+            Message = message
         };
 
         result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
         {
-            EventType = commandType == "SelectStar" ? "SelectedStarChanged" : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow") ? "GirlfriendCuteModeChanged" : (commandType == "ClearHistory" || commandType == "ClearAllData") ? "StarHistoryCleared" : "StarStateChanged",
+            EventType = commandType == "SelectStar"
+                ? "SelectedStarChanged"
+                : commandType == "SetBackgroundWritingLoopEnabled"
+                    ? "BackgroundWritingLoopChanged"
+                    : (commandType == "SetXPostingEnabled" || commandType == "PostStarWritingsToXNow")
+                        ? "XPostingChanged"
+                    : (commandType == "SetGirlfriendCuteMode" || commandType == "ActivateCuteModeNow")
+                        ? "GirlfriendCuteModeChanged"
+                        : (commandType == "ClearHistory" || commandType == "ClearAllData")
+                            ? "StarHistoryCleared"
+                            : "StarStateChanged",
             CommandId = command.CommandId,
             SourceClientId = command.SourceClientId,
             SessionId = sessionId,
@@ -996,6 +1274,13 @@ public sealed partial class MainViewModel
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+            BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+            XPostingEnabled = XPostingEnabled,
+            XPostingStatus = XPostingStatus,
+            PendingWritingCount = writingState?.PendingCount,
+            PersistedWritingCount = writingState?.PersistedWritings?.Count,
+            UnpostedWritingCount = writingState?.UnpostedCount,
             Heart = state.Heart,
             Trust = state.Trust,
             Romance = state.Romance,
@@ -1023,7 +1308,8 @@ public sealed partial class MainViewModel
         try
         {
             string starId = ResolveDefaultStarId(SelectedStarId);
-            StarState state = await _runtime.GetStarStateAsync("android-phone-dev", starId, CancellationToken.None).ConfigureAwait(false);
+            StarState state = await _services.MobileConversation.GetStateAsync("android-phone-dev", starId, CancellationToken.None).ConfigureAwait(false);
+            StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, CancellationToken.None).ConfigureAwait(false);
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "SelectedStarChanged",
@@ -1037,6 +1323,8 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                PendingWritingCount = writingState.PendingCount,
+                PersistedWritingCount = writingState.PersistedWritings.Count,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -1052,7 +1340,7 @@ public sealed partial class MainViewModel
                 DailyStateGeneratedAt = state.TodayState?.GeneratedAt,
                 DailyStateSummary = state.TodayState?.Summary ?? string.Empty,
                 DailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
-            DailyStateXml = string.Empty,
+                DailyStateXml = string.Empty,
                 Message = "Elusiaa noticed the desktop selected Star changed to " + starId + " (" + reason + ")."
             });
         }
@@ -1151,7 +1439,7 @@ public sealed partial class MainViewModel
             && !(text.IndexOf("received your words", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("try again", StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
-    private static object CreateMobileStarStateDto(StarState state)
+    private static object CreateMobileStarStateDto(StarState state, StarWritingNotesState writingState)
     {
         return new
         {
@@ -1179,11 +1467,14 @@ public sealed partial class MainViewModel
             dailyStateSummary = state.TodayState?.Summary ?? string.Empty,
             dailyStateJson = state.TodayState?.Json ?? state.TodayState?.Xml ?? string.Empty,
             dailyStateXml = string.Empty,
-            interactionCount = state.InteractionCount
+            interactionCount = state.InteractionCount,
+            pendingWritingCount = writingState?.PendingCount ?? 0,
+            persistedWritingCount = writingState?.PersistedWritings?.Count ?? 0,
+            unpostedWritingCount = writingState?.UnpostedCount ?? 0
         };
     }
 
-    private void PublishMobileBridgeStateEventFromDesktop(string eventType, StarState state, string message)
+    private void PublishMobileBridgeStateEventFromDesktop(string eventType, StarState state, string message, int? pendingWritingCount = null, int? persistedWritingCount = null)
     {
         if (state == null) return;
         try
@@ -1201,6 +1492,12 @@ public sealed partial class MainViewModel
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
+                BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+                BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+                XPostingEnabled = XPostingEnabled,
+                XPostingStatus = XPostingStatus,
+                PendingWritingCount = pendingWritingCount,
+                PersistedWritingCount = persistedWritingCount,
                 Heart = state.Heart,
                 Trust = state.Trust,
                 Romance = state.Romance,
@@ -1306,7 +1603,7 @@ public sealed partial class MainViewModel
     {
         try
         {
-            if (_mobileBridgeAudioHost == null || _mobileBridgeAudioHost.ClientCount == 0)
+            if (!_services.MobileVoice.IsConnected)
             {
                 return new
                 {
@@ -1319,7 +1616,7 @@ public sealed partial class MainViewModel
 
             byte[] wav = CreateMobileTestToneWav(sampleRate: 24000, seconds: 1.25, frequencyHz: 660.0);
             string checksum = Sha256Hex(wav);
-            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa is sending the desktop test tone. sha256=" + ShortHash(checksum), cancellationToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendStatusAsync("Elusiaa is sending the desktop test tone. sha256=" + ShortHash(checksum), cancellationToken).ConfigureAwait(false);
             VoiceSynthesisResult result = new VoiceSynthesisResult
             {
                 StarId = SelectedStarId ?? "Elusiaa",
@@ -1332,8 +1629,8 @@ public sealed partial class MainViewModel
                 Source = "mobile-bridge-test-tone"
             };
 
-            MobileAudioSendResult sent = await _mobileBridgeAudioHost.SendVoiceChunkAsync(result, 0, 1, cancellationToken).ConfigureAwait(false);
-            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa finished the desktop test tone send. sha256=" + ShortHash(checksum) + ", clients=" + sent.SentClients, cancellationToken).ConfigureAwait(false);
+            MobileAudioSendResult sent = await _services.MobileVoice.SendChunkAsync(result, 0, 1, cancellationToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendStatusAsync("Elusiaa finished the desktop test tone send. sha256=" + ShortHash(checksum) + ", clients=" + sent.SentClients, cancellationToken).ConfigureAwait(false);
             OnUiThread(() =>
             {
                 MobileBridgeStatus = "Sent Android phone audio test tone. Clients=" + sent.SentClients + ", bytes=" + wav.Length + ", sha256=" + ShortHash(checksum) + ".";
@@ -1422,6 +1719,7 @@ public sealed partial class MainViewModel
 
     private async Task<MobileBridgeResponse> ProcessMobileAudioAsync(MobileBridgeRequest request, CancellationToken cancellationToken)
     {
+        using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android voice interaction");
         if (string.IsNullOrWhiteSpace(request.AudioBase64))
         {
             return new MobileBridgeResponse { Ok = false, VoiceError = "No audioBase64 was supplied.", Notes = { "Android did not send audio data." } };
@@ -1488,7 +1786,7 @@ public sealed partial class MainViewModel
             InitiativePriority = 0,
             InitiativeReason = reason,
             VoiceRequested = false,
-            VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
+            VoiceSocketConnected = _services.MobileVoice.IsConnected,
             VoiceMessage = reason
         };
     }
@@ -1515,7 +1813,10 @@ public sealed partial class MainViewModel
                 || ContainsIgnoreCase(mobileRequest.ClientName, "ListenButton")
                 || ContainsIgnoreCase(mobileRequest.Reason, "manual")
                 || ContainsIgnoreCase(mobileRequest.Reason, "button"));
-        bool gateTaken = false;
+        using IDisposable? writingLoopLease = !isPrefetchInitiative && (!isAtRestInitiative || isManualInitiative)
+            ? BeginBackgroundWritingForegroundActivity("an Android foreground interaction with " + starId)
+            : null;
+        MobileConversationService.Lease? mobileLease = null;
         System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         if (isPrefetchInitiative)
@@ -1523,24 +1824,23 @@ public sealed partial class MainViewModel
             // Probe the foreground gate, but do not hold it while the low-priority prefetch waits in
             // the API background dispatcher. A player message arriving one millisecond later must be
             // able to take the mobile foreground gate immediately.
-            bool mobileWasIdle = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            using MobileConversationService.Lease? probeLease = await _services.MobileConversation.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
-            if (!mobileWasIdle)
+            if (probeLease == null)
             {
                 MobileBridgeResponse skipped = CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
                 skipped.GateWaitMs = gateWaitMs;
                 skipped.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
                 return skipped;
             }
-            _mobileBridgeRuntimeGate.Release();
         }
         else if (isAtRestInitiative && !isManualInitiative)
         {
             // Automatic visible at-rest initiative must never get in front of a real player action.
             // If the mobile runtime is busy, skip this quiet check and try later.
-            gateTaken = await _mobileBridgeRuntimeGate.WaitAsync(0, cancellationToken).ConfigureAwait(false);
+            mobileLease = await _services.MobileConversation.TryAcquireAsync(cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
-            if (!gateTaken)
+            if (mobileLease == null)
             {
                 MobileBridgeResponse skipped = CreateMobileBusySkippedInitiativeResponse(mobileRequest, starId);
                 skipped.GateWaitMs = gateWaitMs;
@@ -1555,9 +1855,8 @@ public sealed partial class MainViewModel
             // desktop immediately instead of waiting behind the older initiative HTTP call.
             string priorityLabel = isManualInitiative ? "Android manual Listen request" : "Android foreground request";
             try { _operationController.CancelAllRuntimeOperations(priorityLabel + " preempted mobile background/at-rest work for " + starId + "."); } catch { }
-            try { _runtime.CancelBackgroundAnalysis(priorityLabel + " preempted background analysis for " + starId + "."); } catch { }
-            await _mobileBridgeRuntimeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            gateTaken = true;
+            try { _services.MobileConversation.CancelBackgroundAnalysis(priorityLabel + " preempted background analysis for " + starId + "."); } catch { }
+            mobileLease = await _services.MobileConversation.AcquireAsync(cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
         }
 
@@ -1600,12 +1899,12 @@ public sealed partial class MainViewModel
                 : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
             System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
             StarInteractionResponse starResponse = isPrefetchInitiative
-                ? await _runtime.ProcessWhenForegroundIdleAsync(
+                ? await _services.MobileConversation.ProcessWhenForegroundIdleAsync(
                     request,
                     "Prepare " + starId + "'s private Android Listen response only after foreground conversation is idle.",
                     linkedCts.Token).ConfigureAwait(false)
-                : await _runtime.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
-            StarState stateAfterResponse = await _runtime.GetStarStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
+                : await _services.MobileConversation.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+            StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
             if (photoResult.Attached)
@@ -1713,7 +2012,7 @@ public sealed partial class MainViewModel
             }
             else if (wantsPhoneAudio)
             {
-                response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
+                response.VoiceSocketConnected = _services.MobileVoice.IsConnected;
                 response.VoiceMessage = response.VoiceSocketConnected
                     ? "Text will be delivered first. Voice generation starts immediately after the correlated response is written to Android."
                     : "Text will be delivered first, but no Android audio socket is connected yet.";
@@ -1761,7 +2060,7 @@ public sealed partial class MainViewModel
                 ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge response returned without voice playback.");
             }
 
-            if (!wantsInlineAudio) response.VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0;
+            if (!wantsInlineAudio) response.VoiceSocketConnected = _services.MobileVoice.IsConnected;
             if (!mobileRequest.PrefetchForListen)
             {
                 PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
@@ -1814,10 +2113,7 @@ public sealed partial class MainViewModel
         finally
         {
             IsProcessingRuntime = false;
-            if (gateTaken)
-            {
-                _mobileBridgeRuntimeGate.Release();
-            }
+            mobileLease?.Dispose();
         }
     }
 
@@ -1835,7 +2131,7 @@ public sealed partial class MainViewModel
         context.RecentEvents.Add("Android phone bridge conversation request");
         if (!string.IsNullOrWhiteSpace(request.ClientName)) context.RecentEvents.Add("Client: " + request.ClientName);
         context.Flags["mobileBridge"] = "true";
-        context.Flags["phoneAudioSocketConnected"] = ((_mobileBridgeAudioHost?.ClientCount ?? 0) > 0).ToString().ToLowerInvariant();
+        context.Flags["phoneAudioSocketConnected"] = _services.MobileVoice.IsConnected.ToString().ToLowerInvariant();
         context.Flags["speakOnDesktop"] = request.SpeakOnDesktop.ToString().ToLowerInvariant();
         context.Flags["returnAudioToPhone"] = request.ReturnAudio.ToString().ToLowerInvariant();
         context.Flags["returnAudioInline"] = request.ReturnAudioInline.ToString().ToLowerInvariant();
@@ -2101,7 +2397,7 @@ public sealed partial class MainViewModel
         try { previous?.Cancel(); } catch { }
 
         string streamId = "android-voice-" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
-        MobileAudioStreamSession? audioSession = _mobileBridgeAudioHost?.CreateStreamSession(
+        MobileAudioStreamSession? audioSession = _services.MobileVoice.CreateStreamSession(
             streamId,
             ordinal,
             "android-phone-dev",
@@ -2209,7 +2505,7 @@ public sealed partial class MainViewModel
             VoiceRequested = (mobileRequest.ReturnAudio || mobileRequest.ReturnAudioInline) && response.InitiativeShouldSpeak && !string.IsNullOrWhiteSpace(response.SpokenText),
             PrefetchForListen = mobileRequest.PrefetchForListen,
             PrefetchedAtUtc = mobileRequest.PrefetchForListen ? DateTimeOffset.UtcNow : null,
-            VoiceSocketConnected = (_mobileBridgeAudioHost?.ClientCount ?? 0) > 0,
+            VoiceSocketConnected = _services.MobileVoice.IsConnected,
             StoryId = response.StoryId ?? string.Empty,
             StoryTitle = response.StoryTitle ?? string.Empty,
             StoryMarkdown = response.StoryMarkdown ?? string.Empty,
@@ -2405,7 +2701,7 @@ public sealed partial class MainViewModel
 
         try
         {
-            if (_mobileBridgeAudioHost == null || _mobileBridgeAudioHost.ClientCount == 0 || voiceStream.AudioSession == null || voiceStream.AudioSession.TargetClientIds.Count == 0)
+            if (!_services.MobileVoice.IsConnected || voiceStream.AudioSession == null || voiceStream.AudioSession.TargetClientIds.Count == 0)
             {
                 mobileResponse.VoiceSocketConnected = false;
                 mobileResponse.VoiceError = "No Android audio socket is connected. The phone should connect to TCP " + ResolveMobileBridgeAudioPort() + " after /health.";
@@ -2414,7 +2710,7 @@ public sealed partial class MainViewModel
                 return;
             }
 
-            await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "start", "Starting fresh Android voice stream " + voiceStream.StreamId + ". The phone should clear stale queued speech before accepting this stream.", voiceToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendControlAsync(voiceStream.AudioSession, "start", "Starting ordered Android voice stream " + voiceStream.StreamId + ". Audio already accepted by the phone remains queued and finishes before newer speech.", voiceToken).ConfigureAwait(false);
 
             if (_storySpeechAdapter.ShouldUseStoryAutoplay(starResponse))
             {
@@ -2424,7 +2720,7 @@ public sealed partial class MainViewModel
 
             PrepareVoiceCloneReferenceForTts(starResponse);
             mobileResponse.VoiceSocketConnected = true;
-            await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa opened the voice stream. Generating " + (starResponse.StarId ?? "Star") + " voice...", voiceToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendStatusAsync("Elusiaa opened the voice stream. Generating " + (starResponse.StarId ?? "Star") + " voice...", voiceToken).ConfigureAwait(false);
             OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation started", (starResponse.StarId ?? "Star") + ", stream=" + voiceStream.Ordinal + ", streaming=" + _useStreamingTts));
 
             if (_useStreamingTts)
@@ -2451,10 +2747,10 @@ public sealed partial class MainViewModel
                             TtsPartIndex = chunkIndex,
                             TtsTotalParts = totalChunks
                         };
-                        MobileAudioSendResult sent = _mobileBridgeAudioHost.SendVoiceChunkAsync(args.Result, chunkIndex, totalChunks, voiceToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
+                        MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(args.Result, chunkIndex, totalChunks, voiceToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
                         chunksSent++;
                         bytesSent += args.Result.WavAudio.Length;
-                        _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", voiceToken).GetAwaiter().GetResult();
+                        _services.MobileVoice.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", voiceToken).GetAwaiter().GetResult();
                         OnUiThread(() =>
                         {
                             MobileBridgeStatus = "Sent phone voice chunk " + chunksSent + " (" + args.Result.WavAudio.Length + " bytes, sha256=" + ShortHash(checksum) + ") to " + sent.SentClients + " phone client(s).";
@@ -2473,11 +2769,11 @@ public sealed partial class MainViewModel
                 mobilePipeline.GenerationError += (_, args) =>
                 {
                     mobileResponse.VoiceError = args.ErrorMessage ?? "TTS generation error.";
-                    if (!voiceToken.IsCancellationRequested) _ = _mobileBridgeAudioHost.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None);
+                    if (!voiceToken.IsCancellationRequested) _ = _services.MobileVoice.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None);
                 };
 
                 await mobilePipeline.SpeakStreamingAsync(DefaultSessionId, starResponse, voiceToken).ConfigureAwait(false);
-                await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa closed the voice stream. Finished generating and sending " + chunksSent + " chunk(s), bytes=" + bytesSent + ".", voiceToken).ConfigureAwait(false);
+                await _services.MobileVoice.SendStatusAsync("Elusiaa closed the voice stream. Finished generating and sending " + chunksSent + " chunk(s), bytes=" + bytesSent + ".", voiceToken).ConfigureAwait(false);
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("Voice generation finished", "stream=" + voiceStream.Ordinal + ", chunks=" + chunksSent + ", bytes=" + bytesSent));
                 mobileResponse.VoiceChunksSent = chunksSent;
                 mobileResponse.VoiceBytesSent = bytesSent;
@@ -2492,8 +2788,8 @@ public sealed partial class MainViewModel
                 VoiceSynthesisResult result = await generator.GenerateAsync(CreateVoiceSynthesisRequest(starResponse), voiceToken).ConfigureAwait(false);
                 string checksum = Sha256Hex(result.WavAudio);
                 MobileAudioFrameContext frameContext = new MobileAudioFrameContext { IsStory = false, TtsPartIndex = 0, TtsTotalParts = 1 };
-                MobileAudioSendResult sent = await _mobileBridgeAudioHost.SendVoiceChunkAsync(result, 0, 1, voiceToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
-                await _mobileBridgeAudioHost.SendStatusAsync("Elusiaa sent one complete voice WAV. sha256=" + ShortHash(checksum) + ", bytes=" + result.WavAudio.Length + ".", voiceToken).ConfigureAwait(false);
+                MobileAudioSendResult sent = await _services.MobileVoice.SendChunkAsync(result, 0, 1, voiceToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
+                await _services.MobileVoice.SendStatusAsync("Elusiaa sent one complete voice WAV. sha256=" + ShortHash(checksum) + ", bytes=" + result.WavAudio.Length + ".", voiceToken).ConfigureAwait(false);
                 mobileResponse.VoiceChunksSent = sent.SentClients > 0 ? 1 : 0;
                 mobileResponse.VoiceBytesSent = result.WavAudio.Length;
                 mobileResponse.VoiceMessage = "Queued one non-streaming voice WAV on the Android phone audio socket.";
@@ -2510,9 +2806,9 @@ public sealed partial class MainViewModel
             mobileResponse.VoiceError = "Android phone voice stream was replaced by a newer request.";
             try
             {
-                if (_mobileBridgeAudioHost != null && voiceStream.AudioSession != null)
+                if (voiceStream.AudioSession != null)
                 {
-                    await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "cancel", "This Android voice stream was cancelled because a newer stream started.", CancellationToken.None).ConfigureAwait(false);
+                    await _services.MobileVoice.SendControlAsync(voiceStream.AudioSession, "cancel", "This Android voice stream was cancelled because a newer stream started.", CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch { }
@@ -2524,9 +2820,9 @@ public sealed partial class MainViewModel
             mobileResponse.VoiceError = "Android phone voice failed: " + ex.Message;
             try
             {
-                if (_mobileBridgeAudioHost != null)
+                if (_services.MobileVoice.IsConnected)
                 {
-                    await _mobileBridgeAudioHost.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None).ConfigureAwait(false);
+                    await _services.MobileVoice.SendErrorAsync(mobileResponse.VoiceError, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch { }
@@ -2539,9 +2835,9 @@ public sealed partial class MainViewModel
             {
                 try
                 {
-                    if (_mobileBridgeAudioHost != null && voiceStream.AudioSession != null && !voiceStream.CancellationToken.IsCancellationRequested)
+                    if (voiceStream.AudioSession != null && !voiceStream.CancellationToken.IsCancellationRequested)
                     {
-                        await _mobileBridgeAudioHost.SendStreamControlAsync(voiceStream.AudioSession, "end", "Android voice stream completed.", CancellationToken.None).ConfigureAwait(false);
+                        await _services.MobileVoice.SendControlAsync(voiceStream.AudioSession, "end", "Android voice stream completed.", CancellationToken.None).ConfigureAwait(false);
                     }
                 }
                 catch { }
@@ -2583,9 +2879,9 @@ public sealed partial class MainViewModel
         if (stream == null) return;
         try
         {
-            if (_mobileBridgeAudioHost != null && stream.AudioSession != null && !stream.CancellationToken.IsCancellationRequested)
+            if (stream.AudioSession != null && !stream.CancellationToken.IsCancellationRequested)
             {
-                await _mobileBridgeAudioHost.SendStreamControlAsync(stream.AudioSession, "end", "Android story voice stream completed.", CancellationToken.None).ConfigureAwait(false);
+                await _services.MobileVoice.SendControlAsync(stream.AudioSession, "end", "Android story voice stream completed.", CancellationToken.None).ConfigureAwait(false);
             }
         }
         catch { }
@@ -2703,7 +2999,7 @@ public sealed partial class MainViewModel
     {
         string sessionId = ExtractUnityEventData(response, "sessionId", "android-phone-prod");
         string starId = response.StarId ?? SelectedStarId;
-        StarState persistedState = await _runtime.GetStarStateAsync(sessionId, starId, CancellationToken.None).ConfigureAwait(false);
+        StarState persistedState = await _services.MobileConversation.GetStateAsync(sessionId, starId, CancellationToken.None).ConfigureAwait(false);
         PublishMobileGirlfriendProposalEvent(response, persistedState, "GirlfriendProposalResponseReady", "The full girlfriend proposal response and persisted relationship state are ready for Android.");
         OnUiThread(() =>
         {
@@ -2794,7 +3090,7 @@ public sealed partial class MainViewModel
         Task<List<VoiceSynthesisResult>>? prefetchedVoiceTask = null;
 
         PublishMobileStoryEventIfNeeded(firstResponse, "StoryResponseReady", "Full story markdown is ready; Android story voice prefetch is starting.");
-        await _mobileBridgeAudioHost!.SendStatusAsync("Story voice mode: streaming the first ready sentence immediately and asking Qwen for the next passage as soon as the phone starts receiving audio.", cancellationToken).ConfigureAwait(false);
+        await _services.MobileVoice.SendStatusAsync("Story voice mode: streaming the first ready sentence immediately and asking Qwen for the next passage as soon as the phone starts receiving audio.", cancellationToken).ConfigureAwait(false);
         OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice low-latency prefetch started", (firstResponse.StarId ?? "Star") + " storyChunks=" + totalStoryChunks));
 
         while (!cancellationToken.IsCancellationRequested)
@@ -2819,7 +3115,7 @@ public sealed partial class MainViewModel
                         TrackStoryFromResponse(createdNext);
                         PublishMobileStoryEventIfNeeded(createdNext, "StoryVoicePrefetchStarted", "The next story voice request was sent as soon as the current Android speech began queueing.");
                         nextVoiceTask = GenerateMobileStoryVoiceBatchAsync(createdNext, cancellationToken);
-                        _ = _mobileBridgeAudioHost!.SendStatusAsync((createdNext.StarId ?? "Star") + " is already preparing story passage " + (createdNext.StoryPartIndex + 1) + " while the phone plays passage " + (currentResponse.StoryPartIndex + 1) + ".", CancellationToken.None);
+                        _ = _services.MobileVoice.SendStatusAsync((createdNext.StarId ?? "Star") + " is already preparing story passage " + (createdNext.StoryPartIndex + 1) + " while the phone plays passage " + (currentResponse.StoryPartIndex + 1) + ".", CancellationToken.None);
                         OnUiThread(() => AppendMobileBridgeVoiceDebug("Next story passage requested early", "current=" + (currentResponse.StoryPartIndex + 1) + ", next=" + (createdNext.StoryPartIndex + 1)));
                     }
                 }
@@ -2864,7 +3160,7 @@ public sealed partial class MainViewModel
 
             if (nextResponse == null || nextVoiceTask == null)
             {
-                await _mobileBridgeAudioHost.SendStatusAsync("Story voice stream finished. Queued " + storyChunksQueued + " story passage(s), voice chunks=" + totalVoiceChunks + ", bytes=" + totalBytes + ".", cancellationToken).ConfigureAwait(false);
+                await _services.MobileVoice.SendStatusAsync("Story voice stream finished. Queued " + storyChunksQueued + " story passage(s), voice chunks=" + totalVoiceChunks + ", bytes=" + totalBytes + ".", cancellationToken).ConfigureAwait(false);
                 OnUiThread(() => AppendMobileBridgeVoiceDebug("Story voice finished", "storyChunks=" + storyChunksQueued + ", voiceChunks=" + totalVoiceChunks + ", bytes=" + totalBytes));
                 mobileResponse.VoiceChunksSent = totalVoiceChunks;
                 mobileResponse.VoiceBytesSent = totalBytes;
@@ -2922,10 +3218,10 @@ public sealed partial class MainViewModel
                     TtsPartIndex = chunkIndex,
                     TtsTotalParts = totalTtsChunks
                 };
-                MobileAudioSendResult sent = _mobileBridgeAudioHost!.SendVoiceChunkAsync(args.Result, chunkIndex, totalTtsChunks, cancellationToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
+                MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(args.Result, chunkIndex, totalTtsChunks, cancellationToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
                 voiceChunks++;
                 bytes += args.Result.WavAudio.Length;
-                _mobileBridgeAudioHost.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " streamed to phone immediately, ttsPart=" + voiceChunks + "/" + totalTtsChunks + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).GetAwaiter().GetResult();
+                _services.MobileVoice.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " streamed to phone immediately, ttsPart=" + voiceChunks + "/" + totalTtsChunks + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).GetAwaiter().GetResult();
                 _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
                     EventType = "StoryVoiceChunkQueued",
@@ -2951,7 +3247,7 @@ public sealed partial class MainViewModel
 
         pipeline.GenerationError += (_, args) =>
         {
-            if (!cancellationToken.IsCancellationRequested) _ = _mobileBridgeAudioHost!.SendErrorAsync(args.ErrorMessage ?? "TTS generation error.", CancellationToken.None);
+            if (!cancellationToken.IsCancellationRequested) _ = _services.MobileVoice.SendErrorAsync(args.ErrorMessage ?? "TTS generation error.", CancellationToken.None);
         };
 
         await pipeline.SpeakStreamingAsync(DefaultSessionId, response, cancellationToken).ConfigureAwait(false);
@@ -3002,9 +3298,9 @@ public sealed partial class MainViewModel
                 TtsPartIndex = i,
                 TtsTotalParts = voiceChunks.Count
             };
-            MobileAudioSendResult sent = await _mobileBridgeAudioHost!.SendVoiceChunkAsync(chunk, i, voiceChunks.Count, cancellationToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
+            MobileAudioSendResult sent = await _services.MobileVoice.SendChunkAsync(chunk, i, voiceChunks.Count, cancellationToken, voiceStream.AudioSession, frameContext).ConfigureAwait(false);
             bytes += chunk.WavAudio.Length;
-            await _mobileBridgeAudioHost.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " sent to phone, ttsPart=" + (i + 1) + "/" + voiceChunks.Count + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).ConfigureAwait(false);
+            await _services.MobileVoice.SendStatusAsync("Story voice chunk " + (response.StoryPartIndex + 1) + "/" + totalStoryChunks + " sent to phone, ttsPart=" + (i + 1) + "/" + voiceChunks.Count + ", sha256=" + ShortHash(checksum) + ".", cancellationToken).ConfigureAwait(false);
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "StoryVoiceChunkQueued",

@@ -1,0 +1,65 @@
+SELECT FIVE PAIRS OF WORDS
+
+IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Character attributes: {{ data.characterAttributes }}
+
+CHARACTERISTIC INTERESTS AND BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+PRIVATE OR CANON DETAILS THAT MAY SHAPE WHAT CATCHES YOUR ATTENTION
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+SEED WORDS
+These are optional ideas. Use any that help, or ignore them.
+{{ if data.seedWords.size == 0 }}
+(disabled)
+{{ else }}
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+UNAVAILABLE HISTORICAL WORDS
+{{ if data.allUsedWordsText == "" }}
+(none yet)
+{{ else }}
+{{ data.allUsedWordsText }}
+{{ end }}
+
+LAST TEN GENERATED WORD SETS
+These are the newest complete five-pair selections. Prefer fresh words instead of repeating them.
+{{ if data.recentGeneratedWordSets.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word_set in data.recentGeneratedWordSets }}
+Set {{ word_set.index }} — {{ word_set.generatedAt }}
+{{ for pair in word_set.pairs }}
+- {{ pair.first }} + {{ pair.second }}
+{{ end }}
+{{ end }}
+{{ end }}
+
+TOP TEN MOST USED GENERATED WORDS
+{{ if data.topUsedWords.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.topUsedWords }}
+- {{ item.word }}: {{ item.count }} uses
+{{ end }}
+{{ end }}
+
+Do not use the same word in multiple pairs very often.
+Choose five varied pairs now. Return only JSON with starId and wordPairs.

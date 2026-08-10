@@ -159,6 +159,11 @@ public sealed class MobileBridgeDispatcher
         if (compact.Equals("BreakupGirlfriend", StringComparison.OrdinalIgnoreCase) || compact.Equals("BreakUpGirlfriend", StringComparison.OrdinalIgnoreCase)) return "BreakupGirlfriend";
         if (compact.Equals("SetSpeechPlaybackPaused", StringComparison.OrdinalIgnoreCase) || compact.Equals("PauseSpeech", StringComparison.OrdinalIgnoreCase)) return "SetSpeechPlaybackPaused";
         if (compact.Equals("ResumeSpeech", StringComparison.OrdinalIgnoreCase)) return "ResumeSpeech";
+        if (compact.Equals("GenerateStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("GenerateWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("CreateStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("CreateJokesPoems", StringComparison.OrdinalIgnoreCase)) return "GenerateStarWriting";
+        if (compact.Equals("TellStarWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("TellWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("TellBestLatestWriting", StringComparison.OrdinalIgnoreCase)) return "TellStarWriting";
+        if (compact.Equals("SetBackgroundWritingLoopEnabled", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetAutoWritingEnabled", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAutoWriting", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetWritingLoopEnabled", StringComparison.OrdinalIgnoreCase)) return "SetBackgroundWritingLoopEnabled";
+        if (compact.Equals("SetXPostingEnabled", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleXPosting", StringComparison.OrdinalIgnoreCase) || compact.Equals("SetAutoXPostingEnabled", StringComparison.OrdinalIgnoreCase)) return "SetXPostingEnabled";
+        if (compact.Equals("PostStarWritingsToXNow", StringComparison.OrdinalIgnoreCase) || compact.Equals("PostToXNow", StringComparison.OrdinalIgnoreCase) || compact.Equals("PostSelectedStarToX", StringComparison.OrdinalIgnoreCase)) return "PostStarWritingsToXNow";
         if (compact.Equals("Refresh", StringComparison.OrdinalIgnoreCase) || compact.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)) return "RefreshState";
         return value.Trim();
     }
@@ -174,6 +179,8 @@ public sealed class MobileBridgeDispatchCommand
     public bool? IsMet { get; set; }
     public bool? IsAlly { get; set; }
     public bool? CuteModeEnabled { get; set; }
+    public bool? BackgroundWritingLoopEnabled { get; set; }
+    public bool? XPostingEnabled { get; set; }
     public bool? PlaybackPaused { get; set; }
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
@@ -204,6 +211,13 @@ public sealed class MobileBridgeDispatchResult
     public bool IsGirlfriend { get; set; }
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
+    public bool BackgroundWritingLoopEnabled { get; set; }
+    public string BackgroundWritingLoopStatus { get; set; } = string.Empty;
+    public bool XPostingEnabled { get; set; }
+    public string XPostingStatus { get; set; } = string.Empty;
+    public int XPostingAttemptedCount { get; set; }
+    public int XPostingPostedCount { get; set; }
+    public int XPostingFailedCount { get; set; }
     public bool PlaybackPaused { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
@@ -212,6 +226,10 @@ public sealed class MobileBridgeDispatchResult
     public string Transcript { get; set; } = string.Empty;
     public string SpokenText { get; set; } = string.Empty;
     public string StarOutput { get; set; } = string.Empty;
+    public int? PendingWritingCount { get; set; }
+    public int? PersistedWritingCount { get; set; }
+    public int? UnpostedWritingCount { get; set; }
+    public List<string> WritingItems { get; set; } = new List<string>();
     public string ConversationSummary { get; set; } = string.Empty;
     public string ChangesSummary { get; set; } = string.Empty;
     public bool InitiativeShouldSpeak { get; set; } = true;
@@ -331,6 +349,13 @@ public sealed class MobileBridgeDispatchEvent
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
+    public bool BackgroundWritingLoopEnabled { get; set; }
+    public string BackgroundWritingLoopStatus { get; set; } = string.Empty;
+    public bool XPostingEnabled { get; set; }
+    public string XPostingStatus { get; set; } = string.Empty;
+    public int XPostingAttemptedCount { get; set; }
+    public int XPostingPostedCount { get; set; }
+    public int XPostingFailedCount { get; set; }
     public bool PlaybackPaused { get; set; }
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
@@ -343,6 +368,10 @@ public sealed class MobileBridgeDispatchEvent
     public bool StoryIsFinished { get; set; }
     public int StoryChunkCount { get; set; }
     public string SpokenText { get; set; } = string.Empty;
+    public int? PendingWritingCount { get; set; }
+    public int? PersistedWritingCount { get; set; }
+    public int? UnpostedWritingCount { get; set; }
+    public List<string> WritingItems { get; set; } = new List<string>();
     public string SpeechIntentId { get; set; } = string.Empty;
     public string PreparedArtifactId { get; set; } = string.Empty;
     public string SpeechIntentPriority { get; set; } = string.Empty;
@@ -421,6 +450,13 @@ public sealed class MobileBridgeDispatchEvent
             GirlfriendCuteModeEnabled = state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = (state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled) && (state?.GirlfriendHourlyState?.CuteModeActive ?? result.GirlfriendCuteModeActive),
             GirlfriendCuteModeSignature = !string.IsNullOrWhiteSpace(result.GirlfriendCuteModeSignature) ? result.GirlfriendCuteModeSignature : (state?.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty),
+            BackgroundWritingLoopEnabled = result.BackgroundWritingLoopEnabled,
+            BackgroundWritingLoopStatus = result.BackgroundWritingLoopStatus ?? string.Empty,
+            XPostingEnabled = result.XPostingEnabled,
+            XPostingStatus = result.XPostingStatus ?? string.Empty,
+            XPostingAttemptedCount = result.XPostingAttemptedCount,
+            XPostingPostedCount = result.XPostingPostedCount,
+            XPostingFailedCount = result.XPostingFailedCount,
             PlaybackPaused = result.PlaybackPaused,
             Heart = state?.Heart ?? 0,
             Trust = state?.Trust ?? 0,
@@ -438,6 +474,10 @@ public sealed class MobileBridgeDispatchEvent
             StoryIsFinished = result.StoryIsFinished,
             StoryChunkCount = result.StoryChunkCount,
             SpokenText = result.SpokenText,
+            PendingWritingCount = result.PendingWritingCount,
+            PersistedWritingCount = result.PersistedWritingCount,
+            UnpostedWritingCount = result.UnpostedWritingCount,
+            WritingItems = result.WritingItems?.ToList() ?? new List<string>(),
             InitiativeShouldSpeak = result.InitiativeShouldSpeak,
             InitiativeSkippedBeforeLlm = result.InitiativeSkippedBeforeLlm,
             InitiativeStateScore = result.InitiativeStateScore,

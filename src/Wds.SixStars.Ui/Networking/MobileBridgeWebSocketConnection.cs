@@ -23,10 +23,11 @@ internal sealed class MobileBridgeWebSocketConnection : IDisposable
     private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
     private int _disposed;
 
-    public MobileBridgeWebSocketConnection(int id, TcpClient client)
+    public MobileBridgeWebSocketConnection(int id, TcpClient client, int bridgePort)
     {
         Id = id;
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        NetworkInfo = MobileBridgeNetworkAddressDiscovery.Discover(_client, bridgePort);
         _socket = WebSocket.CreateFromStream(
             _client.GetStream(),
             isServer: true,
@@ -35,6 +36,7 @@ internal sealed class MobileBridgeWebSocketConnection : IDisposable
     }
 
     public int Id { get; }
+    public MobileBridgeConnectionNetworkInfo NetworkInfo { get; }
     public bool IsOpen => Volatile.Read(ref _disposed) == 0 && _socket.State == WebSocketState.Open;
 
     public Task SendJsonAsync(object value, JsonSerializerOptions options, CancellationToken cancellationToken)
