@@ -73,34 +73,31 @@ namespace Wds.SixStars.Api.XPosting
             StarXPostApiResult first = await SendCreatePostAsync(token.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
             if (first.Success) return first;
 
-            // 401 is the normal expired/rejected-token signal. A 403 can occasionally be returned for an
-            // authorization state that a fresh access token can clear, so refresh exactly once for either.
-            // If a fresh token still receives 403, diagnose the token with /2/users/me rather than repeatedly
-            // hammering the create-post endpoint or telling the user to keep reauthorizing.
-            if (first.StatusCode != (int)HttpStatusCode.Unauthorized
-                && first.StatusCode != (int)HttpStatusCode.Forbidden) return first;
+            // 403 is a hard create-post denial, not an access-token refresh signal. Do not immediately
+            // send the same post again. Diagnose the existing user token with /2/users/me so the UI can
+            // distinguish an X-side posting restriction from a token that is no longer usable.
+            if (first.StatusCode == (int)HttpStatusCode.Forbidden)
+            {
+                return await DiagnoseForbiddenAsync(token.AccessToken, first, timeoutSeconds, cancellationToken).ConfigureAwait(false);
+            }
+
+            // 401 is the normal expired/rejected-token signal. Refresh exactly once and retry the post once.
+            if (first.StatusCode != (int)HttpStatusCode.Unauthorized) return first;
 
             StarXOAuth2Token? refreshed = await RefreshTokenAsync(account, forceRefresh: true, cancellationToken).ConfigureAwait(false);
             if (refreshed == null)
             {
-                if (first.StatusCode == (int)HttpStatusCode.Forbidden)
-                {
-                    first.PermissionDenied = true;
-                    first.Error = "X returned HTTP 403 for POST /2/tweets and the one forced OAuth refresh attempt also failed. The batch has been stopped. Reauthorize this Star account before testing again. X response: "
-                        + (string.IsNullOrWhiteSpace(first.Error) ? "Forbidden." : first.Error.Trim());
-                }
-                else
-                {
-                    first.Error = string.IsNullOrWhiteSpace(first.Error)
-                        ? "X rejected the OAuth 2.0 token and it could not be refreshed. Reauthorize this Star account."
-                        : first.Error;
-                }
+                first.Error = string.IsNullOrWhiteSpace(first.Error)
+                    ? "X rejected the OAuth 2.0 token and it could not be refreshed. Reauthorize this Star account."
+                    : first.Error;
                 return first;
             }
 
             StarXPostApiResult second = await SendCreatePostAsync(refreshed.AccessToken, postText, timeoutSeconds, cancellationToken).ConfigureAwait(false);
             if (second.StatusCode != (int)HttpStatusCode.Forbidden) return second;
 
+            // A post retried because of an initial 401 may itself reveal a hard 403 restriction. Diagnose it,
+            // but do not perform another refresh or another create-post retry.
             return await DiagnoseForbiddenAsync(refreshed.AccessToken, second, timeoutSeconds, cancellationToken).ConfigureAwait(false);
         }
 
@@ -188,19 +185,19 @@ namespace Wds.SixStars.Api.XPosting
                     return forbidden;
                 }
 
-                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh, and the refreshed token could not validate with /2/users/me (HTTP "
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets, and the current OAuth token could not validate with /2/users/me (HTTP "
                     + ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)
                     + "). Reauthorize this Star account before trying again. X response: " + forbidden.Error;
                 return forbidden;
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh. The follow-up OAuth identity check timed out, so the batch was stopped. X response: " + forbidden.Error;
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets. The follow-up OAuth identity check timed out, so the batch was stopped without retrying the post. X response: " + forbidden.Error;
                 return forbidden;
             }
             catch (Exception ex)
             {
-                forbidden.Error = "X returned HTTP 403 for POST /2/tweets even after one forced token refresh. The follow-up OAuth identity check failed (" + ex.Message + "), so the batch was stopped. X response: " + forbidden.Error;
+                forbidden.Error = "X returned HTTP 403 for POST /2/tweets. The follow-up OAuth identity check failed (" + ex.Message + "), so the batch was stopped without retrying the post. X response: " + forbidden.Error;
                 return forbidden;
             }
         }
