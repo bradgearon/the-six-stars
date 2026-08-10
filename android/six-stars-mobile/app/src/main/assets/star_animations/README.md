@@ -24,6 +24,8 @@ Supported state names are open-ended. The current app requests:
 
 Future emotional state names can be wired by calling `setProdAnimationState("happy")`, `setProdAnimationState("hurt")`, etc. If a state GIF does not exist, the app falls back to `idle.gif`, then to PNG frame resources.
 
+Keep every GIF state for a given Star on the same source canvas. Production idle/talking assets use a 128×128 canvas. A mismatched canvas can change the integer pixel scale when Android swaps animation states, making the character visibly grow or shrink even when the artwork itself has matching proportions.
+
 ## Optional one-shot shirt-off reaction
 
 Place an optional non-looping GIF at:
