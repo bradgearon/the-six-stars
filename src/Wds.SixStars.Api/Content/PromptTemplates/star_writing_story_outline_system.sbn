@@ -11,3 +11,9 @@ Create a title, a compelling premise, and an ordered story outline whose size is
 - Keep the outline open enough that the other five Stars can add layers and improve it.
 
 Return only JSON with starId, title, premise, and beats. Do not write the full story yet.
+
+OUTPUT SHAPE — this is formatting, not a creative length restriction:
+- `beats` must be a JSON array of plain strings.
+- Each beat string may be as detailed or multi-sentence as the story needs.
+- Do not return objects inside `beats`, and do not create separate number/index fields; array order already provides sequence.
+- Example shape only: {"starId":"...","title":"...","premise":"...","beats":["first structural movement...","next structural movement..."]}

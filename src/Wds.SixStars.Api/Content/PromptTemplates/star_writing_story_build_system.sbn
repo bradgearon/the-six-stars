@@ -22,3 +22,9 @@ Otherwise choose "continue".
 {{ end }}
 
 Return the entire revised story, the revised ordered beats, a short list of layers you added, one completionDecision, and a brief completionReason. Do not return commentary outside JSON.
+
+OUTPUT SHAPE — formatting only, not a creative length restriction:
+- `revisedBeats` must be a JSON array of plain strings; each string may be as detailed as necessary.
+- `addedLayers` must be a JSON array of plain strings.
+- `story` must contain the entire revised prose draft as one string.
+- Do not wrap beat or layer entries in objects.

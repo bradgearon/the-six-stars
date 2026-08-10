@@ -701,6 +701,7 @@ namespace Wds.SixStars.Api.Ai
                     "The outline is structurally incomplete because these required story components are empty: "
                     + string.Join(", ", missing)
                     + ". Complete this SAME outline now. Preserve every useful existing field, fill the missing components, and return the full JSON object again. "
+                    + "The beats property must be a JSON array of plain strings; each string may be as detailed as needed. Do not put objects inside beats. "
                     + "Do not shorten the story architecture to satisfy a count or size target; let the story determine its structure."));
 
                 string completionJson = await _client.CompleteJsonAsync(
@@ -792,18 +793,9 @@ namespace Wds.SixStars.Api.Ai
                 0,
                 "star-writing-story-build-" + phaseNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 cancellationToken).ConfigureAwait(false);
-            StarWritingStoryBuildResult? result = JsonSerializer.Deserialize<StarWritingStoryBuildResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty JSON.");
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? contributorProfile.StarId : result.StarId.Trim();
-            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
-            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 0)).ToList();
-            if (result.RevisedBeats.Count == 0) result.RevisedBeats = (outline.Beats ?? new List<string>()).ToList();
-            result.Story = (result.Story ?? string.Empty).Trim();
-            result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 0)).ToList();
-            result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
-            result.CompletionReason = PromptText(result.CompletionReason, 0);
-            if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft.");
-            result.RawModelJson = json;
+            StarWritingStoryBuildResult? result = ParseAndNormalizeStoryBuildResult(json, contributorProfile.StarId, outline, pendingFinish);
+            if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty or unreadable JSON.");
+            if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft. Raw response preview: " + PromptText(json, 1600));
             return result;
         }
 
@@ -938,27 +930,217 @@ namespace Wds.SixStars.Api.Ai
             throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry score vector after a format-repair retry.");
         }
 
-        private StarWritingStoryOutlineResult? ParseAndNormalizeStoryOutline(string json, string fallbackStarId)
+        private StarWritingStoryBuildResult? ParseAndNormalizeStoryBuildResult(
+            string json,
+            string fallbackStarId,
+            StarWritingStoryOutlineResult outline,
+            bool pendingFinish)
         {
-            StarWritingStoryOutlineResult? result;
+            string extracted = ExtractJson(json);
             try
             {
-                result = JsonSerializer.Deserialize<StarWritingStoryOutlineResult>(ExtractJson(json), _jsonOptions);
+                using JsonDocument document = JsonDocument.Parse(extracted);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+                JsonElement root = document.RootElement;
+                StarWritingStoryBuildResult result = new StarWritingStoryBuildResult
+                {
+                    StarId = ReadLooseJsonString(root, "starId"),
+                    Title = ReadLooseJsonString(root, "title"),
+                    RevisedBeats = ReadStoryBeatList(root, "revisedBeats"),
+                    Story = ReadLooseJsonString(root, "story"),
+                    AddedLayers = ReadLooseJsonStringList(root, "addedLayers"),
+                    CompletionDecision = ReadLooseJsonString(root, "completionDecision"),
+                    CompletionReason = ReadLooseJsonString(root, "completionReason"),
+                    RawModelJson = json
+                };
+
+                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
+                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+                result.RevisedBeats = (result.RevisedBeats ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                if (result.RevisedBeats.Count == 0) result.RevisedBeats = (outline.Beats ?? new List<string>()).ToList();
+                result.Story = (result.Story ?? string.Empty).Trim();
+                result.AddedLayers = (result.AddedLayers ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
+                result.CompletionReason = PromptText(result.CompletionReason, 0);
+                return result;
             }
             catch
             {
                 return null;
             }
-            if (result == null) return null;
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
-            result.Title = PromptText(result.Title, 0);
-            result.Premise = PromptText(result.Premise, 0);
-            result.Beats = (result.Beats ?? new List<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => PromptText(x, 0))
-                .ToList();
-            result.RawModelJson = json;
+        }
+
+        private static List<string> ReadLooseJsonStringList(JsonElement root, string propertyName)
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement value)) return new List<string>();
+            List<string> result = new List<string>();
+
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in value.EnumerateArray())
+                {
+                    string text = FlattenStoryBeat(item);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+            }
+            else if (value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in value.EnumerateObject())
+                {
+                    string text = FlattenStoryBeat(property.Value);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+            }
+            else
+            {
+                string text = FlattenStoryBeat(value);
+                if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+            }
+
             return result;
+        }
+
+        private StarWritingStoryOutlineResult? ParseAndNormalizeStoryOutline(string json, string fallbackStarId)
+        {
+            string extracted = ExtractJson(json);
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(extracted);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+                JsonElement root = document.RootElement;
+                StarWritingStoryOutlineResult result = new StarWritingStoryOutlineResult
+                {
+                    StarId = ReadLooseJsonString(root, "starId"),
+                    Title = ReadLooseJsonString(root, "title"),
+                    Premise = ReadLooseJsonString(root, "premise"),
+                    Beats = ReadStoryBeatList(root),
+                    RawModelJson = json
+                };
+
+                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
+                result.Title = PromptText(result.Title, 0);
+                result.Premise = PromptText(result.Premise, 0);
+                result.Beats = (result.Beats ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ReadLooseJsonString(JsonElement root, string propertyName)
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement value)) return string.Empty;
+            return JsonScalarText(value);
+        }
+
+        private static List<string> ReadStoryBeatList(JsonElement root, string propertyName = "beats")
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement beats)) return new List<string>();
+
+            List<string> result = new List<string>();
+            if (beats.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in beats.EnumerateArray())
+                {
+                    string text = FlattenStoryBeat(item);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+                return result;
+            }
+
+            // Some local models naturally express an outline as an object keyed by beat number/name.
+            // Preserve that generated architecture rather than treating it as an empty outline.
+            if (beats.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in beats.EnumerateObject())
+                {
+                    string text = FlattenStoryBeat(property.Value);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+                return result;
+            }
+
+            string single = FlattenStoryBeat(beats);
+            if (!string.IsNullOrWhiteSpace(single)) result.Add(single.Trim());
+            return result;
+        }
+
+        private static string FlattenStoryBeat(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String) return element.GetString() ?? string.Empty;
+            if (element.ValueKind == JsonValueKind.Number || element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False)
+            {
+                return JsonScalarText(element);
+            }
+
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                return string.Join("; ", element.EnumerateArray()
+                    .Select(FlattenStoryBeat)
+                    .Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
+            if (element.ValueKind != JsonValueKind.Object) return string.Empty;
+
+            List<string> pieces = new List<string>();
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                // Sequence metadata is redundant because array order already preserves it.
+                if (string.Equals(property.Name, "index", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "number", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "beatNumber", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string value = FlattenStoryBeat(property.Value);
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                if (string.Equals(property.Name, "beat", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "text", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "summary", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "description", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "content", StringComparison.OrdinalIgnoreCase))
+                {
+                    pieces.Add(value.Trim());
+                }
+                else
+                {
+                    pieces.Add(property.Name + ": " + value.Trim());
+                }
+            }
+
+            return string.Join(" — ", pieces.Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static string JsonScalarText(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String:
+                    return element.GetString() ?? string.Empty;
+                case JsonValueKind.Number:
+                    return element.GetRawText();
+                case JsonValueKind.True:
+                    return "true";
+                case JsonValueKind.False:
+                    return "false";
+                default:
+                    return string.Empty;
+            }
         }
 
         private static List<string> GetMissingStoryOutlineFields(StarWritingStoryOutlineResult outline)
