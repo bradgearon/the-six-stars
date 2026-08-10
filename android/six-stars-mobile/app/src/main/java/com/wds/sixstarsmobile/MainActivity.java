@@ -1012,9 +1012,9 @@ public final class MainActivity extends ComponentActivity {
         prodXPostingCheck.setChecked(desktopXPostingEnabled);
         controls.addView(prodXPostingCheck);
 
-        prodPostToXNowButton = prodButton("Post Selected Star to X Now");
+        prodPostToXNowButton = prodButton("Post 5 to X for All Stars");
         controls.addView(prodPostToXNowButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        TextView xPostingHint = prodText("Authorize each Star account once from the desktop OAuth 2.0 button. The desktop then chooses five unposted shelf items, waits the configured delay between posts, and marks each writing posted only after X accepts it. Foreground speech does not interrupt a started batch.", 11, 0xFFB6A7C8, false);
+        TextView xPostingHint = prodText("Queues one five-post batch for every enabled/configured Star account. The desktop runs them in the background through the serialized X posting lane, chooses five unposted shelf items for each Star, and marks each writing posted only after X accepts it.", 11, 0xFFB6A7C8, false);
         controls.addView(xPostingHint);
 
         TextView status = prodOutput(buildProdMenuStatusText(), 12);
@@ -1046,7 +1046,7 @@ public final class MainActivity extends ComponentActivity {
                 if (suppressXPostingToggleDispatch) return;
                 dispatchXPostingToggle(isChecked, prodXPostingCheck, status);
             });
-            prodPostToXNowButton.setOnClickListener(v -> dispatchXPostingNow(prodPostToXNowButton, status));
+            prodPostToXNowButton.setOnClickListener(v -> dispatchAllStarsXPostingNow(prodPostToXNowButton, status));
             fetchMobileState(false);
             save.setOnClickListener(v -> {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
@@ -2200,7 +2200,7 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
-    private void dispatchXPostingNow(Button button, TextView status) {
+    private void dispatchAllStarsXPostingNow(Button button, TextView status) {
         dispatchXPostingNowForStar(selectedStarName(), button, status, true);
     }
 
@@ -2209,35 +2209,33 @@ public final class MainActivity extends ComponentActivity {
                 ? selectedStarName()
                 : requestedStarId.trim();
         if (button != null) button.setEnabled(false);
+        if (status != null) status.setText("Queuing five X posts for every configured Star…");
         try {
             JSONObject json = new JSONObject();
-            json.put("commandId", "android-x-post-now-" + starId.toLowerCase(Locale.US) + "-" + System.currentTimeMillis());
-            json.put("commandType", "PostStarWritingsToXNow");
+            json.put("commandId", "android-x-post-all-now-" + System.currentTimeMillis());
+            json.put("commandType", "PostAllStarWritingsToXNow");
             json.put("sourceClientId", "SixStarsMobileAndroid");
             json.put("sessionId", currentSessionId());
-            json.put("starId", starId);
-            json.put("reason", "Android quick X button requested an immediate five-post batch for " + starId + ".");
+            json.put("starId", selectedStarName());
+            json.put("reason", "Android Last Cat Console requested an immediate five-post X batch for every configured Star.");
             sendSocketRequest("dispatch", json, 30000L, response -> runOnUiThread(() -> {
                 JSONObject event = response.optJSONObject("event");
                 JSONObject xState = event == null ? response : event;
                 applyXPostingState(xState);
                 if (button != null) button.setEnabled(true);
-                String message = response.optString("message", starId + " X batch queued.");
-                if (status != null) status.setText(showFullMenuStatus ? buildProdMenuStatusText() : message);
-                setDebug("X posting batch queued for " + starId, message);
+                String message = response.optString("message", "Queued X posting batches for all configured Stars.");
+                desktopXPostingStatus = message;
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("All-Star X posting queued", message);
             }), error -> runOnUiThread(() -> {
                 if (button != null) button.setEnabled(true);
-                if (status != null) status.setText(showFullMenuStatus
-                        ? buildProdMenuStatusText()
-                        : "Could not queue " + starId + " X posts: " + error.getMessage());
-                setDebug("Could not queue X posting for " + starId, error.toString());
+                if (status != null) status.setText(buildProdMenuStatusText());
+                setDebug("Could not queue all-Star X posting", error.toString());
             }));
         } catch (Exception ex) {
             if (button != null) button.setEnabled(true);
-            if (status != null) status.setText(showFullMenuStatus
-                    ? buildProdMenuStatusText()
-                    : "Could not queue " + starId + " X posts: " + ex.getMessage());
-            setDebug("Could not queue X posting for " + starId, ex.toString());
+            if (status != null) status.setText(buildProdMenuStatusText());
+            setDebug("Could not queue all-Star X posting", ex.toString());
         }
     }
 
