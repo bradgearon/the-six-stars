@@ -23,6 +23,7 @@ namespace Wds.SixStars.Ui.Configuration
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
         public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
+        public WritingMethodsConfig WritingMethods { get; set; } = new WritingMethodsConfig();
         public XPostingConfig XPosting { get; set; } = new XPostingConfig();
     }
 
@@ -127,7 +128,7 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class WritingPassesConfig
     {
-        /// <summary>When false, the writing shelf runs only its initial word-pair/composition pass.</summary>
+        /// <summary>When false, the writing shelf runs only the selected creative method's first pass.</summary>
         public bool Enabled { get; set; } = true;
         /// <summary>When true, each writing cycle receives 100 optional random noun/adjective/verb ideas.</summary>
         public bool SeedWordsEnabled { get; set; } = true;
@@ -136,6 +137,14 @@ namespace Wds.SixStars.Ui.Configuration
         public double OnePassWeight { get; set; } = 0.50;
         public double TwoToThreePassWeight { get; set; } = 0.30;
         public double FourOrMorePassWeight { get; set; } = 0.20;
+    }
+
+    public sealed class WritingMethodsConfig
+    {
+        /// <summary>Relative weight for the existing two-word semantic collision technique.</summary>
+        public double SemanticCollisionWeight { get; set; } = 0.70;
+        /// <summary>Relative weight for the verb and noun displacement technique.</summary>
+        public double VerbNounDisplacementWeight { get; set; } = 0.30;
     }
 
     public sealed class XPostingConfig

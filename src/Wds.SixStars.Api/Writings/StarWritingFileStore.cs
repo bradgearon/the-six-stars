@@ -244,6 +244,7 @@ namespace Wds.SixStars.Api.Writings
                     SourceBatchId = item.SourceBatchId,
                     StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(),
                     Speaker = string.IsNullOrWhiteSpace(speaker) ? (string.IsNullOrWhiteSpace(starId) ? "Unknown Star" : starId.Trim()) : speaker.Trim(),
+                    WritingMethod = StarWritingMethods.Normalize(item.WritingMethod),
                     GeneratedAt = item.GeneratedAt,
                     Index = item.Index,
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
@@ -272,9 +273,10 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 7;
+            state.Version = 8;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
+            state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
             state.LatestWritingPasses ??= new List<StarWritingPassSnapshot>();
             state.RecentGeneratedWordSets ??= new List<StarWritingGeneratedWordSet>();
             state.GeneratedWordUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -283,6 +285,7 @@ namespace Wds.SixStars.Api.Writings
 
             foreach (StarWritingHistoryItem item in state.RecentWritingHistory.Where(x => x != null))
             {
+                item.WritingMethod = StarWritingMethods.Normalize(item.WritingMethod);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
@@ -322,6 +325,7 @@ namespace Wds.SixStars.Api.Writings
 
             foreach (PersistedStarWriting item in state.PersistedWritings.Where(x => x != null))
             {
+                item.WritingMethod = StarWritingMethods.Normalize(item.WritingMethod);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 item.XPostId ??= string.Empty;
@@ -333,13 +337,14 @@ namespace Wds.SixStars.Api.Writings
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
 
-            // Version 6 keeps the ten newest complete initial word-pair selections and a cumulative
-            // frequency table. Older files are gently seeded from the recent reviewed history so the
+            // The repetition guard keeps the ten newest complete semantic-collision word-pair selections
+            // and a cumulative frequency table. Older files are gently seeded from recent reviewed history so the
             // repetition guard starts with useful context instead of an empty state.
             if (state.RecentGeneratedWordSets.Count == 0 && state.RecentWritingHistory.Count > 0)
             {
                 state.RecentGeneratedWordSets = state.RecentWritingHistory
-                    .Where(x => x != null)
+                    .Where(x => x != null
+                        && string.Equals(StarWritingMethods.Normalize(x.WritingMethod), StarWritingMethods.SemanticCollision, StringComparison.OrdinalIgnoreCase))
                     .GroupBy(x => string.IsNullOrWhiteSpace(x.SourceBatchId)
                         ? x.GeneratedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)
                         : x.SourceBatchId, StringComparer.OrdinalIgnoreCase)

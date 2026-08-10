@@ -1,0 +1,47 @@
+IMPROVE THE VERB-AND-NOUN DISPLACEMENT SET
+
+PASS
+This is pass {{ data.passNumber }} of {{ data.totalPasses }}. The current items already include every accepted change from earlier passes.
+
+CHARACTER IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY AND WRITING VOICE
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Speaking style: {{ data.speakingStyle }}
+Writing delivery: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+RELEVANT PRIVATE OR CANON DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+SEED WORDS
+These are optional ideas for a new noun, displaced verb, or completion. Use any that help, or ignore them.
+{{ if data.seedWords.size == 0 }}
+(disabled)
+{{ else }}
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+CURRENT CANDIDATES
+The two words are noun + displaced verb.
+{{ for item in data.candidates }}
+ID: {{ item.id }}
+Noun + displaced verb: {{ item.words }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+Return only proposed replacements. You may change the noun, the verb, or both. Score old and new from 0 to 100 using the same standard; the runtime keeps the higher-scoring version.

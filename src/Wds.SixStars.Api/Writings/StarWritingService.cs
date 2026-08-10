@@ -19,6 +19,7 @@ namespace Wds.SixStars.Api.Writings
         private readonly IStarWritingAgent _agent;
         private readonly StarWritingFileStore _store;
         private readonly StarWritingPassOptions _passOptions;
+        private readonly StarWritingMethodOptions _methodOptions;
         private readonly IStarWritingSeedWordProvider? _seedWordProvider;
         private readonly Random _random;
         private readonly SemaphoreSlim _operationGate = new SemaphoreSlim(1, 1);
@@ -28,6 +29,7 @@ namespace Wds.SixStars.Api.Writings
             IStarWritingAgent agent,
             StarWritingFileStore store,
             StarWritingPassOptions? passOptions = null,
+            StarWritingMethodOptions? methodOptions = null,
             IStarWritingSeedWordProvider? seedWordProvider = null,
             Random? random = null)
         {
@@ -35,6 +37,7 @@ namespace Wds.SixStars.Api.Writings
             _agent = agent ?? throw new ArgumentNullException(nameof(agent));
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _passOptions = passOptions ?? new StarWritingPassOptions();
+            _methodOptions = methodOptions ?? new StarWritingMethodOptions();
             _seedWordProvider = seedWordProvider;
             _random = random ?? new Random();
         }
@@ -54,7 +57,10 @@ namespace Wds.SixStars.Api.Writings
                 System.Diagnostics.Stopwatch totalTimer = System.Diagnostics.Stopwatch.StartNew();
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+                string writingMethod = _methodOptions.SelectMethod(_random);
                 int selectedPassCount = _passOptions.SelectPassCount(_random);
+                System.Diagnostics.Debug.WriteLine(
+                    "[StarWritingMethod] " + profile.StarId + " selected " + writingMethod + ".");
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingPasses] " + profile.StarId + " selected " + selectedPassCount.ToString(CultureInfo.InvariantCulture) + " total pass(es).");
 
@@ -63,19 +69,24 @@ namespace Wds.SixStars.Api.Writings
                 // fresh generation. They can be migrated by a separate maintenance action later.
                 int repairedRatingCount = 0;
 
-                // Pass one deliberately remains two staged requests: choose five unrelated word
-                // pairs without revealing the creative task, then compose from those fixed pairs.
+                // Pass one is always a two-stage creative method. Semantic collision privately
+                // chooses unrelated word pairs; verb/noun displacement privately chooses objects
+                // and their ordinary actions before making a deliberately displaced completion.
                 long generationStartedAt = totalTimer.ElapsedMilliseconds;
                 IReadOnlyList<string> seedWords = _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>();
-                StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, seedWords, cancellationToken).ConfigureAwait(false);
+                StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, seedWords, writingMethod, cancellationToken).ConfigureAwait(false);
+                generation.WritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
                 NormalizeGeneration(generation);
-                RecordGeneratedWordSet(state, generation.UsedWords);
+                if (string.Equals(generation.WritingMethod, StarWritingMethods.SemanticCollision, StringComparison.OrdinalIgnoreCase))
+                {
+                    RecordGeneratedWordSet(state, generation.UsedWords);
+                }
                 generation.SelectedPassCount = selectedPassCount;
                 generation.CompletedPassCount = 1;
                 AppendPassSnapshot(generation, 1, 0);
                 await SaveLatestPassStateAsync(state, generation).ConfigureAwait(false);
 
-                // Passes two and later reuse the same critic/rewrite request. Each proposed
+                // Passes two and later reuse the selected method's critic/rewrite contract. Each proposed
                 // replacement includes an old and new score. Only a strictly higher-scoring rewrite
                 // becomes the input state for the next pass; ties and lower scores keep the old item.
                 for (int passNumber = 2; passNumber <= selectedPassCount; passNumber++)
@@ -102,6 +113,7 @@ namespace Wds.SixStars.Api.Writings
                 StarWritingHistoryBatch batch = new StarWritingHistoryBatch
                 {
                     Id = "writing-batch-" + Guid.NewGuid().ToString("N"),
+                    WritingMethod = generation.WritingMethod,
                     GeneratedAt = now,
                     SelectedPassCount = generation.SelectedPassCount,
                     CompletedPassCount = generation.CompletedPassCount,
@@ -120,6 +132,7 @@ namespace Wds.SixStars.Api.Writings
                     StarWritingHistoryItem historyItem = new StarWritingHistoryItem
                     {
                         Id = itemId,
+                        WritingMethod = generation.WritingMethod,
                         SourceBatchId = batch.Id,
                         GeneratedAt = now,
                         Index = i,
@@ -136,6 +149,7 @@ namespace Wds.SixStars.Api.Writings
                         state.PersistedWritings.Add(new PersistedStarWriting
                         {
                             Id = itemId,
+                            WritingMethod = generation.WritingMethod,
                             SourceBatchId = batch.Id,
                             WordsUsed = historyItem.WordsUsed.ToList(),
                             Writing = historyItem.Writing,
@@ -170,6 +184,7 @@ namespace Wds.SixStars.Api.Writings
 
                 return new StarWritingCreateResult
                 {
+                    WritingMethod = generation.WritingMethod,
                     State = state,
                     Batch = batch,
                     PersistedCount = persistedCount,
@@ -329,6 +344,7 @@ namespace Wds.SixStars.Api.Writings
 
         private async Task SaveLatestPassStateAsync(StarWritingNotesState state, StarWritingGenerationResult generation)
         {
+            state.LatestWritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
             state.LatestSelectedPassCount = generation.SelectedPassCount;
             state.LatestCompletedPassCount = generation.CompletedPassCount;
             state.LatestAppliedImprovementCount = generation.AppliedImprovementCount;
@@ -427,6 +443,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static void NormalizeGeneration(StarWritingGenerationResult generation)
         {
+            generation.WritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
             generation.Jokes ??= new List<string>();
             generation.UsedWords ??= new List<List<string>>();
             generation.SeedWords ??= new List<string>();
@@ -506,6 +523,7 @@ namespace Wds.SixStars.Api.Writings
                 StarWritingGenerationResult generation = new StarWritingGenerationResult
                 {
                     StarId = profile.StarId,
+                    WritingMethod = StarWritingMethods.Normalize(group.FirstOrDefault()?.WritingMethod),
                     Items = group.Select(item => new StarWritingCandidate
                     {
                         WordsUsed = (item.WordsUsed ?? new List<string>()).Take(2).ToList(),
@@ -549,6 +567,7 @@ namespace Wds.SixStars.Api.Writings
                             state.PersistedWritings.Add(new PersistedStarWriting
                             {
                                 Id = item.Id,
+                                WritingMethod = StarWritingMethods.Normalize(item.WritingMethod),
                                 SourceBatchId = item.SourceBatchId,
                                 WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                                 Writing = item.Writing,

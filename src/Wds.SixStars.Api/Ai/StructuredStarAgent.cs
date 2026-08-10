@@ -68,8 +68,15 @@ namespace Wds.SixStars.Api.Ai
             StarProfile profile,
             StarWritingNotesState state,
             IReadOnlyList<string> seedWords,
+            string writingMethod,
             CancellationToken cancellationToken)
         {
+            writingMethod = StarWritingMethods.Normalize(writingMethod);
+            if (string.Equals(writingMethod, StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase))
+            {
+                return await GenerateVerbNounDisplacementAsync(profile, state, seedWords, cancellationToken).ConfigureAwait(false);
+            }
+
             string allUsedWordsText = string.Join(", ", (state.AllUsedWords ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => PromptText(x, 120))
@@ -204,13 +211,137 @@ namespace Wds.SixStars.Api.Ai
             StarWritingGenerationResult? result = JsonSerializer.Deserialize<StarWritingGenerationResult>(ExtractJson(compositionJson), _jsonOptions);
             if (result == null) throw new InvalidOperationException("Writing composition returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
+            result.WritingMethod = StarWritingMethods.SemanticCollision;
             result.UsedWords = wordPairResult.WordPairs.Select(pair => pair.ToList()).ToList();
             result.SeedWords = NormalizeSeedWords(seedWords);
-            result.RawModelJson = "--- WORD PAIR SELECTION ---" + Environment.NewLine
+            result.RawModelJson = "--- SEMANTIC COLLISION WORD PAIR SELECTION ---" + Environment.NewLine
                 + wordPairJson + Environment.NewLine
-                + "--- WRITING COMPOSITION ---" + Environment.NewLine
+                + "--- SEMANTIC COLLISION COMPOSITION ---" + Environment.NewLine
                 + compositionJson;
             return result;
+        }
+
+        private async Task<StarWritingGenerationResult> GenerateVerbNounDisplacementAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            IReadOnlyList<string> seedWords,
+            CancellationToken cancellationToken)
+        {
+            List<string> normalizedSeedWords = NormalizeSeedWords(seedWords);
+            object objectActionData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    8,
+                    600),
+                seedWords = normalizedSeedWords
+            };
+
+            IReadOnlyList<ChatMessage> objectActionMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_displacement_objects_system.sbn", objectActionData)),
+                new ChatMessage("user", _templates.Render("star_writing_displacement_objects_user.sbn", objectActionData))
+            };
+
+            string objectActionJson = await _client.CompleteJsonAsync(
+                objectActionMessages,
+                StarResponseJsonSchema.CreateStarWritingObjectActionResponseFormat(),
+                0,
+                "star-writing-displacement-objects",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingObjectActionResult? objectActionResult = JsonSerializer.Deserialize<StarWritingObjectActionResult>(ExtractJson(objectActionJson), _jsonOptions);
+            if (objectActionResult == null) throw new InvalidOperationException("Verb/noun displacement object selection returned empty JSON.");
+            objectActionResult.StarId = string.IsNullOrWhiteSpace(objectActionResult.StarId) ? profile.StarId : objectActionResult.StarId;
+            objectActionResult.Objects = NormalizeObjectActionItems(objectActionResult.Objects);
+            objectActionResult.RawModelJson = objectActionJson;
+
+            object compositionData = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                element = PromptText(profile.Element, 80),
+                domain = PromptText(profile.Domain, 120),
+                coreQuote = PromptText(profile.CoreQuote, 500),
+                personalityShort = PromptText(profile.PersonalityShort, 900),
+                deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                backstorySummary = PromptText(profile.BackstorySummary, 1400),
+                completeBackgroundStory = PromptText(profile.CompleteBackgroundStory, 2200),
+                voiceArchetype = PromptText(profile.VoiceArchetype, 700),
+                speakingStyle = PromptText(profile.SpeakingStyle, 1200),
+                voiceDirection = PromptText(profile.VoiceDirection, 900),
+                characterAttributes = BuildCharacterAttributeSummary(profile),
+                characterAttributeNotes = PromptList(profile.CharacterAttributeNotes, 8, 700),
+                behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
+                storytellingRules = PromptList(profile.StorytellingRules, 8, 700),
+                quotes = PromptList(profile.Quotes, 10, 700),
+                relevantSecrets = PromptList(
+                    (profile.StarSecrets ?? new List<string>())
+                        .Concat(profile.LibraryCanonNotes ?? new List<string>()),
+                    10,
+                    800),
+                seedWords = normalizedSeedWords,
+                recentWritings = (state.PersistedWritings ?? new List<PersistedStarWriting>())
+                    .Where(x => x != null)
+                    .OrderByDescending(x => x.PersistedAt)
+                    .ThenByDescending(x => x.GeneratedAt)
+                    .Take(10)
+                    .Select(x => new
+                    {
+                        generatedAt = x.GeneratedAt.ToString("yyyy-MM-dd HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture),
+                        words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
+                        writing = PromptText(x.Writing, 1200)
+                    })
+                    .ToList(),
+                objects = objectActionResult.Objects
+                    .Select((item, index) => new
+                    {
+                        index = index + 1,
+                        @object = PromptText(item.Object, 80),
+                        normalActions = (item.NormalActions ?? new List<string>()).Select(x => PromptText(x, 80)).ToList()
+                    })
+                    .ToList()
+            };
+
+            IReadOnlyList<ChatMessage> compositionMessages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_writing_displacement_generate_system.sbn", compositionData)),
+                new ChatMessage("user", _templates.Render("star_writing_displacement_generate_user.sbn", compositionData))
+            };
+
+            string compositionJson = await _client.CompleteJsonAsync(
+                compositionMessages,
+                StarResponseJsonSchema.CreateStarWritingDisplacementCompositionResponseFormat(),
+                0,
+                "star-writing-displacement-compose",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingDisplacementCompositionResult? composition = JsonSerializer.Deserialize<StarWritingDisplacementCompositionResult>(ExtractJson(compositionJson), _jsonOptions);
+            if (composition == null) throw new InvalidOperationException("Verb/noun displacement composition returned empty JSON.");
+            composition.StarId = string.IsNullOrWhiteSpace(composition.StarId) ? profile.StarId : composition.StarId;
+            composition.Items = NormalizeDisplacementCompositionItems(composition.Items, objectActionResult.Objects);
+            composition.RawModelJson = compositionJson;
+
+            return new StarWritingGenerationResult
+            {
+                StarId = profile.StarId,
+                WritingMethod = StarWritingMethods.VerbNounDisplacement,
+                Jokes = composition.Items.Select(x => x.Writing).ToList(),
+                UsedWords = composition.Items.Select(x => new List<string> { x.Noun, x.DisplacedVerb }).ToList(),
+                SeedWords = normalizedSeedWords,
+                RawModelJson = "--- VERB/NOUN DISPLACEMENT OBJECTS ---" + Environment.NewLine
+                    + objectActionJson + Environment.NewLine
+                    + "--- VERB/NOUN DISPLACEMENT COMPOSITION ---" + Environment.NewLine
+                    + compositionJson
+            };
         }
 
         public async Task<StarWritingImprovementResult> ImproveWritingCandidatesAsync(
@@ -259,17 +390,32 @@ namespace Wds.SixStars.Api.Ai
                     .ToList()
             };
 
+            bool displacementMethod = string.Equals(
+                StarWritingMethods.Normalize(generation.WritingMethod),
+                StarWritingMethods.VerbNounDisplacement,
+                StringComparison.OrdinalIgnoreCase);
+            string improveSystemTemplate = displacementMethod
+                ? "star_writing_displacement_improve_system.sbn"
+                : "star_writing_improve_system.sbn";
+            string improveUserTemplate = displacementMethod
+                ? "star_writing_displacement_improve_user.sbn"
+                : "star_writing_improve_user.sbn";
+
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
-                new ChatMessage("system", _templates.Render("star_writing_improve_system.sbn", data)),
-                new ChatMessage("user", _templates.Render("star_writing_improve_user.sbn", data))
+                new ChatMessage("system", _templates.Render(improveSystemTemplate, data)),
+                new ChatMessage("user", _templates.Render(improveUserTemplate, data))
             };
 
+            string improvementRequestName = (displacementMethod
+                ? "star-writing-displacement-improve-pass-"
+                : "star-writing-improve-pass-")
+                + passNumber.ToString(System.Globalization.CultureInfo.InvariantCulture);
             string json = await _client.CompleteJsonAsync(
                 messages,
                 StarResponseJsonSchema.CreateStarWritingImprovementResponseFormat(),
                 0,
-                "star-writing-improve-pass-" + passNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                improvementRequestName,
                 cancellationToken).ConfigureAwait(false);
 
             List<StarWritingImprovementReplacement>? replacements;
@@ -871,6 +1017,83 @@ namespace Wds.SixStars.Api.Ai
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Take(100)
                 .ToList();
+        }
+
+        private static List<StarWritingObjectActionItem> NormalizeObjectActionItems(IEnumerable<StarWritingObjectActionItem>? items)
+        {
+            List<StarWritingObjectActionItem> normalized = (items ?? Enumerable.Empty<StarWritingObjectActionItem>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Object))
+                .Select(x => new StarWritingObjectActionItem
+                {
+                    Object = PromptText(x.Object, 80),
+                    NormalActions = (x.NormalActions ?? new List<string>())
+                        .Where(action => !string.IsNullOrWhiteSpace(action))
+                        .Select(action => PromptText(action, 80))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(3)
+                        .ToList()
+                })
+                .Take(5)
+                .ToList();
+
+            if (normalized.Count != 5
+                || normalized.Any(x => string.IsNullOrWhiteSpace(x.Object) || x.NormalActions.Count != 3)
+                || normalized.Select(x => x.Object).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 5)
+            {
+                throw new InvalidOperationException("Verb/noun displacement setup must contain exactly five distinct objects with three ordinary actions each.");
+            }
+
+            return normalized;
+        }
+
+        private static List<StarWritingDisplacementCompositionItem> NormalizeDisplacementCompositionItems(
+            IEnumerable<StarWritingDisplacementCompositionItem>? items,
+            IReadOnlyList<StarWritingObjectActionItem> sourceObjects)
+        {
+            List<StarWritingDisplacementCompositionItem> raw = (items ?? Enumerable.Empty<StarWritingDisplacementCompositionItem>())
+                .Where(x => x != null)
+                .Take(5)
+                .ToList();
+            if (raw.Count != 5 || sourceObjects == null || sourceObjects.Count != 5)
+            {
+                throw new InvalidOperationException("Verb/noun displacement composition must return exactly five writings.");
+            }
+
+            List<StarWritingDisplacementCompositionItem> normalized = new List<StarWritingDisplacementCompositionItem>();
+            for (int i = 0; i < 5; i++)
+            {
+                StarWritingObjectActionItem source = sourceObjects[i];
+                StarWritingDisplacementCompositionItem item = raw[i];
+                string noun = PromptText(item.Noun, 80);
+                string normalVerb = PromptText(item.NormalVerb, 80);
+                string displacedVerb = PromptText(item.DisplacedVerb, 80);
+                string writing = PromptText(item.Writing, 1400);
+
+                if (!string.Equals(noun, source.Object, StringComparison.OrdinalIgnoreCase))
+                {
+                    noun = source.Object;
+                }
+                if (!source.NormalActions.Contains(normalVerb, StringComparer.OrdinalIgnoreCase))
+                {
+                    normalVerb = source.NormalActions[0];
+                }
+                if (string.IsNullOrWhiteSpace(displacedVerb)
+                    || string.Equals(displacedVerb, normalVerb, StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(writing))
+                {
+                    throw new InvalidOperationException("Verb/noun displacement composition must replace the ordinary verb with a different non-empty verb and complete the writing.");
+                }
+
+                normalized.Add(new StarWritingDisplacementCompositionItem
+                {
+                    Noun = noun,
+                    NormalVerb = normalVerb,
+                    DisplacedVerb = displacedVerb,
+                    Writing = writing
+                });
+            }
+
+            return normalized;
         }
 
         private static List<List<string>> NormalizeWritingWordPairs(IEnumerable<List<string>>? wordPairs)

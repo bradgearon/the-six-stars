@@ -41,6 +41,34 @@ namespace Wds.SixStars.Api.Writings
         public string RawModelJson { get; set; } = string.Empty;
     }
 
+    public sealed class StarWritingObjectActionItem
+    {
+        public string Object { get; set; } = string.Empty;
+        public List<string> NormalActions { get; set; } = new List<string>();
+    }
+
+    public sealed class StarWritingObjectActionResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public List<StarWritingObjectActionItem> Objects { get; set; } = new List<StarWritingObjectActionItem>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingDisplacementCompositionItem
+    {
+        public string Noun { get; set; } = string.Empty;
+        public string NormalVerb { get; set; } = string.Empty;
+        public string DisplacedVerb { get; set; } = string.Empty;
+        public string Writing { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingDisplacementCompositionResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public List<StarWritingDisplacementCompositionItem> Items { get; set; } = new List<StarWritingDisplacementCompositionItem>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
     public sealed class StarWritingGeneratedWordSet
     {
         public DateTimeOffset GeneratedAt { get; set; }
@@ -81,8 +109,9 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingGenerationResult
     {
         public string StarId { get; set; } = string.Empty;
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
 
-        // The composition response supplies Jokes. UsedWords is attached from the separate word-pair selection response so Jokes[i] always maps to UsedWords[i].
+        // The composition response supplies Jokes. UsedWords carries the two tracked creative terms for the selected method so Jokes[i] always maps to UsedWords[i].
         public List<string> Jokes { get; set; } = new List<string>();
         public List<List<string>> UsedWords { get; set; } = new List<List<string>>();
         /// <summary>Optional random seed vocabulary shared by every pass in this writing cycle.</summary>
@@ -118,6 +147,7 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingHistoryItem
     {
         public string Id { get; set; } = string.Empty;
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public string SourceBatchId { get; set; } = string.Empty;
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
@@ -131,6 +161,7 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingHistoryBatch
     {
         public string Id { get; set; } = string.Empty;
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public DateTimeOffset GeneratedAt { get; set; }
         public int SelectedPassCount { get; set; } = 1;
         public int CompletedPassCount { get; set; } = 1;
@@ -142,11 +173,12 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
         public string Speaker { get; set; } = string.Empty;
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
@@ -160,6 +192,7 @@ namespace Wds.SixStars.Api.Writings
     public sealed class PersistedStarWriting
     {
         public string Id { get; set; } = string.Empty;
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public string SourceBatchId { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
@@ -178,11 +211,12 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 7;
+        public int Version { get; set; } = 8;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
         /// <summary>Latest iterative generation state, updated and saved after every completed pass.</summary>
+        public string LatestWritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public int LatestSelectedPassCount { get; set; } = 1;
         public int LatestCompletedPassCount { get; set; }
         public int LatestAppliedImprovementCount { get; set; }
@@ -201,6 +235,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingCreateResult
     {
+        public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public StarWritingHistoryBatch Batch { get; set; } = new StarWritingHistoryBatch();
         public int PersistedCount { get; set; }

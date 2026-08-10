@@ -202,7 +202,7 @@ public sealed partial class MainViewModel
                     }
                 });
 
-                string message = "Background writing: " + starId + " completed " + result.CompletedPassCount + " of " + result.SelectedPassCount + " passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " writings were saved. " + result.State.PendingCount + " are waiting to be told.";
+                string message = "Background writing: " + starId + " used " + result.WritingMethod + " and completed " + result.CompletedPassCount + " of " + result.SelectedPassCount + " passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " writings were saved. " + result.State.PendingCount + " are waiting to be told.";
                 SetBackgroundWritingLoopStatus(message);
                 await PublishWritingShelfEventAsync(
                     "StarWritingBackgroundGenerated",

@@ -166,6 +166,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 TwoToThreePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_TWO_TO_THREE_PASS_WEIGHT"), _appConfig.WritingPasses.TwoToThreePassWeight),
                 FourOrMorePassWeight = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_WRITING_FOUR_OR_MORE_PASS_WEIGHT"), _appConfig.WritingPasses.FourOrMorePassWeight)
             },
+            new StarWritingMethodOptions
+            {
+                SemanticCollisionWeight = GetDoubleSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEMANTIC_COLLISION_WEIGHT"),
+                    _appConfig.WritingMethods.SemanticCollisionWeight),
+                VerbNounDisplacementWeight = GetDoubleSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_WRITING_VERB_NOUN_DISPLACEMENT_WEIGHT"),
+                    _appConfig.WritingMethods.VerbNounDisplacementWeight)
+            },
             new RandomStarWritingSeedWordProvider(
                 GetBooleanSetting(
                     Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEED_WORDS_ENABLED"),
@@ -2485,7 +2494,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 string repairMessage = result.RepairedRatingCount > 0
                     ? " Re-rated " + result.RepairedRatingCount + " older writings whose vectors were incomplete."
                     : string.Empty;
-                Status = starId + " finished " + result.CompletedPassCount + " of " + result.SelectedPassCount + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
+                Status = starId + " used " + result.WritingMethod + " and finished " + result.CompletedPassCount + " of " + result.SelectedPassCount + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
                 IsProcessingRuntime = false;
             });
             await PublishWritingShelfEventAsync("StarWritingGenerated", starId, result.State, result.Batch.Items.Select(x => x.Writing).ToList(), Status).ConfigureAwait(false);

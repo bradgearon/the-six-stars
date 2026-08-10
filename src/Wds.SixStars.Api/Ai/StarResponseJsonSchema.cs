@@ -96,6 +96,79 @@ namespace Wds.SixStars.Api.Ai
             return WrapSchema("six_stars_writing_word_pairs", schema);
         }
 
+        public static object CreateStarWritingObjectActionResponseFormat()
+        {
+            Dictionary<string, object> objectAction = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "object", "normalActions" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "object", StringProperty(80) },
+                        { "normalActions", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 3 },
+                                { "items", StringProperty(80) }
+                            }
+                        }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "objects" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "objects", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", objectAction }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_object_actions", schema);
+        }
+
+        public static object CreateStarWritingDisplacementCompositionResponseFormat()
+        {
+            Dictionary<string, object> item = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "noun", "normalVerb", "displacedVerb", "writing" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "noun", StringProperty(80) },
+                        { "normalVerb", StringProperty(80) },
+                        { "displacedVerb", StringProperty(80) },
+                        { "writing", StringProperty(1400) }
+                    }
+                }
+            };
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "items" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "items", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 5 }, { "maxItems", 5 },
+                                { "items", item }
+                            }
+                        }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_verb_noun_displacement", schema);
+        }
+
         public static object CreateStarWritingCompositionResponseFormat()
         {
             Dictionary<string, object> schema = new Dictionary<string, object>

@@ -19,27 +19,54 @@ namespace Wds.SixStars.Api.Agents
     /// </summary>
     public sealed class MockStarAgent : IStarAgent, IStarWritingAgent
     {
-        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        public Task<StarWritingGenerationResult> GenerateWritingCandidatesAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<string> seedWords, string writingMethod, CancellationToken cancellationToken)
         {
-            string[][] pairs =
+            string normalizedMethod = StarWritingMethods.Normalize(writingMethod);
+            string[][] pairs;
+            string[] lines;
+            if (string.Equals(normalizedMethod, StarWritingMethods.VerbNounDisplacement, StringComparison.OrdinalIgnoreCase))
             {
-                new[] { "Starlight", "Pebble" },
-                new[] { "Void", "Teacup" },
-                new[] { "Shadow", "Tapestry" },
-                new[] { "Fragment", "Echo" },
-                new[] { "Stone", "Whisper" }
-            };
-            string[] lines =
+                pairs = new[]
+                {
+                    new[] { "Sky", "Hums" },
+                    new[] { "Stone", "Remembers" },
+                    new[] { "Lantern", "Drinks" },
+                    new[] { "River", "Laughs" },
+                    new[] { "Clock", "Dreams" }
+                };
+                lines = new[]
+                {
+                    "The sky hums a blue song above the sleeping roofs.",
+                    "Stone remembers every hand that once believed it could become a home.",
+                    "The lantern drinks the dark until its little flame is full.",
+                    "The river laughs against the bridge and carries the joke downstream.",
+                    "The clock dreams between ticks of a minute nobody has spent yet."
+                };
+            }
+            else
             {
-                "Why did the starlight refuse to sit on the pebble? It found the weight of its own brilliance too heavy.",
-                "What did the void say to the teacup? You hold such fragile containment; I prefer the beautiful, endless spill.",
-                "Why did the shadow refuse to join the tapestry? It did not want to be defined by any single thread.",
-                "How does a fragment greet an echo? With a quiet, knowing nod; they both know something is missing.",
-                "What did the stone whisper to the wind? You have no memory of my silence."
-            };
+                pairs = new[]
+                {
+                    new[] { "Starlight", "Pebble" },
+                    new[] { "Void", "Teacup" },
+                    new[] { "Shadow", "Tapestry" },
+                    new[] { "Fragment", "Echo" },
+                    new[] { "Stone", "Whisper" }
+                };
+                lines = new[]
+                {
+                    "Why did the starlight refuse to sit on the pebble? It found the weight of its own brilliance too heavy.",
+                    "What did the void say to the teacup? You hold such fragile containment; I prefer the beautiful, endless spill.",
+                    "Why did the shadow refuse to join the tapestry? It did not want to be defined by any single thread.",
+                    "How does a fragment greet an echo? With a quiet, knowing nod; they both know something is missing.",
+                    "What did the stone whisper to the wind? You have no memory of my silence."
+                };
+            }
+
             StarWritingGenerationResult result = new StarWritingGenerationResult
             {
                 StarId = profile.StarId,
+                WritingMethod = normalizedMethod,
                 Jokes = lines.ToList(),
                 UsedWords = pairs.Select(x => x.ToList()).ToList(),
                 SeedWords = (seedWords ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(100).ToList(),

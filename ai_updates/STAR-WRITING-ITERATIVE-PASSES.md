@@ -2,14 +2,11 @@
 
 The writing shelf now treats its creative workflow as a configurable sequence of passes.
 
-## Pass 1: word pairs and composition
+## Pass 1: selected creative method
 
-The initial pass keeps the established separation between spontaneous word selection and writing:
+The initial pass first chooses a creative method by weight. `semantic-collision` uses the established hidden five-pair selection followed by composition. `verb-noun-displacement` privately chooses five objects and three ordinary actions for each, then replaces one ordinary action with an unexpected verb and completes the statement.
 
-1. `star-writing-word-pairs` chooses five two-word sets without being told about the writing task.
-2. `star-writing-compose` creates five finished jokes, aphorisms, tiny poems, or poetic fragments from those pairs.
-
-The runtime assigns stable ids `candidate-1` through `candidate-5` to the five paired writings.
+Both methods produce five normalized candidates and the runtime assigns stable ids `candidate-1` through `candidate-5`.
 
 ## Passes 2 and later: reusable literary review
 
@@ -63,7 +60,7 @@ Weights are normalized against the configured range, so ranges such as `2..4` or
 }
 ```
 
-`Enabled: false` disables additional review/rewrite passes while preserving the mandatory initial word-pair/composition pass. Setting both `MinimumPasses` and `MaximumPasses` to `1` also forces exactly one pass.
+`Enabled: false` disables additional review/rewrite passes while preserving the selected method's mandatory first pass. Setting both `MinimumPasses` and `MaximumPasses` to `1` also forces exactly one pass.
 
 Environment overrides are available:
 
@@ -91,6 +88,6 @@ from available recent writing history.
 
 ## Optional random seed words
 
-When `SeedWordsEnabled` is true, the desktop host creates one array of 100 optional word ideas at the start of the writing cycle. The array is shared by the initial private word-pair request and every later improvement pass. The prompt only tells the Star that she may use the words for ideas; it does not require any seed to appear in the result.
+When `SeedWordsEnabled` is true, the desktop host creates one array of 100 optional word ideas at the start of the writing cycle. The selected creative method receives the same array during its setup/composition flow and later improvement passes. The prompt only tells the Star that she may use the words for ideas; it does not require any seed to appear in the result.
 
 The generator uses relative weights of `0.50` noun, `0.25` adjective, and `0.40` verb. Because those values total `1.15`, they are normalized during random selection.

@@ -5,12 +5,12 @@ using System.Linq;
 namespace Wds.SixStars.Api.Writings
 {
     /// <summary>
-    /// Controls how many total writing passes run. Pass one is always the normal word-pair
-    /// selection plus composition. Passes two and later are reusable critic/rewrite passes.
+    /// Controls how many total writing passes run. Pass one is the selected creative method's
+    /// two-stage setup plus composition. Passes two and later are reusable critic/rewrite passes.
     /// </summary>
     public sealed class StarWritingPassOptions
     {
-        /// <summary>When false, only the initial generation pass runs.</summary>
+        /// <summary>When false, only the selected method's initial generation pass runs.</summary>
         public bool Enabled { get; set; } = true;
         public int MinimumPasses { get; set; } = 1;
         public int MaximumPasses { get; set; } = 6;
