@@ -541,9 +541,16 @@ public sealed partial class MainViewModel
 
             case "PostStarWritingsToXNow":
             {
-                QueueManualXPosting(starId);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
+                if (!_xPostingService.HasConfiguredClient(starId))
+                {
+                    string unavailable = "No enabled X account with a ClientId and loopback RedirectUri is configured for " + starId + ".";
+                    OnUiThread(() => Status = unavailable);
+                    return PublishMobileCommandResult(command, false, commandType, starId, sessionId, state, unavailable, writingState);
+                }
+
+                QueueManualXPosting(starId);
                 string message = "Queued an uninterrupted five-post X batch for " + starId + ". Progress will arrive through bridge events.";
                 OnUiThread(() => Status = message);
                 return PublishMobileCommandResult(command, true, commandType, starId, sessionId, state, message, writingState);

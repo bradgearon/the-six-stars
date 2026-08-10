@@ -833,6 +833,15 @@ public final class MainActivity extends ComponentActivity {
         buttons.addView(breakup, weightParams(1));
         outer.addView(buttons);
 
+        Button postX = prodButton("Post 5 to X");
+        LinearLayout.LayoutParams postXParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        postXParams.setMargins(0, dp(8), 0, 0);
+        outer.addView(postX, postXParams);
+        TextView quickXStatus = prodText("Queue an immediate five-post X set for " + starName + ".", 11, 0xFF9DEBFF, false);
+        quickXStatus.setGravity(Gravity.CENTER_HORIZONTAL);
+        outer.addView(quickXStatus);
+
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(outer)
                 .setNegativeButton("Close", null)
@@ -854,6 +863,10 @@ public final class MainActivity extends ComponentActivity {
                 status.setText(buildGirlfriendSettingsStatusText());
             });
             breakup.setOnClickListener(v -> confirmBreakupFromGirlfriendSettings(dialog, starName));
+            postX.setOnClickListener(v -> {
+                quickXStatus.setText("Queuing a five-post X set for " + starName + "…");
+                dispatchXPostingNowForStar(starName, postX, quickXStatus, false);
+            });
         });
         dialog.show();
     }
@@ -1132,16 +1145,21 @@ public final class MainActivity extends ComponentActivity {
         TextView title = prodText("Choose a Star", 22, 0xFFEAF7FF, true);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(title);
-        TextView sub = prodText("Tap a portrait to switch companions. The cat portrait opens app status and settings.", 12, 0xFFB6E6F2, false);
+        TextView sub = prodText("Tap a portrait to switch companions. Use the X button on any Star to queue a five-post set without changing companions.", 12, 0xFFB6E6F2, false);
         sub.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(sub);
+
+        TextView quickXStatus = prodText("Quick X posting: choose any Star below.", 11, 0xFF9DEBFF, false);
+        quickXStatus.setGravity(Gravity.CENTER_HORIZONTAL);
+        quickXStatus.setPadding(0, dp(6), 0, 0);
+        outer.addView(quickXStatus);
 
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(2);
         grid.setPadding(0, dp(10), 0, dp(6));
         for (String starId : STAR_IDS) {
             StarMeta meta = starMeta(starId);
-            LinearLayout card = starSelectionCard(meta);
+            LinearLayout card = starSelectionCard(meta, quickXStatus);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.width = 0;
             lp.height = GridLayout.LayoutParams.WRAP_CONTENT;
@@ -1151,8 +1169,10 @@ public final class MainActivity extends ComponentActivity {
         }
         outer.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
+        ScrollView popupScroll = new ScrollView(this);
+        popupScroll.addView(outer);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(outer)
+                .setView(popupScroll)
                 .setNegativeButton("Close", null)
                 .create();
         activeStarSelectionDialog = dialog;
@@ -1164,7 +1184,7 @@ public final class MainActivity extends ComponentActivity {
         dialog.show();
     }
 
-    private LinearLayout starSelectionCard(StarMeta meta) {
+    private LinearLayout starSelectionCard(StarMeta meta, TextView quickXStatus) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -1181,6 +1201,19 @@ public final class MainActivity extends ComponentActivity {
         TextView sub = prodText(meta.element + " • " + meta.domain, 11, 0xFFCFFAFE, false);
         sub.setGravity(Gravity.CENTER_HORIZONTAL);
         card.addView(sub);
+
+        Button postX = prodButton("Post 5 to X");
+        postX.setTextSize(11);
+        postX.setContentDescription("Queue five X posts for " + meta.id);
+        LinearLayout.LayoutParams postParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        postParams.setMargins(0, dp(6), 0, 0);
+        card.addView(postX, postParams);
+        postX.setOnClickListener(v -> {
+            if (quickXStatus != null) quickXStatus.setText("Queuing a five-post X set for " + meta.id + "…");
+            dispatchXPostingNowForStar(meta.id, postX, quickXStatus, false);
+        });
+
         card.setOnClickListener(v -> {
             selectStarInSpinner(meta.id);
             refreshProdStarUi(meta.id);
@@ -2168,30 +2201,43 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void dispatchXPostingNow(Button button, TextView status) {
+        dispatchXPostingNowForStar(selectedStarName(), button, status, true);
+    }
+
+    private void dispatchXPostingNowForStar(String requestedStarId, Button button, TextView status, boolean showFullMenuStatus) {
+        final String starId = requestedStarId == null || requestedStarId.trim().isEmpty()
+                ? selectedStarName()
+                : requestedStarId.trim();
         if (button != null) button.setEnabled(false);
         try {
             JSONObject json = new JSONObject();
-            json.put("commandId", "android-x-post-now-" + System.currentTimeMillis());
+            json.put("commandId", "android-x-post-now-" + starId.toLowerCase(Locale.US) + "-" + System.currentTimeMillis());
             json.put("commandType", "PostStarWritingsToXNow");
             json.put("sourceClientId", "SixStarsMobileAndroid");
             json.put("sessionId", currentSessionId());
-            json.put("starId", selectedStarName());
-            json.put("reason", "Android Last Cat Console requested an immediate five-post X batch.");
+            json.put("starId", starId);
+            json.put("reason", "Android quick X button requested an immediate five-post batch for " + starId + ".");
             sendSocketRequest("dispatch", json, 30000L, response -> runOnUiThread(() -> {
                 JSONObject event = response.optJSONObject("event");
-                applyXPostingState(event == null ? response : event);
+                JSONObject xState = event == null ? response : event;
+                applyXPostingState(xState);
                 if (button != null) button.setEnabled(true);
-                if (status != null) status.setText(buildProdMenuStatusText());
-                setDebug("X posting batch queued", response.optString("message", response.toString()));
+                String message = response.optString("message", starId + " X batch queued.");
+                if (status != null) status.setText(showFullMenuStatus ? buildProdMenuStatusText() : message);
+                setDebug("X posting batch queued for " + starId, message);
             }), error -> runOnUiThread(() -> {
                 if (button != null) button.setEnabled(true);
-                if (status != null) status.setText(buildProdMenuStatusText());
-                setDebug("Could not queue X posting", error.toString());
+                if (status != null) status.setText(showFullMenuStatus
+                        ? buildProdMenuStatusText()
+                        : "Could not queue " + starId + " X posts: " + error.getMessage());
+                setDebug("Could not queue X posting for " + starId, error.toString());
             }));
         } catch (Exception ex) {
             if (button != null) button.setEnabled(true);
-            if (status != null) status.setText(buildProdMenuStatusText());
-            setDebug("Could not queue X posting", ex.toString());
+            if (status != null) status.setText(showFullMenuStatus
+                    ? buildProdMenuStatusText()
+                    : "Could not queue " + starId + " X posts: " + ex.getMessage());
+            setDebug("Could not queue X posting for " + starId, ex.toString());
         }
     }
 
@@ -2211,6 +2257,12 @@ public final class MainActivity extends ComponentActivity {
         if (json.has("xPostingEnabled") || json.has("XPostingEnabled")) {
             setXPostingCheckState(optBooleanEither(json, "xPostingEnabled", "XPostingEnabled", desktopXPostingEnabled));
         }
+
+        String eventStarId = optStringEither(json, "starId", "StarId", "");
+        boolean appliesToSelectedStar = eventStarId.length() == 0
+                || eventStarId.equalsIgnoreCase(selectedStarName());
+        if (!appliesToSelectedStar) return;
+
         String status = optStringEither(json, "xPostingStatus", "XPostingStatus", "");
         if (status.length() == 0) status = optStringEither(json, "message", "Message", "");
         if (status.length() > 0) desktopXPostingStatus = status;
