@@ -5,8 +5,8 @@ using System.Linq;
 namespace Wds.SixStars.Api.Writings
 {
     /// <summary>
-    /// Deterministic ranking helpers for persisted shelf writing. The saved open-ended review value vector is the
-    /// source of truth: no additional LLM call is needed to decide which part of a large shelf is strongest.
+    /// Deterministic ranking helpers for persisted shelf writing. The saved open-ended review values are the
+    /// source of truth: Spark literary vectors and Constellation named reader-emotion feedback can both rank without another LLM call.
     /// </summary>
     public static class StarWritingDeterministicRanker
     {
@@ -46,15 +46,26 @@ namespace Wds.SixStars.Api.Writings
 
         public static double OverallValue(PersistedStarWriting? writing)
         {
-            if (writing == null
-                || !StarWritingEmotionVector.TryNormalizeUsable(
-                    writing.EmotionalVector,
-                    out _,
-                    out Dictionary<string, StarWritingEmotionValue> values))
+            if (writing == null) return -1.0;
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out _, out _)
+                && !double.IsNaN(writing.OverallValue)
+                && !double.IsInfinity(writing.OverallValue)
+                && writing.OverallValue >= 0)
+            {
+                return writing.OverallValue;
+            }
+
+            if (!StarWritingEmotionVector.TryNormalizeUsable(
+                writing.EmotionalVector,
+                out _,
+                out Dictionary<string, StarWritingEmotionValue> values))
             {
                 return -1.0;
             }
-
             return Value(values, "Overall");
         }
 
@@ -66,8 +77,24 @@ namespace Wds.SixStars.Api.Writings
         /// </summary>
         public static double PublicSharingValue(PersistedStarWriting? writing)
         {
-            if (writing == null
-                || !StarWritingEmotionVector.TryNormalizeUsable(
+            if (writing == null) return -1.0;
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _))
+            {
+                double baseStoryValue = StarWritingValueBaselineCatalog.ComputeStoryEmotionPublicValue(feedback, writing.OverallValue);
+                int storyRouteCount = (writing.MatchedPersistenceRuleIds ?? new List<string>())
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count(id => !string.Equals(id, "global-overall-excellence", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(id, "constellation-default-overall", StringComparison.OrdinalIgnoreCase));
+                return baseStoryValue * (1.0 + (Math.Min(2, storyRouteCount) * 0.015));
+            }
+
+            if (!StarWritingEmotionVector.TryNormalizeUsable(
                     writing.EmotionalVector,
                     out _,
                     out Dictionary<string, StarWritingEmotionValue> values))
@@ -100,7 +127,7 @@ namespace Wds.SixStars.Api.Writings
         }
 
         /// <summary>
-        /// Returns the strongest writings first. Tie breakers are also vector-derived before falling
+        /// Returns the strongest writings first. Legacy literary tie breakers apply when available before falling
         /// back to stable persisted metadata, so the same shelf state always produces the same window.
         /// </summary>
         public static List<PersistedStarWriting> TakeHighestRanked(
@@ -114,7 +141,7 @@ namespace Wds.SixStars.Api.Writings
                 .Where(x => x != null)
                 .Select(x => new RankedWriting(x!, ReadVector(x!)))
                 .OrderByDescending(x => x.PublicValue)
-                .ThenByDescending(x => x.Value("Overall"))
+                .ThenByDescending(x => x.OverallValue)
                 .ThenByDescending(x => x.Value("Quotable"))
                 .ThenByDescending(x => x.Value("WorthRetelling"))
                 .ThenByDescending(x => x.Value("Memorable"))
@@ -161,6 +188,7 @@ namespace Wds.SixStars.Api.Writings
 
             public PersistedStarWriting Writing { get; }
             public double PublicValue { get; }
+            public double OverallValue => StarWritingDeterministicRanker.OverallValue(Writing);
 
             public double Value(string category)
             {

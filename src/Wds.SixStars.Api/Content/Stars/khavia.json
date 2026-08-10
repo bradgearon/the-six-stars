@@ -1021,5 +1021,143 @@
         "minimumValue": 60
       }
     ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "shared-meaning",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Moved",
+          "minimumValue": 70
+        },
+        {
+          "category": "Connected",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "friendly-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 75
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "intriguing-repeatable",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 75
+        },
+        {
+          "category": "Engrossed",
+          "minimumValue": 75
+        }
+      ]
+    },
+    {
+      "id": "tide-comfort",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Comforted",
+          "minimumValue": 70
+        },
+        {
+          "category": "Hopeful",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
   }
 }

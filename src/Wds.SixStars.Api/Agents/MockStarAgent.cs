@@ -171,11 +171,20 @@ namespace Wds.SixStars.Api.Agents
 
         public Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken)
         {
-            List<string> scores = StarWritingEmotionVector.Categories.Select(name => name == "Overall" ? "90" : "84").ToList();
+            List<StarWritingStoryEmotionValue> feedback = StarWritingStoryEmotionFeedback.Emotions
+                .Select(emotion => new StarWritingStoryEmotionValue
+                {
+                    Emotion = emotion,
+                    Value = string.Equals(emotion, "Mirthful", StringComparison.OrdinalIgnoreCase) ? 35 : 84
+                })
+                .ToList();
             return Task.FromResult(new StarWritingRating
             {
                 Index = 0,
-                EmotionalVector = StarWritingEmotionVector.Normalize(string.Join(";", scores), out _)
+                ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                EmotionFeedback = feedback,
+                OverallValue = 90,
+                EmotionalVector = string.Empty
             });
         }
 

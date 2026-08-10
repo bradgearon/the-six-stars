@@ -224,18 +224,36 @@ namespace Wds.SixStars.Api.Writings
             StringBuilder lines = new StringBuilder();
             foreach (StarWritingHistoryItem item in batch.Items.Where(x => x != null))
             {
-                StarWritingEmotionVector.TryNormalizeComplete(
-                    item.EmotionalVector,
-                    out string normalizedVector,
-                    out Dictionary<string, StarWritingEmotionValue> values);
-
+                string reviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                string normalizedVector = string.Empty;
                 Dictionary<string, double> namedValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-                foreach (string category in StarWritingEmotionVector.Categories)
+                List<StarWritingStoryEmotionValue> normalizedEmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                double overallValue = item.OverallValue;
+                if (string.Equals(reviewDiscipline, StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase)
+                    && StarWritingStoryEmotionFeedback.TryNormalizeComplete(item.EmotionFeedback, out normalizedEmotionFeedback, out Dictionary<string, StarWritingEmotionValue> emotionValues))
                 {
-                    if (values.TryGetValue(category, out StarWritingEmotionValue? value))
+                    foreach (KeyValuePair<string, StarWritingEmotionValue> pair in emotionValues)
                     {
-                        namedValues[category] = value.Value;
+                        namedValues[pair.Key] = pair.Value.Value;
                     }
+                    if (double.IsNaN(overallValue) || double.IsInfinity(overallValue) || overallValue < 0) overallValue = 0;
+                    namedValues["Overall"] = overallValue;
+                }
+                else
+                {
+                    reviewDiscipline = StarWritingReviewDisciplines.LiteraryValuesV1;
+                    StarWritingEmotionVector.TryNormalizeComplete(
+                        item.EmotionalVector,
+                        out normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values);
+                    foreach (string category in StarWritingEmotionVector.Categories)
+                    {
+                        if (values.TryGetValue(category, out StarWritingEmotionValue? value))
+                        {
+                            namedValues[category] = value.Value;
+                        }
+                    }
+                    overallValue = namedValues.TryGetValue("Overall", out double legacyOverall) ? legacyOverall : 0.0;
                 }
 
                 StarWritingStatementLogEntry entry = new StarWritingStatementLogEntry
@@ -252,7 +270,10 @@ namespace Wds.SixStars.Api.Writings
                     Index = item.Index,
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                     Statement = item.Writing ?? string.Empty,
-                    EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? (item.EmotionalVector ?? string.Empty) : normalizedVector,
+                    ReviewDiscipline = reviewDiscipline,
+                    EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? string.Empty : normalizedVector,
+                    EmotionFeedback = normalizedEmotionFeedback,
+                    OverallValue = overallValue,
                     ValueUnit = StarWritingValueUnits.InformationUnits,
                     Values = namedValues,
                     Persisted = item.Persisted,
@@ -277,7 +298,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 12;
+            state.Version = 13;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
@@ -362,6 +383,31 @@ namespace Wds.SixStars.Api.Writings
             state.StoryVerbUsageCounts = NormalizeTermUsageCounts(state.StoryVerbUsageCounts, state.RecentStoryVerbs);
             NormalizeStoryDevelopment(state.LatestStoryDevelopment);
 
+            foreach (StarWritingHistoryItem item in state.RecentWritingHistory.Where(x => x != null))
+            {
+                item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (StarWritingStoryEmotionFeedback.TryNormalizeComplete(item.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _))
+                    {
+                        item.EmotionFeedback = feedback;
+                    }
+                    else
+                    {
+                        item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                    }
+                    if (double.IsNaN(item.OverallValue) || double.IsInfinity(item.OverallValue) || item.OverallValue < 0) item.OverallValue = 0;
+                    item.EmotionalVector = string.Empty;
+                }
+                else if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedHistoryVector, out Dictionary<string, StarWritingEmotionValue> historyValues))
+                {
+                    item.EmotionalVector = normalizedHistoryVector;
+                    item.OverallValue = StarWritingEmotionVector.ReadValue(historyValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
+            }
+
             state.RecentWritingHistory = state.RecentWritingHistory
                 .Where(x => x != null)
                 .OrderByDescending(x => x.GeneratedAt)
@@ -405,9 +451,26 @@ namespace Wds.SixStars.Api.Writings
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 item.XPostId ??= string.Empty;
                 item.PostedText ??= string.Empty;
-                if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
+                item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (StarWritingStoryEmotionFeedback.TryNormalizeComplete(item.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _))
+                    {
+                        item.EmotionFeedback = feedback;
+                    }
+                    else
+                    {
+                        item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                    }
+                    if (double.IsNaN(item.OverallValue) || double.IsInfinity(item.OverallValue) || item.OverallValue < 0) item.OverallValue = 0;
+                    item.EmotionalVector = string.Empty;
+                }
+                else if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out Dictionary<string, StarWritingEmotionValue> legacyValues))
                 {
                     item.EmotionalVector = normalizedVector;
+                    item.OverallValue = StarWritingEmotionVector.ReadValue(legacyValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
                 }
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();

@@ -1,4 +1,4 @@
-VALUE ONE COMPLETED CONSTELLATION STORY
+REVIEW ONE COMPLETED CONSTELLATION STORY
 
 VIEWPOINT STAR
 Name: {{ data.displayName }}
@@ -18,19 +18,23 @@ CONTRIBUTING STARS
 - {{ id }}
 {{ end }}
 
-EXACT VALUE VECTOR CATEGORY ORDER (27)
-{{ data.vectorOrder }}
+CANONICAL READER-EMOTION DISCIPLINE
+Review discipline id: {{ data.reviewDiscipline }}
+Use every bucket exactly once.
+{{ for item in data.emotionBuckets }}
+- {{ item.emotion }}: {{ item.discipline }}
+{{ end }}
 
 CALIBRATION BASELINES
-Reference excellence value: {{ data.referenceValue }} IU (information units). It is not a maximum.
-These are complete quality anchors, not plot templates. Do not reward similarity to them; compare craft and effect.
+Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
+These are complete valued stories reviewed under THIS SAME reader-emotion discipline. They are magnitude anchors, never plot templates.
 {{ if data.valueReferences.size == 0 }}
-(no valued Constellation references are available yet; use {{ data.referenceValue }} as the bootstrap reference for excellent known work)
+No same-discipline Constellation baselines exist yet. Bootstrap carefully with {{ data.referenceValue }} IU representing excellent known work and preserve broad separation between weak, moderate, strong, excellent, and extraordinary effects.
 {{ else }}
 {{ for item in data.valueReferences }}
 [{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
-Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
-Value vector: {{ item.valueVector }}
+Overall={{ item.overallValue }} IU
+Reader emotion feedback: {{ for effect in item.emotionFeedback }}{{ effect.emotion }}={{ effect.value }}{{ if for.last }}{{ else }}; {{ end }}{{ end }}
 FULL STORY:
 {{ item.writing }}
 --- END REFERENCE ---
@@ -43,5 +47,6 @@ TITLE
 STORY
 {{ data.story }}
 
-Return only: {"0":""}
-Replace the empty string with exactly 27 non-negative integer VALUES separated by semicolons. Values may exceed 100 or every reference when justified.
+Return only JSON in exactly this shape, replacing the numeric zeroes with your IU values:
+{"emotions":[{{ for item in data.emotionBuckets }}{"emotion":"{{ item.emotion }}","value":0}{{ if for.last }}{{ else }},{{ end }}{{ end }}],"overallValue":0}
+Do not change the emotion names or their membership. Values may exceed 100 or every reference when justified.

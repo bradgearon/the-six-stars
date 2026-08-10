@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.Writings;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -384,17 +385,42 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateStarWritingStoryReviewResponseFormat()
         {
-            Dictionary<string, object> schema = new Dictionary<string, object>
+            Dictionary<string, object> emotionItem = new Dictionary<string, object>
             {
-                { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "0" } },
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "emotion", "value" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        { "0", StringProperty(512) }
+                        { "emotion", new Dictionary<string, object>
+                            {
+                                { "type", "string" },
+                                { "enum", StarWritingStoryEmotionFeedback.Emotions }
+                            }
+                        },
+                        { "value", NonNegativeNumberProperty() }
                     }
                 }
             };
-            return WrapSchema("six_stars_story_review", schema);
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "emotions", "overallValue" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "emotions", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "minItems", StarWritingStoryEmotionFeedback.Emotions.Length },
+                                { "maxItems", StarWritingStoryEmotionFeedback.Emotions.Length },
+                                { "items", emotionItem }
+                            }
+                        },
+                        { "overallValue", NonNegativeNumberProperty() }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_story_reader_emotion_review", schema);
         }
 
         public static object CreateStarWritingReviewResponseFormat()

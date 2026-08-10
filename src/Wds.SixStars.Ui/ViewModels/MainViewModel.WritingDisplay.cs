@@ -16,6 +16,26 @@ public sealed partial class MainViewModel
                 StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string BuildConstellationReviewSummary(StarWritingHistoryItem? item)
+    {
+        if (item == null
+            || !string.Equals(
+                StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline),
+                StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                StringComparison.OrdinalIgnoreCase)
+            || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(item.EmotionFeedback, out var feedback, out _))
+        {
+            return string.Empty;
+        }
+
+        string strongest = string.Join(", ", feedback
+            .OrderByDescending(x => x.Value)
+            .Take(4)
+            .Select(x => x.Emotion + " " + x.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " IU"));
+        return "Overall " + item.OverallValue.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+            + " IU; strongest reader effects: " + strongest + ".";
+    }
+
     private static string BuildWritingGenerationStatus(string starId, StarWritingCreateResult result, string prefix = "")
     {
         string repairMessage = result.RepairedRatingCount > 0
@@ -25,11 +45,13 @@ public sealed partial class MainViewModel
         if (IsConstellationStory(result))
         {
             string persistence = result.PersistedCount > 0
-                ? "The finished Constellation Story passed her persistence rules and was saved to the shelf."
-                : "The finished Constellation Story was reviewed but did not pass her persistence rules.";
+                ? "The finished Constellation Story passed her reader-emotion persistence rules and was saved to the shelf."
+                : "The finished Constellation Story was reviewed but did not pass her reader-emotion persistence rules.";
+            string review = BuildConstellationReviewSummary(result.Batch.Items.FirstOrDefault());
             return prefix + starId + " used " + result.WritingMethod
                 + " and completed " + result.CompletedPassCount + " collaborative development phases. "
-                + persistence + " " + result.State.PendingCount + " compact Sparks are waiting to be told."
+                + persistence + (string.IsNullOrWhiteSpace(review) ? "" : " " + review)
+                + " " + result.State.PendingCount + " compact Sparks are waiting to be told."
                 + repairMessage;
         }
 
@@ -57,6 +79,11 @@ public sealed partial class MainViewModel
                 }
                 output.AppendLine(item.Writing ?? string.Empty);
                 output.AppendLine();
+                string review = BuildConstellationReviewSummary(item);
+                if (!string.IsNullOrWhiteSpace(review))
+                {
+                    output.AppendLine("Reader-emotion review: " + review);
+                }
                 output.AppendLine(item.Persisted
                     ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds ?? new System.Collections.Generic.List<string>())
                     : "Not persisted by this Star's current value rules.");

@@ -80,8 +80,14 @@ namespace Wds.SixStars.Api.Stars
         /// <summary>Shared quality consensus required before any writing persistence route can save a candidate.</summary>
         public StarWritingPersistenceQualityGate WritingPersistenceQualityGate { get; set; } = new StarWritingPersistenceQualityGate();
 
-        /// <summary>Per-Star value rules deciding which generated shelf writings become durable.</summary>
+        /// <summary>Per-Star value rules deciding which generated shelf Sparks become durable.</summary>
         public List<StarWritingPersistenceRule> WritingPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
+
+        /// <summary>Reader-emotion impact consensus required before a Constellation Story can persist.</summary>
+        public StarWritingPersistenceQualityGate ConstellationPersistenceQualityGate { get; set; } = new StarWritingPersistenceQualityGate();
+
+        /// <summary>Per-Star reader-emotion IU routes deciding which completed Constellation Stories become durable.</summary>
+        public List<StarWritingPersistenceRule> ConstellationPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
 
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
     }

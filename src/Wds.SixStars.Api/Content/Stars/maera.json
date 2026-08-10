@@ -1029,5 +1029,157 @@
         "minimumValue": 60
       }
     ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "blood-resonance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Moved",
+          "minimumValue": 75
+        },
+        {
+          "category": "Impassioned",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "possessive-depth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Yearning",
+          "minimumValue": 80
+        },
+        {
+          "category": "Haunted",
+          "minimumValue": 75
+        }
+      ]
+    },
+    {
+      "id": "dangerous-romance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Attracted",
+          "minimumValue": 75
+        },
+        {
+          "category": "Uneasy",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "sharp-blood-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 62,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
   }
 }

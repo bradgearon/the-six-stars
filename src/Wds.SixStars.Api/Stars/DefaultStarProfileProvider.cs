@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stories;
+using Wds.SixStars.Api.Writings;
 
 namespace Wds.SixStars.Api.Stars
 {
@@ -25,6 +26,7 @@ namespace Wds.SixStars.Api.Stars
             foreach (StarProfile profile in profiles)
             {
                 ApplyDefaultCharacterAttributes(profile);
+                ApplyDefaultConstellationPersistence(profile);
                 StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
             }
 
@@ -44,6 +46,105 @@ namespace Wds.SixStars.Api.Stars
         public IReadOnlyList<StarProfile> GetAllProfiles()
         {
             return _profiles.Values.ToList();
+        }
+
+        private static void ApplyDefaultConstellationPersistence(StarProfile profile)
+        {
+            if (profile == null) return;
+
+            double minimumOverallValue = string.Equals(profile.StarId, "Auerlis", StringComparison.OrdinalIgnoreCase)
+                ? 58.0
+                : string.Equals(profile.StarId, "Maera", StringComparison.OrdinalIgnoreCase)
+                    ? 62.0
+                    : 60.0;
+
+            string[] supportingEffects =
+            {
+                "Engrossed", "Intrigued", "Moved", "Wondrous", "Admiring", "Inspired", "Contemplative",
+                "Haunted", "Hopeful", "Mirthful", "Exhilarated", "Connected", "Uneasy", "Tender", "Yearning"
+            };
+
+            profile.ConstellationPersistenceQualityGate = new StarWritingPersistenceQualityGate
+            {
+                MinimumOverallValue = minimumOverallValue,
+                MinimumSupportingMatches = 2,
+                SupportingRequirements = supportingEffects
+                    .Select(x => Requirement(x, 60.0))
+                    .ToList()
+            };
+
+            profile.ConstellationPersistenceRules = (profile.StarId ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "elusiaa" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("radiant-resonance", ("Moved", 75), ("Tender", 70)),
+                    Rule("gentle-play", ("Mirthful", 70), ("Playful", 65)),
+                    Rule("luminous-hope", ("Hopeful", 75), ("Comforted", 65)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                "auerlis" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("joyful-fire", ("Mirthful", 70), ("Delighted", 70)),
+                    Rule("bright-spectacle", ("Exhilarated", 80), ("Surprised", 70)),
+                    Rule("fire-worth-retelling", ("Hopeful", 80), ("Inspired", 75)),
+                    Rule("funny-play", ("Mirthful", 70), ("Playful", 65)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                "kaelia" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("fatal-beauty", ("Haunted", 80), ("Wondrous", 70)),
+                    Rule("cold-cleverness", ("Intrigued", 70), ("Contemplative", 70)),
+                    Rule("musical-mystery", ("Intrigued", 70), ("Awed", 70)),
+                    Rule("hopeful-vivid", ("Hopeful", 70), ("Wondrous", 70)),
+                    Rule("funny-play", ("Mirthful", 70), ("Playful", 65)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                "khavia" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("shared-meaning", ("Moved", 70), ("Connected", 70)),
+                    Rule("friendly-play", ("Mirthful", 75), ("Playful", 70)),
+                    Rule("intriguing-repeatable", ("Intrigued", 75), ("Engrossed", 75)),
+                    Rule("tide-comfort", ("Comforted", 70), ("Hopeful", 70)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                "maera" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("blood-resonance", ("Moved", 75), ("Impassioned", 70)),
+                    Rule("possessive-depth", ("Yearning", 80), ("Haunted", 75)),
+                    Rule("dangerous-romance", ("Attracted", 75), ("Uneasy", 65)),
+                    Rule("sharp-blood-wit", ("Intrigued", 70), ("Surprised", 70)),
+                    Rule("funny-play", ("Mirthful", 70), ("Playful", 65)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                "nyxari" => new List<StarWritingPersistenceRule>
+                {
+                    Rule("fragmentary-metaphysical-wit", ("Haunted", 75), ("Contemplative", 70)),
+                    Rule("shadow-aphorism", ("Intrigued", 70), ("Surprised", 70)),
+                    Rule("fractured-wonder", ("Wondrous", 70), ("Melancholy", 70)),
+                    Rule("funny-play", ("Mirthful", 70), ("Playful", 65)),
+                    Rule("surprising-mirth", ("Mirthful", 70), ("Surprised", 60))
+                },
+                _ => new List<StarWritingPersistenceRule>()
+            };
+        }
+
+        private static StarWritingPersistenceRule Rule(string id, params (string Category, double MinimumValue)[] requirements)
+        {
+            return new StarWritingPersistenceRule
+            {
+                Id = id,
+                MatchMode = "all",
+                Requirements = requirements.Select(x => Requirement(x.Category, x.MinimumValue)).ToList()
+            };
+        }
+
+        private static StarWritingPersistenceRequirement Requirement(string category, double minimumValue)
+        {
+            return new StarWritingPersistenceRequirement
+            {
+                Category = category,
+                MinimumValue = minimumValue
+            };
         }
 
         private static void ApplyDefaultCharacterAttributes(StarProfile profile)

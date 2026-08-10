@@ -17,8 +17,11 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string ValueVector { get; set; } = string.Empty;
         public Dictionary<string, double> Values { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
     }
 
     public static class StarWritingValueUnits
@@ -30,7 +33,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingValueBaselineFile
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public string Unit { get; set; } = StarWritingValueUnits.InformationUnits;
         public double ReferenceValue { get; set; } = 100.0;
         public List<StarWritingValueBaselineExample> Examples { get; set; } = new List<StarWritingValueBaselineExample>();
@@ -45,7 +48,9 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string ValueVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
         public string ValueUnit { get; set; } = StarWritingValueUnits.InformationUnits;
         public double OverallValue { get; set; }
         public double PublicValue { get; set; }
@@ -105,6 +110,7 @@ namespace Wds.SixStars.Api.Writings
 
             foreach (StarWritingValueBaselineExample example in (Load().Examples ?? new List<StarWritingValueBaselineExample>())
                 .Where(x => x != null)
+                .Where(x => string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.LiteraryValuesV1, StringComparison.OrdinalIgnoreCase))
                 .Where(x => string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(x => string.Equals((x.StarId ?? string.Empty).Trim(), starId, StringComparison.OrdinalIgnoreCase))
                 .ThenByDescending(ReadOverallValue)
@@ -126,6 +132,7 @@ namespace Wds.SixStars.Api.Writings
                     OutputType = normalizedOutputType,
                     Title = (example.Title ?? string.Empty).Trim(),
                     Writing = example.Writing.Trim(),
+                    ReviewDiscipline = StarWritingReviewDisciplines.LiteraryValuesV1,
                     ValueVector = normalizedVector,
                     ValueUnit = StarWritingValueUnits.InformationUnits,
                     OverallValue = StarWritingEmotionVector.ReadValue(values, "Overall"),
@@ -136,6 +143,62 @@ namespace Wds.SixStars.Api.Writings
             }
 
             return references;
+        }
+
+        public List<StarWritingValueReference> GetCuratedStoryEmotionReferences(string preferredStarId, int maximum)
+        {
+            int take = Math.Max(0, maximum);
+            if (take == 0) return new List<StarWritingValueReference>();
+
+            string starId = (preferredStarId ?? string.Empty).Trim();
+            List<StarWritingValueReference> references = new List<StarWritingValueReference>();
+            foreach (StarWritingValueBaselineExample example in (Load().Examples ?? new List<StarWritingValueBaselineExample>())
+                .Where(x => x != null)
+                .Where(x => string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => string.Equals((x.StarId ?? string.Empty).Trim(), starId, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(x => x.OverallValue)
+                .ThenBy(x => x.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(example.Writing)
+                    || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(example.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _)
+                    || double.IsNaN(example.OverallValue)
+                    || double.IsInfinity(example.OverallValue)
+                    || example.OverallValue < 0)
+                {
+                    continue;
+                }
+
+                references.Add(new StarWritingValueReference
+                {
+                    Source = "curated-baseline",
+                    Id = string.IsNullOrWhiteSpace(example.Id) ? "curated-story-emotion-" + references.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) : example.Id.Trim(),
+                    StarId = (example.StarId ?? string.Empty).Trim(),
+                    OutputType = StarWritingOutputTypes.ConstellationStory,
+                    Title = (example.Title ?? string.Empty).Trim(),
+                    Writing = example.Writing.Trim(),
+                    ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    EmotionFeedback = feedback,
+                    ValueVector = StarWritingStoryEmotionFeedback.FormatCompact(feedback),
+                    ValueUnit = StarWritingValueUnits.InformationUnits,
+                    OverallValue = example.OverallValue,
+                    PublicValue = ComputeStoryEmotionPublicValue(feedback, example.OverallValue)
+                });
+                if (references.Count >= take) break;
+            }
+            return references;
+        }
+
+        public static double ComputeStoryEmotionPublicValue(IEnumerable<StarWritingStoryEmotionValue>? feedback, double overallValue)
+        {
+            double strongestEffects = (feedback ?? Enumerable.Empty<StarWritingStoryEmotionValue>())
+                .Where(x => x != null)
+                .Select(x => x.Value)
+                .OrderByDescending(x => x)
+                .Take(5)
+                .DefaultIfEmpty(0.0)
+                .Average();
+            return (Math.Max(0.0, overallValue) * 0.70) + (strongestEffects * 0.30);
         }
 
         private StarWritingValueBaselineFile Load()

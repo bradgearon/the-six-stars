@@ -1019,5 +1019,143 @@
         "minimumValue": 60
       }
     ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "fragmentary-metaphysical-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunted",
+          "minimumValue": 75
+        },
+        {
+          "category": "Contemplative",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "shadow-aphorism",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "fractured-wonder",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Wondrous",
+          "minimumValue": 70
+        },
+        {
+          "category": "Melancholy",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
   }
 }

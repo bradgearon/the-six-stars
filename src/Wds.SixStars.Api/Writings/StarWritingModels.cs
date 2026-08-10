@@ -143,7 +143,14 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingRating
     {
         public int Index { get; set; }
+        /// <summary>Identifies how this review should be interpreted. Legacy/Spark reviews use LiteraryValuesV1.</summary>
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
+        /// <summary>Legacy/Spark compact literary-value vector. New Constellation reviews use named EmotionFeedback instead.</summary>
         public string EmotionalVector { get; set; } = string.Empty;
+        /// <summary>Named reader-emotion IU feedback for ConstellationReaderEmotionsV1.</summary>
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        /// <summary>Open-ended integrated IU value for disciplines that keep Overall separate from emotion buckets.</summary>
+        public double OverallValue { get; set; }
     }
 
     public sealed class StarWritingReviewResult
@@ -165,7 +172,10 @@ namespace Wds.SixStars.Api.Writings
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
         public bool Persisted { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
     }
@@ -186,7 +196,7 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 4;
+        public int Version { get; set; } = 5;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
@@ -199,7 +209,10 @@ namespace Wds.SixStars.Api.Writings
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Statement { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
         public string ValueUnit { get; set; } = StarWritingValueUnits.InformationUnits;
         public Dictionary<string, double> Values { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         public bool Persisted { get; set; }
@@ -216,7 +229,10 @@ namespace Wds.SixStars.Api.Writings
         public string SourceBatchId { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
         public DateTimeOffset GeneratedAt { get; set; }
         public DateTimeOffset PersistedAt { get; set; }
@@ -336,7 +352,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 12;
+        public int Version { get; set; } = 13;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();

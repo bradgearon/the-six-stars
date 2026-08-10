@@ -35,14 +35,15 @@ RELEVANT CANON
 VALUED CONSTELLATION REFERENCES
 Quality anchors only; invent a meaningfully different story.
 Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
-Vector order: {{ data.vectorOrder }}
+Legacy literary-vector order (only when a reference uses the old semicolon vector): {{ data.vectorOrder }}
 {{ if data.valueReferences.size == 0 }}
 (no valued Constellation references available yet)
 {{ else }}
 {{ for item in data.valueReferences }}
 [{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
 Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
-Value vector: {{ item.valueVector }}
+Review discipline={{ item.reviewDiscipline }}
+Review values: {{ item.valueVector }}
 FULL REFERENCE STORY:
 {{ item.writing }}
 --- END REFERENCE ---

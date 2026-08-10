@@ -548,7 +548,7 @@ namespace Wds.SixStars.Api.Writings
             });
             await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
             ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: final revision complete — “" + final.Title
-                + "”, " + CountWords(final.Story).ToString(CultureInfo.InvariantCulture) + " words. Running the 27-value review vector now.");
+                + "”, " + CountWords(final.Story).ToString(CultureInfo.InvariantCulture) + " words. Running the disciplined named reader-emotion IU review now.");
 
             StarWritingRating rating = await _agent.RateStoryAsync(
                 viewpointProfile,
@@ -557,13 +557,32 @@ namespace Wds.SixStars.Api.Writings
                 final.Story,
                 allContributors,
                 cancellationToken).ConfigureAwait(false);
-            rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
-            List<string> matchedRules = GetMatchedRuleIds(viewpointProfile, values);
-            double overallValueNumber = values.TryGetValue("Overall", out StarWritingEmotionValue? overallValue) && overallValue != null
-                ? overallValue.Value
-                : 0.0;
-            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: review vector returned Overall "
-                + overallValueNumber.ToString("0.0", CultureInfo.InvariantCulture) + " IU; persistence matches="
+            if (!string.Equals(
+                    StarWritingReviewDisciplines.Normalize(rating.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StringComparison.OrdinalIgnoreCase)
+                || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(
+                    rating.EmotionFeedback,
+                    out List<StarWritingStoryEmotionValue> normalizedEmotionFeedback,
+                    out Dictionary<string, StarWritingEmotionValue> emotionValues)
+                || double.IsNaN(rating.OverallValue)
+                || double.IsInfinity(rating.OverallValue)
+                || rating.OverallValue < 0)
+            {
+                throw new InvalidOperationException("Constellation Forge story review returned an incomplete reader-emotion IU discipline result.");
+            }
+            rating.ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1;
+            rating.EmotionFeedback = normalizedEmotionFeedback;
+            rating.EmotionalVector = string.Empty;
+            emotionValues["Overall"] = new StarWritingEmotionValue { Value = rating.OverallValue };
+            List<string> matchedRules = GetMatchedConstellationRuleIds(viewpointProfile, emotionValues);
+            string strongestEffects = string.Join(", ", normalizedEmotionFeedback
+                .OrderByDescending(x => x.Value)
+                .Take(4)
+                .Select(x => x.Emotion + " " + x.Value.ToString("0.#", CultureInfo.InvariantCulture) + " IU"));
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: reader-emotion review returned Overall "
+                + rating.OverallValue.ToString("0.0", CultureInfo.InvariantCulture) + " IU; strongest effects="
+                + strongestEffects + "; persistence matches="
                 + (matchedRules.Count > 0 ? string.Join(", ", matchedRules) : "none") + ". Saving the completed development trace and shelf result.");
             phaseNumber++;
             development.CurrentPhase = phaseNumber;
@@ -575,8 +594,8 @@ namespace Wds.SixStars.Api.Writings
                 StarId = viewpointProfile.StarId,
                 CompletionDecision = matchedRules.Count > 0 ? "persist" : "reject",
                 Summary = matchedRules.Count > 0
-                    ? "Passed persistence rules: " + string.Join(", ", matchedRules) + "."
-                    : "Did not pass the existing writing persistence rules.",
+                    ? "Passed Constellation reader-emotion persistence rules: " + string.Join(", ", matchedRules) + "."
+                    : "Did not pass the Constellation reader-emotion persistence rules.",
                 UpdatedAt = development.UpdatedAt
             });
 
@@ -595,7 +614,10 @@ namespace Wds.SixStars.Api.Writings
                 Index = 0,
                 WordsUsed = new List<string>(),
                 Writing = final.Story,
-                EmotionalVector = rating.EmotionalVector,
+                ReviewDiscipline = rating.ReviewDiscipline,
+                EmotionalVector = string.Empty,
+                EmotionFeedback = rating.EmotionFeedback.Select(x => new StarWritingStoryEmotionValue { Emotion = x.Emotion, Value = x.Value }).ToList(),
+                OverallValue = rating.OverallValue,
                 Persisted = matchedRules.Count > 0,
                 MatchedPersistenceRuleIds = matchedRules.ToList()
             };
@@ -624,7 +646,10 @@ namespace Wds.SixStars.Api.Writings
                     SourceBatchId = batchId,
                     WordsUsed = new List<string>(),
                     Writing = final.Story,
-                    EmotionalVector = rating.EmotionalVector,
+                    ReviewDiscipline = rating.ReviewDiscipline,
+                    EmotionalVector = string.Empty,
+                    EmotionFeedback = rating.EmotionFeedback.Select(x => new StarWritingStoryEmotionValue { Emotion = x.Emotion, Value = x.Value }).ToList(),
+                    OverallValue = rating.OverallValue,
                     MatchedPersistenceRuleIds = matchedRules.ToList(),
                     GeneratedAt = now,
                     PersistedAt = now,
@@ -1580,6 +1605,61 @@ namespace Wds.SixStars.Api.Writings
                 .ToList();
         }
 
+        private static List<string> GetMatchedConstellationRuleIds(
+            StarProfile profile,
+            IReadOnlyDictionary<string, StarWritingEmotionValue> values)
+        {
+            if (!PassesPersistenceQualityGate(profile.ConstellationPersistenceQualityGate, values))
+            {
+                return new List<string>();
+            }
+
+            List<StarWritingPersistenceRule> rules = profile.ConstellationPersistenceRules ?? new List<StarWritingPersistenceRule>();
+            if (rules.Count == 0)
+            {
+                rules = new List<StarWritingPersistenceRule>
+                {
+                    new StarWritingPersistenceRule
+                    {
+                        Id = "constellation-default-overall",
+                        Requirements = new List<StarWritingPersistenceRequirement>
+                        {
+                            new StarWritingPersistenceRequirement { Category = "Overall", MinimumValue = 75 }
+                        }
+                    }
+                };
+            }
+
+            List<string> matched = MatchPersistenceRules(rules, values);
+            if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
+                && overall.Value > GlobalOverallValueThreshold
+                && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
+            {
+                matched.Add(GlobalOverallRuleId);
+            }
+            return matched;
+        }
+
+        private static List<string> MatchPersistenceRules(
+            IEnumerable<StarWritingPersistenceRule>? rules,
+            IReadOnlyDictionary<string, StarWritingEmotionValue> values)
+        {
+            List<string> matched = new List<string>();
+            foreach (StarWritingPersistenceRule rule in (rules ?? Enumerable.Empty<StarWritingPersistenceRule>())
+                .Where(x => x != null && x.Requirements != null && x.Requirements.Count > 0))
+            {
+                IEnumerable<bool> checks = rule.Requirements.Select(requirement =>
+                {
+                    if (!values.TryGetValue(requirement.Category ?? string.Empty, out StarWritingEmotionValue? value)) return false;
+                    return value.Value >= requirement.MinimumValue;
+                });
+                bool isAny = string.Equals(rule.MatchMode, "any", StringComparison.OrdinalIgnoreCase);
+                bool qualifies = isAny ? checks.Any(x => x) : checks.All(x => x);
+                if (qualifies) matched.Add(string.IsNullOrWhiteSpace(rule.Id) ? "writing-rule" : rule.Id.Trim());
+            }
+            return matched;
+        }
+
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
             // The review model occasionally emits an inflated Overall value while craft dimensions remain low.
@@ -1605,18 +1685,7 @@ namespace Wds.SixStars.Api.Writings
                 };
             }
 
-            List<string> matched = new List<string>();
-            foreach (StarWritingPersistenceRule rule in rules.Where(x => x != null && x.Requirements != null && x.Requirements.Count > 0))
-            {
-                IEnumerable<bool> checks = rule.Requirements.Select(requirement =>
-                {
-                    if (!values.TryGetValue(requirement.Category ?? string.Empty, out StarWritingEmotionValue? value)) return false;
-                    return value.Value >= requirement.MinimumValue;
-                });
-                bool isAny = string.Equals(rule.MatchMode, "any", StringComparison.OrdinalIgnoreCase);
-                bool qualifies = isAny ? checks.Any(x => x) : checks.All(x => x);
-                if (qualifies) matched.Add(string.IsNullOrWhiteSpace(rule.Id) ? "writing-rule" : rule.Id.Trim());
-            }
+            List<string> matched = MatchPersistenceRules(rules, values);
 
             // Every Star also gets the same conservative excellence backstop. The comparison is
             // deliberately strict: an Overall value of exactly 80 does not qualify at the default
@@ -1677,6 +1746,16 @@ namespace Wds.SixStars.Api.Writings
 
         private static IEnumerable<KeyValuePair<string, StarWritingEmotionValue>> ReadEmotionValues(PersistedStarWriting writing)
         {
+            if (writing != null
+                && string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out _, out Dictionary<string, StarWritingEmotionValue> storyValues))
+            {
+                return storyValues;
+            }
+
             StarWritingEmotionVector.Normalize(writing?.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
             return values;
         }
@@ -1688,7 +1767,10 @@ namespace Wds.SixStars.Api.Writings
             HashSet<string> speakableEmotions = new HashSet<string>(new[]
             {
                 "Funny", "Deep", "Intrigued", "Interested", "Playful", "Surprising",
-                "Mysterious", "Haunting", "Melancholy", "Hopeful", "Romantic", "Moving"
+                "Mysterious", "Haunting", "Melancholy", "Hopeful", "Romantic", "Moving",
+                "Mirthful", "Delighted", "Engrossed", "Wondrous", "Awed", "Moved", "Tender",
+                "Comforted", "Inspired", "Impassioned", "Exhilarated", "Connected", "Attracted",
+                "Yearning", "Vulnerable", "Haunted", "Uneasy", "Afraid", "Concerned", "Angry", "Determined", "Contemplative"
             }, StringComparer.OrdinalIgnoreCase);
             KeyValuePair<string, StarWritingEmotionValue> strongest = ReadEmotionValues(story)
                 .Where(x => speakableEmotions.Contains(x.Key))
