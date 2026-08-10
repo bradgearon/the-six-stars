@@ -7,5 +7,6 @@ namespace Wds.SixStars.Api.Writings
     {
         IReadOnlyList<string> CreateSeedWords();
         IReadOnlyList<string> CreateNounSeedWords();
+        IReadOnlyList<string> CreateVerbSeedWords();
     }
 }

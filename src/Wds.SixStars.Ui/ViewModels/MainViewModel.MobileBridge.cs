@@ -588,14 +588,16 @@ public sealed partial class MainViewModel
                 using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request to generate Star writing");
                 StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-                List<string> items = writingResult.Batch.Items.Select((x, i) =>
-                    (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ". [" + string.Join(" + ", x.WordsUsed) + "] " + x.Writing +
-                    (x.Persisted ? " (saved)" : " (not saved)"))
-                    .ToList();
-                string repairMessage = writingResult.RepairedRatingCount > 0
-                    ? " Re-rated " + writingResult.RepairedRatingCount + " older writings whose vectors were incomplete."
-                    : string.Empty;
-                string message = starId + " used " + writingResult.WritingMethod + " and completed " + writingResult.CompletedPassCount + " of " + writingResult.SelectedPassCount + " writing passes with " + writingResult.AppliedImprovementCount + " accepted replacements; " + writingResult.PersistedCount + " writings passed her persistence rules. " + writingResult.State.PendingCount + " are new and waiting to be told." + repairMessage;
+                List<string> items = IsConstellationStory(writingResult)
+                    ? writingResult.Batch.Items.Select(x =>
+                        (string.IsNullOrWhiteSpace(x.Title) ? "Constellation Story" : x.Title) + Environment.NewLine + x.Writing +
+                        (x.Persisted ? " (saved)" : " (not saved)"))
+                        .ToList()
+                    : writingResult.Batch.Items.Select((x, i) =>
+                        (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture) + ". [" + string.Join(" + ", x.WordsUsed) + "] " + x.Writing +
+                        (x.Persisted ? " (saved)" : " (not saved)"))
+                        .ToList();
+                string message = BuildWritingGenerationStatus(starId, writingResult);
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

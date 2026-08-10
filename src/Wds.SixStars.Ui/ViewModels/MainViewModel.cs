@@ -173,7 +173,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     _appConfig.WritingMethods.SemanticCollisionWeight),
                 VerbNounDisplacementWeight = GetDoubleSetting(
                     Environment.GetEnvironmentVariable("SIX_STARS_WRITING_VERB_NOUN_DISPLACEMENT_WEIGHT"),
-                    _appConfig.WritingMethods.VerbNounDisplacementWeight)
+                    _appConfig.WritingMethods.VerbNounDisplacementWeight),
+                ConstellationForgeWeight = GetDoubleSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_WRITING_CONSTELLATION_FORGE_WEIGHT"),
+                    _appConfig.WritingMethods.ConstellationForgeWeight)
             },
             new RandomStarWritingSeedWordProvider(
                 GetBooleanSetting(
@@ -2458,44 +2461,29 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task GenerateStarWritingAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
-        CancellationToken token = _operationController.BeginNewOperation("Select words, compose, refine through writing passes, and rate five Star writings.");
+        CancellationToken token = _operationController.BeginNewOperation("Select a writing-shelf technique, generate the work, develop it through its configured phases, and review it.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing five word pairs, composing them, and selecting its configured refinement pass count before final rating.";
+            Status = starId + " is starting a writing-shelf cycle and selecting a creative technique.";
         });
         try
         {
             StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, token).ConfigureAwait(false);
-            StringBuilder output = new StringBuilder();
-            output.AppendLine(starId + " created five new jokes / poetic fragments:");
-            output.AppendLine();
-            for (int i = 0; i < result.Batch.Items.Count; i++)
-            {
-                StarWritingHistoryItem item = result.Batch.Items[i];
-                output.Append(i + 1).Append(". [").Append(string.Join(" + ", item.WordsUsed)).AppendLine("]");
-                output.AppendLine(item.Writing);
-                output.AppendLine(item.Persisted
-                    ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
-                    : "Not persisted by this Star's current score rules.");
-                output.AppendLine();
-            }
+            string output = BuildWritingGenerationDisplay(starId, result);
 
             OnUiThread(() =>
             {
                 PendingWritingCount = result.State.PendingCount;
                 PersistedWritingCount = result.State.PersistedWritings.Count;
-                StarOutput = output.ToString().TrimEnd();
+                StarOutput = output;
                 DebugJson = JsonSerializer.Serialize(new
                 {
                     feature = "star-writing-iterative-pass-generation",
                     vectorCategoryOrder = StarWritingEmotionVector.Categories,
                     result
                 }, _jsonOptions);
-                string repairMessage = result.RepairedRatingCount > 0
-                    ? " Re-rated " + result.RepairedRatingCount + " older writings whose vectors were incomplete."
-                    : string.Empty;
-                Status = starId + " used " + result.WritingMethod + " and finished " + result.CompletedPassCount + " of " + result.SelectedPassCount + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " passed her persistence rules. " + PendingWritingCount + " are waiting to be told." + repairMessage;
+                Status = BuildWritingGenerationStatus(starId, result);
                 IsProcessingRuntime = false;
             });
             await PublishWritingShelfEventAsync("StarWritingGenerated", starId, result.State, result.Batch.Items.Select(x => x.Writing).ToList(), Status).ConfigureAwait(false);

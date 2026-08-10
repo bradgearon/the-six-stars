@@ -14,6 +14,7 @@ namespace Wds.SixStars.Api.Writings
         private const string GlobalOverallRuleId = "global-overall-excellence";
         private const double DefaultGlobalOverallThreshold = 80.0;
         private static readonly double GlobalOverallThreshold = ReadGlobalOverallThreshold();
+        private const int StoryMaximumBuildPhases = 10;
 
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
@@ -58,16 +59,22 @@ namespace Wds.SixStars.Api.Writings
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
                 string writingMethod = _methodOptions.SelectMethod(_random);
-                int selectedPassCount = _passOptions.SelectPassCount(_random);
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingMethod] " + profile.StarId + " selected " + writingMethod + ".");
-                System.Diagnostics.Debug.WriteLine(
-                    "[StarWritingPasses] " + profile.StarId + " selected " + selectedPassCount.ToString(CultureInfo.InvariantCulture) + " total pass(es).");
 
                 // Do not make a new-writing button repair legacy vectors first. Older malformed
                 // ratings are historical data and must never block or add hidden LLM calls to a
                 // fresh generation. They can be migrated by a separate maintenance action later.
                 int repairedRatingCount = 0;
+
+                if (string.Equals(writingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase))
+                {
+                    return await GenerateConstellationStoryAsync(profile, state, repairedRatingCount, cancellationToken).ConfigureAwait(false);
+                }
+
+                int selectedPassCount = _passOptions.SelectPassCount(_random);
+                System.Diagnostics.Debug.WriteLine(
+                    "[StarWritingPasses] " + profile.StarId + " selected " + selectedPassCount.ToString(CultureInfo.InvariantCulture) + " total Spark pass(es).");
 
                 // Pass one is always a two-stage creative method. Semantic collision privately
                 // chooses unrelated word pairs; verb/noun displacement privately chooses objects
@@ -81,6 +88,7 @@ namespace Wds.SixStars.Api.Writings
                     : (_seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>());
                 StarWritingGenerationResult generation = await _agent.GenerateWritingCandidatesAsync(profile, state, seedWords, writingMethod, cancellationToken).ConfigureAwait(false);
                 generation.WritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
+                generation.OutputType = StarWritingMethods.GetOutputType(generation.WritingMethod);
                 NormalizeGeneration(generation);
                 if (string.Equals(generation.WritingMethod, StarWritingMethods.SemanticCollision, StringComparison.OrdinalIgnoreCase))
                 {
@@ -123,6 +131,7 @@ namespace Wds.SixStars.Api.Writings
                 {
                     Id = "writing-batch-" + Guid.NewGuid().ToString("N"),
                     WritingMethod = generation.WritingMethod,
+                    OutputType = generation.OutputType,
                     GeneratedAt = now,
                     SelectedPassCount = generation.SelectedPassCount,
                     CompletedPassCount = generation.CompletedPassCount,
@@ -142,6 +151,9 @@ namespace Wds.SixStars.Api.Writings
                     {
                         Id = itemId,
                         WritingMethod = generation.WritingMethod,
+                        OutputType = generation.OutputType,
+                        Title = generation.Title,
+                        ContributingStarIds = (generation.ContributingStarIds ?? new List<string>()).ToList(),
                         SourceBatchId = batch.Id,
                         GeneratedAt = now,
                         Index = i,
@@ -159,6 +171,9 @@ namespace Wds.SixStars.Api.Writings
                         {
                             Id = itemId,
                             WritingMethod = generation.WritingMethod,
+                            OutputType = generation.OutputType,
+                            Title = generation.Title,
+                            ContributingStarIds = (generation.ContributingStarIds ?? new List<string>()).ToList(),
                             SourceBatchId = batch.Id,
                             WordsUsed = historyItem.WordsUsed.ToList(),
                             Writing = historyItem.Writing,
@@ -194,6 +209,7 @@ namespace Wds.SixStars.Api.Writings
                 return new StarWritingCreateResult
                 {
                     WritingMethod = generation.WritingMethod,
+                    OutputType = generation.OutputType,
                     State = state,
                     Batch = batch,
                     PersistedCount = persistedCount,
@@ -206,6 +222,434 @@ namespace Wds.SixStars.Api.Writings
             finally { _operationGate.Release(); }
         }
 
+        private async Task<StarWritingCreateResult> GenerateConstellationStoryAsync(
+            StarProfile viewpointProfile,
+            StarWritingNotesState state,
+            int repairedRatingCount,
+            CancellationToken cancellationToken)
+        {
+            DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+            List<StarProfile> allProfiles = (_profiles.GetAllProfiles() ?? Array.Empty<StarProfile>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId))
+                .GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.First())
+                .ToList();
+            if (!allProfiles.Any(x => string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)))
+            {
+                allProfiles.Insert(0, viewpointProfile);
+            }
+            if (allProfiles.Count < 6)
+            {
+                throw new InvalidOperationException("Constellation Forge requires the complete Six Stars roster so the viewpoint Star can collaborate with all five other Stars.");
+            }
+
+            List<StarProfile> lightPassProfiles = new List<StarProfile> { viewpointProfile };
+            lightPassProfiles.AddRange(ShuffleProfiles(allProfiles
+                .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase))));
+
+            StarWritingStoryDevelopmentState development = new StarWritingStoryDevelopmentState
+            {
+                Id = "constellation-development-" + Guid.NewGuid().ToString("N"),
+                ViewpointStarId = viewpointProfile.StarId,
+                UpdatedAt = startedAt
+            };
+            state.LatestStoryDevelopment = development;
+            state.LatestWritingMethod = StarWritingMethods.ConstellationForge;
+            state.LatestWritingPasses = new List<StarWritingPassSnapshot>();
+            state.LatestSelectedPassCount = 1;
+            state.LatestCompletedPassCount = 0;
+            state.LatestAppliedImprovementCount = 0;
+            state.LatestPassUpdatedAt = startedAt;
+            await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+
+            List<string> subjects = new List<string>();
+            List<string> verbs = new List<string>();
+            int phaseNumber = 0;
+
+            // Light pass: every Star contributes fresh subjects and verbs before anyone writes prose.
+            foreach (StarProfile termProfile in lightPassProfiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                StarWritingStoryTermContributionResult? contribution = null;
+                Exception? lastError = null;
+                for (int attempt = 0; attempt < 2 && contribution == null; attempt++)
+                {
+                    try
+                    {
+                        contribution = await _agent.ContributeStoryTermsAsync(
+                            termProfile,
+                            state,
+                            _seedWordProvider?.CreateNounSeedWords() ?? Array.Empty<string>(),
+                            _seedWordProvider?.CreateVerbSeedWords() ?? Array.Empty<string>(),
+                            subjects,
+                            verbs,
+                            phaseNumber + 1,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        lastError = ex;
+                    }
+                }
+                if (contribution == null)
+                {
+                    throw new InvalidOperationException("Constellation Forge could not obtain fresh story subjects/verbs from " + termProfile.StarId + ".", lastError);
+                }
+
+                List<string> newSubjects = AddUniqueTerms(subjects, contribution.Subjects);
+                List<string> newVerbs = AddUniqueTerms(verbs, contribution.Verbs);
+                RecordStoryTerms(state, newSubjects, newVerbs);
+                phaseNumber++;
+                development.CurrentPhase = phaseNumber;
+                development.Subjects = subjects.ToList();
+                development.Verbs = verbs.ToList();
+                development.UpdatedAt = DateTimeOffset.UtcNow;
+                development.Phases.Add(new StarWritingStoryDevelopmentPhase
+                {
+                    PhaseNumber = phaseNumber,
+                    Stage = "light-terms",
+                    StarId = termProfile.StarId,
+                    Summary = "Added subjects: " + string.Join(", ", newSubjects) + "; verbs: " + string.Join(", ", newVerbs) + ".",
+                    UpdatedAt = development.UpdatedAt
+                });
+                await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            // The viewpoint Star owns the initial architecture.
+            StarWritingStoryOutlineResult outline = await _agent.CreateStoryOutlineAsync(
+                viewpointProfile,
+                state,
+                subjects,
+                verbs,
+                _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
+                cancellationToken).ConfigureAwait(false);
+            phaseNumber++;
+            development.CurrentPhase = phaseNumber;
+            development.Title = outline.Title;
+            development.Premise = outline.Premise;
+            development.OutlineBeats = outline.Beats.ToList();
+            development.UpdatedAt = DateTimeOffset.UtcNow;
+            development.Phases.Add(new StarWritingStoryDevelopmentPhase
+            {
+                PhaseNumber = phaseNumber,
+                Stage = "outline",
+                StarId = viewpointProfile.StarId,
+                Summary = outline.Premise,
+                UpdatedAt = development.UpdatedAt
+            });
+            await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+
+            List<StarProfile> builders = ShuffleProfiles(allProfiles
+                .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)));
+            if (builders.Count < 5)
+            {
+                throw new InvalidOperationException("Constellation Forge requires all five Stars other than the viewpoint Star for collaborative building.");
+            }
+
+            List<string> buildContributors = new List<string>();
+            string currentStory = string.Empty;
+            bool pendingFinish = false;
+            string finishRequestedByStarId = string.Empty;
+            bool completionApproved = false;
+            string lastBuilderId = string.Empty;
+            int buildPhaseCount = 0;
+
+            while (buildPhaseCount < StoryMaximumBuildPhases && !completionApproved)
+            {
+                StarProfile contributor = SelectStoryBuilder(builders, buildPhaseCount, lastBuilderId, finishRequestedByStarId);
+                bool wasPendingFinish = pendingFinish;
+                StarWritingStoryBuildResult build = await _agent.BuildStoryPhaseAsync(
+                    contributor,
+                    viewpointProfile,
+                    state,
+                    outline,
+                    currentStory,
+                    subjects,
+                    verbs,
+                    _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
+                    buildContributors,
+                    buildPhaseCount + 1,
+                    wasPendingFinish,
+                    finishRequestedByStarId,
+                    cancellationToken).ConfigureAwait(false);
+
+                currentStory = build.Story.Trim();
+                outline.Title = string.IsNullOrWhiteSpace(build.Title) ? outline.Title : build.Title.Trim();
+                if (build.RevisedBeats != null && build.RevisedBeats.Count >= 6)
+                {
+                    outline.Beats = build.RevisedBeats.ToList();
+                }
+                if (!buildContributors.Contains(contributor.StarId, StringComparer.OrdinalIgnoreCase))
+                {
+                    buildContributors.Add(contributor.StarId);
+                }
+                buildPhaseCount++;
+                lastBuilderId = contributor.StarId;
+
+                string decision = StarWritingStoryCompletionDecisions.Normalize(build.CompletionDecision, wasPendingFinish);
+                int distinctBuilderCount = buildContributors.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                int requiredBuilderCount = builders.Select(x => x.StarId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+
+                if (wasPendingFinish)
+                {
+                    if (string.Equals(decision, StarWritingStoryCompletionDecisions.ApprovePendingFinish, StringComparison.OrdinalIgnoreCase))
+                    {
+                        completionApproved = true;
+                        pendingFinish = false;
+                    }
+                    else
+                    {
+                        pendingFinish = false;
+                        finishRequestedByStarId = string.Empty;
+                    }
+                }
+                else if (string.Equals(decision, StarWritingStoryCompletionDecisions.RequestFinish, StringComparison.OrdinalIgnoreCase))
+                {
+                    pendingFinish = true;
+                    finishRequestedByStarId = contributor.StarId;
+                }
+
+                // Once all five other Stars have contributed, make sure the team explicitly performs a
+                // pending-finish audit even if nobody volunteered a finish request on the fifth pass.
+                if (!completionApproved
+                    && !pendingFinish
+                    && distinctBuilderCount >= requiredBuilderCount
+                    && buildPhaseCount >= requiredBuilderCount)
+                {
+                    pendingFinish = true;
+                    finishRequestedByStarId = "team-completion-check";
+                }
+
+                phaseNumber++;
+                development.CurrentPhase = phaseNumber;
+                development.Title = outline.Title;
+                development.OutlineBeats = outline.Beats.ToList();
+                development.CurrentStory = currentStory;
+                development.ContributingStarIds = buildContributors.ToList();
+                development.PendingFinish = pendingFinish;
+                development.FinishRequestedByStarId = finishRequestedByStarId;
+                development.UpdatedAt = DateTimeOffset.UtcNow;
+                development.Phases.Add(new StarWritingStoryDevelopmentPhase
+                {
+                    PhaseNumber = phaseNumber,
+                    Stage = wasPendingFinish ? "finish-audit" : "build",
+                    StarId = contributor.StarId,
+                    PendingFinish = wasPendingFinish,
+                    CompletionDecision = decision,
+                    Summary = string.Join("; ", build.AddedLayers ?? new List<string>()) + (string.IsNullOrWhiteSpace(build.CompletionReason) ? string.Empty : " Completion: " + build.CompletionReason),
+                    StorySnapshot = currentStory,
+                    UpdatedAt = development.UpdatedAt
+                });
+                state.LatestSelectedPassCount = Math.Max(1, buildPhaseCount);
+                state.LatestCompletedPassCount = buildPhaseCount;
+                state.LatestAppliedImprovementCount = buildPhaseCount;
+                state.LatestPassUpdatedAt = development.UpdatedAt;
+                await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            // Safety cap: ask one different tail Star for a final explicit finish audit rather than
+            // silently assuming the story is done. A denial leaves the development trace on disk and
+            // prevents an unfinished work from reaching the shelf.
+            if (!completionApproved)
+            {
+                StarProfile tail = SelectStoryBuilder(builders, buildPhaseCount + 1, lastBuilderId, lastBuilderId);
+                StarWritingStoryBuildResult audit = await _agent.BuildStoryPhaseAsync(
+                    tail,
+                    viewpointProfile,
+                    state,
+                    outline,
+                    currentStory,
+                    subjects,
+                    verbs,
+                    _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
+                    buildContributors,
+                    buildPhaseCount + 1,
+                    true,
+                    "maximum-build-phase-audit",
+                    cancellationToken).ConfigureAwait(false);
+                currentStory = audit.Story.Trim();
+                if (audit.RevisedBeats != null && audit.RevisedBeats.Count >= 6) outline.Beats = audit.RevisedBeats.ToList();
+                if (!buildContributors.Contains(tail.StarId, StringComparer.OrdinalIgnoreCase)) buildContributors.Add(tail.StarId);
+                buildPhaseCount++;
+                string auditDecision = StarWritingStoryCompletionDecisions.Normalize(audit.CompletionDecision, true);
+                completionApproved = string.Equals(auditDecision, StarWritingStoryCompletionDecisions.ApprovePendingFinish, StringComparison.OrdinalIgnoreCase);
+                phaseNumber++;
+                development.CurrentPhase = phaseNumber;
+                development.CurrentStory = currentStory;
+                development.OutlineBeats = outline.Beats.ToList();
+                development.ContributingStarIds = buildContributors.ToList();
+                development.PendingFinish = !completionApproved;
+                development.FinishRequestedByStarId = "maximum-build-phase-audit";
+                development.UpdatedAt = DateTimeOffset.UtcNow;
+                development.Phases.Add(new StarWritingStoryDevelopmentPhase
+                {
+                    PhaseNumber = phaseNumber,
+                    Stage = "finish-audit",
+                    StarId = tail.StarId,
+                    PendingFinish = true,
+                    CompletionDecision = auditDecision,
+                    Summary = string.Join("; ", audit.AddedLayers ?? new List<string>()) + (string.IsNullOrWhiteSpace(audit.CompletionReason) ? string.Empty : " Completion: " + audit.CompletionReason),
+                    StorySnapshot = currentStory,
+                    UpdatedAt = development.UpdatedAt
+                });
+                state.LatestSelectedPassCount = Math.Max(1, buildPhaseCount);
+                state.LatestCompletedPassCount = buildPhaseCount;
+                state.LatestAppliedImprovementCount = buildPhaseCount;
+                state.LatestPassUpdatedAt = development.UpdatedAt;
+                await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+                if (!completionApproved)
+                {
+                    throw new InvalidOperationException("Constellation Forge reached its safety cap and the independent tail Star denied completion. The latest development trace was saved and no unfinished story was persisted.");
+                }
+            }
+
+            List<string> allContributors = new[] { viewpointProfile.StarId }
+                .Concat(lightPassProfiles.Select(x => x.StarId))
+                .Concat(buildContributors)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Return the completed collaborative draft to the viewpoint Star for the final authorial pass.
+            StarWritingStoryFinalResult final = await _agent.FinalizeStoryAsync(
+                viewpointProfile,
+                state,
+                outline,
+                currentStory,
+                subjects,
+                verbs,
+                allContributors,
+                _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
+                cancellationToken).ConfigureAwait(false);
+            phaseNumber++;
+            development.CurrentPhase = phaseNumber;
+            development.Title = final.Title;
+            development.CurrentStory = final.Story;
+            development.ContributingStarIds = allContributors.ToList();
+            development.PendingFinish = false;
+            development.FinishRequestedByStarId = string.Empty;
+            development.Completed = true;
+            development.FinalStep = final.FinalStep;
+            development.UpdatedAt = DateTimeOffset.UtcNow;
+            development.Phases.Add(new StarWritingStoryDevelopmentPhase
+            {
+                PhaseNumber = phaseNumber,
+                Stage = "final-revision",
+                StarId = viewpointProfile.StarId,
+                CompletionDecision = "final",
+                Summary = "Viewpoint Star completed the final funny/beautiful/deep/interesting revision with finalStep=true.",
+                StorySnapshot = final.Story,
+                UpdatedAt = development.UpdatedAt
+            });
+            await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+
+            StarWritingRating rating = await _agent.RateStoryAsync(
+                viewpointProfile,
+                state,
+                final.Title,
+                final.Story,
+                allContributors,
+                cancellationToken).ConfigureAwait(false);
+            rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
+            List<string> matchedRules = GetMatchedRuleIds(viewpointProfile, values);
+            phaseNumber++;
+            development.CurrentPhase = phaseNumber;
+            development.UpdatedAt = DateTimeOffset.UtcNow;
+            development.Phases.Add(new StarWritingStoryDevelopmentPhase
+            {
+                PhaseNumber = phaseNumber,
+                Stage = "review",
+                StarId = viewpointProfile.StarId,
+                CompletionDecision = matchedRules.Count > 0 ? "persist" : "reject",
+                Summary = matchedRules.Count > 0
+                    ? "Passed persistence rules: " + string.Join(", ", matchedRules) + "."
+                    : "Did not pass the existing writing persistence rules.",
+                UpdatedAt = development.UpdatedAt
+            });
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            string batchId = "writing-batch-" + Guid.NewGuid().ToString("N");
+            string itemId = "writing-" + Guid.NewGuid().ToString("N");
+            StarWritingHistoryItem historyItem = new StarWritingHistoryItem
+            {
+                Id = itemId,
+                WritingMethod = StarWritingMethods.ConstellationForge,
+                OutputType = StarWritingOutputTypes.ConstellationStory,
+                Title = final.Title,
+                ContributingStarIds = allContributors.ToList(),
+                SourceBatchId = batchId,
+                GeneratedAt = now,
+                Index = 0,
+                WordsUsed = new List<string>(),
+                Writing = final.Story,
+                EmotionalVector = rating.EmotionalVector,
+                Persisted = matchedRules.Count > 0,
+                MatchedPersistenceRuleIds = matchedRules.ToList()
+            };
+            StarWritingHistoryBatch batch = new StarWritingHistoryBatch
+            {
+                Id = batchId,
+                WritingMethod = StarWritingMethods.ConstellationForge,
+                OutputType = StarWritingOutputTypes.ConstellationStory,
+                GeneratedAt = now,
+                SelectedPassCount = development.Phases.Count,
+                CompletedPassCount = development.Phases.Count,
+                AppliedImprovementCount = buildPhaseCount,
+                Items = new List<StarWritingHistoryItem> { historyItem }
+            };
+
+            int persistedCount = 0;
+            if (historyItem.Persisted)
+            {
+                state.PersistedWritings.Add(new PersistedStarWriting
+                {
+                    Id = itemId,
+                    WritingMethod = StarWritingMethods.ConstellationForge,
+                    OutputType = StarWritingOutputTypes.ConstellationStory,
+                    Title = final.Title,
+                    ContributingStarIds = allContributors.ToList(),
+                    SourceBatchId = batchId,
+                    WordsUsed = new List<string>(),
+                    Writing = final.Story,
+                    EmotionalVector = rating.EmotionalVector,
+                    MatchedPersistenceRuleIds = matchedRules.ToList(),
+                    GeneratedAt = now,
+                    PersistedAt = now,
+                    ToldCount = 0
+                });
+                persistedCount = 1;
+            }
+
+            state.RecentWritingHistory.Add(historyItem);
+            state.RecentWritingHistory = state.RecentWritingHistory
+                .Where(x => x != null)
+                .OrderByDescending(x => x.GeneratedAt)
+                .Take(10)
+                .OrderBy(x => x.GeneratedAt)
+                .ThenBy(x => x.Index)
+                .ToList();
+            state.LatestWritingMethod = StarWritingMethods.ConstellationForge;
+            state.LatestSelectedPassCount = development.Phases.Count;
+            state.LatestCompletedPassCount = development.Phases.Count;
+            state.LatestAppliedImprovementCount = buildPhaseCount;
+            state.LatestPassUpdatedAt = now;
+            RebuildUsedWordsFromPersistedWritings(state);
+            await _store.SaveGeneratedBatchAsync(state, viewpointProfile.DisplayName, batch, CancellationToken.None).ConfigureAwait(false);
+
+            return new StarWritingCreateResult
+            {
+                WritingMethod = StarWritingMethods.ConstellationForge,
+                OutputType = StarWritingOutputTypes.ConstellationStory,
+                State = state,
+                Batch = batch,
+                PersistedCount = persistedCount,
+                RepairedRatingCount = repairedRatingCount,
+                SelectedPassCount = development.Phases.Count,
+                CompletedPassCount = development.Phases.Count,
+                AppliedImprovementCount = buildPhaseCount
+            };
+        }
+
         public async Task<StarWritingPerformanceResult?> TellPendingAsync(string starId, CancellationToken cancellationToken)
         {
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -213,7 +657,15 @@ namespace Wds.SixStars.Api.Writings
             {
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
-                List<PersistedStarWriting> pending = state.PersistedWritings.Where(x => x != null && x.ToldCount <= 0).OrderByDescending(x => x.PersistedAt).ToList();
+                // The existing five-at-a-time performance action is intentionally for compact Sparks.
+                // Constellation Stories stay durable on the shelf until a dedicated long-form reader is used,
+                // rather than being truncated to the short performance response shape and marked as told.
+                List<PersistedStarWriting> pending = state.PersistedWritings
+                    .Where(x => x != null
+                        && x.ToldCount <= 0
+                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(x => x.PersistedAt)
+                    .ToList();
                 if (pending.Count == 0) return null;
 
                 StarWritingPerformancePlan plan;
@@ -304,6 +756,86 @@ namespace Wds.SixStars.Api.Writings
             await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try { await _store.ClearAsync(starId, cancellationToken).ConfigureAwait(false); }
             finally { _operationGate.Release(); }
+        }
+
+        private List<StarProfile> ShuffleProfiles(IEnumerable<StarProfile> profiles)
+        {
+            List<StarProfile> values = (profiles ?? Enumerable.Empty<StarProfile>()).Where(x => x != null).ToList();
+            for (int index = values.Count - 1; index > 0; index--)
+            {
+                int swapIndex = _random.Next(index + 1);
+                (values[index], values[swapIndex]) = (values[swapIndex], values[index]);
+            }
+            return values;
+        }
+
+        private static StarProfile SelectStoryBuilder(
+            IReadOnlyList<StarProfile> builders,
+            int buildPhaseCount,
+            string lastBuilderId,
+            string finishRequestedByStarId)
+        {
+            if (builders == null || builders.Count == 0) throw new InvalidOperationException("No collaborative story builders are available.");
+            int start = Math.Abs(buildPhaseCount) % builders.Count;
+            for (int offset = 0; offset < builders.Count; offset++)
+            {
+                StarProfile candidate = builders[(start + offset) % builders.Count];
+                if (builders.Count > 1 && string.Equals(candidate.StarId, lastBuilderId, StringComparison.OrdinalIgnoreCase)) continue;
+                if (builders.Count > 1 && !string.IsNullOrWhiteSpace(finishRequestedByStarId)
+                    && !string.Equals(finishRequestedByStarId, "team-completion-check", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(finishRequestedByStarId, "maximum-build-phase-audit", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(candidate.StarId, finishRequestedByStarId, StringComparison.OrdinalIgnoreCase)) continue;
+                return candidate;
+            }
+            return builders[start];
+        }
+
+        private static List<string> AddUniqueTerms(List<string> destination, IEnumerable<string>? values)
+        {
+            List<string> added = new List<string>();
+            HashSet<string> existing = new HashSet<string>(destination ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            foreach (string value in values ?? Enumerable.Empty<string>())
+            {
+                string normalized = (value ?? string.Empty).Trim();
+                if (normalized.Length == 0 || !existing.Add(normalized)) continue;
+                destination.Add(normalized);
+                added.Add(normalized);
+            }
+            return added;
+        }
+
+        private static void RecordStoryTerms(StarWritingNotesState state, IEnumerable<string>? nouns, IEnumerable<string>? verbs)
+        {
+            state.RecentStoryNouns ??= new List<string>();
+            state.StoryNounUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            state.RecentStoryVerbs ??= new List<string>();
+            state.StoryVerbUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            RecordRollingTerms(state.RecentStoryNouns, state.StoryNounUsageCounts, nouns, 50);
+            RecordRollingTerms(state.RecentStoryVerbs, state.StoryVerbUsageCounts, verbs, 50);
+        }
+
+        private static void RecordRollingTerms(
+            List<string> recent,
+            Dictionary<string, int> counts,
+            IEnumerable<string>? values,
+            int recentLimit)
+        {
+            List<string> normalized = (values ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (normalized.Count == 0) return;
+
+            recent.InsertRange(0, normalized);
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            recent.RemoveAll(x => string.IsNullOrWhiteSpace(x) || !seen.Add(x.Trim()));
+            if (recent.Count > recentLimit) recent.RemoveRange(recentLimit, recent.Count - recentLimit);
+
+            foreach (string value in normalized)
+            {
+                counts[value] = counts.TryGetValue(value, out int current) ? current + 1 : 1;
+            }
         }
 
         private static void RecordGeneratedWordSet(StarWritingNotesState state, IEnumerable<List<string>>? wordPairs)
@@ -508,6 +1040,16 @@ namespace Wds.SixStars.Api.Writings
         private static void NormalizeGeneration(StarWritingGenerationResult generation)
         {
             generation.WritingMethod = StarWritingMethods.Normalize(generation.WritingMethod);
+            generation.OutputType = StarWritingOutputTypes.Normalize(string.IsNullOrWhiteSpace(generation.OutputType)
+                ? StarWritingMethods.GetOutputType(generation.WritingMethod)
+                : generation.OutputType);
+            generation.Title = (generation.Title ?? string.Empty).Trim();
+            generation.ContributingStarIds ??= new List<string>();
+            generation.ContributingStarIds = generation.ContributingStarIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
             generation.Jokes ??= new List<string>();
             generation.UsedWords ??= new List<List<string>>();
             generation.SeedWords ??= new List<string>();
@@ -572,7 +1114,9 @@ namespace Wds.SixStars.Api.Writings
             CancellationToken cancellationToken)
         {
             List<StarWritingHistoryItem> invalid = (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>())
-                .Where(x => x != null && NeedsRatingRepair(x))
+                .Where(x => x != null
+                    && NeedsRatingRepair(x)
+                    && !string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(x => x.GeneratedAt)
                 .ThenBy(x => x.Index)
                 .Take(10)
@@ -632,6 +1176,9 @@ namespace Wds.SixStars.Api.Writings
                             {
                                 Id = item.Id,
                                 WritingMethod = StarWritingMethods.Normalize(item.WritingMethod),
+                                OutputType = StarWritingOutputTypes.Normalize(item.OutputType),
+                                Title = item.Title ?? string.Empty,
+                                ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList(),
                                 SourceBatchId = item.SourceBatchId,
                                 WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                                 Writing = item.Writing,
@@ -644,6 +1191,9 @@ namespace Wds.SixStars.Api.Writings
                         }
                         else
                         {
+                            existing.OutputType = StarWritingOutputTypes.Normalize(item.OutputType);
+                            existing.Title = item.Title ?? string.Empty;
+                            existing.ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList();
                             existing.SourceBatchId = item.SourceBatchId;
                             existing.WordsUsed = (item.WordsUsed ?? new List<string>()).ToList();
                             existing.Writing = item.Writing;

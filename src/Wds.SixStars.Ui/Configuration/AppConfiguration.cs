@@ -128,9 +128,9 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class WritingPassesConfig
     {
-        /// <summary>When false, the writing shelf runs only the selected creative method's first pass.</summary>
+        /// <summary>When false, compact Spark techniques run only their first pass. Constellation Forge uses its own collaborative phase protocol.</summary>
         public bool Enabled { get; set; } = true;
-        /// <summary>When true, each writing cycle receives 100 optional random noun/adjective/verb ideas.</summary>
+        /// <summary>When true, writing techniques can draw 100-word seed pools; Constellation Forge also draws separate noun and verb pools for its light pass.</summary>
         public bool SeedWordsEnabled { get; set; } = true;
         public int MinimumPasses { get; set; } = 1;
         public int MaximumPasses { get; set; } = 6;
@@ -145,6 +145,8 @@ namespace Wds.SixStars.Ui.Configuration
         public double SemanticCollisionWeight { get; set; } = 0.70;
         /// <summary>Relative weight for the verb and noun displacement technique.</summary>
         public double VerbNounDisplacementWeight { get; set; } = 0.30;
+        /// <summary>Relative weight for the collaborative long-form Constellation Forge technique.</summary>
+        public double ConstellationForgeWeight { get; set; } = 0.10;
     }
 
     public sealed class XPostingConfig

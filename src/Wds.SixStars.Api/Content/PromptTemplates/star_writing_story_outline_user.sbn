@@ -1,0 +1,41 @@
+CONSTELLATION FORGE — VIEWPOINT OUTLINE
+
+VIEWPOINT STAR
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory: {{ data.backstorySummary }}
+Relevant background: {{ data.completeBackgroundStory }}
+Speaking / writing style: {{ data.speakingStyle }}
+Character attributes: {{ data.characterAttributes }}
+
+WRITING BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORYTELLING RULES
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+TEAM SUBJECT POOL
+{{ for word in data.subjects }}
+- {{ word }}
+{{ end }}
+
+TEAM VERB POOL
+{{ for word in data.verbs }}
+- {{ word }}
+{{ end }}
+
+FRESH OPTIONAL SEEDS
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+
+Create the structural outline now. Return JSON only.

@@ -1,0 +1,79 @@
+CONSTELLATION FORGE — LIGHT VOCABULARY PASS {{ data.phaseNumber }}
+
+CONTRIBUTING STAR
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Character attributes: {{ data.characterAttributes }}
+
+CHARACTERISTIC INTERESTS / BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+RELEVANT CANON / PRIVATE DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+NOUN SEEDS
+{{ for word in data.nounSeeds }}
+- {{ word }}
+{{ end }}
+
+VERB SEEDS
+{{ for word in data.verbSeeds }}
+- {{ word }}
+{{ end }}
+
+SUBJECTS ALREADY CHOSEN IN THIS STORY
+{{ if data.subjectsSoFar.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word in data.subjectsSoFar }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+VERBS ALREADY CHOSEN IN THIS STORY
+{{ if data.verbsSoFar.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word in data.verbsSoFar }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+RECENT STORY SUBJECTS TO AVOID REPEATING
+{{ if data.recentStoryNouns.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word in data.recentStoryNouns }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+RECENT STORY VERBS TO AVOID REPEATING
+{{ if data.recentStoryVerbs.size == 0 }}
+(none yet)
+{{ else }}
+{{ for word in data.recentStoryVerbs }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+MOST USED STORY SUBJECTS
+{{ for item in data.topStoryNouns }}
+- {{ item.word }}: {{ item.count }}
+{{ end }}
+
+MOST USED STORY VERBS
+{{ for item in data.topStoryVerbs }}
+- {{ item.word }}: {{ item.count }}
+{{ end }}
+
+Return 3-5 fresh subjects and 3-5 fresh verbs only in the required JSON shape.

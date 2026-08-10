@@ -88,6 +88,10 @@ namespace Wds.SixStars.Api.XPosting
                         && !x.PostedAt.HasValue
                         && !string.IsNullOrWhiteSpace(x.Id)
                         && !string.IsNullOrWhiteSpace(x.Writing)
+                        && string.Equals(
+                            StarWritingOutputTypes.Normalize(x.OutputType),
+                            StarWritingOutputTypes.Spark,
+                            StringComparison.OrdinalIgnoreCase)
                         && x.Writing.Trim().Length <= 280)
                     .ToList();
 

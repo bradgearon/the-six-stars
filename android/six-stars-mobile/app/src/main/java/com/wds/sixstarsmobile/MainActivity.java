@@ -996,7 +996,7 @@ public final class MainActivity extends ComponentActivity {
         controls.addView(autoWritingHint);
 
         LinearLayout writingButtons = row();
-        prodGenerateWritingButton = prodButton("Create 5 Jokes / Poems");
+        prodGenerateWritingButton = prodButton("Create Shelf Work");
         prodTellWritingButton = prodButton("Tell Best / Latest (" + selectedStarPendingWritingCount + ")");
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
@@ -1990,6 +1990,14 @@ public final class MainActivity extends ComponentActivity {
         lastStarInitiativeRequestMs = now;
 
         syncStarInitiativeRuntimePrefs();
+
+        PreparedSpeechStore.CachedItem durablePrepared = bestPreparedSpeechForSelectedStar();
+        if (durablePrepared != null) {
+            pauseStarInitiativeBackgroundService("Manual Listen button is consuming the Star's durable prepared thought.");
+            playPreparedSpeech(durablePrepared, "manual Listen button");
+            return;
+        }
+
         if (playPrefetchedInitiativeIfAvailable()) return;
 
         pauseStarInitiativeBackgroundService("Manual Listen button has priority over background at-rest checks.");
@@ -2111,7 +2119,7 @@ public final class MainActivity extends ComponentActivity {
     private void updateProdWritingButtons() {
         if (prodGenerateWritingButton != null) {
             prodGenerateWritingButton.setEnabled(!starWritingRequestRunning);
-            prodGenerateWritingButton.setText(starWritingRequestRunning ? "Writing…" : "Create 5 Jokes / Poems");
+            prodGenerateWritingButton.setText(starWritingRequestRunning ? "Writing…" : "Create Shelf Work");
         }
         if (prodTellWritingButton != null) {
             prodTellWritingButton.setEnabled(!starWritingRequestRunning && selectedStarPendingWritingCount > 0);
@@ -3117,20 +3125,19 @@ public final class MainActivity extends ComponentActivity {
             prodPreparedSpeechIndicatorText.setOnClickListener(null);
         }
 
-        if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
-            if (prodTalkButton != null) {
-                prodTalkButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought.");
-            }
-        } else if (item != null) {
-            if (prodTalkButton != null) {
-                prodTalkButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ".");
-            }
-        } else if (result != null && result.preparingCount > 0) {
-            if (prodTalkButton != null) {
-                prodTalkButton.setContentDescription(selectedStarName() + " is preparing something to say.");
-            }
-        } else if (prodTalkButton != null) {
+        if (prodTalkButton != null) {
             prodTalkButton.setContentDescription("Talk to the selected Star.");
+        }
+        if (prodListenButton != null) {
+            if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
+                prodListenButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought.");
+            } else if (item != null) {
+                prodListenButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ". Listen now.");
+            } else if (result != null && result.preparingCount > 0) {
+                prodListenButton.setContentDescription(selectedStarName() + " is preparing something to say.");
+            } else {
+                prodListenButton.setContentDescription("Ask the selected Star if she has something to say.");
+            }
         }
 
         refreshProdTalkButtonDecor();
@@ -3146,43 +3153,42 @@ public final class MainActivity extends ComponentActivity {
         boolean preparingPrepared = !activePrepared && !readyPrepared && result != null && result.preparingCount > 0;
         boolean highPriorityReady = readyPrepared && item.priorityRank() >= 3;
 
-        int strokeColor = 0xFFB8ACFF;
-        int fillColor = 0xDD171933;
-        int textColor = 0xFFECE9FF;
-        float scale = 1.0f;
+        int talkStrokeColor = recording ? 0xFF38E8FF : 0xFFB8ACFF;
+        int talkFillColor = recording ? 0xEE1E2840 : 0xDD171933;
+        int talkTextColor = recording ? 0xFFFFFFFF : 0xFFECE9FF;
+        float talkScale = recording ? 1.01f : 1.0f;
 
-        if (recording) {
-            strokeColor = 0xFF38E8FF;
-            fillColor = 0xEE1E2840;
-            textColor = 0xFFFFFFFF;
-            scale = 1.01f;
-        } else if (activePrepared) {
-            strokeColor = 0xFF7CF0FF;
-            fillColor = 0xEE22304A;
-            textColor = 0xFFFFFFFF;
-            scale = 1.03f;
-        } else if (highPriorityReady) {
-            strokeColor = 0xFFFFD27A;
-            fillColor = 0xEE322744;
-            textColor = 0xFFFFFFFF;
-            scale = 1.03f;
-        } else if (readyPrepared) {
-            strokeColor = 0xFF7CF0FF;
-            fillColor = 0xEE1B2340;
-            textColor = 0xFFFFFFFF;
-            scale = 1.02f;
-        } else if (preparingPrepared) {
-            strokeColor = 0xFF50D7E8;
-            fillColor = 0xE0172037;
-            textColor = 0xFFF4FBFF;
-            scale = 1.01f;
+        prodTalkButton.setBackground(makeProdPanel(talkFillColor, talkStrokeColor, 16));
+        prodTalkButton.setScaleX(talkScale);
+        prodTalkButton.setScaleY(talkScale);
+        prodTalkButtonText.setTextColor(talkTextColor);
+        if (prodTalkIcon != null) prodTalkIcon.setColorFilter(talkStrokeColor);
+
+        if (prodListenButton != null) {
+            int listenStrokeColor = 0xFF00D5D7;
+            int listenFillColor = 0xCC172033;
+            float listenScale = 1.0f;
+            if (activePrepared) {
+                listenStrokeColor = 0xFF7CF0FF;
+                listenFillColor = 0xEE22304A;
+                listenScale = 1.04f;
+            } else if (highPriorityReady) {
+                listenStrokeColor = 0xFFFFD27A;
+                listenFillColor = 0xEE322744;
+                listenScale = 1.05f;
+            } else if (readyPrepared) {
+                listenStrokeColor = 0xFF7CF0FF;
+                listenFillColor = 0xEE1B2340;
+                listenScale = 1.03f;
+            } else if (preparingPrepared) {
+                listenStrokeColor = 0xFF50D7E8;
+                listenFillColor = 0xE0172037;
+                listenScale = 1.02f;
+            }
+            prodListenButton.setBackground(makeProdPanel(listenFillColor, listenStrokeColor, 14));
+            prodListenButton.setScaleX(listenScale);
+            prodListenButton.setScaleY(listenScale);
         }
-
-        prodTalkButton.setBackground(makeProdPanel(fillColor, strokeColor, 16));
-        prodTalkButton.setScaleX(scale);
-        prodTalkButton.setScaleY(scale);
-        prodTalkButtonText.setTextColor(textColor);
-        if (prodTalkIcon != null) prodTalkIcon.setColorFilter(strokeColor);
     }
 
     private static String capitalize(String value) {
@@ -3322,6 +3328,10 @@ public final class MainActivity extends ComponentActivity {
         } catch (Exception ex) {
             appendVoiceDebug("Prepared completion marker could not be saved", item.intentId + ": " + ex);
         }
+        if (preparedSpeechCoordinator != null) preparedSpeechCoordinator.suppressIntent(item.intentId);
+        preparedSpeechSyncResult = preparedSpeechCoordinator == null
+                ? preparedSpeechSyncResult
+                : preparedSpeechCoordinator.latest();
         updatePreparedSpeechIndicator();
         httpExecutor.execute(() -> {
             try {

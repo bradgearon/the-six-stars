@@ -7,8 +7,8 @@ namespace Wds.SixStars.Ui.Services
 {
     /// <summary>
     /// Generates fresh optional seed vocabularies for writing cycles. Semantic collision keeps
-    /// the existing mixed part-of-speech list, while verb/noun displacement receives 100 nouns
-    /// so its object-selection step gets a broad noun palette without seeding replacement verbs.
+    /// the existing mixed part-of-speech list, verb/noun displacement receives 100 nouns, and
+    /// Constellation Forge can request separate 100-word noun and verb pools for its light pass.
     /// </summary>
     public sealed class RandomStarWritingSeedWordProvider : IStarWritingSeedWordProvider
     {
@@ -57,6 +57,19 @@ namespace Wds.SixStars.Ui.Services
             lock (_gate)
             {
                 return CreateUniqueWords(() => WordGenerator.PartOfSpeech.noun);
+            }
+        }
+
+        public IReadOnlyList<string> CreateVerbSeedWords()
+        {
+            if (!_enabled)
+            {
+                return Array.Empty<string>();
+            }
+
+            lock (_gate)
+            {
+                return CreateUniqueWords(() => WordGenerator.PartOfSpeech.verb);
             }
         }
 

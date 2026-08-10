@@ -3,7 +3,9 @@ package com.wds.sixstarsmobile;
 import android.content.Context;
 import android.os.SystemClock;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -56,6 +58,46 @@ final class PreparedSpeechCoordinator {
     PreparedSpeechStore.CachedItem bestFor(String starId) {
         for (PreparedSpeechStore.CachedItem item : latest.readyItems) if (item.starId.equalsIgnoreCase(starId)) return item;
         return null;
+    }
+
+    void suppressIntent(String intentId) {
+        if (intentId == null || intentId.trim().isEmpty()) return;
+        PreparedSpeechStore.SyncResult current = latest;
+        List<PreparedSpeechStore.CachedItem> remaining = new ArrayList<>();
+        for (PreparedSpeechStore.CachedItem item : current.readyItems) {
+            if (item == null || item.intentId.equalsIgnoreCase(intentId)) continue;
+            remaining.add(item);
+        }
+        if (remaining.size() == current.readyItems.size()) return;
+
+        double highestScore = 0.0;
+        String highestPriority = "low";
+        int highestRank = 0;
+        for (PreparedSpeechStore.CachedItem item : remaining) {
+            highestScore = Math.max(highestScore, item.effectiveScore);
+            int rank = item.priorityRank();
+            if (rank > highestRank) {
+                highestRank = rank;
+                highestPriority = item.priority;
+            }
+        }
+        latest = new PreparedSpeechStore.SyncResult(
+                remaining,
+                current.preparingCount,
+                highestScore,
+                highestPriority,
+                current.speakBeforeReplyEnabled,
+                current.speakBeforeReplyProbability,
+                current.highPrioritySpeakBeforeReplyProbability,
+                current.speakBeforeReplyMaximumSeconds,
+                current.minimumPageDwellSeconds,
+                current.mediumPriorityPageDwellSeconds,
+                current.girlfriendMediumSpeakProbability,
+                current.highConnectionMediumSpeakProbability,
+                current.highConnectionThreshold,
+                current.minimumMinutesBetweenAutoSpeech,
+                current.highPriorityAutoSpeakThreshold,
+                current.mediumPriorityAutoSpeakThreshold);
     }
     void blockFor(long delayMs) {
         blockedUntilElapsedMs = Math.max(blockedUntilElapsedMs, SystemClock.elapsedRealtime() + Math.max(0L, delayMs));

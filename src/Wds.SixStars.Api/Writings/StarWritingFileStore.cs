@@ -245,6 +245,9 @@ namespace Wds.SixStars.Api.Writings
                     StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(),
                     Speaker = string.IsNullOrWhiteSpace(speaker) ? (string.IsNullOrWhiteSpace(starId) ? "Unknown Star" : starId.Trim()) : speaker.Trim(),
                     WritingMethod = StarWritingMethods.Normalize(item.WritingMethod),
+                    OutputType = StarWritingOutputTypes.Normalize(item.OutputType),
+                    Title = item.Title ?? string.Empty,
+                    ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList(),
                     GeneratedAt = item.GeneratedAt,
                     Index = item.Index,
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
@@ -273,7 +276,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 9;
+            state.Version = 10;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
@@ -282,12 +285,22 @@ namespace Wds.SixStars.Api.Writings
             state.GeneratedWordUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             state.RecentGeneratedNouns ??= new List<string>();
             state.GeneratedNounUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            state.RecentStoryNouns ??= new List<string>();
+            state.StoryNounUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            state.RecentStoryVerbs ??= new List<string>();
+            state.StoryVerbUsageCounts ??= new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             state.AllUsedWords ??= new List<string>();
             state.PersistedWritings ??= new List<PersistedStarWriting>();
 
             foreach (StarWritingHistoryItem item in state.RecentWritingHistory.Where(x => x != null))
             {
                 item.WritingMethod = StarWritingMethods.Normalize(item.WritingMethod);
+                item.OutputType = string.Equals(item.WritingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase)
+                    ? StarWritingOutputTypes.ConstellationStory
+                    : StarWritingOutputTypes.Normalize(item.OutputType);
+                item.Title ??= string.Empty;
+                item.ContributingStarIds ??= new List<string>();
+                item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
@@ -342,6 +355,12 @@ namespace Wds.SixStars.Api.Writings
             }
             state.GeneratedNounUsageCounts = normalizedNounUsageCounts;
 
+            state.RecentStoryNouns = NormalizeRecentTerms(state.RecentStoryNouns, 50);
+            state.RecentStoryVerbs = NormalizeRecentTerms(state.RecentStoryVerbs, 50);
+            state.StoryNounUsageCounts = NormalizeTermUsageCounts(state.StoryNounUsageCounts, state.RecentStoryNouns);
+            state.StoryVerbUsageCounts = NormalizeTermUsageCounts(state.StoryVerbUsageCounts, state.RecentStoryVerbs);
+            NormalizeStoryDevelopment(state.LatestStoryDevelopment);
+
             state.RecentWritingHistory = state.RecentWritingHistory
                 .Where(x => x != null)
                 .OrderByDescending(x => x.GeneratedAt)
@@ -375,6 +394,12 @@ namespace Wds.SixStars.Api.Writings
             foreach (PersistedStarWriting item in state.PersistedWritings.Where(x => x != null))
             {
                 item.WritingMethod = StarWritingMethods.Normalize(item.WritingMethod);
+                item.OutputType = string.Equals(item.WritingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase)
+                    ? StarWritingOutputTypes.ConstellationStory
+                    : StarWritingOutputTypes.Normalize(item.OutputType);
+                item.Title ??= string.Empty;
+                item.ContributingStarIds ??= new List<string>();
+                item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 item.XPostId ??= string.Empty;
@@ -471,6 +496,65 @@ namespace Wds.SixStars.Api.Writings
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             return state;
+        }
+
+        private static List<string> NormalizeRecentTerms(IEnumerable<string>? terms, int limit)
+        {
+            return (terms ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(1, limit))
+                .ToList();
+        }
+
+        private static Dictionary<string, int> NormalizeTermUsageCounts(
+            IDictionary<string, int>? counts,
+            IEnumerable<string>? fallbackTerms)
+        {
+            Dictionary<string, int> normalized = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, int> entry in counts ?? new Dictionary<string, int>())
+            {
+                string word = (entry.Key ?? string.Empty).Trim();
+                if (word.Length == 0 || entry.Value <= 0) continue;
+                normalized[word] = normalized.TryGetValue(word, out int current) ? current + entry.Value : entry.Value;
+            }
+            if (normalized.Count == 0)
+            {
+                foreach (string word in fallbackTerms ?? Enumerable.Empty<string>())
+                {
+                    if (string.IsNullOrWhiteSpace(word)) continue;
+                    string normalizedWord = word.Trim();
+                    normalized[normalizedWord] = normalized.TryGetValue(normalizedWord, out int current) ? current + 1 : 1;
+                }
+            }
+            return normalized;
+        }
+
+        private static void NormalizeStoryDevelopment(StarWritingStoryDevelopmentState? development)
+        {
+            if (development == null) return;
+            development.Id ??= string.Empty;
+            development.ViewpointStarId ??= string.Empty;
+            development.Title ??= string.Empty;
+            development.Premise ??= string.Empty;
+            development.OutlineBeats ??= new List<string>();
+            development.CurrentStory ??= string.Empty;
+            development.Subjects = NormalizeRecentTerms(development.Subjects, 100);
+            development.Verbs = NormalizeRecentTerms(development.Verbs, 100);
+            development.ContributingStarIds ??= new List<string>();
+            development.ContributingStarIds = development.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            development.FinishRequestedByStarId ??= string.Empty;
+            development.Phases ??= new List<StarWritingStoryDevelopmentPhase>();
+            foreach (StarWritingStoryDevelopmentPhase phase in development.Phases.Where(x => x != null))
+            {
+                phase.Stage ??= string.Empty;
+                phase.StarId ??= string.Empty;
+                phase.CompletionDecision ??= string.Empty;
+                phase.Summary ??= string.Empty;
+                phase.StorySnapshot ??= string.Empty;
+            }
+            development.Phases = development.Phases.Where(x => x != null).OrderBy(x => x.PhaseNumber).ToList();
         }
 
         private static string SafeName(string? value)

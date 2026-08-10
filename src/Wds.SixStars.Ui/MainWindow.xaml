@@ -66,7 +66,7 @@
                     <Border BorderBrush="#D8C8F2" BorderThickness="1" CornerRadius="6" Padding="7" Margin="0,0,0,8" Background="#FCF9FF">
                         <StackPanel>
                             <TextBlock Text="Star Writing Shelf" FontWeight="SemiBold" Margin="0,0,0,5" />
-                            <Button Content="Create 5 Jokes / Poems" Command="{Binding GenerateStarWritingCommand}" Margin="0,0,0,6" Height="34" />
+                            <Button Content="Create Shelf Work" Command="{Binding GenerateStarWritingCommand}" Margin="0,0,0,6" Height="34" />
                             <Button Content="{Binding TellStarWritingButtonText}" Command="{Binding TellStarWritingCommand}" Margin="0,0,0,6" Height="34" />
                             <CheckBox Content="Generate for every Star while idle"
                                       IsChecked="{Binding BackgroundWritingLoopEnabled, Mode=TwoWay}"

@@ -104,6 +104,81 @@ namespace Wds.SixStars.Api.Agents
             return Task.FromResult(result);
         }
 
+        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, int phaseNumber, CancellationToken cancellationToken)
+        {
+            string prefix = string.IsNullOrWhiteSpace(profile.Element) ? profile.StarId : profile.Element;
+            return Task.FromResult(new StarWritingStoryTermContributionResult
+            {
+                StarId = profile.StarId,
+                Subjects = new List<string> { prefix + " bell", prefix + " bridge", prefix + " moth" },
+                Verbs = new List<string> { "wanders", "unfolds", "remembers" },
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new StarWritingStoryOutlineResult
+            {
+                StarId = viewpointProfile.StarId,
+                Title = "The Six Bells",
+                Premise = "Six strange bells lead one traveler through a city that has forgotten why it was built.",
+                Beats = new List<string>
+                {
+                    "A traveler finds the first bell under a broken bridge.",
+                    "The bell points toward a city that cannot remember its own name.",
+                    "A second bell reveals a lie the traveler has been carrying.",
+                    "The city's guardians mistake memory for trespass.",
+                    "The traveler learns the bells are pieces of one unfinished promise.",
+                    "The final bell rings only when the traveler chooses what should be remembered."
+                },
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
+        {
+            string story = string.IsNullOrWhiteSpace(currentStory)
+                ? "Under a broken bridge, a traveler found a bell that rang without being touched. Each note seemed to remember a street the city had forgotten."
+                : currentStory + " " + contributorProfile.DisplayName + " added another turn to the road, and the city answered with a stranger memory.";
+            string decision = pendingFinish
+                ? StarWritingStoryCompletionDecisions.ApprovePendingFinish
+                : phaseNumber >= 5 ? StarWritingStoryCompletionDecisions.RequestFinish : StarWritingStoryCompletionDecisions.Continue;
+            return Task.FromResult(new StarWritingStoryBuildResult
+            {
+                StarId = contributorProfile.StarId,
+                Title = outline.Title,
+                RevisedBeats = outline.Beats.ToList(),
+                Story = story,
+                AddedLayers = new List<string> { "mock contribution from " + contributorProfile.DisplayName },
+                CompletionDecision = decision,
+                CompletionReason = pendingFinish ? "The mock story has a complete arc." : "Continue until the team has contributed.",
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new StarWritingStoryFinalResult
+            {
+                StarId = viewpointProfile.StarId,
+                Title = outline.Title,
+                Story = currentStory + " In the end, the last bell laughed softly: memory had never needed permission to come home.",
+                FinalStep = true,
+                RawModelJson = "mock"
+            });
+        }
+
+        public Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken)
+        {
+            List<string> scores = StarWritingEmotionVector.Categories.Select(name => name == "Overall" ? "90" : "84").ToList();
+            return Task.FromResult(new StarWritingRating
+            {
+                Index = 0,
+                EmotionalVector = StarWritingEmotionVector.Normalize(string.Join(";", scores), out _)
+            });
+        }
+
         public Task<StarWritingPerformancePlan> PrepareWritingPerformanceAsync(StarProfile profile, StarWritingNotesState state, IReadOnlyList<PersistedStarWriting> pendingWritings, CancellationToken cancellationToken)
         {
             List<PersistedStarWriting> selected = pendingWritings.OrderByDescending(x => x.PersistedAt).Take(5).ToList();

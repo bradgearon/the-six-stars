@@ -189,7 +189,7 @@ public sealed partial class MainViewModel
             bool failed = false;
             try
             {
-                SetBackgroundWritingLoopStatus("Generating five writings and running the configured refinement passes for " + starId + " in the background...");
+                SetBackgroundWritingLoopStatus("Generating a writing-shelf work and running its selected development process for " + starId + " in the background...");
                 StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, iterationCts.Token).ConfigureAwait(false);
                 completed = true;
 
@@ -202,7 +202,7 @@ public sealed partial class MainViewModel
                     }
                 });
 
-                string message = "Background writing: " + starId + " used " + result.WritingMethod + " and completed " + result.CompletedPassCount + " of " + result.SelectedPassCount + " passes with " + result.AppliedImprovementCount + " accepted replacements; " + result.PersistedCount + " writings were saved. " + result.State.PendingCount + " are waiting to be told.";
+                string message = BuildWritingGenerationStatus(starId, result, "Background writing: ");
                 SetBackgroundWritingLoopStatus(message);
                 await PublishWritingShelfEventAsync(
                     "StarWritingBackgroundGenerated",

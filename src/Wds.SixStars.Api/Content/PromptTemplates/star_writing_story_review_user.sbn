@@ -1,0 +1,31 @@
+RATE ONE COMPLETED CONSTELLATION STORY
+
+VIEWPOINT STAR
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Speaking / writing style: {{ data.speakingStyle }}
+Signature behavior:
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+CONTRIBUTING STARS
+{{ for id in data.contributorStarIds }}
+- {{ id }}
+{{ end }}
+
+EXACT VECTOR CATEGORY ORDER (27)
+{{ data.vectorOrder }}
+
+TITLE
+{{ data.title }}
+
+STORY
+{{ data.story }}
+
+Return only: {"0":""}
+Replace the empty string with exactly 27 integer scores separated by semicolons.

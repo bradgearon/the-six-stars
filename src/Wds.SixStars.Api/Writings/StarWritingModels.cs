@@ -110,6 +110,9 @@ namespace Wds.SixStars.Api.Writings
     {
         public string StarId { get; set; } = string.Empty;
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
+        public string Title { get; set; } = string.Empty;
+        public List<string> ContributingStarIds { get; set; } = new List<string>();
 
         // The composition response supplies Jokes. UsedWords carries the two tracked creative terms for the selected method so Jokes[i] always maps to UsedWords[i].
         public List<string> Jokes { get; set; } = new List<string>();
@@ -148,6 +151,9 @@ namespace Wds.SixStars.Api.Writings
     {
         public string Id { get; set; } = string.Empty;
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
+        public string Title { get; set; } = string.Empty;
+        public List<string> ContributingStarIds { get; set; } = new List<string>();
         public string SourceBatchId { get; set; } = string.Empty;
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
@@ -162,6 +168,7 @@ namespace Wds.SixStars.Api.Writings
     {
         public string Id { get; set; } = string.Empty;
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public DateTimeOffset GeneratedAt { get; set; }
         public int SelectedPassCount { get; set; } = 1;
         public int CompletedPassCount { get; set; } = 1;
@@ -173,12 +180,15 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 2;
+        public int Version { get; set; } = 3;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
         public string Speaker { get; set; } = string.Empty;
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
+        public string Title { get; set; } = string.Empty;
+        public List<string> ContributingStarIds { get; set; } = new List<string>();
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
@@ -193,6 +203,9 @@ namespace Wds.SixStars.Api.Writings
     {
         public string Id { get; set; } = string.Empty;
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
+        public string Title { get; set; } = string.Empty;
+        public List<string> ContributingStarIds { get; set; } = new List<string>();
         public string SourceBatchId { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
@@ -209,9 +222,101 @@ namespace Wds.SixStars.Api.Writings
         public bool IsPosted => PostedAt.HasValue;
     }
 
+    public sealed class StarWritingStoryTermContributionResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public List<string> Subjects { get; set; } = new List<string>();
+        public List<string> Verbs { get; set; } = new List<string>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingStoryOutlineResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string Premise { get; set; } = string.Empty;
+        public List<string> Beats { get; set; } = new List<string>();
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public static class StarWritingStoryCompletionDecisions
+    {
+        public const string Continue = "continue";
+        public const string RequestFinish = "request-finish";
+        public const string ApprovePendingFinish = "approve-pending-finish";
+        public const string DenyPendingFinish = "deny-pending-finish";
+
+        public static string Normalize(string? value, bool pendingFinish)
+        {
+            if (pendingFinish)
+            {
+                return string.Equals(value, ApprovePendingFinish, StringComparison.OrdinalIgnoreCase)
+                    ? ApprovePendingFinish
+                    : DenyPendingFinish;
+            }
+
+            return string.Equals(value, RequestFinish, StringComparison.OrdinalIgnoreCase)
+                ? RequestFinish
+                : Continue;
+        }
+    }
+
+    public sealed class StarWritingStoryBuildResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public List<string> RevisedBeats { get; set; } = new List<string>();
+        public string Story { get; set; } = string.Empty;
+        public List<string> AddedLayers { get; set; } = new List<string>();
+        public string CompletionDecision { get; set; } = StarWritingStoryCompletionDecisions.Continue;
+        public string CompletionReason { get; set; } = string.Empty;
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingStoryFinalResult
+    {
+        public string StarId { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string Story { get; set; } = string.Empty;
+        public bool FinalStep { get; set; }
+        public string RawModelJson { get; set; } = string.Empty;
+    }
+
+    public sealed class StarWritingStoryDevelopmentPhase
+    {
+        public int PhaseNumber { get; set; }
+        public string Stage { get; set; } = string.Empty;
+        public string StarId { get; set; } = string.Empty;
+        public bool PendingFinish { get; set; }
+        public string CompletionDecision { get; set; } = string.Empty;
+        public string Summary { get; set; } = string.Empty;
+        public string StorySnapshot { get; set; } = string.Empty;
+        public DateTimeOffset UpdatedAt { get; set; }
+    }
+
+    public sealed class StarWritingStoryDevelopmentState
+    {
+        public string Id { get; set; } = string.Empty;
+        public string ViewpointStarId { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string Premise { get; set; } = string.Empty;
+        public List<string> OutlineBeats { get; set; } = new List<string>();
+        public string CurrentStory { get; set; } = string.Empty;
+        public List<string> Subjects { get; set; } = new List<string>();
+        public List<string> Verbs { get; set; } = new List<string>();
+        public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public bool PendingFinish { get; set; }
+        public string FinishRequestedByStarId { get; set; } = string.Empty;
+        public bool Completed { get; set; }
+        public bool FinalStep { get; set; }
+        public int CurrentPhase { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
+        public List<StarWritingStoryDevelopmentPhase> Phases { get; set; } = new List<StarWritingStoryDevelopmentPhase>();
+    }
+
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 9;
+        public int Version { get; set; } = 10;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -233,16 +338,38 @@ namespace Wds.SixStars.Api.Writings
         public List<string> RecentGeneratedNouns { get; set; } = new List<string>();
         /// <summary>Cumulative usage count for nouns selected by verb/noun displacement setup.</summary>
         public Dictionary<string, int> GeneratedNounUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Newest Constellation Forge story subjects/nouns, newest first.</summary>
+        public List<string> RecentStoryNouns { get; set; } = new List<string>();
+        /// <summary>Cumulative usage count for Constellation Forge story subjects/nouns.</summary>
+        public Dictionary<string, int> StoryNounUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Newest Constellation Forge story verbs, newest first.</summary>
+        public List<string> RecentStoryVerbs { get; set; } = new List<string>();
+        /// <summary>Cumulative usage count for Constellation Forge story verbs.</summary>
+        public Dictionary<string, int> StoryVerbUsageCounts { get; set; } = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Latest collaborative long-form development trace, saved after each phase for inspection and diagnostics.</summary>
+        public StarWritingStoryDevelopmentState? LatestStoryDevelopment { get; set; }
         public List<string> AllUsedWords { get; set; } = new List<string>();
         public List<PersistedStarWriting> PersistedWritings { get; set; } = new List<PersistedStarWriting>();
 
-        public int PendingCount => PersistedWritings?.Count(x => x != null && x.ToldCount <= 0) ?? 0;
-        public int UnpostedCount => PersistedWritings?.Count(x => x != null && !x.PostedAt.HasValue) ?? 0;
+        /// <summary>Untold compact Sparks eligible for the existing five-at-a-time performance action.</summary>
+        public int PendingCount => PersistedWritings?.Count(x => x != null
+            && x.ToldCount <= 0
+            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        /// <summary>Unposted compact Sparks eligible for X publishing.</summary>
+        public int UnpostedCount => PersistedWritings?.Count(x => x != null
+            && !x.PostedAt.HasValue
+            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        public int ConstellationStoryCount => PersistedWritings?.Count(x => x != null
+            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        public int PendingConstellationStoryCount => PersistedWritings?.Count(x => x != null
+            && x.ToldCount <= 0
+            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)) ?? 0;
     }
 
     public sealed class StarWritingCreateResult
     {
         public string WritingMethod { get; set; } = StarWritingMethods.SemanticCollision;
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public StarWritingHistoryBatch Batch { get; set; } = new StarWritingHistoryBatch();
         public int PersistedCount { get; set; }
