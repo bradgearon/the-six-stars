@@ -51,10 +51,19 @@ TEAM VERB POOL
 - {{ word }}
 {{ end }}
 
+TEAM STORY WISHES — OPTIONAL CREATIVE OFFERS
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 FRESH OPTIONAL SEEDS
 {{ for word in data.seedWords }}
 - {{ word }}
 {{ end }}
 
-Create the structural outline now. Return JSON only with starId, title, premise, characters, storySubjects, and beats.
+Create the structural outline now. Remember: you are the author, not automatically a character or narrator, and this shelf story is non-canon by default. Return JSON only with starId, title, premise, characters, storySubjects, and beats.
 The characters list is the named cast you want the team to develop; the storySubjects list is what this particular story is actually about, not merely a repetition of the seed noun pool.

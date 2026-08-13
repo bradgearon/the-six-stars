@@ -167,6 +167,9 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public string SourceBatchId { get; set; } = string.Empty;
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
@@ -196,7 +199,7 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 5;
+        public int Version { get; set; } = 6;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
@@ -205,6 +208,9 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
@@ -226,6 +232,9 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public string SourceBatchId { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
@@ -245,11 +254,22 @@ namespace Wds.SixStars.Api.Writings
         public bool IsPosted => PostedAt.HasValue;
     }
 
+    /// <summary>One current-story desire seed contributed by a souled actor during the light pass.</summary>
+    public sealed class StarWritingStoryWish
+    {
+        public string SourceActorId { get; set; } = string.Empty;
+        public string SourceDisplayName { get; set; } = string.Empty;
+        public string SourceActorType { get; set; } = string.Empty;
+        public string Wish { get; set; } = string.Empty;
+    }
+
     public sealed class StarWritingStoryTermContributionResult
     {
         public string StarId { get; set; } = string.Empty;
         public List<string> Subjects { get; set; } = new List<string>();
         public List<string> Verbs { get; set; } = new List<string>();
+        /// <summary>Five things this contributor would especially like to encounter in a story right now.</summary>
+        public List<string> StoryWishes { get; set; } = new List<string>();
         public string RawModelJson { get; set; } = string.Empty;
     }
 
@@ -320,6 +340,7 @@ namespace Wds.SixStars.Api.Writings
         public string StarId { get; set; } = string.Empty;
         public List<string> Characters { get; set; } = new List<string>();
         public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public bool PendingFinish { get; set; }
         public string CompletionDecision { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
@@ -340,6 +361,8 @@ namespace Wds.SixStars.Api.Writings
         /// <summary>Light-pass noun/subject vocabulary pool, separate from StorySubjects.</summary>
         public List<string> Subjects { get; set; } = new List<string>();
         public List<string> Verbs { get; set; } = new List<string>();
+        /// <summary>Current-story desire seeds contributed by the active collaborators during the light pass.</summary>
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public List<string> ContributingStarIds { get; set; } = new List<string>();
         public bool PendingFinish { get; set; }
         public string FinishRequestedByStarId { get; set; } = string.Empty;
@@ -352,7 +375,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 13;
+        public int Version { get; set; } = 14;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();

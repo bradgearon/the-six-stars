@@ -260,7 +260,7 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "subjects", "verbs" } },
+                { "required", new[] { "starId", "subjects", "verbs", "storyWishes" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
@@ -273,6 +273,14 @@ namespace Wds.SixStars.Api.Ai
                         { "verbs", new Dictionary<string, object>
                             {
                                 { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "storyWishes", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "minItems", 5 },
+                                { "maxItems", 5 },
                                 { "items", StringProperty() }
                             }
                         }

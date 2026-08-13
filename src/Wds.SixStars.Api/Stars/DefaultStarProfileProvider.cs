@@ -4,6 +4,7 @@ using System.Linq;
 using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.Actors;
 
 namespace Wds.SixStars.Api.Stars
 {
@@ -23,8 +24,15 @@ namespace Wds.SixStars.Api.Stars
                 CreateNyxari()
             };
 
+            int sortOrder = 10;
             foreach (StarProfile profile in profiles)
             {
+                profile.Active = true;
+                profile.SortOrder = sortOrder;
+                sortOrder += 10;
+                profile.ActorType = "star";
+                profile.ActorId = profile.StarId;
+                profile.Soul ??= ActorSoulConfig.FullStarSoul();
                 ApplyDefaultCharacterAttributes(profile);
                 ApplyDefaultConstellationPersistence(profile);
                 StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);
@@ -45,7 +53,10 @@ namespace Wds.SixStars.Api.Stars
 
         public IReadOnlyList<StarProfile> GetAllProfiles()
         {
-            return _profiles.Values.ToList();
+            return _profiles.Values
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static void ApplyDefaultConstellationPersistence(StarProfile profile)

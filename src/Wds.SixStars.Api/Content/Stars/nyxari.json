@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 60,
+  "actorType": "star",
+  "actorId": "Nyxari",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Nyxari",
   "displayName": "Nyxari",
   "element": "Shadow",

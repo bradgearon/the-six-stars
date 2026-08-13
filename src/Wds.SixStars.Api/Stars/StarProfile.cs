@@ -1,11 +1,22 @@
 using System.Collections.Generic;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.Actors;
 
 namespace Wds.SixStars.Api.Stars
 {
     public sealed class StarProfile
     {
+        /// <summary>Whether this Star is part of the active runtime/Forge roster.</summary>
+        public bool Active { get; set; } = true;
+        /// <summary>Stable configurable roster/display order; lower values appear first.</summary>
+        public int SortOrder { get; set; } = 1000;
+        /// <summary>Generic actor identity. Stars use actorType=star and normally actorId=StarId.</summary>
+        public string ActorType { get; set; } = "star";
+        public string ActorId { get; set; } = string.Empty;
+        /// <summary>Capability/depth declaration shared with generic souled actors.</summary>
+        public ActorSoulConfig Soul { get; set; } = ActorSoulConfig.FullStarSoul();
+
         public string StarId { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public string Element { get; set; } = string.Empty;

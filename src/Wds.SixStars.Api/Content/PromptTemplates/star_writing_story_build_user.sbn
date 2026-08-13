@@ -27,7 +27,7 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
-RELEVANT CANON
+CHARACTER / WORLD REFERENCE — INSPIRATION, NOT AUTOMATIC STORY CANON
 {{ for item in data.relevantSecrets }}
 - {{ item }}
 {{ end }}
@@ -96,9 +96,23 @@ TEAM VERBS
 - {{ word }}
 {{ end }}
 
+TEAM STORY WISHES — OPTIONAL
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 FRESH WORD SEEDS FOR THIS PHASE
 {{ for word in data.seedWords }}
 - {{ word }}
+{{ end }}
+
+ELIGIBLE ACTIVE BUILD COLLABORATORS
+{{ for id in data.eligibleContributorStarIds }}
+- {{ id }}
 {{ end }}
 
 PRIOR BUILD CONTRIBUTORS

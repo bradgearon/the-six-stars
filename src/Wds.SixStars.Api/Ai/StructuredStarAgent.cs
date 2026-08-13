@@ -614,6 +614,7 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<string> verbSeeds,
             IReadOnlyList<string> subjectsSoFar,
             IReadOnlyList<string> verbsSoFar,
+            IReadOnlyList<StarWritingStoryWish> storyWishesSoFar,
             int phaseNumber,
             CancellationToken cancellationToken)
         {
@@ -637,6 +638,7 @@ namespace Wds.SixStars.Api.Ai
                 verbSeeds = NormalizeSeedWords(verbSeeds),
                 subjectsSoFar = NormalizeStoryTerms(subjectsSoFar, 40),
                 verbsSoFar = NormalizeStoryTerms(verbsSoFar, 40),
+                storyWishesSoFar = FormatStoryWishes(storyWishesSoFar),
                 recentStoryNouns = NormalizeStoryTerms(viewpointState.RecentStoryNouns, 50),
                 recentStoryVerbs = NormalizeStoryTerms(viewpointState.RecentStoryVerbs, 50),
                 topStoryNouns = BuildTopStoryTermCounts(viewpointState.StoryNounUsageCounts),
@@ -663,8 +665,16 @@ namespace Wds.SixStars.Api.Ai
             usedVerbs.UnionWith(viewpointState.RecentStoryVerbs ?? new List<string>());
             result.Subjects = NormalizeStoryTermsUnbounded(result.Subjects).Where(x => !usedSubjects.Contains(x)).ToList();
             result.Verbs = NormalizeStoryTermsUnbounded(result.Verbs).Where(x => !usedVerbs.Contains(x)).ToList();
-            // The prompt asks for a useful handful of each. Do not reject a valid contribution merely
-            // because the model chose a different count; the six-Star pass naturally accumulates material.
+            result.StoryWishes = NormalizeStoryTermsUnbounded(result.StoryWishes).ToList();
+            if (result.StoryWishes.Count != 5)
+            {
+                throw new InvalidOperationException(
+                    "Constellation Forge story-wish contribution from " + profile.StarId
+                    + " returned " + result.StoryWishes.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + " usable wishes; exactly five are required so every active Star gets the same creative voice in the seed pass. Raw response preview: "
+                    + PromptText(json, 1400));
+            }
+            // Subject/verb counts remain instruction-guided rather than hard-gated; the active roster naturally accumulates them.
             result.RawModelJson = json;
             return result;
         }
@@ -674,6 +684,7 @@ namespace Wds.SixStars.Api.Ai
             StarWritingNotesState state,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
         {
@@ -694,6 +705,7 @@ namespace Wds.SixStars.Api.Ai
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
+                storyWishes = FormatStoryWishes(storyWishes),
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
@@ -768,8 +780,10 @@ namespace Wds.SixStars.Api.Ai
             string currentStory,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> seedWords,
             IReadOnlyList<string> priorContributorStarIds,
+            IReadOnlyList<string> eligibleContributorStarIds,
             int phaseNumber,
             bool pendingFinish,
             string finishRequestedByStarId,
@@ -806,8 +820,10 @@ namespace Wds.SixStars.Api.Ai
                 currentStory = PromptText(currentStory, 0),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
+                storyWishes = FormatStoryWishes(storyWishes),
                 seedWords = NormalizeSeedWords(seedWords),
                 priorContributorStarIds = (priorContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                eligibleContributorStarIds = (eligibleContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingEmotionVector.CategoryOrder,
                 valueReferences = BuildValueReferences(viewpointState, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
@@ -839,6 +855,7 @@ namespace Wds.SixStars.Api.Ai
             string currentStory,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> contributorStarIds,
             IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
@@ -865,6 +882,7 @@ namespace Wds.SixStars.Api.Ai
                 currentStory = PromptText(currentStory, 0),
                 subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
                 verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
+                storyWishes = FormatStoryWishes(storyWishes),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
@@ -876,29 +894,28 @@ namespace Wds.SixStars.Api.Ai
                 new ChatMessage("system", _templates.Render("star_writing_story_final_system.sbn", data)),
                 new ChatMessage("user", _templates.Render("star_writing_story_final_user.sbn", data))
             };
-            string lastJson = string.Empty;
-            for (int attempt = 0; attempt < 2; attempt++)
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingStoryFinalResponseFormat(),
+                0,
+                "star-writing-story-final",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(json), _jsonOptions);
+            if (result == null)
             {
-                List<ChatMessage> attemptMessages = messages.ToList();
-                if (attempt > 0)
-                {
-                    attemptMessages.Add(new ChatMessage("user", "Return the final revised story now. The finalStep field must be true. Do not return planning or another intermediate draft."));
-                }
-                lastJson = await _client.CompleteJsonAsync(
-                    attemptMessages,
-                    StarResponseJsonSchema.CreateStarWritingStoryFinalResponseFormat(),
-                    0,
-                    attempt == 0 ? "star-writing-story-final" : "star-writing-story-final-retry",
-                    cancellationToken).ConfigureAwait(false);
-                StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(lastJson), _jsonOptions);
-                if (result == null) continue;
-                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
-                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
-                result.Story = (result.Story ?? string.Empty).Trim();
-                result.RawModelJson = lastJson;
-                if (result.FinalStep && !string.IsNullOrWhiteSpace(result.Story)) return result;
+                throw new InvalidOperationException("Constellation Forge final viewpoint revision returned empty or unreadable JSON. Raw response preview: " + PromptText(json, 1600));
             }
-            throw new InvalidOperationException("Constellation Forge final viewpoint revision did not return finalStep=true with a finished story.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
+            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+            result.Story = (result.Story ?? string.Empty).Trim();
+            result.RawModelJson = json;
+            if (!result.FinalStep || string.IsNullOrWhiteSpace(result.Story))
+            {
+                throw new InvalidOperationException(
+                    "Constellation Forge final viewpoint revision violated its generation contract: finalStep must be true and story must be non-empty. Fix the final-revision instructions/model behavior rather than silently retrying or substituting output. Raw response preview: "
+                    + PromptText(json, 1600));
+            }
+            return result;
         }
 
         public async Task<StarWritingRating> RateStoryAsync(
@@ -1831,6 +1848,20 @@ namespace Wds.SixStars.Api.Ai
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
             result.RawModelJson = json;
             return result;
+        }
+
+        private static List<object> FormatStoryWishes(IEnumerable<StarWritingStoryWish>? storyWishes)
+        {
+            return (storyWishes ?? Enumerable.Empty<StarWritingStoryWish>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Wish))
+                .Select(x => (object)new
+                {
+                    sourceActorId = PromptText(x.SourceActorId, 120),
+                    sourceDisplayName = PromptText(x.SourceDisplayName, 120),
+                    sourceActorType = PromptText(x.SourceActorType, 80),
+                    wish = PromptText(x.Wish, 1000)
+                })
+                .ToList();
         }
 
         private static List<string> NormalizeSeedWords(IEnumerable<string>? seedWords)

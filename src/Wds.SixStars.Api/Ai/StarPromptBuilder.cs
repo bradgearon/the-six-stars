@@ -2046,7 +2046,10 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("Game premise: No cat has been seen for one hundred years. The universe is drying up. The Last Cat is an astral conduit who learns mana abilities from the Stars, then learns no-mana astral versions through the soul sword, the Astral Stream, Leviathan, ancient cat letters, and repeated use.");
             sb.AppendLine("Major places: Virethorn Sanctuary and poisoned water puzzles; Upper Caves / Highroot Waterworks; Bone Caves / Marrow Ossuary with Bone Bloom; Astral Caverns and Leviathan Road; Astral Book Room and hell arcade foreshadowing.");
             sb.AppendLine("Cave tone: the Last Cat moves through dark, deep, dangerous passages where violent and treacherous enemies can kill cats and Stars. He needs Star powers to survive, and he is the only present hope of restoring the cats.");
-            sb.AppendLine("Stars: Elusiaa-Light/Mercy; Khavia-Water/Friendship; Auerlis-Fire/Joy; Maera-Blood/Possession; Kaelia-Void/Mystery; Nyxari-Shadow/Fragmentation.");
+            if (!string.IsNullOrWhiteSpace(_options.ConfiguredStarSummary))
+            {
+                sb.AppendLine("Active configured Stars: " + _options.ConfiguredStarSummary.Trim());
+            }
             AppendExpandedProfileLore(sb, profile);
             if (profile.AngelStories.Count > 0)
             {

@@ -24,6 +24,7 @@ using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
 using Wds.SixStars.Ui.Services;
 using Wds.SixStars.Api.State;
+using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Ui.ViewModels;
 
@@ -198,10 +199,26 @@ public sealed partial class MainViewModel
 
     private object CreateMobileStarsPayload()
     {
+        IReadOnlyList<StarProfile> profiles = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         return new
         {
             ok = true,
-            stars = StarIds.ToArray(),
+            stars = profiles.Select(x => x.StarId).ToArray(),
+            starProfiles = profiles.Select(x => new
+            {
+                starId = x.StarId,
+                displayName = x.DisplayName,
+                element = x.Element,
+                domain = x.Domain,
+                sortOrder = x.SortOrder,
+                actorId = x.ActorId,
+                actorType = x.ActorType,
+                soulDepth = x.Soul == null ? 0 : x.Soul.Depth
+            }).ToArray(),
             requestTypes = RequestTypes.Select(x => x.ToString()).ToArray()
         };
     }
@@ -1775,7 +1792,8 @@ public sealed partial class MainViewModel
 
             await streamer.BeginSegmentAsync(segmentId, pcm.Format, new WhisperTranscriptionOptions
             {
-                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language
+                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
+                Prompt = CreateWhisperNamePrompt()
             }, cancellationToken).ConfigureAwait(false);
             await streamer.PushAudioAsync(segmentId, pcm.Pcm16, 0, pcm.Pcm16.Length, cancellationToken).ConfigureAwait(false);
             SpeechTranscript transcript = await streamer.EndSegmentAsync(segmentId, cancellationToken).ConfigureAwait(false);

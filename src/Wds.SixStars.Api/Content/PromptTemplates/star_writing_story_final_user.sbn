@@ -68,6 +68,15 @@ SUBJECT / VERB MATERIAL
 Subjects: {{ data.subjectsText }}
 Verbs: {{ data.verbsText }}
 
+TEAM STORY WISHES — OPTIONAL HISTORY OF WHAT THE ROOM WANTED
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 CONTRIBUTING STARS
 {{ for id in data.contributorStarIds }}
 - {{ id }}

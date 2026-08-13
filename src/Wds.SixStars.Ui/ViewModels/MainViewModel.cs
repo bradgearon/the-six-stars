@@ -147,6 +147,20 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         });
 
         _profileProvider = FileStarProfileProvider.TryCreateDefaultOrFallback();
+        IReadOnlyList<StarProfile> activeStarProfiles = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (activeStarProfiles.Count == 0)
+        {
+            throw new InvalidOperationException("No active Star profiles are configured. Add/enable at least one Content/Stars/<StarId>.json profile.");
+        }
+        if (!activeStarProfiles.Any(x => string.Equals(x.StarId, _selectedStarId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _selectedStarId = activeStarProfiles[0].StarId;
+        }
+
         IStarAgent starAgent = CreateStarAgent();
         if (starAgent is not IStarWritingAgent writingAgent)
         {
@@ -233,7 +247,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _voiceCaptureSettings,
             new WhisperTranscriptionOptions
             {
-                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language
+                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
+                Prompt = CreateWhisperNamePrompt()
             });
 
         // Determine if we should use streaming TTS. WebSocket streaming is the default desktop voice path
@@ -433,7 +448,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         WireMicrophoneEvents();
         WireScreenEvents();
 
-        StarIds = new ObservableCollection<string> { "Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari" };
+        StarIds = new ObservableCollection<string>(activeStarProfiles.Select(x => x.StarId));
         AudioBackends = new ObservableCollection<string> { "directsound", "wasapi", "waveout", "auto" };
         RequestTypes = new ObservableCollection<RequestType>
         {
@@ -1132,6 +1147,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             SecretStateCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SECRET_STATES_FOR_PROMPT"), _appConfig.Memory.SecretStatesForPrompt),
             RelationshipComboCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RELATIONSHIP_COMBOS_FOR_PROMPT"), _appConfig.Memory.RelationshipCombosForPrompt),
             ScreenCaptureCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_CAPTURES_FOR_PROMPT"), _appConfig.Memory.ScreenCapturesForPrompt),
+            ConfiguredStarSummary = string.Join("; ", (_profileProvider.GetAllProfiles() ?? Array.Empty<StarProfile>())
+                .Where(x => x != null && x.Active)
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(x => (string.IsNullOrWhiteSpace(x.DisplayName) ? x.StarId : x.DisplayName)
+                    + (string.IsNullOrWhiteSpace(x.Element) ? string.Empty : "-" + x.Element)
+                    + (string.IsNullOrWhiteSpace(x.Domain) ? string.Empty : "/" + x.Domain))),
             ActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.ActiveFlirtConnectionPercent),
             ActiveFlirtRomanceScore = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_ROMANCE_SCORE"), _appConfig.Memory.ActiveFlirtRomanceScore),
             StrongActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_STRONG_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.StrongActiveFlirtConnectionPercent),
@@ -3545,21 +3567,45 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return context;
     }
 
-    private static WakeAliasConfig CreateDefaultWakeAliases()
+    private string CreateWhisperNamePrompt()
     {
-        return new WakeAliasConfig
+        List<string> names = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active)
+            .SelectMany(x => new[] { x.StarId, x.DisplayName }.Concat(x.NameAliases ?? new List<string>()))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        names.Add("Leviathan");
+        names.Add("Virethorn");
+        return "Names that may appear: " + string.Join(", ", names.Distinct(StringComparer.OrdinalIgnoreCase)) + ".";
+    }
+
+    private WakeAliasConfig CreateDefaultWakeAliases()
+    {
+        WakeAliasConfig config = new WakeAliasConfig();
+        foreach (StarProfile profile in _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            EquippedStars = { "Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari" },
-            WakeAliases =
+            config.EquippedStars.Add(profile.StarId);
+            System.Collections.Generic.List<string> aliases = new System.Collections.Generic.List<string>();
+            void AddAlias(string? alias)
             {
-                { "Elusiaa", new System.Collections.Generic.List<string> { "elusiaa", "elusia", "light star", "angel bearer of light" } },
-                { "Kaelia", new System.Collections.Generic.List<string> { "kaelia", "kaylia", "void star" } },
-                { "Maera", new System.Collections.Generic.List<string> { "maera", "blood star" } },
-                { "Khavia", new System.Collections.Generic.List<string> { "khavia", "water star" } },
-                { "Auerlis", new System.Collections.Generic.List<string> { "auerlis", "aurelis", "fire star" } },
-                { "Nyxari", new System.Collections.Generic.List<string> { "nyxari", "shadow star" } }
+                if (string.IsNullOrWhiteSpace(alias)) return;
+                string normalized = alias.Trim();
+                if (!aliases.Contains(normalized, StringComparer.OrdinalIgnoreCase)) aliases.Add(normalized);
             }
-        };
+
+            AddAlias(profile.StarId);
+            AddAlias(profile.DisplayName);
+            foreach (string alias in profile.NameAliases ?? new System.Collections.Generic.List<string>()) AddAlias(alias);
+            if (!string.IsNullOrWhiteSpace(profile.Element)) AddAlias(profile.Element.Trim() + " star");
+
+            config.WakeAliases[profile.StarId] = aliases;
+        }
+        return config;
     }
 
     private static bool IsTruthyEnvironment(string name)
@@ -3574,7 +3620,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private static string ResolveDefaultStarId(string? value)
     {
-        string normalized = (value ?? "Elusiaa").Trim();
+        string normalized = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized)) return "Elusiaa";
         return normalized.ToLowerInvariant() switch
         {
             "elusiaa" or "elusia" => "Elusiaa",
@@ -3583,7 +3630,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             "khavia" => "Khavia",
             "auerlis" or "aurelis" => "Auerlis",
             "nyxari" => "Nyxari",
-            _ => "Elusiaa"
+            _ => normalized
         };
     }
 

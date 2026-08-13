@@ -1,4 +1,4 @@
-CONSTELLATION FORGE — LIGHT VOCABULARY PASS {{ data.phaseNumber }}
+CONSTELLATION FORGE — LIGHT SEED PASS {{ data.phaseNumber }}
 
 CONTRIBUTING STAR
 Name: {{ data.displayName }}
@@ -15,7 +15,8 @@ CHARACTERISTIC INTERESTS / BEHAVIOR
 - {{ item }}
 {{ end }}
 
-RELEVANT CANON / PRIVATE DETAILS
+CHARACTER / WORLD REFERENCE
+These details can inform what interests you, but this shelf story is not automatically game canon and does not need to be about you.
 {{ for item in data.relevantSecrets }}
 - {{ item }}
 {{ end }}
@@ -48,6 +49,16 @@ VERBS ALREADY CHOSEN IN THIS STORY
 {{ end }}
 {{ end }}
 
+STORY WISHES ALREADY OFFERED BY THE TEAM
+Use these only to understand the room; add five wishes that genuinely come from you and preferably broaden the possibilities.
+{{ if data.storyWishesSoFar.size == 0 }}
+(none yet)
+{{ else }}
+{{ for wish in data.storyWishesSoFar }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 RECENT STORY SUBJECTS TO AVOID REPEATING
 {{ if data.recentStoryNouns.size == 0 }}
 (none yet)
@@ -76,4 +87,4 @@ MOST USED STORY VERBS
 - {{ item.word }}: {{ item.count }}
 {{ end }}
 
-Return 3-5 fresh subjects and 3-5 fresh verbs only in the required JSON shape.
+Return 3-5 fresh subjects, 3-5 fresh verbs, and exactly five current storyWishes in the required JSON shape.

@@ -266,6 +266,9 @@ namespace Wds.SixStars.Api.Writings
                     OutputType = StarWritingOutputTypes.Normalize(item.OutputType),
                     Title = item.Title ?? string.Empty,
                     ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList(),
+                    StoryCharacters = (item.StoryCharacters ?? new List<string>()).ToList(),
+                    StorySubjects = (item.StorySubjects ?? new List<string>()).ToList(),
+                    StoryWishes = NormalizeStoryWishes(item.StoryWishes),
                     GeneratedAt = item.GeneratedAt,
                     Index = item.Index,
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
@@ -298,7 +301,7 @@ namespace Wds.SixStars.Api.Writings
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 13;
+            state.Version = 14;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
@@ -323,6 +326,9 @@ namespace Wds.SixStars.Api.Writings
                 item.Title ??= string.Empty;
                 item.ContributingStarIds ??= new List<string>();
                 item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                item.StoryCharacters = NormalizeStoryArchitectureList(item.StoryCharacters);
+                item.StorySubjects = NormalizeStoryArchitectureList(item.StorySubjects);
+                item.StoryWishes = NormalizeStoryWishes(item.StoryWishes);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
@@ -447,6 +453,9 @@ namespace Wds.SixStars.Api.Writings
                 item.Title ??= string.Empty;
                 item.ContributingStarIds ??= new List<string>();
                 item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                item.StoryCharacters = NormalizeStoryArchitectureList(item.StoryCharacters);
+                item.StorySubjects = NormalizeStoryArchitectureList(item.StorySubjects);
+                item.StoryWishes = NormalizeStoryWishes(item.StoryWishes);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 item.XPostId ??= string.Empty;
@@ -573,6 +582,20 @@ namespace Wds.SixStars.Api.Writings
         }
 
 
+        private static List<StarWritingStoryWish> NormalizeStoryWishes(IEnumerable<StarWritingStoryWish>? values)
+        {
+            return (values ?? Enumerable.Empty<StarWritingStoryWish>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Wish))
+                .Select(x => new StarWritingStoryWish
+                {
+                    SourceActorId = (x.SourceActorId ?? string.Empty).Trim(),
+                    SourceDisplayName = (x.SourceDisplayName ?? string.Empty).Trim(),
+                    SourceActorType = (x.SourceActorType ?? string.Empty).Trim(),
+                    Wish = x.Wish.Trim()
+                })
+                .ToList();
+        }
+
         private static List<string> NormalizeStoryArchitectureList(IEnumerable<string>? values)
         {
             return (values ?? Enumerable.Empty<string>())
@@ -614,6 +637,7 @@ namespace Wds.SixStars.Api.Writings
             development.Premise ??= string.Empty;
             development.Characters = NormalizeStoryArchitectureList(development.Characters);
             development.StorySubjects = NormalizeStoryArchitectureList(development.StorySubjects);
+            development.StoryWishes = NormalizeStoryWishes(development.StoryWishes);
             development.OutlineBeats ??= new List<string>();
             development.CurrentStory ??= string.Empty;
             development.Subjects = NormalizeRecentTerms(development.Subjects, 100);
@@ -628,6 +652,7 @@ namespace Wds.SixStars.Api.Writings
                 phase.StarId ??= string.Empty;
                 phase.Characters = NormalizeStoryArchitectureList(phase.Characters);
                 phase.StorySubjects = NormalizeStoryArchitectureList(phase.StorySubjects);
+                phase.StoryWishes = NormalizeStoryWishes(phase.StoryWishes);
                 phase.CompletionDecision ??= string.Empty;
                 phase.Summary ??= string.Empty;
                 phase.StorySnapshot ??= string.Empty;

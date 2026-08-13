@@ -104,7 +104,7 @@ namespace Wds.SixStars.Api.Agents
             return Task.FromResult(result);
         }
 
-        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, int phaseNumber, CancellationToken cancellationToken)
+        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, IReadOnlyList<StarWritingStoryWish> storyWishesSoFar, int phaseNumber, CancellationToken cancellationToken)
         {
             string prefix = string.IsNullOrWhiteSpace(profile.Element) ? profile.StarId : profile.Element;
             return Task.FromResult(new StarWritingStoryTermContributionResult
@@ -112,11 +112,12 @@ namespace Wds.SixStars.Api.Agents
                 StarId = profile.StarId,
                 Subjects = new List<string> { prefix + " bell", prefix + " bridge", prefix + " moth" },
                 Verbs = new List<string> { "wanders", "unfolds", "remembers" },
+                StoryWishes = new List<string> { "a dangerous crossing", "a memorable stranger", "a sharp joke under pressure", "a difficult choice", "an earned emotional payoff" },
                 RawModelJson = "mock"
             });
         }
 
-        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
         {
             return Task.FromResult(new StarWritingStoryOutlineResult
             {
@@ -136,7 +137,7 @@ namespace Wds.SixStars.Api.Agents
             });
         }
 
-        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
+        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, IReadOnlyList<string> eligibleContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
         {
             string story = string.IsNullOrWhiteSpace(currentStory)
                 ? "Under a broken bridge, a traveler found a bell that rang without being touched. Each note seemed to remember a street the city had forgotten."
@@ -157,7 +158,7 @@ namespace Wds.SixStars.Api.Agents
             });
         }
 
-        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
         {
             return Task.FromResult(new StarWritingStoryFinalResult
             {

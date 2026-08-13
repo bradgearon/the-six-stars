@@ -239,7 +239,10 @@ namespace Wds.SixStars.Api.Writings
         {
             DateTimeOffset startedAt = DateTimeOffset.UtcNow;
             List<StarProfile> allProfiles = (_profiles.GetAllProfiles() ?? Array.Empty<StarProfile>())
-                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.StarId))
+                .Where(x => x != null
+                    && x.Active
+                    && (x.Soul == null || x.Soul.Writing)
+                    && !string.IsNullOrWhiteSpace(x.StarId))
                 .GroupBy(x => x.StarId, StringComparer.OrdinalIgnoreCase)
                 .Select(x => x.First())
                 .ToList();
@@ -247,9 +250,9 @@ namespace Wds.SixStars.Api.Writings
             {
                 allProfiles.Insert(0, viewpointProfile);
             }
-            if (allProfiles.Count < 6)
+            if (allProfiles.Count < 3)
             {
-                throw new InvalidOperationException("Constellation Forge requires the complete Six Stars roster so the viewpoint Star can collaborate with all five other Stars.");
+                throw new InvalidOperationException("Constellation Forge needs at least three active writing-enabled Stars: one viewpoint Star plus two collaborators so a different Star can independently audit a pending finish.");
             }
 
             List<StarProfile> lightPassProfiles = new List<StarProfile> { viewpointProfile };
@@ -273,10 +276,11 @@ namespace Wds.SixStars.Api.Writings
 
             List<string> subjects = new List<string>();
             List<string> verbs = new List<string>();
+            List<StarWritingStoryWish> storyWishes = new List<StarWritingStoryWish>();
             int phaseNumber = 0;
 
-            // Light pass: every Star contributes fresh subjects and verbs before anyone writes prose.
-            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: starting the six-Star light vocabulary pass.");
+            // Light pass: every active Star contributes fresh subjects, verbs, and five current story wishes before anyone writes prose.
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: starting the " + lightPassProfiles.Count.ToString(CultureInfo.InvariantCulture) + "-Star light seed pass (vocabulary + what each Star wants to hear)." );
             int lightPassIndex = 0;
             foreach (StarProfile termProfile in lightPassProfiles)
             {
@@ -284,47 +288,57 @@ namespace Wds.SixStars.Api.Writings
                 lightPassIndex++;
                 ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: vocabulary "
                     + lightPassIndex.ToString(CultureInfo.InvariantCulture) + "/" + lightPassProfiles.Count.ToString(CultureInfo.InvariantCulture)
-                    + " — " + termProfile.StarId + " is choosing fresh subjects and verbs.");
-                StarWritingStoryTermContributionResult? contribution = null;
-                Exception? lastError = null;
-                for (int attempt = 0; attempt < 2 && contribution == null; attempt++)
+                    + " — " + termProfile.StarId + " is choosing fresh subjects, verbs, and five story wishes.");
+                StarWritingStoryTermContributionResult contribution;
+                try
                 {
-                    try
-                    {
-                        contribution = await _agent.ContributeStoryTermsAsync(
-                            termProfile,
-                            state,
-                            _seedWordProvider?.CreateNounSeedWords() ?? Array.Empty<string>(),
-                            _seedWordProvider?.CreateVerbSeedWords() ?? Array.Empty<string>(),
-                            subjects,
-                            verbs,
-                            phaseNumber + 1,
-                            cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        lastError = ex;
-                    }
+                    contribution = await _agent.ContributeStoryTermsAsync(
+                        termProfile,
+                        state,
+                        _seedWordProvider?.CreateNounSeedWords() ?? Array.Empty<string>(),
+                        _seedWordProvider?.CreateVerbSeedWords() ?? Array.Empty<string>(),
+                        subjects,
+                        verbs,
+                        storyWishes,
+                        phaseNumber + 1,
+                        cancellationToken).ConfigureAwait(false);
                 }
-                if (contribution == null)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
-                    throw new InvalidOperationException("Constellation Forge could not obtain fresh story subjects/verbs from " + termProfile.StarId + ".", lastError);
+                    throw new InvalidOperationException(
+                        "Constellation Forge light seed pass failed for " + termProfile.StarId
+                        + ". The model must return subjects, verbs, and exactly five story wishes; fix the generation contract rather than skipping this actor.",
+                        ex);
                 }
 
                 List<string> newSubjects = AddUniqueTerms(subjects, contribution.Subjects);
                 List<string> newVerbs = AddUniqueTerms(verbs, contribution.Verbs);
+                List<StarWritingStoryWish> newWishes = (contribution.StoryWishes ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => new StarWritingStoryWish
+                    {
+                        SourceActorId = string.IsNullOrWhiteSpace(termProfile.ActorId) ? termProfile.StarId : termProfile.ActorId.Trim(),
+                        SourceDisplayName = string.IsNullOrWhiteSpace(termProfile.DisplayName) ? termProfile.StarId : termProfile.DisplayName.Trim(),
+                        SourceActorType = string.IsNullOrWhiteSpace(termProfile.ActorType) ? "star" : termProfile.ActorType.Trim(),
+                        Wish = x.Trim()
+                    })
+                    .Take(5)
+                    .ToList();
+                storyWishes.AddRange(newWishes);
                 RecordStoryTerms(state, newSubjects, newVerbs);
                 phaseNumber++;
                 development.CurrentPhase = phaseNumber;
                 development.Subjects = subjects.ToList();
                 development.Verbs = verbs.ToList();
+                development.StoryWishes = CloneStoryWishes(storyWishes);
                 development.UpdatedAt = DateTimeOffset.UtcNow;
                 development.Phases.Add(new StarWritingStoryDevelopmentPhase
                 {
                     PhaseNumber = phaseNumber,
                     Stage = "light-terms",
                     StarId = termProfile.StarId,
-                    Summary = "Added subjects: " + string.Join(", ", newSubjects) + "; verbs: " + string.Join(", ", newVerbs) + ".",
+                    StoryWishes = CloneStoryWishes(newWishes),
+                    Summary = "Added subjects: " + string.Join(", ", newSubjects) + "; verbs: " + string.Join(", ", newVerbs) + "; story wishes: " + string.Join(" | ", newWishes.Select(x => x.SourceDisplayName + ": " + x.Wish)) + ".",
                     UpdatedAt = development.UpdatedAt
                 });
                 await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
@@ -332,17 +346,20 @@ namespace Wds.SixStars.Api.Writings
                     + " added " + newSubjects.Count.ToString(CultureInfo.InvariantCulture) + " subjects and "
                     + newVerbs.Count.ToString(CultureInfo.InvariantCulture) + " verbs; team pool is now "
                     + subjects.Count.ToString(CultureInfo.InvariantCulture) + " subjects / "
-                    + verbs.Count.ToString(CultureInfo.InvariantCulture) + " verbs.");
+                    + verbs.Count.ToString(CultureInfo.InvariantCulture) + " verbs / "
+                    + storyWishes.Count.ToString(CultureInfo.InvariantCulture) + " story wishes.");
             }
 
             // The viewpoint Star owns the initial architecture.
-            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: vocabulary pass complete. "
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: light seed pass complete with "
+                + storyWishes.Count.ToString(CultureInfo.InvariantCulture) + " current story wishes. "
                 + viewpointProfile.StarId + " is building the story architecture now.");
             StarWritingStoryOutlineResult outline = await _agent.CreateStoryOutlineAsync(
                 viewpointProfile,
                 state,
                 subjects,
                 verbs,
+                storyWishes,
                 _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
                 cancellationToken).ConfigureAwait(false);
             phaseNumber++;
@@ -351,6 +368,7 @@ namespace Wds.SixStars.Api.Writings
             development.Premise = outline.Premise;
             development.Characters = (outline.Characters ?? new List<string>()).ToList();
             development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
+            development.StoryWishes = CloneStoryWishes(storyWishes);
             development.OutlineBeats = outline.Beats.ToList();
             development.UpdatedAt = DateTimeOffset.UtcNow;
             development.Phases.Add(new StarWritingStoryDevelopmentPhase
@@ -360,6 +378,7 @@ namespace Wds.SixStars.Api.Writings
                 StarId = viewpointProfile.StarId,
                 Characters = (outline.Characters ?? new List<string>()).ToList(),
                 StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                StoryWishes = CloneStoryWishes(storyWishes),
                 Summary = outline.Premise,
                 UpdatedAt = development.UpdatedAt
             });
@@ -371,9 +390,9 @@ namespace Wds.SixStars.Api.Writings
 
             List<StarProfile> builders = ShuffleProfiles(allProfiles
                 .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)));
-            if (builders.Count < 5)
+            if (builders.Count < 2)
             {
-                throw new InvalidOperationException("Constellation Forge requires all five Stars other than the viewpoint Star for collaborative building.");
+                throw new InvalidOperationException("Constellation Forge needs at least two active collaborator Stars other than the viewpoint Star so pending finish can be audited by someone different from the requester.");
             }
 
             List<string> buildContributors = new List<string>();
@@ -400,8 +419,10 @@ namespace Wds.SixStars.Api.Writings
                     currentStory,
                     subjects,
                     verbs,
+                    storyWishes,
                     _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
                     buildContributors,
+                    builders.Select(x => x.StarId).ToList(),
                     buildPhaseCount + 1,
                     wasPendingFinish,
                     finishRequestedByStarId,
@@ -451,8 +472,8 @@ namespace Wds.SixStars.Api.Writings
                     finishRequestedByStarId = contributor.StarId;
                 }
 
-                // Once all five other Stars have contributed, make sure the team explicitly performs a
-                // pending-finish audit even if nobody volunteered a finish request on the fifth pass.
+                // Once every active collaborator has contributed, make sure the team explicitly performs a
+                // pending-finish audit even if nobody volunteered a finish request on the first complete rotation.
                 if (!completionApproved
                     && !pendingFinish
                     && distinctBuilderCount >= requiredBuilderCount
@@ -469,6 +490,7 @@ namespace Wds.SixStars.Api.Writings
                 development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
                 development.OutlineBeats = outline.Beats.ToList();
                 development.CurrentStory = currentStory;
+                development.StoryWishes = CloneStoryWishes(storyWishes);
                 development.ContributingStarIds = buildContributors.ToList();
                 development.PendingFinish = pendingFinish;
                 development.FinishRequestedByStarId = finishRequestedByStarId;
@@ -480,6 +502,7 @@ namespace Wds.SixStars.Api.Writings
                     StarId = contributor.StarId,
                     Characters = (outline.Characters ?? new List<string>()).ToList(),
                     StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                    StoryWishes = CloneStoryWishes(storyWishes),
                     PendingFinish = wasPendingFinish,
                     CompletionDecision = decision,
                     Summary = string.Join("; ", build.AddedLayers ?? new List<string>()) + (string.IsNullOrWhiteSpace(build.CompletionReason) ? string.Empty : " Completion: " + build.CompletionReason),
@@ -519,6 +542,7 @@ namespace Wds.SixStars.Api.Writings
                 currentStory,
                 subjects,
                 verbs,
+                storyWishes,
                 allContributors,
                 _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
                 cancellationToken).ConfigureAwait(false);
@@ -528,6 +552,7 @@ namespace Wds.SixStars.Api.Writings
             development.Characters = (outline.Characters ?? new List<string>()).ToList();
             development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
             development.CurrentStory = final.Story;
+            development.StoryWishes = CloneStoryWishes(storyWishes);
             development.ContributingStarIds = allContributors.ToList();
             development.PendingFinish = false;
             development.FinishRequestedByStarId = string.Empty;
@@ -541,6 +566,7 @@ namespace Wds.SixStars.Api.Writings
                 StarId = viewpointProfile.StarId,
                 Characters = (outline.Characters ?? new List<string>()).ToList(),
                 StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                StoryWishes = CloneStoryWishes(storyWishes),
                 CompletionDecision = "final",
                 Summary = "Viewpoint Star completed the final funny/beautiful/deep/interesting revision with finalStep=true.",
                 StorySnapshot = final.Story,
@@ -609,6 +635,9 @@ namespace Wds.SixStars.Api.Writings
                 OutputType = StarWritingOutputTypes.ConstellationStory,
                 Title = final.Title,
                 ContributingStarIds = allContributors.ToList(),
+                StoryCharacters = (outline.Characters ?? new List<string>()).ToList(),
+                StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                StoryWishes = CloneStoryWishes(storyWishes),
                 SourceBatchId = batchId,
                 GeneratedAt = now,
                 Index = 0,
@@ -643,6 +672,9 @@ namespace Wds.SixStars.Api.Writings
                     OutputType = StarWritingOutputTypes.ConstellationStory,
                     Title = final.Title,
                     ContributingStarIds = allContributors.ToList(),
+                    StoryCharacters = (outline.Characters ?? new List<string>()).ToList(),
+                    StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                    StoryWishes = CloneStoryWishes(storyWishes),
                     SourceBatchId = batchId,
                     WordsUsed = new List<string>(),
                     Writing = final.Story,
@@ -1116,6 +1148,20 @@ namespace Wds.SixStars.Api.Writings
                 return candidate;
             }
             return builders[start];
+        }
+
+        private static List<StarWritingStoryWish> CloneStoryWishes(IEnumerable<StarWritingStoryWish>? wishes)
+        {
+            return (wishes ?? Enumerable.Empty<StarWritingStoryWish>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Wish))
+                .Select(x => new StarWritingStoryWish
+                {
+                    SourceActorId = (x.SourceActorId ?? string.Empty).Trim(),
+                    SourceDisplayName = (x.SourceDisplayName ?? string.Empty).Trim(),
+                    SourceActorType = (x.SourceActorType ?? string.Empty).Trim(),
+                    Wish = x.Wish.Trim()
+                })
+                .ToList();
         }
 
         private static List<string> AddUniqueTerms(List<string> destination, IEnumerable<string>? values)

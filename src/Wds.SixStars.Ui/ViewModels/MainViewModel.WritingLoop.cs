@@ -10,15 +10,20 @@ namespace Wds.SixStars.Ui.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private static readonly string[] BackgroundWritingStarOrder =
+    private string[] BackgroundWritingStarOrder
     {
-        "Elusiaa",
-        "Kaelia",
-        "Maera",
-        "Khavia",
-        "Auerlis",
-        "Nyxari"
-    };
+        get
+        {
+            string[] active = (_profileProvider?.GetAllProfiles() ?? Array.Empty<Wds.SixStars.Api.Stars.StarProfile>())
+                .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.StarId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return active.Length > 0 ? active : new[] { "Elusiaa" };
+        }
+    }
 
     private static readonly TimeSpan BackgroundWritingIdleDelay = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan BackgroundWritingPollDelay = TimeSpan.FromMilliseconds(500);
@@ -386,7 +391,7 @@ public sealed partial class MainViewModel
         }
     }
 
-    private static int NormalizeBackgroundWritingIndex(int index)
+    private int NormalizeBackgroundWritingIndex(int index)
     {
         int count = BackgroundWritingStarOrder.Length;
         if (count <= 0)
@@ -398,7 +403,7 @@ public sealed partial class MainViewModel
         return normalized < 0 ? normalized + count : normalized;
     }
 
-    private static int ResolveBackgroundWritingStartIndex(string? starId)
+    private int ResolveBackgroundWritingStartIndex(string? starId)
     {
         int index = Array.FindIndex(
             BackgroundWritingStarOrder,

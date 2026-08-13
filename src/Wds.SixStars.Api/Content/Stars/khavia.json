@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 40,
+  "actorType": "star",
+  "actorId": "Khavia",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Khavia",
   "displayName": "Khavia",
   "element": "Water",

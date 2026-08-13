@@ -106,7 +106,8 @@ public final class MainActivity extends ComponentActivity {
     private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";
-    private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
+    private static final String[] DEFAULT_STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
+    private final List<String> activeStarIds = new ArrayList<>(Arrays.asList(DEFAULT_STAR_IDS));
     private static final int SAMPLE_RATE = 16000;
     private static final int FRAME_STATUS = 1;
     private static final int FRAME_AUDIO_WAV = 2;
@@ -529,7 +530,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout selectors = row();
         starSpinner = new Spinner(this);
         starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                STAR_IDS));
+                activeStarIds));
         requestTypeSpinner = new Spinner(this);
         requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
@@ -777,7 +778,7 @@ public final class MainActivity extends ComponentActivity {
     private void createProdHiddenControls() {
         serverUrlEdit = input(savedBridgeUrl(), false);
         starSpinner = new Spinner(this);
-        starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, STAR_IDS));
+        starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, activeStarIds));
         starSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
@@ -1189,7 +1190,7 @@ public final class MainActivity extends ComponentActivity {
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(2);
         grid.setPadding(0, dp(8), 0, dp(6));
-        for (String starId : STAR_IDS) {
+        for (String starId : new ArrayList<>(activeStarIds)) {
             StarMeta meta = starMeta(starId);
             LinearLayout card = starSelectionCard(meta, quickXStatus);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
@@ -1676,6 +1677,7 @@ public final class MainActivity extends ComponentActivity {
                     }
                 });
                 if (!promoted && (playOnPhoneCheck == null || playOnPhoneCheck.isChecked())) ensureAudioSocket(host, audioPort);
+                refreshActiveStarRoster();
                 fetchMobileState(false);
             } catch (Exception ex) {
                 if (manual) runOnUiThread(() -> setDebug("Health parse failed", ex.toString()));
@@ -1684,6 +1686,66 @@ public final class MainActivity extends ComponentActivity {
             if (connectionStatusText != null) connectionStatusText.setText("Connecting to " + (viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()) + " — " + error.getMessage());
             if (manual) setDebug("WebSocket health failed", error.toString());
         }));
+    }
+
+    private void refreshActiveStarRoster() {
+        String activeBase = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
+        httpExecutor.execute(() -> {
+            try {
+                JSONObject response = new JSONObject(get(activeBase + "/api/mobile/stars", 10000));
+                JSONArray stars = response.optJSONArray("stars");
+                if (stars == null || stars.length() == 0) return;
+
+                ArrayList<String> discovered = new ArrayList<>();
+                for (int i = 0; i < stars.length(); i++) {
+                    String id = stars.optString(i, "").trim();
+                    if (id.length() == 0) continue;
+                    boolean duplicate = false;
+                    for (String existing : discovered) {
+                        if (existing.equalsIgnoreCase(id)) { duplicate = true; break; }
+                    }
+                    if (!duplicate) discovered.add(id);
+                }
+                if (discovered.isEmpty()) return;
+
+                runOnUiThread(() -> applyActiveStarRoster(discovered));
+            } catch (Exception ex) {
+                // The desktop JSON roster is authoritative when reachable; offline startup keeps
+                // the built-in visual fallback list so the phone remains usable.
+                appendVoiceDebug("Star roster refresh", "Using current phone roster: " + ex.getMessage());
+            }
+        });
+    }
+
+    private void applyActiveStarRoster(List<String> discovered) {
+        if (discovered == null || discovered.isEmpty()) return;
+        String selected = selectedStarName();
+
+        activeStarIds.clear();
+        activeStarIds.addAll(discovered);
+
+        if (starSpinner != null) {
+            suppressStarSelectionDispatch = true;
+            try {
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                        this,
+                        android.R.layout.simple_spinner_dropdown_item,
+                        new ArrayList<>(activeStarIds));
+                starSpinner.setAdapter(adapter);
+                int position = -1;
+                for (int i = 0; i < adapter.getCount(); i++) {
+                    String item = adapter.getItem(i);
+                    if (item != null && item.equalsIgnoreCase(selected)) { position = i; break; }
+                }
+                if (position < 0) position = 0;
+                starSpinner.setSelection(position);
+            } finally {
+                suppressStarSelectionDispatch = false;
+            }
+            String current = selectedStarName();
+            settingsService.setSelectedStarId(current);
+            refreshProdStarUi(current);
+        }
     }
 
     private int defaultAudioPort() {

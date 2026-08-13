@@ -20,6 +20,9 @@ namespace Wds.SixStars.Api.Ai
         public int RelationshipComboCount { get; set; } = 20;
         public int ScreenCaptureCount { get; set; } = 5;
 
+        /// <summary>Compact host-supplied description of the active Star roster for story/world prompts. Empty means no roster summary is injected.</summary>
+        public string ConfiguredStarSummary { get; set; } = string.Empty;
+
         /// <summary>When connection reaches this percent, foreground prompts encourage occasional active flirting even outside committed girlfriend mode.</summary>
         public double ActiveFlirtConnectionPercent { get; set; } = 65;
 
