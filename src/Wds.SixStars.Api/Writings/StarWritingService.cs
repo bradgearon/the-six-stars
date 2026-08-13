@@ -152,7 +152,17 @@ namespace Wds.SixStars.Api.Writings
                 {
                     StarWritingCandidate candidate = generation.Items[i];
                     StarWritingRating rating = review.Ratings.First(x => x.Index == i);
-                    rating.EmotionalVector = StarWritingEmotionVector.Normalize(rating.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                            rating.EmotionalVector,
+                            out string readerEmotionVector,
+                            out Dictionary<string, StarWritingEmotionValue> values))
+                    {
+                        throw new InvalidOperationException("Spark review returned an incomplete ReaderEmotionIuV1 vector.");
+                    }
+                    rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    rating.EmotionalVector = readerEmotionVector;
+                    rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+                    rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
                     List<string> matchedRules = GetMatchedRuleIds(profile, values);
                     string itemId = "writing-" + Guid.NewGuid().ToString("N");
                     StarWritingHistoryItem historyItem = new StarWritingHistoryItem
@@ -167,7 +177,10 @@ namespace Wds.SixStars.Api.Writings
                         Index = i,
                         WordsUsed = candidate.WordsUsed.ToList(),
                         Writing = candidate.Writing,
+                        ReviewDiscipline = rating.ReviewDiscipline,
                         EmotionalVector = rating.EmotionalVector,
+                        EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                        OverallValue = rating.OverallValue,
                         Persisted = matchedRules.Count > 0,
                         MatchedPersistenceRuleIds = matchedRules
                     };
@@ -185,7 +198,10 @@ namespace Wds.SixStars.Api.Writings
                             SourceBatchId = batch.Id,
                             WordsUsed = historyItem.WordsUsed.ToList(),
                             Writing = historyItem.Writing,
+                            ReviewDiscipline = historyItem.ReviewDiscipline,
                             EmotionalVector = historyItem.EmotionalVector,
+                            EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                            OverallValue = historyItem.OverallValue,
                             MatchedPersistenceRuleIds = matchedRules.ToList(),
                             GeneratedAt = now,
                             PersistedAt = now,
@@ -574,7 +590,7 @@ namespace Wds.SixStars.Api.Writings
             });
             await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
             ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: final revision complete — “" + final.Title
-                + "”, " + CountWords(final.Story).ToString(CultureInfo.InvariantCulture) + " words. Running the disciplined named reader-emotion IU review now.");
+                + "”, " + CountWords(final.Story).ToString(CultureInfo.InvariantCulture) + " words. Running the compact reader-emotion IU vector review now.");
 
             StarWritingRating rating = await _agent.RateStoryAsync(
                 viewpointProfile,
@@ -585,28 +601,26 @@ namespace Wds.SixStars.Api.Writings
                 cancellationToken).ConfigureAwait(false);
             if (!string.Equals(
                     StarWritingReviewDisciplines.Normalize(rating.ReviewDiscipline),
-                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
                     StringComparison.OrdinalIgnoreCase)
-                || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(
-                    rating.EmotionFeedback,
-                    out List<StarWritingStoryEmotionValue> normalizedEmotionFeedback,
-                    out Dictionary<string, StarWritingEmotionValue> emotionValues)
-                || double.IsNaN(rating.OverallValue)
-                || double.IsInfinity(rating.OverallValue)
-                || rating.OverallValue < 0)
+                || !StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    rating.EmotionalVector,
+                    out string normalizedEmotionVector,
+                    out Dictionary<string, StarWritingEmotionValue> emotionValues))
             {
-                throw new InvalidOperationException("Constellation Forge story review returned an incomplete reader-emotion IU discipline result.");
+                throw new InvalidOperationException("Constellation Forge story review returned an incomplete compact ReaderEmotionIuV1 vector.");
             }
-            rating.ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1;
-            rating.EmotionFeedback = normalizedEmotionFeedback;
-            rating.EmotionalVector = string.Empty;
-            emotionValues["Overall"] = new StarWritingEmotionValue { Value = rating.OverallValue };
+            rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+            rating.EmotionalVector = normalizedEmotionVector;
+            rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+            rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(emotionValues, "Overall");
             List<string> matchedRules = GetMatchedConstellationRuleIds(viewpointProfile, emotionValues);
-            string strongestEffects = string.Join(", ", normalizedEmotionFeedback
+            string strongestEffects = string.Join(", ", StarWritingReaderEmotionVector.EmotionCategories
+                .Select(emotion => new { Emotion = emotion, Value = StarWritingReaderEmotionVector.ReadValue(emotionValues, emotion) })
                 .OrderByDescending(x => x.Value)
                 .Take(4)
                 .Select(x => x.Emotion + " " + x.Value.ToString("0.#", CultureInfo.InvariantCulture) + " IU"));
-            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: reader-emotion review returned Overall "
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: reader-emotion vector review returned Overall "
                 + rating.OverallValue.ToString("0.0", CultureInfo.InvariantCulture) + " IU; strongest effects="
                 + strongestEffects + "; persistence matches="
                 + (matchedRules.Count > 0 ? string.Join(", ", matchedRules) : "none") + ". Saving the completed development trace and shelf result.");
@@ -644,8 +658,8 @@ namespace Wds.SixStars.Api.Writings
                 WordsUsed = new List<string>(),
                 Writing = final.Story,
                 ReviewDiscipline = rating.ReviewDiscipline,
-                EmotionalVector = string.Empty,
-                EmotionFeedback = rating.EmotionFeedback.Select(x => new StarWritingStoryEmotionValue { Emotion = x.Emotion, Value = x.Value }).ToList(),
+                EmotionalVector = rating.EmotionalVector,
+                EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
                 OverallValue = rating.OverallValue,
                 Persisted = matchedRules.Count > 0,
                 MatchedPersistenceRuleIds = matchedRules.ToList()
@@ -679,8 +693,8 @@ namespace Wds.SixStars.Api.Writings
                     WordsUsed = new List<string>(),
                     Writing = final.Story,
                     ReviewDiscipline = rating.ReviewDiscipline,
-                    EmotionalVector = string.Empty,
-                    EmotionFeedback = rating.EmotionFeedback.Select(x => new StarWritingStoryEmotionValue { Emotion = x.Emotion, Value = x.Value }).ToList(),
+                    EmotionalVector = rating.EmotionalVector,
+                    EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
                     OverallValue = rating.OverallValue,
                     MatchedPersistenceRuleIds = matchedRules.ToList(),
                     GeneratedAt = now,
@@ -1529,12 +1543,22 @@ namespace Wds.SixStars.Api.Writings
                 {
                     StarWritingHistoryItem item = group[i];
                     StarWritingRating rating = review.Ratings.First(x => x.Index == i);
-                    rating.EmotionalVector = StarWritingEmotionVector.Normalize(
-                        rating.EmotionalVector,
-                        out Dictionary<string, StarWritingEmotionValue> values);
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                            rating.EmotionalVector,
+                            out string repairedVector,
+                            out Dictionary<string, StarWritingEmotionValue> values))
+                    {
+                        throw new InvalidOperationException("Spark rating repair returned an incomplete ReaderEmotionIuV1 vector.");
+                    }
+                    rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    rating.EmotionalVector = repairedVector;
+                    rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
                     List<string> matchedRules = GetMatchedRuleIds(profile, values);
 
+                    item.ReviewDiscipline = rating.ReviewDiscipline;
                     item.EmotionalVector = rating.EmotionalVector;
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                    item.OverallValue = rating.OverallValue;
                     item.Persisted = matchedRules.Count > 0;
                     item.MatchedPersistenceRuleIds = matchedRules;
 
@@ -1554,7 +1578,10 @@ namespace Wds.SixStars.Api.Writings
                                 SourceBatchId = item.SourceBatchId,
                                 WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                                 Writing = item.Writing,
+                                ReviewDiscipline = item.ReviewDiscipline,
                                 EmotionalVector = item.EmotionalVector,
+                                EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                                OverallValue = item.OverallValue,
                                 MatchedPersistenceRuleIds = matchedRules.ToList(),
                                 GeneratedAt = item.GeneratedAt,
                                 PersistedAt = repairedAt,
@@ -1569,7 +1596,10 @@ namespace Wds.SixStars.Api.Writings
                             existing.SourceBatchId = item.SourceBatchId;
                             existing.WordsUsed = (item.WordsUsed ?? new List<string>()).ToList();
                             existing.Writing = item.Writing;
+                            existing.ReviewDiscipline = item.ReviewDiscipline;
                             existing.EmotionalVector = item.EmotionalVector;
+                            existing.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                            existing.OverallValue = item.OverallValue;
                             existing.MatchedPersistenceRuleIds = matchedRules.ToList();
                             existing.GeneratedAt = item.GeneratedAt;
                         }
@@ -1594,10 +1624,13 @@ namespace Wds.SixStars.Api.Writings
 
         private static bool NeedsRatingRepair(StarWritingHistoryItem item)
         {
-            return !StarWritingEmotionVector.TryNormalizeUsable(
-                item?.EmotionalVector,
-                out _,
-                out _);
+            if (item == null) return true;
+            string discipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+            if (string.Equals(discipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+            {
+                return !StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out _);
+            }
+            return !StarWritingEmotionVector.TryNormalizeUsable(item.EmotionalVector, out _, out _);
         }
 
         private static void NormalizeReview(StarWritingReviewResult review)
@@ -1621,17 +1654,20 @@ namespace Wds.SixStars.Api.Writings
                 }
 
                 used.Add(rating);
-                if (!StarWritingEmotionVector.TryNormalizeUsable(
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
                     rating.EmotionalVector,
                     out string emotionalVector,
-                    out _))
+                    out Dictionary<string, StarWritingEmotionValue> values))
                 {
                     throw new InvalidOperationException(
-                        "Writing review rating " + i + " did not contain 27 valid values in category order.");
+                        "Writing review rating " + i + " did not contain the complete 31-value ReaderEmotionIuV1 vector in category order.");
                 }
 
                 rating.Index = i;
+                rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
                 rating.EmotionalVector = emotionalVector;
+                rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
                 normalized.Add(rating);
             }
 
@@ -1795,11 +1831,11 @@ namespace Wds.SixStars.Api.Writings
             if (writing != null
                 && string.Equals(
                     StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
-                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
                     StringComparison.OrdinalIgnoreCase)
-                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out _, out Dictionary<string, StarWritingEmotionValue> storyValues))
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(writing.EmotionalVector, out _, out Dictionary<string, StarWritingEmotionValue> readerValues))
             {
-                return storyValues;
+                return readerValues;
             }
 
             StarWritingEmotionVector.Normalize(writing?.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);

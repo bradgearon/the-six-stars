@@ -151,7 +151,7 @@ namespace Wds.SixStars.Api.Ai
             wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
             wordPairResult.RawModelJson = wordPairJson;
 
-            List<StarWritingValueReference> sparkValueReferences = BuildValueReferences(
+            List<StarWritingValueReference> sparkValueReferences = BuildReaderEmotionValueReferences(
                 state,
                 StarWritingOutputTypes.Spark,
                 profile.StarId,
@@ -195,7 +195,7 @@ namespace Wds.SixStars.Api.Ai
                     })
                     .ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
                 valueReferences = sparkValueReferences,
                 wordPairs = wordPairResult.WordPairs
                     .Select((pair, index) => new
@@ -320,7 +320,7 @@ namespace Wds.SixStars.Api.Ai
                     objectActionError);
             }
 
-            List<StarWritingValueReference> sparkValueReferences = BuildValueReferences(
+            List<StarWritingValueReference> sparkValueReferences = BuildReaderEmotionValueReferences(
                 state,
                 StarWritingOutputTypes.Spark,
                 profile.StarId,
@@ -364,7 +364,7 @@ namespace Wds.SixStars.Api.Ai
                     })
                     .ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
                 valueReferences = sparkValueReferences,
                 objects = objectActionResult.Objects
                     .Select((item, index) => new
@@ -472,8 +472,8 @@ namespace Wds.SixStars.Api.Ai
                 passNumber = Math.Max(2, passNumber),
                 totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select(item => new
@@ -549,9 +549,12 @@ namespace Wds.SixStars.Api.Ai
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                reviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                vectorCount = StarWritingReaderEmotionVector.Categories.Length,
+                emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
+                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select((item, index) => new
@@ -598,8 +601,22 @@ namespace Wds.SixStars.Api.Ai
             if (!HasCompleteWritingReview(result))
             {
                 throw new InvalidOperationException(
-                    "Writing review did not return five usable 27-entry value vectors. " +
+                    "Writing review did not return five usable 31-entry reader-emotion IU vectors. " +
                     "No new writing batch was saved; try the generation again.");
+            }
+
+            foreach (StarWritingRating rating in result.Ratings.Where(x => x != null))
+            {
+                if (StarWritingReaderEmotionVector.TryNormalizeComplete(
+                        rating.EmotionalVector,
+                        out string normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    rating.EmotionalVector = normalizedVector;
+                    rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+                    rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
             }
 
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
@@ -708,8 +725,8 @@ namespace Wds.SixStars.Api.Ai
                 storyWishes = FormatStoryWishes(storyWishes),
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
@@ -825,8 +842,8 @@ namespace Wds.SixStars.Api.Ai
                 priorContributorStarIds = (priorContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 eligibleContributorStarIds = (eligibleContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                valueReferences = BuildValueReferences(viewpointState, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildReaderEmotionValueReferences(viewpointState, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
                 phaseNumber = Math.Max(1, phaseNumber),
                 pendingFinish,
                 finishRequestedByStarId = PromptText(finishRequestedByStarId, 80)
@@ -886,8 +903,8 @@ namespace Wds.SixStars.Api.Ai
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                valueReferences = BuildValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
             };
             List<ChatMessage> messages = new List<ChatMessage>
             {
@@ -937,10 +954,12 @@ namespace Wds.SixStars.Api.Ai
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                reviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                reviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                vectorCount = StarWritingReaderEmotionVector.Categories.Length,
                 emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                valueReferences = BuildStoryEmotionValueReferences(state, viewpointProfile.StarId, 3),
+                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
                 title = PromptText(title, 0),
                 story = PromptText(story, 0)
             };
@@ -949,6 +968,7 @@ namespace Wds.SixStars.Api.Ai
                 new ChatMessage("system", _templates.Render("star_writing_story_review_system.sbn", data)),
                 new ChatMessage("user", _templates.Render("star_writing_story_review_user.sbn", data))
             };
+
             string lastJson = string.Empty;
             for (int attempt = 0; attempt < 2; attempt++)
             {
@@ -957,68 +977,39 @@ namespace Wds.SixStars.Api.Ai
                 {
                     attemptMessages.Add(new ChatMessage(
                         "user",
-                        "FORMAT REPAIR: Return only the required JSON object. The emotions array must contain every supplied emotion bucket exactly once, using the exact emotion names, with one non-negative open-ended IU value per item, plus one non-negative overallValue. Do not omit, duplicate, rename, or invent emotion buckets."));
+                        "FORMAT REPAIR: Return only {\"valueVector\":\"...\"}. valueVector must contain exactly "
+                        + StarWritingReaderEmotionVector.Categories.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " non-negative IU values separated by semicolons in the supplied order, with Overall last. Do not return an emotions array or per-emotion objects."));
                 }
 
                 lastJson = await _client.CompleteJsonAsync(
                     attemptMessages,
                     StarResponseJsonSchema.CreateStarWritingStoryReviewResponseFormat(),
                     0,
-                    attempt == 0 ? "star-writing-story-emotion-rate" : "star-writing-story-emotion-rate-repair",
+                    attempt == 0 ? "star-writing-story-emotion-vector-rate" : "star-writing-story-emotion-vector-rate-repair",
                     cancellationToken).ConfigureAwait(false);
 
                 try
                 {
                     using JsonDocument document = JsonDocument.Parse(ExtractJson(lastJson));
                     JsonElement root = document.RootElement;
-                    List<StarWritingStoryEmotionValue> rawFeedback = new List<StarWritingStoryEmotionValue>();
-                    bool invalidNumericValue = false;
-                    if (TryGetPropertyIgnoreCase(root, "emotions", out JsonElement emotionsElement)
-                        && emotionsElement.ValueKind == JsonValueKind.Array)
+                    if (TryGetPropertyIgnoreCase(root, "valueVector", out JsonElement vectorElement))
                     {
-                        foreach (JsonElement item in emotionsElement.EnumerateArray())
+                        string vector = ReadWritingVector(vectorElement);
+                        if (StarWritingReaderEmotionVector.TryNormalizeComplete(
+                                vector,
+                                out string normalizedVector,
+                                out Dictionary<string, StarWritingEmotionValue> values))
                         {
-                            if (item.ValueKind != JsonValueKind.Object)
+                            return new StarWritingRating
                             {
-                                invalidNumericValue = true;
-                                continue;
-                            }
-                            string emotion = ReadLooseJsonString(item, "emotion");
-                            if (!TryGetPropertyIgnoreCase(item, "value", out JsonElement valueElement)
-                                || !TryReadJsonDouble(valueElement, out double value))
-                            {
-                                invalidNumericValue = true;
-                                continue;
-                            }
-                            rawFeedback.Add(new StarWritingStoryEmotionValue { Emotion = emotion, Value = value });
+                                Index = 0,
+                                ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                                EmotionalVector = normalizedVector,
+                                EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                                OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall")
+                            };
                         }
-                    }
-                    else
-                    {
-                        invalidNumericValue = true;
-                    }
-
-                    double overallValue = -1.0;
-                    if (!TryGetPropertyIgnoreCase(root, "overallValue", out JsonElement overallElement)
-                        || !TryReadJsonDouble(overallElement, out overallValue))
-                    {
-                        invalidNumericValue = true;
-                    }
-
-                    if (!invalidNumericValue
-                        && StarWritingStoryEmotionFeedback.TryNormalizeComplete(rawFeedback, out List<StarWritingStoryEmotionValue> normalized, out _)
-                        && !double.IsNaN(overallValue)
-                        && !double.IsInfinity(overallValue)
-                        && overallValue >= 0)
-                    {
-                        return new StarWritingRating
-                        {
-                            Index = 0,
-                            ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
-                            EmotionFeedback = normalized,
-                            OverallValue = overallValue,
-                            EmotionalVector = string.Empty
-                        };
                     }
                 }
                 catch (JsonException)
@@ -1027,9 +1018,9 @@ namespace Wds.SixStars.Api.Ai
             }
 
             throw new InvalidOperationException(
-                "Constellation Story review did not return one complete named reader-emotion IU review after a format-repair retry. " +
-                "The review must include every canonical emotion bucket exactly once plus overallValue. Raw response preview: " +
-                PromptText(lastJson, 1800));
+                "Constellation Story review did not return one complete compact ReaderEmotionIuV1 vector after a format-repair retry. "
+                + "The vector must contain every canonical reader-emotion bucket once in positional order plus Overall last. Raw response preview: "
+                + PromptText(lastJson, 1800));
         }
 
         private StarWritingStoryBuildResult? ParseAndNormalizeStoryBuildResult(
@@ -1448,14 +1439,14 @@ namespace Wds.SixStars.Api.Ai
 
             JsonElement[] entries = element.EnumerateArray().ToArray();
 
-            // Compatibility with numeric-array output. The current value-only shape is 27
-            // numbers. Older revisions used 54 alternating score/confidence numbers; keep
-            // only every legacy score as its migrated value so old responses remain readable.
+            // Compatibility only. New review prompts require compact strings, but older local-model
+            // responses may still contain arrays. ReaderEmotionIuV1 is 31 values; legacy literary
+            // vectors are 27 values (or 54 alternating score/confidence values).
             bool flatNumericVector = entries.Length > 0 && entries.All(x => TryReadJsonDouble(x, out _));
             if (flatNumericVector)
             {
                 List<string> scores = new List<string>();
-                if (entries.Length >= 26 && entries.Length <= 28)
+                if ((entries.Length >= 26 && entries.Length <= 28) || entries.Length == StarWritingReaderEmotionVector.Categories.Length)
                 {
                     foreach (JsonElement entry in entries)
                     {
@@ -1539,7 +1530,7 @@ namespace Wds.SixStars.Api.Ai
             else
             {
                 string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
-                if (tokens.Length >= 26 && tokens.Length <= 28)
+                if ((tokens.Length >= 26 && tokens.Length <= 28) || tokens.Length == StarWritingReaderEmotionVector.Categories.Length)
                 {
                     // Defensive compatibility if a model uses colons between value-only items.
                     foreach (string token in tokens)
@@ -1564,18 +1555,17 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
-            // Gemma has omitted only Overall in some responses. Derive it from the core
-            // literary-quality categories rather than issuing a second full review.
+            // Legacy compatibility only: old 26-value literary responses occasionally omitted Overall.
+            // New ReaderEmotionIuV1 reviews are never synthesized or truncated; malformed 31-value
+            // output must go through the explicit repair request.
             if (scores.Count == 26)
             {
                 scores.Add(DeriveOverallWritingValue(scores));
             }
-            else if (scores.Count > 27)
-            {
-                scores = scores.Take(27).ToList();
-            }
 
-            return scores.Count == 27 ? string.Join(";", scores) : string.Empty;
+            return scores.Count == 27 || scores.Count == StarWritingReaderEmotionVector.Categories.Length
+                ? string.Join(";", scores)
+                : string.Empty;
         }
 
         private static bool TryNormalizeWritingValue(string raw, out string normalized)
@@ -1669,7 +1659,7 @@ namespace Wds.SixStars.Api.Ai
                 StarWritingRating? rating = result.Ratings.FirstOrDefault(x => !used.Contains(x) && x.Index == i)
                     ?? result.Ratings.FirstOrDefault(x => !used.Contains(x));
                 if (rating == null
-                    || !StarWritingEmotionVector.TryNormalizeUsable(
+                    || !StarWritingReaderEmotionVector.TryNormalizeComplete(
                         rating.EmotionalVector,
                         out _,
                         out _))
@@ -2042,60 +2032,7 @@ namespace Wds.SixStars.Api.Ai
                 .ToList();
         }
 
-        private List<StarWritingValueReference> BuildStoryEmotionValueReferences(
-            StarWritingNotesState state,
-            string preferredStarId,
-            int maximum)
-        {
-            int take = Math.Max(0, maximum);
-            if (take == 0) return new List<StarWritingValueReference>();
-
-            List<StarWritingValueReference> references = _valueBaselines
-                .GetCuratedStoryEmotionReferences(preferredStarId, take);
-            HashSet<string> seenText = new HashSet<string>(
-                references.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing)).Select(x => x.Writing.Trim()),
-                StringComparer.Ordinal);
-
-            if (references.Count < take)
-            {
-                IEnumerable<PersistedStarWriting> candidates = (state?.PersistedWritings ?? new List<PersistedStarWriting>())
-                    .Where(x => x != null
-                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrWhiteSpace(x.Writing));
-
-                foreach (PersistedStarWriting writing in candidates
-                    .OrderByDescending(x => x.OverallValue)
-                    .ThenByDescending(x => StarWritingValueBaselineCatalog.ComputeStoryEmotionPublicValue(x.EmotionFeedback, x.OverallValue))
-                    .ThenByDescending(x => x.PersistedAt)
-                    .ThenBy(x => x.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase))
-                {
-                    if (references.Count >= take) break;
-                    string text = (writing.Writing ?? string.Empty).Trim();
-                    if (text.Length == 0 || !seenText.Add(text)) continue;
-                    if (!StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _)) continue;
-
-                    references.Add(new StarWritingValueReference
-                    {
-                        Source = "shelf-best",
-                        Id = writing.Id ?? string.Empty,
-                        StarId = preferredStarId ?? string.Empty,
-                        OutputType = StarWritingOutputTypes.ConstellationStory,
-                        Title = writing.Title ?? string.Empty,
-                        Writing = text,
-                        ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
-                        EmotionFeedback = feedback,
-                        ValueUnit = StarWritingValueUnits.InformationUnits,
-                        OverallValue = writing.OverallValue,
-                        PublicValue = StarWritingValueBaselineCatalog.ComputeStoryEmotionPublicValue(feedback, writing.OverallValue)
-                    });
-                }
-            }
-
-            return references.Take(take).ToList();
-        }
-
-        private List<StarWritingValueReference> BuildValueReferences(
+        private List<StarWritingValueReference> BuildReaderEmotionValueReferences(
             StarWritingNotesState state,
             string outputType,
             string preferredStarId,
@@ -2106,80 +2043,48 @@ namespace Wds.SixStars.Api.Ai
 
             string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
             List<StarWritingValueReference> references = _valueBaselines
-                .GetCuratedReferences(normalizedOutputType, preferredStarId, take);
-            if (string.Equals(normalizedOutputType, StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)
-                && references.Count < take)
-            {
-                foreach (StarWritingValueReference emotionReference in _valueBaselines.GetCuratedStoryEmotionReferences(preferredStarId, take - references.Count))
-                {
-                    if (references.Count >= take) break;
-                    references.Add(emotionReference);
-                }
-            }
+                .GetCuratedReaderEmotionReferences(normalizedOutputType, preferredStarId, take);
             HashSet<string> seenText = new HashSet<string>(
                 references.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing)).Select(x => x.Writing.Trim()),
                 StringComparer.Ordinal);
 
             if (references.Count < take)
             {
-                List<PersistedStarWriting> shelf = StarWritingDeterministicRanker.TakeHighestRanked(
-                    (state?.PersistedWritings ?? new List<PersistedStarWriting>())
-                        .Where(x => x != null
-                            && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase)
-                            && !string.IsNullOrWhiteSpace(x.Writing)),
-                    Math.Max(take * 3, take));
+                IEnumerable<PersistedStarWriting> candidates = (state?.PersistedWritings ?? new List<PersistedStarWriting>())
+                    .Where(x => x != null
+                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(x.Writing));
 
-                foreach (PersistedStarWriting writing in shelf)
+                foreach (PersistedStarWriting writing in candidates
+                    .Select(x => new { Writing = x, Public = StarWritingValueBaselineCatalog.ComputeReaderEmotionPublicValue(x.EmotionalVector) })
+                    .Where(x => x.Public >= 0)
+                    .OrderByDescending(x => StarWritingDeterministicRanker.OverallValue(x.Writing))
+                    .ThenByDescending(x => x.Public)
+                    .ThenByDescending(x => x.Writing.PersistedAt)
+                    .ThenBy(x => x.Writing.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase))
                 {
                     if (references.Count >= take) break;
-                    string text = (writing.Writing ?? string.Empty).Trim();
+                    string text = (writing.Writing.Writing ?? string.Empty).Trim();
                     if (text.Length == 0 || !seenText.Add(text)) continue;
-                    if (string.Equals(
-                            StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
-                            StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
-                            StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(normalizedOutputType, StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)
-                        && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out List<StarWritingStoryEmotionValue> storyFeedback, out _))
-                    {
-                        references.Add(new StarWritingValueReference
-                        {
-                            Source = "shelf-best",
-                            Id = writing.Id ?? string.Empty,
-                            StarId = preferredStarId ?? string.Empty,
-                            OutputType = normalizedOutputType,
-                            Title = writing.Title ?? string.Empty,
-                            Writing = text,
-                            ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
-                            EmotionFeedback = storyFeedback,
-                            ValueVector = StarWritingStoryEmotionFeedback.FormatCompact(storyFeedback),
-                            ValueUnit = StarWritingValueUnits.InformationUnits,
-                            OverallValue = writing.OverallValue,
-                            PublicValue = StarWritingDeterministicRanker.PublicSharingValue(writing)
-                        });
-                        continue;
-                    }
-
-                    if (!StarWritingEmotionVector.TryNormalizeUsable(
-                        writing.EmotionalVector,
-                        out string vector,
-                        out Dictionary<string, StarWritingEmotionValue> values))
-                    {
-                        continue;
-                    }
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                            writing.Writing.EmotionalVector,
+                            out string vector,
+                            out Dictionary<string, StarWritingEmotionValue> values)) continue;
 
                     references.Add(new StarWritingValueReference
                     {
                         Source = "shelf-best",
-                        Id = writing.Id ?? string.Empty,
+                        Id = writing.Writing.Id ?? string.Empty,
                         StarId = preferredStarId ?? string.Empty,
                         OutputType = normalizedOutputType,
-                        Title = writing.Title ?? string.Empty,
+                        Title = writing.Writing.Title ?? string.Empty,
                         Writing = text,
-                        ReviewDiscipline = StarWritingReviewDisciplines.LiteraryValuesV1,
+                        ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
                         ValueVector = vector,
                         ValueUnit = StarWritingValueUnits.InformationUnits,
-                        OverallValue = StarWritingEmotionVector.ReadValue(values, "Overall"),
-                        PublicValue = StarWritingDeterministicRanker.PublicSharingValue(writing)
+                        OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall"),
+                        PublicValue = writing.Public
                     });
                 }
             }

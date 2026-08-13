@@ -18,23 +18,27 @@ CONTRIBUTING STARS
 - {{ id }}
 {{ end }}
 
-CANONICAL READER-EMOTION DISCIPLINE
+EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
 Review discipline id: {{ data.reviewDiscipline }}
-Use every bucket exactly once.
+{{ data.vectorOrder }}
+Overall is LAST.
+
+BUCKET MEANINGS
 {{ for item in data.emotionBuckets }}
 - {{ item.emotion }}: {{ item.discipline }}
 {{ end }}
+- Overall: integrated literary/information value of the complete story; not an emotion and not an average.
 
 CALIBRATION BASELINES
 Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
-These are complete valued stories reviewed under THIS SAME reader-emotion discipline. They are magnitude anchors, never plot templates.
+These are complete works reviewed under THIS SAME reader-emotion discipline. They are magnitude anchors, never plot templates.
 {{ if data.valueReferences.size == 0 }}
-No same-discipline Constellation baselines exist yet. Bootstrap carefully with {{ data.referenceValue }} IU representing excellent known work and preserve broad separation between weak, moderate, strong, excellent, and extraordinary effects.
+No same-discipline Constellation baselines exist yet. Bootstrap carefully with {{ data.referenceValue }} IU representing excellent known work.
 {{ else }}
 {{ for item in data.valueReferences }}
 [{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
-Overall={{ item.overallValue }} IU
-Reader emotion feedback: {{ for effect in item.emotionFeedback }}{{ effect.emotion }}={{ effect.value }}{{ if for.last }}{{ else }}; {{ end }}{{ end }}
+Overall={{ item.overallValue }} IU | public={{ item.publicValue }} IU
+Reader-emotion vector: {{ item.valueVector }}
 FULL STORY:
 {{ item.writing }}
 --- END REFERENCE ---
@@ -47,6 +51,7 @@ TITLE
 STORY
 {{ data.story }}
 
-Return only JSON in exactly this shape, replacing the numeric zeroes with your IU values:
-{"emotions":[{{ for item in data.emotionBuckets }}{"emotion":"{{ item.emotion }}","value":0}{{ if for.last }}{{ else }},{{ end }}{{ end }}],"overallValue":0}
-Do not change the emotion names or their membership. Values may exceed 100 or every reference when justified.
+Return only:
+{"valueVector":""}
+
+Replace the empty string with exactly {{ data.vectorCount }} non-negative IU values separated by semicolons in the category order above. Values may exceed 100 or every reference when justified.

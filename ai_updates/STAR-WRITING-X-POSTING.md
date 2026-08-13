@@ -5,7 +5,7 @@ The writing shelf can publish five Star-selected writings to X at each of the fo
 ## Selection and posting behavior
 
 1. Load persisted shelf writings that do not have `PostedAt`, have non-empty text, and fit X's 280-character limit.
-2. Rank the eligible shelf deterministically from each writing's saved 27-value review vector. Public ranking is 40% `Overall`, 40% the average of durable craft/retellability dimensions (`Memorable`, `Original`, `Coherent`, `Meaningful`, `Characterful`, `EmotionallyResonant`, `Polished`, `Quotable`, `WorthRetelling`), and 20% the average of that writing's three strongest expressive dimensions. Writings that matched multiple non-global persistence routes receive a small bonus.
+2. Rank the eligible shelf deterministically from each writing's saved review. New ReaderEmotionIuV1 Sparks use 70% `Overall` plus 30% the average of the five strongest reader-emotion effects, with the existing small multi-route persistence bonus. Legacy 27-value literary reviews retain their prior 40/40/20 ranking formula so existing shelves remain usable.
 3. Take the strongest `CandidateLimit` writings (maximum 500), strongest first. There is no random shelf sampling in this stage.
 4. Ask the selected Star, through the dedicated Scriban templates, to choose exactly five favorites from that already-high-quality window. The selected persisted writing text is returned unchanged; no hashtags or extra copy are added.
 5. Post the five items in sequence through X API v2 `POST /2/tweets`.

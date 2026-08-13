@@ -26,7 +26,7 @@ STORYTELLING RULES
 VALUED CONSTELLATION REFERENCES
 Quality anchors only; invent a meaningfully different story.
 Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
-Legacy literary-vector order (only when a reference uses the old semicolon vector): {{ data.vectorOrder }}
+Reader-emotion IU vector order (Overall last): {{ data.vectorOrder }}
 {{ if data.valueReferences.size == 0 }}
 (no valued Constellation references available yet)
 {{ else }}

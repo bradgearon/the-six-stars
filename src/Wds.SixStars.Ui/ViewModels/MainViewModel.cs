@@ -2505,7 +2505,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 DebugJson = JsonSerializer.Serialize(new
                 {
                     feature = "star-writing-iterative-pass-generation",
-                    vectorCategoryOrder = StarWritingEmotionVector.Categories,
+                    vectorCategoryOrder = StarWritingReaderEmotionVector.Categories,
                     result
                 }, _jsonOptions);
                 Status = BuildWritingGenerationStatus(starId, result);

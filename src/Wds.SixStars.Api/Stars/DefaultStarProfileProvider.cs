@@ -137,6 +137,11 @@ namespace Wds.SixStars.Api.Stars
                 },
                 _ => new List<StarWritingPersistenceRule>()
             };
+
+            // Sparks and Constellations now share the same ReaderEmotionIuV1 discipline, so the
+            // fallback profile uses the same emotion-based persistence language for both output types.
+            profile.WritingPersistenceQualityGate = profile.ConstellationPersistenceQualityGate;
+            profile.WritingPersistenceRules = profile.ConstellationPersistenceRules;
         }
 
         private static StarWritingPersistenceRule Rule(string id, params (string Category, double MinimumValue)[] requirements)

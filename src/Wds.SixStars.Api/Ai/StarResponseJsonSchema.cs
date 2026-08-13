@@ -393,38 +393,16 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateStarWritingStoryReviewResponseFormat()
         {
-            Dictionary<string, object> emotionItem = new Dictionary<string, object>
+            Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "emotion", "value" } },
+                { "required", new[] { "valueVector" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        { "emotion", new Dictionary<string, object>
-                            {
-                                { "type", "string" },
-                                { "enum", StarWritingStoryEmotionFeedback.Emotions }
-                            }
-                        },
-                        { "value", NonNegativeNumberProperty() }
-                    }
-                }
-            };
-            Dictionary<string, object> schema = new Dictionary<string, object>
-            {
-                { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "emotions", "overallValue" } },
-                { "properties", new Dictionary<string, object>
-                    {
-                        { "emotions", new Dictionary<string, object>
-                            {
-                                { "type", "array" },
-                                { "minItems", StarWritingStoryEmotionFeedback.Emotions.Length },
-                                { "maxItems", StarWritingStoryEmotionFeedback.Emotions.Length },
-                                { "items", emotionItem }
-                            }
-                        },
-                        { "overallValue", NonNegativeNumberProperty() }
+                        // One compact positional vector keeps local-model completion work small.
+                        // ReaderEmotionIuV1 contains 30 reader-emotion IU values plus Overall last.
+                        { "valueVector", StringProperty(1024) }
                     }
                 }
             };
@@ -437,7 +415,7 @@ namespace Wds.SixStars.Api.Ai
             for (int i = 0; i < 5; i++)
             {
                 // One compact value-only vector string per writing minimizes completion tokens.
-                // Each value contains exactly 27 semicolon-delimited open-ended values.
+                // Each value contains exactly 31 semicolon-delimited open-ended reader-emotion IU values (30 emotions + Overall).
                 properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
             }
 

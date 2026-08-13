@@ -77,7 +77,7 @@ Constellation Forge runs in deliberate phases. All six Stars first perform a lig
 
 Constellation Stories are kept out of the existing short-form X publisher and five-at-a-time spoken Spark action so a long work cannot be truncated and accidentally marked posted/told.
 
-Value calibration can be curated in the optional `src/Wds.SixStars.Api/Content/Writing/writing-value-baselines.json` file. It can hold full Spark or Constellation Story text plus complete 27-value vectors. When curated examples are absent or do not fill the requested reference set, the generator automatically uses the highest-valued compatible persisted shelf works instead. Spark generation/improvement/review receives up to five valued Spark references; Constellation outline/build/final/review receives up to three complete valued Constellation references.
+Value calibration can be curated in the optional `src/Wds.SixStars.Api/Content/Writing/writing-value-baselines.json` file. New Spark and Constellation reviews share one compact open-ended `reader-emotion-iu-v1` vector: 30 fixed reader-emotion IU values plus Overall last, serialized as one semicolon-delimited string for local-model efficiency. When curated examples are absent or insufficient, the generator uses the highest-valued compatible same-discipline persisted shelf works instead. Legacy 27-value literary vectors remain readable but are not relabeled as reader emotions.
 
 `WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques. The current experiment sets Constellation Forge to 100% (`1.0`) and both Spark technique weights to `0.0` so every shelf run exercises the collaborative story pipeline.
 

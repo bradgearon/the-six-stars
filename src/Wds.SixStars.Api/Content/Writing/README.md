@@ -4,36 +4,32 @@
 
 The value system is open-ended and measured in **information units (IU)**: values are non-negative and have no maximum. `referenceValue` defaults to `100` IU; it is a reference point for excellent known work, never a ceiling.
 
-Baselines are review-discipline aware.
+## Canonical review discipline
 
-## Sparks / legacy literary values
+All newly reviewed shelf outputs — both **Sparks** and **Constellation Stories** — use:
 
-Spark examples use `reviewDiscipline: "literary-values-v1"` (or omit it for backward compatibility) and may provide either the compact 27-value `valueVector` or the named `values` object already used by the Spark review system.
+`reviewDiscipline: "reader-emotion-iu-v1"`
 
-## Constellation Stories / reader-emotion values
+The LLM contract is intentionally compact for local-model speed. A review is one positional semicolon-delimited `valueVector`, not a JSON array of per-emotion objects.
 
-New Constellation Story reviews use `reviewDiscipline: "constellation-reader-emotions-v1"`. Their emotional feedback is a **named list**, not a positional vector, and `overallValue` is stored separately because Overall is not an emotion.
+The vector contains the 30 canonical reader-emotion IU buckets in fixed order followed by **Overall** as the final value. Overall is integrated literary/information value; it is stored in the vector so Spark and Constellation reviews use exactly the same contract.
 
-Example:
+A curated example therefore looks like:
 
 ```json
 {
-  "id": "kaelia-emotion-baseline-1",
+  "id": "kaelia-reader-emotion-baseline-1",
   "starId": "Kaelia",
   "outputType": "constellation-story",
-  "reviewDiscipline": "constellation-reader-emotions-v1",
+  "reviewDiscipline": "reader-emotion-iu-v1",
   "title": "Example title",
   "writing": "Full untruncated work...",
-  "overallValue": 132,
-  "emotionFeedback": [
-    { "emotion": "Mirthful", "value": 8 },
-    { "emotion": "Playful", "value": 12 },
-    { "emotion": "Delighted", "value": 28 },
-    { "emotion": "Intrigued", "value": 121 }
-  ]
+  "valueVector": "4;2;18;128;121;...;137;132"
 }
 ```
 
-A real Constellation baseline must contain **every canonical reader-emotion bucket exactly once**. The abbreviated list above only demonstrates the JSON shape.
+The abbreviated vector above only demonstrates the storage shape; a real baseline must contain every canonical position.
 
-When curated examples are absent or do not fill the requested reference set, the app fills remaining slots from the highest-valued compatible works already persisted on that Star's shelf. For Constellation review calibration, only stories already reviewed under the same named reader-emotion discipline are used; older literary-vector stories are not silently treated as if their old categories were emotions.
+Older `literary-values-v1` 27-value Spark vectors remain readable for backward compatibility. The short-lived `constellation-reader-emotions-v1` named-array format is also migrated on load into the compact ReaderEmotionIuV1 vector. New LLM requests never ask for the named-array format.
+
+When curated examples are absent or do not fill the requested reference set, the app fills remaining slots from the highest-valued compatible works already persisted on that Star's shelf **under the same ReaderEmotionIuV1 discipline**. Legacy literary vectors are not silently relabeled as reader emotions.

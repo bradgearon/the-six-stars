@@ -143,13 +143,13 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingRating
     {
         public int Index { get; set; }
-        /// <summary>Identifies how this review should be interpreted. Legacy/Spark reviews use LiteraryValuesV1.</summary>
+        /// <summary>Identifies how this review should be interpreted. New reviews use ReaderEmotionIuV1.</summary>
         public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
-        /// <summary>Legacy/Spark compact literary-value vector. New Constellation reviews use named EmotionFeedback instead.</summary>
+        /// <summary>Compact positional IU vector. ReaderEmotionIuV1 uses 30 emotions plus Overall as the final value.</summary>
         public string EmotionalVector { get; set; } = string.Empty;
-        /// <summary>Named reader-emotion IU feedback for ConstellationReaderEmotionsV1.</summary>
+        /// <summary>Legacy compatibility only for the short-lived named-array Constellation format. New LLM reviews never emit this.</summary>
         public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
-        /// <summary>Open-ended integrated IU value for disciplines that keep Overall separate from emotion buckets.</summary>
+        /// <summary>Cached Overall IU value derived from the final ReaderEmotionIuV1 vector position.</summary>
         public double OverallValue { get; set; }
     }
 
@@ -199,7 +199,7 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 6;
+        public int Version { get; set; } = 7;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
@@ -375,7 +375,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 14;
+        public int Version { get; set; } = 15;
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();

@@ -2038,7 +2038,7 @@ namespace Wds.SixStars.Api.Ai
             AppendList(sb, "Concise canon notes imported from the markdown game library", profile.LibraryCanonNotes);
         }
 
-        private static void AppendStoryLoreContext(StringBuilder sb, StarProfile profile, StarInteractionRequest request)
+        private void AppendStoryLoreContext(StringBuilder sb, StarProfile profile, StarInteractionRequest request)
         {
             sb.AppendLine();
             sb.AppendLine("STORY CANON CAPSULE FOR THIS STAR");

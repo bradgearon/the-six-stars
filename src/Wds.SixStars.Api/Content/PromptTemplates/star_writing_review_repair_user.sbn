@@ -5,14 +5,15 @@ Domain: {{ data.domain }}
 Personality: {{ data.personalityShort }}
 Speaking style: {{ data.speakingStyle }}
 
-CATEGORY ORDER
+READER-EMOTION VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
+Overall is LAST.
 
 VALUE-CALIBRATION REFERENCES
-Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Reference excellence value: {{ data.referenceValue }} IU (not a maximum)
 {{ for item in data.valueReferences }}
-Overall value={{ item.overallValue }} IU
-Value vector: {{ item.valueVector }}
+Overall={{ item.overallValue }} IU
+Vector: {{ item.valueVector }}
 Writing: {{ item.writing }}
 ---
 {{ end }}
@@ -22,7 +23,7 @@ WRITINGS
 [{{ item.index }}] {{ item.writing }}
 {{ end }}
 
-Return only this outer JSON shape:
+Return only:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace every empty value with exactly 27 non-negative integer values separated by semicolons, in the category order above. Values are open-ended and may exceed 100.
+Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the category order above.

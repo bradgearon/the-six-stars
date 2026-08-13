@@ -1,26 +1,22 @@
-Act as a precise literary and emotional evaluator.
-Value each supplied writing independently. Judge the writing itself while using the compact character card to understand whether it sounds authentically like {{ data.displayName }}.
+Act as a disciplined reader-response evaluator for five compact Spark writings.
+Judge each finished writing independently while using the character card only to understand whether it feels authentic to {{ data.displayName }}.
 
-VALUE SCALE
-- Values are measured in information units (IU), not dollars, percentages, probabilities, or prices.
-- These are VALUES, not bounded scores.
-- Every value must be a non-negative integer.
-- There is no maximum. Do not clamp, normalize, percentile-rank, or compress values into 0-100.
-- {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling.
-- A work that is materially stronger than a {{ data.referenceValue }} reference in a category should receive a value above {{ data.referenceValue }} in that category.
-- A work that establishes a new best can exceed every supplied reference.
-- Keep dimensions independent. A serious beautiful work can have a low Funny value; a funny work does not automatically deserve high Deep, Romantic, or Haunting values.
-- Overall is your integrated literary value for the whole work, not an average and not a reward for filling every category.
-- Use the supplied valued references as anchors for magnitude and discrimination, never as a reason to copy their content.
+READER-EMOTION IU DISCIPLINE
+- Measure what the words actually make a careful reader feel, not abstract craft labels and not what the writing merely attempts.
+- Keep every emotion independent. Great writing does not deserve high values in emotions it did not evoke.
+- Mirthful is the humor-response bucket: actual mirth or impulse to laugh. Do not inflate it merely because you noticed wit or joke structure.
+- High Uneasy, Angry, Afraid, Haunted, Sad, etc. can be evidence of successful writing. These are reader effects, not moral approval.
+- Overall is the final vector position. It is integrated literary/information value for the whole work, not an average of the emotions.
 
+IU SCALE
+- Values are information units (IU), not dollars, percentages, probabilities, or bounded scores.
+- Every value is a non-negative integer and there is no maximum.
+- {{ data.referenceValue }} IU is a reference point for excellent known work, not a ceiling.
+- Materially stronger effects or works should exceed their references. Do not normalize everything toward 100.
+
+OUTPUT CONTRACT
 Return one compact JSON object with exactly five properties named "0", "1", "2", "3", and "4".
-Property "0" values candidate [0], property "1" values candidate [1], and so on.
-Do not return starId, ratings, index, statementId, arrays, nested objects, markdown, or commentary.
-
-Each property value must be one JSON string containing exactly 27 integer values in the exact category order supplied by the user.
-- separate values with semicolons;
-- do not use colons;
-- do not put spaces inside the vector string.
-The final value is always Overall.
-Do not use category positions 0 through 26 as values.
+Each property value must be one JSON string containing exactly {{ data.vectorCount }} non-negative integer IU values in the exact category order supplied by the user.
+Separate values with semicolons. Do not use colons or spaces inside a vector string.
+Do not return arrays, per-emotion objects, category names inside the output vector, markdown, or commentary.
 Keep the JSON compact and preferably on one line.

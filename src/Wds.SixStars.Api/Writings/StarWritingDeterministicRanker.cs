@@ -6,7 +6,7 @@ namespace Wds.SixStars.Api.Writings
 {
     /// <summary>
     /// Deterministic ranking helpers for persisted shelf writing. The saved open-ended review values are the
-    /// source of truth: Spark literary vectors and Constellation named reader-emotion feedback can both rank without another LLM call.
+    /// source of truth. New Sparks and Constellations share the compact ReaderEmotionIuV1 vector; legacy literary vectors remain readable.
     /// </summary>
     public static class StarWritingDeterministicRanker
     {
@@ -49,14 +49,14 @@ namespace Wds.SixStars.Api.Writings
             if (writing == null) return -1.0;
             if (string.Equals(
                     StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
-                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
                     StringComparison.OrdinalIgnoreCase)
-                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out _, out _)
-                && !double.IsNaN(writing.OverallValue)
-                && !double.IsInfinity(writing.OverallValue)
-                && writing.OverallValue >= 0)
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    writing.EmotionalVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> readerValues))
             {
-                return writing.OverallValue;
+                return StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall");
             }
 
             if (!StarWritingEmotionVector.TryNormalizeUsable(
@@ -80,18 +80,19 @@ namespace Wds.SixStars.Api.Writings
             if (writing == null) return -1.0;
             if (string.Equals(
                     StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
-                    StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
                     StringComparison.OrdinalIgnoreCase)
-                && StarWritingStoryEmotionFeedback.TryNormalizeComplete(writing.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _))
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(writing.EmotionalVector, out string readerVector, out _))
             {
-                double baseStoryValue = StarWritingValueBaselineCatalog.ComputeStoryEmotionPublicValue(feedback, writing.OverallValue);
-                int storyRouteCount = (writing.MatchedPersistenceRuleIds ?? new List<string>())
+                double baseReaderValue = StarWritingValueBaselineCatalog.ComputeReaderEmotionPublicValue(readerVector);
+                int readerRouteCount = (writing.MatchedPersistenceRuleIds ?? new List<string>())
                     .Where(id => !string.IsNullOrWhiteSpace(id))
                     .Select(id => id.Trim())
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Count(id => !string.Equals(id, "global-overall-excellence", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(id, "constellation-default-overall", StringComparison.OrdinalIgnoreCase));
-                return baseStoryValue * (1.0 + (Math.Min(2, storyRouteCount) * 0.015));
+                        && !string.Equals(id, "constellation-default-overall", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(id, "default-overall", StringComparison.OrdinalIgnoreCase));
+                return baseReaderValue * (1.0 + (Math.Min(2, readerRouteCount) * 0.015));
             }
 
             if (!StarWritingEmotionVector.TryNormalizeUsable(
@@ -155,6 +156,18 @@ namespace Wds.SixStars.Api.Writings
 
         private static Dictionary<string, StarWritingEmotionValue> ReadVector(PersistedStarWriting writing)
         {
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    writing.EmotionalVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> readerValues))
+            {
+                return readerValues;
+            }
+
             if (StarWritingEmotionVector.TryNormalizeUsable(
                 writing.EmotionalVector,
                 out _,
@@ -170,7 +183,11 @@ namespace Wds.SixStars.Api.Writings
             IReadOnlyDictionary<string, StarWritingEmotionValue> values,
             string category)
         {
-            return StarWritingEmotionVector.ReadValue(values, category);
+            if (values != null && values.TryGetValue(category ?? string.Empty, out StarWritingEmotionValue? value) && value != null)
+            {
+                return Math.Max(0.0, value.Value);
+            }
+            return 0.0;
         }
 
         private sealed class RankedWriting

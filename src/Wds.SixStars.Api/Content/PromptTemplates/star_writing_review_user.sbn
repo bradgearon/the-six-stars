@@ -1,4 +1,4 @@
-VALUE FIVE WRITINGS
+REVIEW FIVE SPARKS
 
 COMPACT CHARACTER CARD
 Name: {{ data.displayName }}
@@ -13,17 +13,24 @@ Signature imagery / behavior:
 - {{ item }}
 {{ end }}
 
-EXACT VALUE VECTOR CATEGORY ORDER (27)
+EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
+Overall is LAST.
+
+BUCKET MEANINGS
+{{ for item in data.emotionBuckets }}
+- {{ item.emotion }}: {{ item.discipline }}
+{{ end }}
+- Overall: integrated literary/information value of the complete work; not an emotion and not an average.
 
 VALUE-CALIBRATION REFERENCES
-Reference excellence value: {{ data.referenceValue }} IU (information units). It is not a maximum.
+Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
 {{ if data.valueReferences.size == 0 }}
-No valued shelf references are available yet. Bootstrap the scale with {{ data.referenceValue }} representing excellent shelf-worthy work, while still allowing values above it for exceptional work.
+No same-discipline Spark references are available yet. Bootstrap with {{ data.referenceValue }} IU representing excellent known work while preserving broad separation among weak, moderate, strong, excellent, and extraordinary effects.
 {{ else }}
 {{ for item in data.valueReferences }}
-[{{ item.source }} | {{ item.starId }}] Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
-Value vector: {{ item.valueVector }}
+[{{ item.source }} | {{ item.starId }}] Overall={{ item.overallValue }} IU | public={{ item.publicValue }} IU
+Reader-emotion vector: {{ item.valueVector }}
 Writing: {{ item.writing }}
 ---
 {{ end }}
@@ -35,9 +42,7 @@ CANDIDATES
 Writing: {{ item.writing }}
 {{ end }}
 
-Return only this outer JSON shape:
+Return only:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace each empty value with one compact string containing exactly 27 non-negative integer VALUES separated by semicolons.
-Example beginning only: 35;72;108;...
-The numeric property name identifies the writing; it is not a Star ID.
+Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the order above. Values may exceed 100 or every reference when justified.

@@ -33,7 +33,7 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingValueBaselineFile
     {
-        public int Version { get; set; } = 2;
+        public int Version { get; set; } = 3;
         public string Unit { get; set; } = StarWritingValueUnits.InformationUnits;
         public double ReferenceValue { get; set; } = 100.0;
         public List<StarWritingValueBaselineExample> Examples { get; set; } = new List<StarWritingValueBaselineExample>();
@@ -145,60 +145,70 @@ namespace Wds.SixStars.Api.Writings
             return references;
         }
 
-        public List<StarWritingValueReference> GetCuratedStoryEmotionReferences(string preferredStarId, int maximum)
+        public List<StarWritingValueReference> GetCuratedReaderEmotionReferences(
+            string outputType,
+            string preferredStarId,
+            int maximum)
         {
             int take = Math.Max(0, maximum);
             if (take == 0) return new List<StarWritingValueReference>();
 
+            string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
             string starId = (preferredStarId ?? string.Empty).Trim();
             List<StarWritingValueReference> references = new List<StarWritingValueReference>();
             foreach (StarWritingValueBaselineExample example in (Load().Examples ?? new List<StarWritingValueBaselineExample>())
                 .Where(x => x != null)
-                .Where(x => string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase))
-                .Where(x => string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(x => string.Equals((x.StarId ?? string.Empty).Trim(), starId, StringComparison.OrdinalIgnoreCase))
                 .ThenByDescending(x => x.OverallValue)
                 .ThenBy(x => x.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase))
             {
-                if (string.IsNullOrWhiteSpace(example.Writing)
-                    || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(example.EmotionFeedback, out List<StarWritingStoryEmotionValue> feedback, out _)
-                    || double.IsNaN(example.OverallValue)
-                    || double.IsInfinity(example.OverallValue)
-                    || example.OverallValue < 0)
+                string vector = (example.ValueVector ?? string.Empty).Trim();
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(vector, out string normalizedVector, out Dictionary<string, StarWritingEmotionValue> values))
                 {
-                    continue;
+                    vector = StarWritingReaderEmotionVector.FromLegacyEmotionFeedback(example.EmotionFeedback, example.OverallValue);
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(vector, out normalizedVector, out values)) continue;
                 }
+                if (string.IsNullOrWhiteSpace(example.Writing)) continue;
 
                 references.Add(new StarWritingValueReference
                 {
                     Source = "curated-baseline",
-                    Id = string.IsNullOrWhiteSpace(example.Id) ? "curated-story-emotion-" + references.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) : example.Id.Trim(),
+                    Id = string.IsNullOrWhiteSpace(example.Id) ? "curated-reader-emotion-" + references.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) : example.Id.Trim(),
                     StarId = (example.StarId ?? string.Empty).Trim(),
-                    OutputType = StarWritingOutputTypes.ConstellationStory,
+                    OutputType = normalizedOutputType,
                     Title = (example.Title ?? string.Empty).Trim(),
                     Writing = example.Writing.Trim(),
-                    ReviewDiscipline = StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
-                    EmotionFeedback = feedback,
-                    ValueVector = StarWritingStoryEmotionFeedback.FormatCompact(feedback),
+                    ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    ValueVector = normalizedVector,
                     ValueUnit = StarWritingValueUnits.InformationUnits,
-                    OverallValue = example.OverallValue,
-                    PublicValue = ComputeStoryEmotionPublicValue(feedback, example.OverallValue)
+                    OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall"),
+                    PublicValue = ComputeReaderEmotionPublicValue(normalizedVector)
                 });
                 if (references.Count >= take) break;
             }
             return references;
         }
 
-        public static double ComputeStoryEmotionPublicValue(IEnumerable<StarWritingStoryEmotionValue>? feedback, double overallValue)
+        public static double ComputeReaderEmotionPublicValue(string? valueVector)
         {
-            double strongestEffects = (feedback ?? Enumerable.Empty<StarWritingStoryEmotionValue>())
-                .Where(x => x != null)
-                .Select(x => x.Value)
+            if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    valueVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> values))
+            {
+                return -1.0;
+            }
+
+            double overall = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+            double strongestEffects = StarWritingReaderEmotionVector.EmotionCategories
+                .Select(category => StarWritingReaderEmotionVector.ReadValue(values, category))
                 .OrderByDescending(x => x)
                 .Take(5)
                 .DefaultIfEmpty(0.0)
                 .Average();
-            return (Math.Max(0.0, overallValue) * 0.70) + (strongestEffects * 0.30);
+            return (overall * 0.70) + (strongestEffects * 0.30);
         }
 
         private StarWritingValueBaselineFile Load()

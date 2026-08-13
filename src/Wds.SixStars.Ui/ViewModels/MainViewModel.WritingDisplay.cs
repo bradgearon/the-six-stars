@@ -21,18 +21,20 @@ public sealed partial class MainViewModel
         if (item == null
             || !string.Equals(
                 StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline),
-                StarWritingReviewDisciplines.ConstellationReaderEmotionsV1,
+                StarWritingReviewDisciplines.ReaderEmotionIuV1,
                 StringComparison.OrdinalIgnoreCase)
-            || !StarWritingStoryEmotionFeedback.TryNormalizeComplete(item.EmotionFeedback, out var feedback, out _))
+            || !StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out var values))
         {
             return string.Empty;
         }
 
-        string strongest = string.Join(", ", feedback
+        string strongest = string.Join(", ", StarWritingReaderEmotionVector.EmotionCategories
+            .Select(emotion => new { Emotion = emotion, Value = StarWritingReaderEmotionVector.ReadValue(values, emotion) })
             .OrderByDescending(x => x.Value)
             .Take(4)
             .Select(x => x.Emotion + " " + x.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " IU"));
-        return "Overall " + item.OverallValue.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+        double overall = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+        return "Overall " + overall.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
             + " IU; strongest reader effects: " + strongest + ".";
     }
 

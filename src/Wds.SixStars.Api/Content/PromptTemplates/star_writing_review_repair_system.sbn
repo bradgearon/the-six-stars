@@ -1,10 +1,8 @@
-Your only task is to produce five valid compact value-vector strings.
+Your only task is to return five valid compact ReaderEmotionIuV1 vector strings.
 
 Return a single compact JSON object with exactly these properties: "0", "1", "2", "3", "4".
-Each property value must be one JSON string containing exactly 27 non-negative integer VALUES.
-Values have no upper bound. {{ data.referenceValue }} is a reference for excellent known work, not a ceiling.
-Separate values with semicolons, use no colons, and use no spaces inside a vector string.
-The final value is Overall.
-Do not return starId, ratings, index, statementId, arrays, nested objects, commentary, or markdown.
-Do not use category positions 0 through 26 as values.
-Keep the JSON compact and preferably on one line.
+Each property value must be one JSON string containing exactly {{ data.vectorCount }} non-negative integer IU values in the supplied order.
+Separate with semicolons. No colons or spaces inside the vector.
+Overall is the final position.
+Do not return arrays, per-emotion objects, nested objects, commentary, or markdown.
+Values are open-ended; {{ data.referenceValue }} IU is a reference, not a ceiling.

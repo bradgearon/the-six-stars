@@ -1,23 +1,11 @@
-# Constellation Forge reader-emotion IU review
+# Unified reader-emotion IU review
 
-Completed Constellation Stories no longer reuse the Spark-oriented 27 literary-category vector. Forge review now uses a named, disciplined reader-emotion list plus a separate open-ended Overall IU value.
+Spark and Constellation shelf reviews now use the same `reader-emotion-iu-v1` discipline. The review is intentionally one compact positional string rather than a JSON array of named emotion objects, because the local model handles the compact contract materially faster.
 
-The review discipline id is `constellation-reader-emotions-v1`. Every review must return every canonical emotion exactly once:
+The vector contains 31 open-ended IU values: 30 canonical reader-emotion buckets followed by `Overall`. The exact order is supplied in every review prompt. Example shape: `4;2;18;128;121;...;137;132`. Values are information units, not percentages or bounded scores, and can exceed 100.
 
-`Mirthful, Playful, Delighted, Intrigued, Engrossed, Surprised, Wondrous, Awed, Admiring, Moved, Tender, Comforted, Hopeful, Inspired, Impassioned, Exhilarated, Connected, Affectionate, Attracted, Yearning, Vulnerable, Melancholy, Sad, Haunted, Uneasy, Afraid, Concerned, Angry, Determined, Contemplative`.
+The 30 reader effects are: Mirthful, Playful, Delighted, Intrigued, Engrossed, Surprised, Wondrous, Awed, Admiring, Moved, Tender, Comforted, Hopeful, Inspired, Impassioned, Exhilarated, Connected, Affectionate, Attracted, Yearning, Vulnerable, Melancholy, Sad, Haunted, Uneasy, Afraid, Concerned, Angry, Determined, Contemplative. `Overall` is position 31.
 
-`Mirthful` is deliberately the humor-response bucket. It means the story actually produced mirth / the impulse to laugh, from a genuine smile or chuckle through full laughter. The IU magnitude carries the strength of that response, so the category name does not need to collapse weak amusement and powerful laughter into one fixed intensity. It is not a generic quality score and it replaces the temptation to call every good work `Funny` or `Amused`.
+Mirthful remains the humor-response bucket: actual mirth or impulse to laugh, not simply recognition that a joke was attempted. Negative-feeling buckets such as Haunted, Uneasy, Afraid, Angry, or Sad are reader effects and may be high in excellent work.
 
-All emotion values and `overallValue` are non-negative information units with no upper bound. High negative-valence effects such as Haunted, Uneasy, Afraid, Sad, or Angry are not failures: they can be evidence that horror, tragedy, danger, or moral conflict landed strongly.
-
-## Persistence
-
-Sparks keep their existing literary-value persistence rules. Constellations now have separate `constellationPersistenceRules` and `constellationPersistenceQualityGate` entries in each Star profile. The old routes were translated by intent into reader effects so the shelf continues catching the work each Star is meant to preserve: for example Elusiaa's radiant resonance is now Moved + Tender, Auerlis's bright spectacle is Exhilarated + Surprised, Kaelia's fatal beauty is Haunted + Wondrous, Khavia's shared meaning is Moved + Connected, Maera's possessive depth is Yearning + Haunted, and Nyxari's fragmentary metaphysical route is Haunted + Contemplative.
-
-The global Overall excellence backstop still applies after the Constellation impact-consensus gate.
-
-## Storage and baselines
-
-New Constellation shelf objects record `reviewDiscipline`, `emotionFeedback`, and `overallValue`. `EmotionalVector` is left empty for this discipline so named emotion feedback cannot be accidentally reinterpreted as the old positional literary vector. Statement-log records are version 5 and include the named list plus a `Values` dictionary for inspection.
-
-Curated `writing-value-baselines.json` examples can now use the same review discipline, full story, complete named `emotionFeedback`, and `overallValue`. The story-review prompt only compares against same-discipline baselines. If none exist yet, it bootstraps from the 100 IU excellence reference. Once same-discipline stories accumulate on the shelf, the best of those can fill missing calibration slots automatically.
+Both output types use the same parser, baseline discipline, persistence category vocabulary, deterministic ranking support, and storage field (`EmotionalVector`). `OverallValue` is cached from the final vector position for convenient querying. New reviews never request the former named `emotionFeedback` array. Older Constellation named-array data is converted to the compact vector on load; old `literary-values-v1` data stays readable as legacy data rather than being semantically relabeled.

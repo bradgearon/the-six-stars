@@ -974,11 +974,11 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Haunting",
+          "category": "Haunted",
           "minimumValue": 80
         },
         {
-          "category": "Original",
+          "category": "Wondrous",
           "minimumValue": 70
         }
       ]
@@ -988,11 +988,11 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Clever",
+          "category": "Intrigued",
           "minimumValue": 70
         },
         {
-          "category": "Characterful",
+          "category": "Contemplative",
           "minimumValue": 70
         }
       ]
@@ -1002,11 +1002,11 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Musical",
+          "category": "Intrigued",
           "minimumValue": 70
         },
         {
-          "category": "Mysterious",
+          "category": "Awed",
           "minimumValue": 70
         }
       ]
@@ -1020,7 +1020,7 @@
           "minimumValue": 70
         },
         {
-          "category": "Vivid",
+          "category": "Wondrous",
           "minimumValue": 70
         }
       ]
@@ -1030,7 +1030,7 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
+          "category": "Mirthful",
           "minimumValue": 70
         },
         {
@@ -1040,15 +1040,15 @@
       ]
     },
     {
-      "id": "original-joke",
+      "id": "surprising-mirth",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
+          "category": "Mirthful",
           "minimumValue": 70
         },
         {
-          "category": "Original",
+          "category": "Surprised",
           "minimumValue": 60
         }
       ]
@@ -1059,31 +1059,63 @@
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
-        "category": "Coherent",
-        "minimumValue": 70
-      },
-      {
-        "category": "Polished",
+        "category": "Engrossed",
         "minimumValue": 60
       },
       {
-        "category": "Characterful",
-        "minimumValue": 65
+        "category": "Intrigued",
+        "minimumValue": 60
       },
       {
-        "category": "Original",
-        "minimumValue": 65
+        "category": "Moved",
+        "minimumValue": 60
       },
       {
-        "category": "Meaningful",
-        "minimumValue": 65
+        "category": "Wondrous",
+        "minimumValue": 60
       },
       {
-        "category": "WorthRetelling",
-        "minimumValue": 65
+        "category": "Admiring",
+        "minimumValue": 60
       },
       {
-        "category": "Quotable",
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
         "minimumValue": 60
       }
     ]

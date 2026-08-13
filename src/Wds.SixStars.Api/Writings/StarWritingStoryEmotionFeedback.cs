@@ -8,17 +8,21 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>Names the review contract used to interpret saved writing values.</summary>
     public static class StarWritingReviewDisciplines
     {
-        /// <summary>Legacy/current Spark literary-value vector. Existing saved shelf data defaults here.</summary>
+        /// <summary>Legacy 27-dimension literary-value vector retained for older saved shelf data.</summary>
         public const string LiteraryValuesV1 = "literary-values-v1";
 
-        /// <summary>Named reader-emotion feedback used for completed Constellation Stories.</summary>
+        /// <summary>Canonical compact reader-emotion IU vector used by new Spark and Constellation reviews.</summary>
+        public const string ReaderEmotionIuV1 = "reader-emotion-iu-v1";
+
+        /// <summary>Legacy persisted discipline name from the first Constellation emotion-review implementation.</summary>
         public const string ConstellationReaderEmotionsV1 = "constellation-reader-emotions-v1";
 
         public static string Normalize(string? value)
         {
             string text = (value ?? string.Empty).Trim();
-            return string.Equals(text, ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase)
-                ? ConstellationReaderEmotionsV1
+            return string.Equals(text, ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(text, ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase)
+                ? ReaderEmotionIuV1
                 : LiteraryValuesV1;
         }
     }
@@ -42,9 +46,9 @@ namespace Wds.SixStars.Api.Writings
     }
 
     /// <summary>
-    /// Canonical reader-effect discipline for Constellation Forge reviews.
-    /// These buckets describe what the finished story actually makes a reader feel, not abstract craft labels.
-    /// Overall literary value remains separate because it is not itself an emotion.
+    /// Canonical reader-effect bucket definitions shared by Spark and Constellation shelf reviews.
+    /// These buckets describe what the finished writing actually makes a reader feel, not abstract craft labels.
+    /// Overall remains a separate final vector position because it is not itself an emotion.
     /// </summary>
     public static class StarWritingStoryEmotionFeedback
     {
