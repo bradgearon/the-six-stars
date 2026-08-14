@@ -32,23 +32,8 @@ CHARACTER / WORLD REFERENCE — INSPIRATION, NOT AUTOMATIC STORY CANON
 - {{ item }}
 {{ end }}
 
-VALUED CONSTELLATION REFERENCES
-Quality anchors only; invent a meaningfully different story.
-Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
-Reader-emotion IU vector order (Overall last): {{ data.vectorOrder }}
-{{ if data.valueReferences.size == 0 }}
-(no valued Constellation references available yet)
-{{ else }}
-{{ for item in data.valueReferences }}
-[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
-Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
-Review discipline={{ item.reviewDiscipline }}
-Review values: {{ item.valueVector }}
-FULL REFERENCE STORY:
-{{ item.writing }}
---- END REFERENCE ---
-{{ end }}
-{{ end }}
+QUALITY TARGET
+Revise for actual literary quality, not for a numeric emotion target. Prefer precise, coherent, memorable language over generic poetic atmosphere. Avoid vague profundity, adjective stacking, strained metaphors, and automatic filler such as "ancient", "forgotten", "shadow", "sorrow", or "whisper" unless the specific sentence truly needs them.
 
 TITLE
 {{ data.title }}

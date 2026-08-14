@@ -11,7 +11,10 @@ namespace Wds.SixStars.Api.Writings
         /// <summary>Legacy 27-dimension literary-value vector retained for older saved shelf data.</summary>
         public const string LiteraryValuesV1 = "literary-values-v1";
 
-        /// <summary>Canonical compact reader-emotion IU vector used by new Spark and Constellation reviews.</summary>
+        /// <summary>Single bounded 0-100 finished-writing quality score used by new Spark and Constellation reviews.</summary>
+        public const string WritingQualityScoreV1 = "writing-quality-score-v1";
+
+        /// <summary>Legacy compact reader-emotion IU vector retained for older saved shelf data.</summary>
         public const string ReaderEmotionIuV1 = "reader-emotion-iu-v1";
 
         /// <summary>Legacy persisted discipline name from the first Constellation emotion-review implementation.</summary>
@@ -20,6 +23,11 @@ namespace Wds.SixStars.Api.Writings
         public static string Normalize(string? value)
         {
             string text = (value ?? string.Empty).Trim();
+            if (string.Equals(text, WritingQualityScoreV1, StringComparison.OrdinalIgnoreCase))
+            {
+                return WritingQualityScoreV1;
+            }
+
             return string.Equals(text, ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(text, ConstellationReaderEmotionsV1, StringComparison.OrdinalIgnoreCase)
                 ? ReaderEmotionIuV1
@@ -46,9 +54,8 @@ namespace Wds.SixStars.Api.Writings
     }
 
     /// <summary>
-    /// Canonical reader-effect bucket definitions shared by Spark and Constellation shelf reviews.
-    /// These buckets describe what the finished writing actually makes a reader feel, not abstract craft labels.
-    /// Overall remains a separate final vector position because it is not itself an emotion.
+    /// Legacy reader-effect bucket definitions retained for old ReaderEmotionIuV1 files and compatibility helpers.
+    /// Current Spark and Constellation shelf reviews use one WritingQualityScoreV1 number instead.
     /// </summary>
     public static class StarWritingStoryEmotionFeedback
     {

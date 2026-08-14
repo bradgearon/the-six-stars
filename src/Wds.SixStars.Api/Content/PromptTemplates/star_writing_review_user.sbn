@@ -1,36 +1,13 @@
-REVIEW FIVE SPARKS
+RATE FIVE SPARKS FOR FINISHED WRITING QUALITY
 
-EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
-{{ data.vectorOrder }}
-Overall is LAST.
-
-BUCKET MEANINGS
-{{ for item in data.emotionBuckets }}
-- {{ item.emotion }}: {{ item.discipline }}
-{{ end }}
-- Overall: integrated literary/information value of the complete work; not an emotion and not an average.
-
-GLOBAL SHARED CALIBRATION REFERENCES
-These references are the same ruler for every actor. Never change the scale because of who wrote the candidate.
-Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
-{{ if data.valueReferences.size == 0 }}
-No curated shared Spark references are installed. Use the fixed shared IU ladder from the system instruction; do not infer a scale from this actor's prior writing.
-{{ else }}
-{{ for item in data.valueReferences }}
-[{{ item.source }}] Overall={{ item.overallValue }} IU
-Reader-emotion vector: {{ item.valueVector }}
-Writing: {{ item.writing }}
----
-{{ end }}
-{{ end }}
+Read each line literally and critically. Ignore actor identity and intended emotional category. Use the strict 0-100 quality scale from the system instruction.
 
 CANDIDATES
 {{ for item in data.candidates }}
-[{{ item.index }}] Words: {{ item.words }}
-Writing: {{ item.writing }}
+[{{ item.index }}] {{ item.writing }}
 {{ end }}
 
 Return only:
-{"0":"","1":"","2":"","3":"","4":""}
+{"0":0,"1":0,"2":0,"3":0,"4":0}
 
-Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the order above. Values may exceed 100 or every reference when justified.
+Replace each zero with that Spark's independent finished-writing quality score from 0 to 100.

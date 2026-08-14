@@ -233,7 +233,7 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "id", StringProperty(80) },
-                        { "oldValue", NonNegativeNumberProperty() },
+                        { "oldValue", NumberProperty(0, 100) },
                         { "newWordSet", new Dictionary<string, object>
                             {
                                 { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
@@ -241,7 +241,7 @@ namespace Wds.SixStars.Api.Ai
                             }
                         },
                         { "newWriting", StringProperty(1400) },
-                        { "newValue", NonNegativeNumberProperty() }
+                        { "newValue", NumberProperty(0, 100) }
                     }
                 }
             };
@@ -397,16 +397,15 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "valueVector" } },
+                { "required", new[] { "score" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        // One compact positional vector keeps local-model completion work small.
-                        // ReaderEmotionIuV1 contains 30 reader-emotion IU values plus Overall last.
-                        { "valueVector", StringProperty(1024) }
+                        // Review output is intentionally one bounded finished-writing quality score.
+                        { "score", NumberProperty(0, 100) }
                     }
                 }
             };
-            return WrapSchema("six_stars_story_reader_emotion_review", schema);
+            return WrapSchema("six_stars_story_quality_score_review", schema);
         }
 
         public static object CreateStarWritingReviewResponseFormat()
@@ -414,9 +413,8 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                // One compact value-only vector string per writing minimizes completion tokens.
-                // Each value contains exactly 31 semicolon-delimited open-ended reader-emotion IU values (30 emotions + Overall).
-                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
+                // One numeric quality score per Spark keeps the review contract tiny and actor-neutral.
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = NumberProperty(0, 100);
             }
 
             Dictionary<string, object> schema = new Dictionary<string, object>
@@ -426,7 +424,7 @@ namespace Wds.SixStars.Api.Ai
                 { "required", new[] { "0", "1", "2", "3", "4" } },
                 { "properties", properties }
             };
-            return WrapSchema("six_stars_writing_review", schema);
+            return WrapSchema("six_stars_writing_quality_scores", schema);
         }
 
         public static object CreateStarXPostSelectionResponseFormat()

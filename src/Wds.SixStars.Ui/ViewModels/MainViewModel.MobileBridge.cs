@@ -732,19 +732,18 @@ public sealed partial class MainViewModel
                 List<string> items = isConstellation
                     ? performance.SelectedWritings.Select(x =>
                         (string.IsNullOrWhiteSpace(x.Title) ? "Constellation Story" : x.Title)
-                        + " — " + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " IU")
+                        + " — " + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "/100")
                         .ToList()
                     : performance.SelectedWritings.Select(x => x.Writing).ToList();
                 string message = isConstellation
-                    ? starId + " selected the highest-Overall-IU unplayed Constellation Story, “"
+                    ? starId + " selected the highest-score unplayed Constellation Story, “"
                         + (performance.Response.StoryTitle ?? "Constellation Story") + "” at "
                         + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
-                        + " IU, and split the complete story into " + performance.Response.SpokenParts.Count
+                        + "/100, and split the complete story into " + performance.Response.SpokenParts.Count
                         + " spoken queue chunks. " + performance.State.PendingConstellationStoryCount + " unplayed Constellation Stories remain."
-                    : starId + " chose " + items.Count + " Spark(s) from a weighted "
-                        + performance.CandidateCount + "-item listening set drawn from her top " + performance.ElitePoolCount
-                        + " IU Sparks (" + performance.AnchorCount + " peak anchors, " + performance.ContrastCount
-                        + " contrast picks); " + performance.State.PendingCount + " untold Sparks remain.";
+                    : starId + " is performing the " + items.Count + " highest-scoring untold Spark(s) from a "
+                        + performance.ElitePoolCount + "-item score-ranked shelf; "
+                        + performance.State.PendingCount + " untold Sparks remain.";
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))

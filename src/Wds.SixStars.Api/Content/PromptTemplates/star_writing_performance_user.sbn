@@ -1,4 +1,4 @@
-PERFORM YOUR FAVORITE SPARKS
+PERFORM THESE TOP-SCORED SPARKS
 
 CHARACTER CARD
 Name: {{ data.displayName }}
@@ -10,17 +10,16 @@ Deep personality: {{ data.deepPersonality }}
 Speaking style: {{ data.speakingStyle }}
 Performance direction: {{ data.voiceDirection }}
 
-WEIGHTED HIGH-VALUE LISTENING SET
-There are {{ data.totalPendingCount }} untold shelf entries in the supplied state. The shelf layer first considered the highest-valued untold Sparks, then built the {{ data.candidateCount }}-item mixed listening set below so you have enough context room to read the stronger pieces carefully while still seeing a little contrast.
-The order below is randomized. Judge the actual work and its IU evidence rather than its position.
+TOP QUALITY-SCORE SET
+The shelf system has already selected the highest-scoring untold Sparks below. The saved value is one strict 0-100 finished-writing quality score produced by an actor-blind writing review.
 
-The two IU values beside each Spark are calibration evidence. The deterministic public value already summarizes its saved review vector, so spend your attention on reading the actual writing rather than reconstructing the review math.
+Do NOT re-rank these by character preference, emotion, theme, or personal taste. Keep every supplied ID exactly once, in the supplied order. Your job is only to make the spoken presentation sound natural for this Star without rewriting the stored Sparks.
+
 {{ for item in data.persistedWritings }}
 ID: {{ item.id }}
-Overall value: {{ item.overallValue }} IU
-Deterministic public value: {{ item.deterministicPublicValue }} IU
+Quality score: {{ item.overallValue }}/100
 Writing: {{ item.writing }}
 ---
 {{ end }}
 
-Choose the required Sparks by their exact IDs and produce the one-to-one spokenText array. Return only JSON.
+Return the exact supplied IDs in order and a one-to-one spokenText array. Return only JSON.

@@ -90,22 +90,13 @@ namespace Wds.SixStars.Api.Agents
             StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
             for (int i = 0; i < 5; i++)
             {
-                Dictionary<string, double> values = StarWritingReaderEmotionVector.Categories
-                    .ToDictionary(
-                        category => category,
-                        category => string.Equals(category, "Mirthful", StringComparison.OrdinalIgnoreCase)
-                            ? 72.0 + i
-                            : string.Equals(category, "Overall", StringComparison.OrdinalIgnoreCase)
-                                ? 90.0 + i
-                                : 78.0,
-                        StringComparer.OrdinalIgnoreCase);
-                string vector = StarWritingReaderEmotionVector.FormatValues(values);
                 result.Ratings.Add(new StarWritingRating
                 {
                     Index = i,
-                    ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
-                    EmotionalVector = vector,
-                    OverallValue = values["Overall"]
+                    ReviewDiscipline = StarWritingReviewDisciplines.WritingQualityScoreV1,
+                    EmotionalVector = string.Empty,
+                    EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                    OverallValue = 78.0 + (i * 3.0)
                 });
             }
             return Task.FromResult(result);
@@ -179,23 +170,13 @@ namespace Wds.SixStars.Api.Agents
 
         public Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken)
         {
-            Dictionary<string, double> values = StarWritingReaderEmotionVector.Categories
-                .ToDictionary(
-                    category => category,
-                    category => string.Equals(category, "Mirthful", StringComparison.OrdinalIgnoreCase)
-                        ? 35.0
-                        : string.Equals(category, "Overall", StringComparison.OrdinalIgnoreCase)
-                            ? 90.0
-                            : 84.0,
-                    StringComparer.OrdinalIgnoreCase);
-            string vector = StarWritingReaderEmotionVector.FormatValues(values);
             return Task.FromResult(new StarWritingRating
             {
                 Index = 0,
-                ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
-                EmotionalVector = vector,
+                ReviewDiscipline = StarWritingReviewDisciplines.WritingQualityScoreV1,
+                EmotionalVector = string.Empty,
                 EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
-                OverallValue = values["Overall"]
+                OverallValue = 90.0
             });
         }
 

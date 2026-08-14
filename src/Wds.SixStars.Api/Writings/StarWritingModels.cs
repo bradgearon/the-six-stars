@@ -143,13 +143,13 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingRating
     {
         public int Index { get; set; }
-        /// <summary>Identifies how this review should be interpreted. New reviews use ReaderEmotionIuV1.</summary>
+        /// <summary>Identifies how this review should be interpreted. New reviews use WritingQualityScoreV1.</summary>
         public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
-        /// <summary>Compact positional IU vector. ReaderEmotionIuV1 uses 30 emotions plus Overall as the final value.</summary>
+        /// <summary>Legacy review vector. New WritingQualityScoreV1 reviews leave this empty.</summary>
         public string EmotionalVector { get; set; } = string.Empty;
         /// <summary>Legacy compatibility only for the short-lived named-array Constellation format. New LLM reviews never emit this.</summary>
         public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
-        /// <summary>Cached Overall IU value derived from the final ReaderEmotionIuV1 vector position.</summary>
+        /// <summary>For WritingQualityScoreV1 this is the bounded 0-100 finished-writing quality score.</summary>
         public double OverallValue { get; set; }
     }
 
@@ -261,7 +261,7 @@ namespace Wds.SixStars.Api.Writings
     /// </summary>
     public static class StarWritingPersistencePolicy
     {
-        public const int CurrentVersion = 2;
+        public const int CurrentVersion = 3;
     }
 
     /// <summary>One current-story desire seed contributed by a souled actor during the light pass.</summary>

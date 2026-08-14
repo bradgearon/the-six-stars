@@ -1,31 +1,4 @@
-REVIEW ONE COMPLETED CONSTELLATION STORY
-
-EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
-Review discipline id: {{ data.reviewDiscipline }}
-{{ data.vectorOrder }}
-Overall is LAST.
-
-BUCKET MEANINGS
-{{ for item in data.emotionBuckets }}
-- {{ item.emotion }}: {{ item.discipline }}
-{{ end }}
-- Overall: integrated literary/information value of the complete story; not an emotion and not an average.
-
-GLOBAL SHARED CALIBRATION REFERENCES
-Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
-These references, when present, are the same magnitude ruler for every actor and are never plot templates.
-{{ if data.valueReferences.size == 0 }}
-No curated shared Constellation references are installed. Use the fixed shared IU ladder from the system instruction; do not infer a scale from this actor's prior shelf.
-{{ else }}
-{{ for item in data.valueReferences }}
-[{{ item.source }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
-Overall={{ item.overallValue }} IU
-Reader-emotion vector: {{ item.valueVector }}
-FULL STORY:
-{{ item.writing }}
---- END REFERENCE ---
-{{ end }}
-{{ end }}
+RATE ONE COMPLETED CONSTELLATION STORY FOR FINISHED WRITING QUALITY
 
 TITLE
 {{ data.title }}
@@ -34,6 +7,6 @@ STORY
 {{ data.story }}
 
 Return only:
-{"valueVector":""}
+{"score":0}
 
-Replace the empty string with exactly {{ data.vectorCount }} non-negative IU values separated by semicolons in the category order above. Values may exceed 100 or every reference when justified.
+Replace 0 with the strict 0-100 finished-writing quality score. 80+ means genuinely excellent and shelf-worthy; 90+ is rare.

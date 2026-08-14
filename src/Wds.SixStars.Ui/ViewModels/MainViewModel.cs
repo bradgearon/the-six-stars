@@ -2536,7 +2536,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 DebugJson = JsonSerializer.Serialize(new
                 {
                     feature = "star-writing-iterative-pass-generation",
-                    vectorCategoryOrder = StarWritingReaderEmotionVector.Categories,
+                    reviewDiscipline = StarWritingReviewDisciplines.WritingQualityScoreV1,
                     result
                 }, _jsonOptions);
                 Status = BuildWritingGenerationStatus(starId, result);
@@ -2568,11 +2568,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        CancellationToken token = _operationController.BeginNewOperation("Tell favorite high-IU Sparks.");
+        CancellationToken token = _operationController.BeginNewOperation("Tell top-scored Sparks.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing five favorites from a 25-Spark weighted-IU listening set drawn from her top 100 untold Sparks.";
+            Status = starId + " is loading her five highest-scoring untold Sparks.";
         });
         try
         {
@@ -2600,7 +2600,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     response = result.Response,
                     pendingAfter = PendingWritingCount
                 }, _jsonOptions);
-                Status = starId + " selected " + result.SelectedWritings.Count + " Spark(s) from a weighted " + result.CandidateCount + "-item set drawn from the top " + result.ElitePoolCount + " IU pool (" + result.AnchorCount + " peak anchors, " + result.ContrastCount + " contrast picks). " + PendingWritingCount + " remain new.";
+                Status = starId + " is performing the " + result.SelectedWritings.Count + " highest-scoring untold Spark(s) from a " + result.ElitePoolCount + "-item score-ranked shelf. " + PendingWritingCount + " remain new.";
             });
 
             await PublishWritingShelfEventAsync("StarWritingPerformanceReady", starId, result.State, result.Response.SpokenParts, Status).ConfigureAwait(false);

@@ -1,35 +1,19 @@
-# Writing value baselines
-
-`writing-value-baselines.json` is the shared calibration pack for the writing shelf. Reader-emotion IU review must use the same curated ruler for every actor; it must never learn its numeric scale from the current actor's persisted shelf.
-
-The value system is open-ended and measured in **information units (IU)**: values are non-negative and have no maximum. `referenceValue` defaults to `100` IU; it is a reference point for excellent known work, never a ceiling.
+# Writing review and legacy value baselines
 
 ## Canonical review discipline
 
 All newly reviewed shelf outputs — both **Sparks** and **Constellation Stories** — use:
 
-`reviewDiscipline: "reader-emotion-iu-v1"`
+`reviewDiscipline: "writing-quality-score-v1"`
 
-The LLM contract is intentionally compact for local-model speed. A review is one positional semicolon-delimited `valueVector`, not a JSON array of per-emotion objects.
+The final review contract is deliberately small: the reviewer reads the finished writing itself and returns **one 0-100 quality score**. It does not rate a reader-emotion vector, and it does not receive the Star personality as evidence for quality. This keeps shelf selection focused on the writing rather than on whether a line happens to trigger a particular emotional bucket.
 
-The vector contains the 30 canonical reader-emotion IU buckets in fixed order followed by **Overall** as the final value. Overall is integrated literary/information value; it is stored in the vector so Spark and Constellation reviews use exactly the same contract.
+For a five-Spark batch the JSON response is five numeric scores keyed by candidate index. A Constellation Story review returns one numeric `score`. The current persistence policy uses that finished-writing score directly. Sparks must meet the configured score threshold and at most two Sparks from one generated batch can be automatically persisted.
 
-A curated example therefore looks like:
+The strict reviewer rubric rewards originality, precise word choice, coherence, rhythm, memorability, and earned emotional/intellectual force. It penalizes strained noun/verb combinations, vague profundity, cliches, adjective stacking, mixed metaphors, and generic AI-poetic filler. Scores of 80+ are intended to mean genuinely shelf-worthy work; 90+ should be rare.
 
-```json
-{
-  "id": "kaelia-reader-emotion-baseline-1",
-  "starId": "Kaelia",
-  "outputType": "constellation-story",
-  "reviewDiscipline": "reader-emotion-iu-v1",
-  "title": "Example title",
-  "writing": "Full untruncated work...",
-  "valueVector": "4;2;18;128;121;...;137;132"
-}
-```
+## Legacy review data
 
-The abbreviated vector above only demonstrates the storage shape; a real baseline must contain every canonical position. Shared calibration examples should normally leave `starId` blank so they cannot be interpreted as actor-specific standards. The authored file order is preserved intentionally so the pack can include low, medium, strong, and excellent anchors rather than only the highest-valued examples.
+`reader-emotion-iu-v1`, `literary-values-v1`, and the short-lived `constellation-reader-emotions-v1` formats remain readable for historical files and diagnostics. The shared `writing-value-baselines.json` pack also remains available for older generation/calibration code that still references it.
 
-Older `literary-values-v1` 27-value Spark vectors remain readable for backward compatibility. The short-lived `constellation-reader-emotions-v1` named-array format is also migrated on load into the compact ReaderEmotionIuV1 vector. New LLM requests never ask for the named-array format.
-
-Reader-emotion review never fills missing calibration slots from an actor's persisted shelf. If the curated shared pack is absent or incomplete, the fixed system-level IU ladder is the fallback ruler. Legacy literary vectors remain readable but are not silently relabeled as reader emotions.
+Policy v3 does **not** silently reinterpret an old emotion/IU review as a writing-quality score. Existing legacy reviews stay in history and the append-only statement log, but legacy emotion-selected entries are removed from the active persisted shelf until a new quality-score review creates current shelf work. This avoids carrying forward low-quality selections merely because the old emotional calibration happened to favor them.
