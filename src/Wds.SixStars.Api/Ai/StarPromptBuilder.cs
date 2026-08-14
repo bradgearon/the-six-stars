@@ -7,6 +7,7 @@ using Wds.SixStars.Api.Models;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Engine;
 using Wds.SixStars.Api.GirlfriendState;
+using Wds.SixStars.Api.Forge.Context;
 using Wds.SixStars.Api.Screen;
 using Wds.SixStars.Api.Stars;
 using Wds.SixStars.Api.Stories;
@@ -18,6 +19,8 @@ namespace Wds.SixStars.Api.Ai
     {
         private readonly StarPromptOptions _options;
         private readonly PromptTemplateRenderer _templates;
+        private readonly IForgeContextCardFactory _forgeContextCards;
+        private readonly IForgeContextCardRenderer _forgeContextRenderer;
 
         public StarPromptBuilder(MainInstructionSet mainInstructions)
             : this(mainInstructions, new StarPromptOptions())
@@ -25,9 +28,20 @@ namespace Wds.SixStars.Api.Ai
         }
 
         public StarPromptBuilder(MainInstructionSet mainInstructions, StarPromptOptions options)
+            : this(mainInstructions, options, new SixStarsForgeContextCardFactory(), new CompactForgeContextCardRenderer())
+        {
+        }
+
+        public StarPromptBuilder(
+            MainInstructionSet mainInstructions,
+            StarPromptOptions options,
+            IForgeContextCardFactory forgeContextCards,
+            IForgeContextCardRenderer forgeContextRenderer)
         {
             _options = options ?? new StarPromptOptions();
             _templates = PromptTemplateRenderer.CreateDefault();
+            _forgeContextCards = forgeContextCards ?? throw new ArgumentNullException(nameof(forgeContextCards));
+            _forgeContextRenderer = forgeContextRenderer ?? throw new ArgumentNullException(nameof(forgeContextRenderer));
         }
 
         public IReadOnlyList<ChatMessage> BuildMessages(StarProfile profile, StarInteractionRequest request, StarState state)
@@ -560,44 +574,12 @@ namespace Wds.SixStars.Api.Ai
 
         private string BuildCompactReviewUserMessage(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
-            StringBuilder history = new StringBuilder();
-            AppendRecentConversationHistory(history, profile, state, Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true);
-
-            StringBuilder memory = new StringBuilder();
-            memory.AppendLine("Existing conversation summary: " + (string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 900)));
-            AppendList(memory, "Important remembered player quotes", state.ImportantPlayerQuotes.Take(6).ToList());
-            AppendList(memory, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(6).ToList());
-            AppendRememberedMarkers(memory, state, 8);
-            AppendList(memory, "Relationship events", state.RelationshipEvents.Take(6).ToList());
-            if (state.StoryHistory.Count > 0)
-            {
-                memory.AppendLine("Stories already told by this Star:");
-                foreach (StarStoryHistoryEntry toldStory in state.StoryHistory.Take(10))
-                {
-                    memory.AppendLine("- " + toldStory.Title + " | finished=" + toldStory.Finished + " | " + Truncate(toldStory.Summary, 180));
-                }
-            }
-
-            StringBuilder relationship = new StringBuilder();
-            relationship.AppendLine(BuildRelationshipStatus(state));
-            relationship.AppendLine("IsGirlfriend=" + state.IsGirlfriend + "; GirlfriendSince=" + (state.GirlfriendSince.HasValue ? state.GirlfriendSince.Value.ToString("o") : "none") + "; IsGirlfriendReady=" + state.IsGirlfriendReady + ".");
-            relationship.AppendLine("Current EmotionalConnectionPercent: " + state.EmotionalConnectionPercent.ToString("0.0") + "%.");
-            // This pass only needs the current hourly vectors to score this turn. Historical
-            // need/want vectors are reserved for the hourly girlfriend-state refresh.
-            AppendGirlfriendHourlyStateContext(relationship, state);
-            AppendDialogueMemoryContext(relationship, state, 4);
-            relationship.AppendLine("Girlfriend readiness: " + (state.IsGirlfriendReady ? "ready" : "not ready") + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
-
-            StringBuilder story = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(foregroundResponse.StoryId) || request.RequestType == RequestType.Story)
-            {
-                story.AppendLine("Foreground story fields to preserve/update:");
-                story.AppendLine("storyId=" + (foregroundResponse.StoryId ?? string.Empty));
-                story.AppendLine("storyTitle=" + (foregroundResponse.StoryTitle ?? string.Empty));
-                story.AppendLine("storySummary=" + Truncate(foregroundResponse.StorySummary ?? string.Empty, 700));
-                story.AppendLine("storyIsFinished=" + foregroundResponse.StoryIsFinished);
-                story.AppendLine("storyPartIndex=" + foregroundResponse.StoryPartIndex);
-            }
+            ForgeContextBundle forgeContext = _forgeContextCards.CreateInteractionReviewBundle(
+                profile,
+                request,
+                state,
+                foregroundResponse,
+                Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20)));
 
             object data = new
             {
@@ -606,10 +588,10 @@ namespace Wds.SixStars.Api.Ai
                 currentTimeContext = BuildCurrentTimeContext(),
                 playerTextBlock = request.RequestType == RequestType.StarInitiative ? "> [No player message. This is a system at-rest state check.]" : QuoteBlock(request.PlayerText),
                 foregroundSpokenPartsJson = FormatSpokenPartsForReview(foregroundResponse.SpokenParts, 3600).TrimEnd(),
-                relationshipContext = relationship.ToString().TrimEnd(),
-                recentConversationHistory = history.ToString().TrimEnd(),
-                durableMemoryContext = memory.ToString().TrimEnd(),
-                storyFieldsContext = story.ToString().TrimEnd()
+                relationshipContext = _forgeContextRenderer.Render(forgeContext.Relationship),
+                recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
+                durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
+                storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
             return _templates.Render("review_user.sbn", data);

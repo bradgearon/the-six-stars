@@ -1,15 +1,9 @@
-CHARACTER
-Name: {{ data.displayName }}
-Element: {{ data.element }}
-Domain: {{ data.domain }}
-Personality: {{ data.personalityShort }}
-Speaking style: {{ data.speakingStyle }}
-
 READER-EMOTION VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
 Overall is LAST.
 
-VALUE-CALIBRATION REFERENCES
+GLOBAL SHARED CALIBRATION REFERENCES
+Use the same numeric ruler for every actor. Never infer magnitude from author identity or prior shelf history.
 Reference excellence value: {{ data.referenceValue }} IU (not a maximum)
 {{ for item in data.valueReferences }}
 Overall={{ item.overallValue }} IU

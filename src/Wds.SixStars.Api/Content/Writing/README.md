@@ -1,12 +1,12 @@
 # Writing value baselines
 
-`writing-value-baselines.json` is an optional curated calibration pack for the writing shelf.
+`writing-value-baselines.json` is the shared calibration pack for the writing shelf. Reader-emotion IU review must use the same curated ruler for every actor; it must never learn its numeric scale from the current actor's persisted shelf.
 
 The value system is open-ended and measured in **information units (IU)**: values are non-negative and have no maximum. `referenceValue` defaults to `100` IU; it is a reference point for excellent known work, never a ceiling.
 
 ## Canonical review discipline
 
-All newly reviewed shelf outputs — both **Sparks** and **Constellation Stories** — use:
+All newly reviewed shelf outputs â€” both **Sparks** and **Constellation Stories** â€” use:
 
 `reviewDiscipline: "reader-emotion-iu-v1"`
 
@@ -28,8 +28,8 @@ A curated example therefore looks like:
 }
 ```
 
-The abbreviated vector above only demonstrates the storage shape; a real baseline must contain every canonical position.
+The abbreviated vector above only demonstrates the storage shape; a real baseline must contain every canonical position. Shared calibration examples should normally leave `starId` blank so they cannot be interpreted as actor-specific standards. The authored file order is preserved intentionally so the pack can include low, medium, strong, and excellent anchors rather than only the highest-valued examples.
 
 Older `literary-values-v1` 27-value Spark vectors remain readable for backward compatibility. The short-lived `constellation-reader-emotions-v1` named-array format is also migrated on load into the compact ReaderEmotionIuV1 vector. New LLM requests never ask for the named-array format.
 
-When curated examples are absent or do not fill the requested reference set, the app fills remaining slots from the highest-valued compatible works already persisted on that Star's shelf **under the same ReaderEmotionIuV1 discipline**. Legacy literary vectors are not silently relabeled as reader emotions.
+Reader-emotion review never fills missing calibration slots from an actor's persisted shelf. If the curated shared pack is absent or incomplete, the fixed system-level IU ladder is the fallback ruler. Legacy literary vectors remain readable but are not silently relabeled as reader emotions.

@@ -54,8 +54,21 @@ namespace Wds.SixStars.Api.Writings
             return _store.LoadAsync(starId, cancellationToken);
         }
 
+        public Task<StarWritingCreateResult> GenerateAndReviewAsync(
+            string starId,
+            CancellationToken cancellationToken,
+            Action<string>? progress = null)
+        {
+            return GenerateAndReviewAsync(starId, null, cancellationToken, progress);
+        }
+
+        /// <summary>
+        /// Forge-facing generation entry point. requestedWritingMethod=null keeps the existing weighted automatic
+        /// selection; supplying one of the three stable method ids targets that generator explicitly.
+        /// </summary>
         public async Task<StarWritingCreateResult> GenerateAndReviewAsync(
             string starId,
+            string? requestedWritingMethod,
             CancellationToken cancellationToken,
             Action<string>? progress = null)
         {
@@ -65,7 +78,9 @@ namespace Wds.SixStars.Api.Writings
                 System.Diagnostics.Stopwatch totalTimer = System.Diagnostics.Stopwatch.StartNew();
                 StarProfile profile = _profiles.GetProfile(starId);
                 StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
-                string writingMethod = _methodOptions.SelectMethod(_random);
+                string writingMethod = string.IsNullOrWhiteSpace(requestedWritingMethod)
+                    ? _methodOptions.SelectMethod(_random)
+                    : StarWritingMethods.Normalize(requestedWritingMethod);
                 ReportProgress(progress, profile.StarId + " writing shelf: selected " + writingMethod + ".");
                 System.Diagnostics.Debug.WriteLine(
                     "[StarWritingMethod] " + profile.StarId + " selected " + writingMethod + ".");
@@ -1691,10 +1706,8 @@ namespace Wds.SixStars.Api.Writings
             StarProfile profile,
             IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
-            if (!PassesPersistenceQualityGate(profile.ConstellationPersistenceQualityGate, values))
-            {
-                return new List<string>();
-            }
+            bool passesProfileGate = PassesPersistenceQualityGate(profile.ConstellationPersistenceQualityGate, values);
+            List<string> matched = new List<string>();
 
             List<StarWritingPersistenceRule> rules = profile.ConstellationPersistenceRules ?? new List<StarWritingPersistenceRule>();
             if (rules.Count == 0)
@@ -1712,7 +1725,10 @@ namespace Wds.SixStars.Api.Writings
                 };
             }
 
-            List<string> matched = MatchPersistenceRules(rules, values);
+            if (passesProfileGate)
+            {
+                matched.AddRange(MatchPersistenceRules(rules, values));
+            }
             if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
                 && overall.Value > GlobalOverallValueThreshold
                 && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
@@ -1744,12 +1760,11 @@ namespace Wds.SixStars.Api.Writings
 
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
-            // The review model occasionally emits an inflated Overall value while craft dimensions remain low.
-            // Require a broader value consensus before any character route or the global backstop can persist it.
-            if (!PassesPersistenceQualityGate(profile.WritingPersistenceQualityGate, values))
-            {
-                return new List<string>();
-            }
+            // Keep the authored Spark gate and rule shapes intact. The only exception is the global
+            // Overall excellence backstop, which is an independent integrated judgment and must not
+            // disappear merely because an excellent tiny Spark has a concentrated emotional profile.
+            bool passesProfileGate = PassesPersistenceQualityGate(profile.WritingPersistenceQualityGate, values);
+            List<string> matched = new List<string>();
 
             List<StarWritingPersistenceRule> rules = profile.WritingPersistenceRules ?? new List<StarWritingPersistenceRule>();
             if (rules.Count == 0)
@@ -1767,7 +1782,10 @@ namespace Wds.SixStars.Api.Writings
                 };
             }
 
-            List<string> matched = MatchPersistenceRules(rules, values);
+            if (passesProfileGate)
+            {
+                matched.AddRange(MatchPersistenceRules(rules, values));
+            }
 
             // Every Star also gets the same conservative excellence backstop. The comparison is
             // deliberately strict: an Overall value of exactly 80 does not qualify at the default

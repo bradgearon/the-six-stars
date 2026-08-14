@@ -195,7 +195,7 @@ public sealed partial class MainViewModel
             try
             {
                 SetBackgroundWritingLoopStatus("Generating a writing-shelf work and running its selected development process for " + starId + " in the background...");
-                StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(
+                StarWritingCreateResult result = await GenerateForgeShelfContentAsync(
                     starId,
                     iterationCts.Token,
                     message => SetBackgroundWritingLoopStatus(message)).ConfigureAwait(false);

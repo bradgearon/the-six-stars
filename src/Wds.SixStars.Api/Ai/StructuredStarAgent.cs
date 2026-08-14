@@ -151,10 +151,8 @@ namespace Wds.SixStars.Api.Ai
             wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
             wordPairResult.RawModelJson = wordPairJson;
 
-            List<StarWritingValueReference> sparkValueReferences = BuildReaderEmotionValueReferences(
-                state,
+            List<StarWritingValueReference> sparkValueReferences = BuildSharedReaderEmotionCalibrationReferences(
                 StarWritingOutputTypes.Spark,
-                profile.StarId,
                 5);
 
             object compositionData = new
@@ -320,10 +318,8 @@ namespace Wds.SixStars.Api.Ai
                     objectActionError);
             }
 
-            List<StarWritingValueReference> sparkValueReferences = BuildReaderEmotionValueReferences(
-                state,
+            List<StarWritingValueReference> sparkValueReferences = BuildSharedReaderEmotionCalibrationReferences(
                 StarWritingOutputTypes.Spark,
-                profile.StarId,
                 5);
 
             object compositionData = new
@@ -473,7 +469,7 @@ namespace Wds.SixStars.Api.Ai
                 totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
-                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.Spark, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select(item => new
@@ -554,7 +550,7 @@ namespace Wds.SixStars.Api.Ai
                 vectorCount = StarWritingReaderEmotionVector.Categories.Length,
                 emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.Spark, profile.StarId, 5),
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.Spark, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select((item, index) => new
@@ -579,6 +575,25 @@ namespace Wds.SixStars.Api.Ai
                 "star-writing-rate",
                 cancellationToken).ConfigureAwait(false);
             StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
+
+            if (HasCompleteWritingReview(result) && HasSuspiciousCollapsedWritingReview(result))
+            {
+                List<ChatMessage> calibrationRepairMessages = messages.ToList();
+                calibrationRepairMessages.Add(new ChatMessage(
+                    "user",
+                    "CALIBRATION RE-REVIEW: The previous response collapsed different writings into the same reader-emotion vector. Read each candidate independently. The author identity must not affect magnitude; the same text under another actor must receive the same values. Re-evaluate all five from the shared IU scale and return only the compact JSON contract."));
+                string calibrationRepairJson = await _client.CompleteJsonAsync(
+                    calibrationRepairMessages,
+                    StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
+                    0,
+                    "star-writing-rate-calibration-repair",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingReviewResult calibrationRepaired = ParseWritingReviewResult(calibrationRepairJson, profile.StarId);
+                calibrationRepaired.RawModelJson = json + Environment.NewLine
+                    + "--- CALIBRATION COLLAPSE RE-REVIEW ---" + Environment.NewLine
+                    + calibrationRepairJson;
+                if (HasCompleteWritingReview(calibrationRepaired)) result = calibrationRepaired;
+            }
 
             if (!HasCompleteWritingReview(result))
             {
@@ -726,7 +741,7 @@ namespace Wds.SixStars.Api.Ai
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
-                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
@@ -843,7 +858,7 @@ namespace Wds.SixStars.Api.Ai
                 eligibleContributorStarIds = (eligibleContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
-                valueReferences = BuildReaderEmotionValueReferences(viewpointState, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3),
                 phaseNumber = Math.Max(1, phaseNumber),
                 pendingFinish,
                 finishRequestedByStarId = PromptText(finishRequestedByStarId, 80)
@@ -904,7 +919,7 @@ namespace Wds.SixStars.Api.Ai
                 seedWords = NormalizeSeedWords(seedWords),
                 referenceValue = _valueBaselines.ReferenceValue,
                 vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
-                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3)
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3)
             };
             List<ChatMessage> messages = new List<ChatMessage>
             {
@@ -959,7 +974,7 @@ namespace Wds.SixStars.Api.Ai
                 vectorCount = StarWritingReaderEmotionVector.Categories.Length,
                 emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
                 referenceValue = _valueBaselines.ReferenceValue,
-                valueReferences = BuildReaderEmotionValueReferences(state, StarWritingOutputTypes.ConstellationStory, viewpointProfile.StarId, 3),
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3),
                 title = PromptText(title, 0),
                 story = PromptText(story, 0)
             };
@@ -1650,6 +1665,25 @@ namespace Wds.SixStars.Api.Ai
             return false;
         }
 
+        private static bool HasSuspiciousCollapsedWritingReview(StarWritingReviewResult result)
+        {
+            if (result?.Ratings == null || result.Ratings.Count < 5) return false;
+
+            List<string> vectors = new List<string>();
+            foreach (StarWritingRating rating in result.Ratings.Where(x => x != null).Take(5))
+            {
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(rating.EmotionalVector, out string normalized, out _))
+                {
+                    return false;
+                }
+                vectors.Add(normalized);
+            }
+
+            // Four or five byte-for-byte identical 31-value judgments across different writings is
+            // a strong sign that the local model copied a persona/template vector instead of reading.
+            return vectors.GroupBy(x => x, StringComparer.Ordinal).Any(group => group.Count() >= 4);
+        }
+
         private static bool HasCompleteWritingReview(StarWritingReviewResult result)
         {
             if (result.Ratings == null || result.Ratings.Count < 5) return false;
@@ -2032,64 +2066,14 @@ namespace Wds.SixStars.Api.Ai
                 .ToList();
         }
 
-        private List<StarWritingValueReference> BuildReaderEmotionValueReferences(
-            StarWritingNotesState state,
+        private List<StarWritingValueReference> BuildSharedReaderEmotionCalibrationReferences(
             string outputType,
-            string preferredStarId,
             int maximum)
         {
-            int take = Math.Max(0, maximum);
-            if (take == 0) return new List<StarWritingValueReference>();
-
-            string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
-            List<StarWritingValueReference> references = _valueBaselines
-                .GetCuratedReaderEmotionReferences(normalizedOutputType, preferredStarId, take);
-            HashSet<string> seenText = new HashSet<string>(
-                references.Where(x => x != null && !string.IsNullOrWhiteSpace(x.Writing)).Select(x => x.Writing.Trim()),
-                StringComparer.Ordinal);
-
-            if (references.Count < take)
-            {
-                IEnumerable<PersistedStarWriting> candidates = (state?.PersistedWritings ?? new List<PersistedStarWriting>())
-                    .Where(x => x != null
-                        && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrWhiteSpace(x.Writing));
-
-                foreach (PersistedStarWriting writing in candidates
-                    .Select(x => new { Writing = x, Public = StarWritingValueBaselineCatalog.ComputeReaderEmotionPublicValue(x.EmotionalVector) })
-                    .Where(x => x.Public >= 0)
-                    .OrderByDescending(x => StarWritingDeterministicRanker.OverallValue(x.Writing))
-                    .ThenByDescending(x => x.Public)
-                    .ThenByDescending(x => x.Writing.PersistedAt)
-                    .ThenBy(x => x.Writing.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase))
-                {
-                    if (references.Count >= take) break;
-                    string text = (writing.Writing.Writing ?? string.Empty).Trim();
-                    if (text.Length == 0 || !seenText.Add(text)) continue;
-                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
-                            writing.Writing.EmotionalVector,
-                            out string vector,
-                            out Dictionary<string, StarWritingEmotionValue> values)) continue;
-
-                    references.Add(new StarWritingValueReference
-                    {
-                        Source = "shelf-best",
-                        Id = writing.Writing.Id ?? string.Empty,
-                        StarId = preferredStarId ?? string.Empty,
-                        OutputType = normalizedOutputType,
-                        Title = writing.Writing.Title ?? string.Empty,
-                        Writing = text,
-                        ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
-                        ValueVector = vector,
-                        ValueUnit = StarWritingValueUnits.InformationUnits,
-                        OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall"),
-                        PublicValue = writing.Public
-                    });
-                }
-            }
-
-            return references.Take(take).ToList();
+            // IU is one shared currency. Never calibrate a reviewer from the current actor's
+            // previously persisted shelf: that creates a self-reinforcing per-actor exchange rate.
+            // The curated pack is deliberately actor-neutral and identical for every reviewer.
+            return _valueBaselines.GetSharedReaderEmotionCalibrationReferences(outputType, maximum);
         }
 
         private static string PromptText(string? value, int maximumCharacters)

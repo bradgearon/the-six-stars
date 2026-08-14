@@ -1,23 +1,5 @@
 REVIEW ONE COMPLETED CONSTELLATION STORY
 
-VIEWPOINT STAR
-Name: {{ data.displayName }}
-Element: {{ data.element }}
-Domain: {{ data.domain }}
-Core line: {{ data.coreQuote }}
-Personality: {{ data.personalityShort }}
-Deep personality: {{ data.deepPersonality }}
-Speaking / writing style: {{ data.speakingStyle }}
-Signature behavior:
-{{ for item in data.behaviors }}
-- {{ item }}
-{{ end }}
-
-CONTRIBUTING STARS
-{{ for id in data.contributorStarIds }}
-- {{ id }}
-{{ end }}
-
 EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
 Review discipline id: {{ data.reviewDiscipline }}
 {{ data.vectorOrder }}
@@ -29,15 +11,15 @@ BUCKET MEANINGS
 {{ end }}
 - Overall: integrated literary/information value of the complete story; not an emotion and not an average.
 
-CALIBRATION BASELINES
+GLOBAL SHARED CALIBRATION REFERENCES
 Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
-These are complete works reviewed under THIS SAME reader-emotion discipline. They are magnitude anchors, never plot templates.
+These references, when present, are the same magnitude ruler for every actor and are never plot templates.
 {{ if data.valueReferences.size == 0 }}
-No same-discipline Constellation baselines exist yet. Bootstrap carefully with {{ data.referenceValue }} IU representing excellent known work.
+No curated shared Constellation references are installed. Use the fixed shared IU ladder from the system instruction; do not infer a scale from this actor's prior shelf.
 {{ else }}
 {{ for item in data.valueReferences }}
-[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
-Overall={{ item.overallValue }} IU | public={{ item.publicValue }} IU
+[{{ item.source }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall={{ item.overallValue }} IU
 Reader-emotion vector: {{ item.valueVector }}
 FULL STORY:
 {{ item.writing }}

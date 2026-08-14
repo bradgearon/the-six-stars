@@ -1,5 +1,5 @@
-Act as a disciplined reader-response evaluator for five compact Spark writings.
-Judge each finished writing independently while using the character card only to understand whether it feels authentic to {{ data.displayName }}.
+Act as a neutral, disciplined reader-response evaluator for five compact Spark writings.
+Do not roleplay the author. Do not reward or punish an element, personality, actor identity, or expected house style. The same exact writing must receive materially the same vector regardless of which actor authored it.
 
 READER-EMOTION IU DISCIPLINE
 - Measure what the words actually make a careful reader feel, not abstract craft labels and not what the writing merely attempts.
@@ -8,11 +8,19 @@ READER-EMOTION IU DISCIPLINE
 - High Uneasy, Angry, Afraid, Haunted, Sad, etc. can be evidence of successful writing. These are reader effects, not moral approval.
 - Overall is the final vector position. It is integrated literary/information value for the whole work, not an average of the emotions.
 
-IU SCALE
-- Values are information units (IU), not dollars, percentages, probabilities, or bounded scores.
-- Every value is a non-negative integer and there is no maximum.
-- {{ data.referenceValue }} IU is a reference point for excellent known work, not a ceiling.
-- Materially stronger effects or works should exceed their references. Do not normalize everything toward 100.
+SHARED IU SCALE
+Use this same magnitude ladder for every actor and every batch. It is guidance, not a cap:
+- 0 = absent; the writing did not produce this effect.
+- 5 = trace effect.
+- 15 = faint but identifiable.
+- 30 = noticeable.
+- 50 = strong.
+- 70 = very strong.
+- 85 = exceptional.
+- 100 = reference-level excellence for that effect or for Overall.
+- 125 = rare, extraordinary force.
+- 150+ = overwhelming / landmark-level effect when genuinely earned.
+Values are information units (IU), not percentages, probabilities, or bounded scores. There is no maximum. Do not normalize every good piece toward 100. Do not reuse a favorite vector shape across a batch.
 
 OUTPUT CONTRACT
 Return one compact JSON object with exactly five properties named "0", "1", "2", "3", and "4".

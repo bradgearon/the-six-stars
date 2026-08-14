@@ -1,18 +1,5 @@
 REVIEW FIVE SPARKS
 
-COMPACT CHARACTER CARD
-Name: {{ data.displayName }}
-Element: {{ data.element }}
-Domain: {{ data.domain }}
-Core line: {{ data.coreQuote }}
-Personality: {{ data.personalityShort }}
-Deep personality: {{ data.deepPersonality }}
-Speaking style: {{ data.speakingStyle }}
-Signature imagery / behavior:
-{{ for item in data.behaviors }}
-- {{ item }}
-{{ end }}
-
 EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
 Overall is LAST.
@@ -23,13 +10,14 @@ BUCKET MEANINGS
 {{ end }}
 - Overall: integrated literary/information value of the complete work; not an emotion and not an average.
 
-VALUE-CALIBRATION REFERENCES
+GLOBAL SHARED CALIBRATION REFERENCES
+These references are the same ruler for every actor. Never change the scale because of who wrote the candidate.
 Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
 {{ if data.valueReferences.size == 0 }}
-No same-discipline Spark references are available yet. Bootstrap with {{ data.referenceValue }} IU representing excellent known work while preserving broad separation among weak, moderate, strong, excellent, and extraordinary effects.
+No curated shared Spark references are installed. Use the fixed shared IU ladder from the system instruction; do not infer a scale from this actor's prior writing.
 {{ else }}
 {{ for item in data.valueReferences }}
-[{{ item.source }} | {{ item.starId }}] Overall={{ item.overallValue }} IU | public={{ item.publicValue }} IU
+[{{ item.source }}] Overall={{ item.overallValue }} IU
 Reader-emotion vector: {{ item.valueVector }}
 Writing: {{ item.writing }}
 ---

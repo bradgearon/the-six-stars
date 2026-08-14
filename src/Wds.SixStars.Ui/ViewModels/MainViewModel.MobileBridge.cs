@@ -603,7 +603,7 @@ public sealed partial class MainViewModel
             case "GenerateStarWriting":
             {
                 using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request to generate Star writing");
-                StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarWritingCreateResult writingResult = await GenerateForgeShelfContentAsync(starId, cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 List<string> items = IsConstellationStory(writingResult)
                     ? writingResult.Batch.Items.Select(x =>

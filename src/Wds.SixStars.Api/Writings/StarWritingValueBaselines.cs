@@ -58,7 +58,7 @@ namespace Wds.SixStars.Api.Writings
 
     /// <summary>
     /// Loads optional curated baselines from Content/Writing/writing-value-baselines.json.
-    /// If it is missing, empty, or malformed, generation continues and the caller can fall back to shelf references.
+    /// If it is missing, empty, or malformed, generation continues using the fixed shared IU ladder; review never falls back to actor-local shelf values.
     /// </summary>
     public sealed class StarWritingValueBaselineCatalog
     {
@@ -176,6 +176,53 @@ namespace Wds.SixStars.Api.Writings
                 {
                     Source = "curated-baseline",
                     Id = string.IsNullOrWhiteSpace(example.Id) ? "curated-reader-emotion-" + references.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) : example.Id.Trim(),
+                    StarId = (example.StarId ?? string.Empty).Trim(),
+                    OutputType = normalizedOutputType,
+                    Title = (example.Title ?? string.Empty).Trim(),
+                    Writing = example.Writing.Trim(),
+                    ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    ValueVector = normalizedVector,
+                    ValueUnit = StarWritingValueUnits.InformationUnits,
+                    OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall"),
+                    PublicValue = ComputeReaderEmotionPublicValue(normalizedVector)
+                });
+                if (references.Count >= take) break;
+            }
+            return references;
+        }
+
+        /// <summary>
+        /// Returns the canonical shared reader-emotion calibration set in authored file order.
+        /// Review calibration must be actor-independent: no Star preference and no shelf fallback.
+        /// </summary>
+        public List<StarWritingValueReference> GetSharedReaderEmotionCalibrationReferences(
+            string outputType,
+            int maximum)
+        {
+            int take = Math.Max(0, maximum);
+            if (take == 0) return new List<StarWritingValueReference>();
+
+            string normalizedOutputType = StarWritingOutputTypes.Normalize(outputType);
+            List<StarWritingValueReference> references = new List<StarWritingValueReference>();
+            foreach (StarWritingValueBaselineExample example in (Load().Examples ?? new List<StarWritingValueBaselineExample>())
+                .Where(x => x != null)
+                .Where(x => string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), normalizedOutputType, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(StarWritingReviewDisciplines.Normalize(x.ReviewDiscipline), StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)))
+            {
+                string vector = (example.ValueVector ?? string.Empty).Trim();
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(vector, out string normalizedVector, out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    vector = StarWritingReaderEmotionVector.FromLegacyEmotionFeedback(example.EmotionFeedback, example.OverallValue);
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(vector, out normalizedVector, out values)) continue;
+                }
+                if (string.IsNullOrWhiteSpace(example.Writing)) continue;
+
+                references.Add(new StarWritingValueReference
+                {
+                    Source = "shared-calibration",
+                    Id = string.IsNullOrWhiteSpace(example.Id)
+                        ? "shared-reader-emotion-" + references.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        : example.Id.Trim(),
                     StarId = (example.StarId ?? string.Empty).Trim(),
                     OutputType = normalizedOutputType,
                     Title = (example.Title ?? string.Empty).Trim(),

@@ -31,6 +31,10 @@ using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Forge.Contracts;
+using Wds.SixStars.Api.Forge.Context;
+using Wds.SixStars.Api.Forge.Generation;
+using Wds.SixStars.Api.Forge.Review;
 using Wds.SixStars.Api.Writings;
 using Wds.SixStars.Api.XPosting;
 using Wds.SixStars.Ui.Audio;
@@ -48,6 +52,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SixStarsRuntime _runtime;
     private readonly IStarProfileProvider _profileProvider;
     private readonly StarWritingService _writingService;
+    private readonly IForgeService _forgeService;
     private readonly StarXPostingOptions _xPostingOptions;
     private readonly StarXPostingService _xPostingService;
     private readonly StarXPostingScheduleStore _xPostingScheduleStore;
@@ -197,6 +202,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEED_WORDS_ENABLED"),
                     _appConfig.WritingPasses.SeedWordsEnabled)));
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
+        IForgeInteractionReviewService forgeReviewService = starAgent is IStarTurnAnalyzer turnAnalyzer
+            ? new StarTurnAnalyzerForgeInteractionReviewService(turnAnalyzer)
+            : new PassthroughForgeInteractionReviewService();
+        _forgeService = new InProcessForgeService(
+            forgeReviewService,
+            new SixStarsForgeContentGenerationService(_writingService));
+        System.Diagnostics.Debug.WriteLine("[Forge] In-process Forge service boundary enabled: " + _forgeService.ForgeId + ".");
         _xPostingOptions = CreateXPostingOptions();
         _xOAuth2TokenStore = new DesktopXOAuth2TokenStore(Path.Combine(_xPostingOptions.StateRoot, "oauth2-tokens"));
         _xOAuth2AuthorizationService = new XOAuth2DesktopAuthorizationService(_xOAuth2TokenStore);
@@ -230,7 +242,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             worldEventOptions: CreateWorldEventOptions(),
             speechIntentOptions: CreateStarSpeechIntentOptions(),
             preparedSpeechOptions: CreatePreparedSpeechOptions(),
-            foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions());
+            foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions(),
+            forgeInteractionReviewService: starAgent is IStarTurnAnalyzer ? _forgeService : null,
+            forgeContextCardFactory: new SixStarsForgeContextCardFactory());
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
@@ -2480,6 +2494,23 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task<StarWritingCreateResult> GenerateForgeShelfContentAsync(
+        string starId,
+        CancellationToken cancellationToken,
+        Action<string>? progress = null,
+        string generatorId = ForgeGeneratorIds.Auto)
+    {
+        ForgeContentGenerationResult result = await _forgeService.GenerateContentAsync(
+            new ForgeContentGenerationRequest
+            {
+                Actor = ForgeActorReference.ForStar(starId),
+                GeneratorId = generatorId,
+                Progress = progress
+            },
+            cancellationToken).ConfigureAwait(false);
+        return result.WritingResult;
+    }
+
     private async Task GenerateStarWritingAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
@@ -2491,7 +2522,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         });
         try
         {
-            StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(
+            StarWritingCreateResult result = await GenerateForgeShelfContentAsync(
                 starId,
                 token,
                 message => OnUiThread(() => Status = message)).ConfigureAwait(false);

@@ -16,7 +16,7 @@ public sealed partial class MainViewModel
                 StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildConstellationReviewSummary(StarWritingHistoryItem? item)
+    private static string BuildReaderEmotionReviewSummary(StarWritingHistoryItem? item)
     {
         if (item == null
             || !string.Equals(
@@ -38,6 +38,22 @@ public sealed partial class MainViewModel
             + " IU; strongest reader effects: " + strongest + ".";
     }
 
+    private static string BuildSparkBatchReviewSummary(StarWritingCreateResult result)
+    {
+        if (result?.Batch?.Items == null || result.Batch.Items.Count == 0) return string.Empty;
+
+        string values = string.Join(", ", result.Batch.Items.Select(item =>
+        {
+            if (!StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out var readerValues))
+            {
+                return "?";
+            }
+            return StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall")
+                .ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        }));
+        return " Overall IU: [" + values + "].";
+    }
+
     private static string BuildWritingGenerationStatus(string starId, StarWritingCreateResult result, string prefix = "")
     {
         string repairMessage = result.RepairedRatingCount > 0
@@ -49,7 +65,7 @@ public sealed partial class MainViewModel
             string persistence = result.PersistedCount > 0
                 ? "The finished Constellation Story passed her reader-emotion persistence rules and was saved to the shelf."
                 : "The finished Constellation Story was reviewed but did not pass her reader-emotion persistence rules.";
-            string review = BuildConstellationReviewSummary(result.Batch.Items.FirstOrDefault());
+            string review = BuildReaderEmotionReviewSummary(result.Batch.Items.FirstOrDefault());
             return prefix + starId + " used " + result.WritingMethod
                 + " and completed " + result.CompletedPassCount + " collaborative development phases. "
                 + persistence + (string.IsNullOrWhiteSpace(review) ? "" : " " + review)
@@ -60,7 +76,8 @@ public sealed partial class MainViewModel
         return prefix + starId + " used " + result.WritingMethod
             + " and completed " + result.CompletedPassCount + " of " + result.SelectedPassCount
             + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; "
-            + result.PersistedCount + " Sparks passed her persistence rules. "
+            + result.PersistedCount + " Sparks passed her persistence rules."
+            + BuildSparkBatchReviewSummary(result) + " "
             + result.State.PendingCount + " are new and waiting to be told."
             + repairMessage;
     }
@@ -81,7 +98,7 @@ public sealed partial class MainViewModel
                 }
                 output.AppendLine(item.Writing ?? string.Empty);
                 output.AppendLine();
-                string review = BuildConstellationReviewSummary(item);
+                string review = BuildReaderEmotionReviewSummary(item);
                 if (!string.IsNullOrWhiteSpace(review))
                 {
                     output.AppendLine("Reader-emotion review: " + review);
@@ -104,9 +121,14 @@ public sealed partial class MainViewModel
             StarWritingHistoryItem item = result.Batch.Items[i];
             output.Append(i + 1).Append(". [").Append(string.Join(" + ", item.WordsUsed)).AppendLine("]");
             output.AppendLine(item.Writing);
+            string review = BuildReaderEmotionReviewSummary(item);
+            if (!string.IsNullOrWhiteSpace(review))
+            {
+                output.AppendLine("Reader-emotion review: " + review);
+            }
             output.AppendLine(item.Persisted
                 ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
-                : "Not persisted by this Star's current value rules.");
+                : "Not persisted by this Star's current reader-effect rules.");
             output.AppendLine();
         }
         return output.ToString().TrimEnd();

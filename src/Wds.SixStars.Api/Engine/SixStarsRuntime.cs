@@ -18,6 +18,9 @@ using Wds.SixStars.Api.State;
 using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Forge.Contracts;
+using Wds.SixStars.Api.Forge.Context;
+using Wds.SixStars.Api.Forge.Review;
 
 namespace Wds.SixStars.Api.Engine
 {
@@ -27,6 +30,8 @@ namespace Wds.SixStars.Api.Engine
         private readonly IStarAgent _agent;
         private readonly IRelationshipDeltaCalculator _deltaCalculator;
         private readonly IStarMemoryApi _memoryApi;
+        private readonly IForgeInteractionReviewService? _forgeInteractionReviewService;
+        private readonly IForgeContextCardFactory _forgeContextCardFactory;
         private readonly IScreenContextStore? _screenContextStore;
         private readonly int _recentScreenCount;
         private readonly int _recentHistoryCount;
@@ -107,7 +112,9 @@ namespace Wds.SixStars.Api.Engine
             WorldEventOptions? worldEventOptions = null,
             StarSpeechIntentOptions? speechIntentOptions = null,
             PreparedSpeechOptions? preparedSpeechOptions = null,
-            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null,
+            IForgeInteractionReviewService? forgeInteractionReviewService = null,
+            IForgeContextCardFactory? forgeContextCardFactory = null)
             : this(
                 profileProvider,
                 agent,
@@ -127,7 +134,9 @@ namespace Wds.SixStars.Api.Engine
                 worldEventOptions,
                 speechIntentOptions,
                 preparedSpeechOptions,
-                foregroundSpeechStyleOptions)
+                foregroundSpeechStyleOptions,
+                forgeInteractionReviewService,
+                forgeContextCardFactory)
         {
         }
 
@@ -143,12 +152,17 @@ namespace Wds.SixStars.Api.Engine
             WorldEventOptions? worldEventOptions = null,
             StarSpeechIntentOptions? speechIntentOptions = null,
             PreparedSpeechOptions? preparedSpeechOptions = null,
-            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null,
+            IForgeInteractionReviewService? forgeInteractionReviewService = null,
+            IForgeContextCardFactory? forgeContextCardFactory = null)
         {
             _profileProvider = profileProvider;
             _agent = agent;
             _deltaCalculator = deltaCalculator;
             _memoryApi = memoryApi;
+            _forgeContextCardFactory = forgeContextCardFactory ?? new SixStarsForgeContextCardFactory();
+            _forgeInteractionReviewService = forgeInteractionReviewService
+                ?? (agent is IStarTurnAnalyzer analyzer ? new StarTurnAnalyzerForgeInteractionReviewService(analyzer) : null);
             _screenContextStore = screenContextStore;
             _recentScreenCount = Math.Max(1, recentScreenCount);
             _recentHistoryCount = Math.Max(1, recentHistoryCount);
@@ -866,7 +880,7 @@ namespace Wds.SixStars.Api.Engine
                 return response;
             }
 
-            if (_agent is IStarTurnAnalyzer analyzer)
+            if (_forgeInteractionReviewService != null)
             {
                 response.StateDeltas = RelationshipDelta.Zero();
                 response.UnityEvents.Add(new UnityEventEnvelope
@@ -892,7 +906,7 @@ namespace Wds.SixStars.Api.Engine
                     }
                 });
                 response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. Background review is waiting for voice generation to finish.");
-                StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, request, state, response);
+                StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, request, state, response);
                 return response;
             }
 
@@ -2514,7 +2528,7 @@ namespace Wds.SixStars.Api.Engine
                         proposalResponse.IsGirlfriendReadyAfter = true;
                     }
 
-                    if (_agent is IStarTurnAnalyzer analyzer)
+                    if (_forgeInteractionReviewService != null)
                     {
                         proposalResponse.StateDeltas = RelationshipDelta.Zero();
                         string backgroundAnalysisId = Guid.NewGuid().ToString("N");
@@ -2529,7 +2543,7 @@ namespace Wds.SixStars.Api.Engine
                                 { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated girlfriend proposal voice playback completes." }
                             }
                         });
-                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, latestState, proposalResponse);
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, latestState, proposalResponse);
                     }
 
                     proposalResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2710,7 +2724,7 @@ namespace Wds.SixStars.Api.Engine
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ". This is detached from the quick-thinking TTS operation token so the placeholder voice cannot cancel the story LLM call.");
                     StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, workToken).ConfigureAwait(false);
                     ApplyVoiceDefaults(profile, storyResponse);
-                    if (_agent is IStarTurnAnalyzer analyzer)
+                    if (_forgeInteractionReviewService != null)
                     {
                         storyResponse.StateDeltas = RelationshipDelta.Zero();
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2738,7 +2752,7 @@ namespace Wds.SixStars.Api.Engine
                         });
                         storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting for story voice completion.");
                         storyResponse.Debug.Notes.Add(BuildStoryLengthDebugNote(workerRequest.StoryOptions));
-                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, state, storyResponse);
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, state, storyResponse);
                     }
 
                     storyResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2902,14 +2916,13 @@ namespace Wds.SixStars.Api.Engine
                 + " sentence(s) per chunk. Flexible target: complete story is more important than exact duration.";
         }
 
-        private void StorePendingBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void StorePendingBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
             lock (_backgroundGate)
             {
                 _pendingBackgroundAnalysis[analysisId] = new PendingBackgroundAnalysis
                 {
                     AnalysisId = analysisId,
-                    Analyzer = analyzer,
                     Profile = profile,
                     Request = request,
                     StateBeforeTurn = state,
@@ -2956,11 +2969,11 @@ namespace Wds.SixStars.Api.Engine
             }
 
             System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after voice ready: " + reason);
-            QueueBackgroundAnalysis(analysisId, pending.Analyzer, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
+            QueueBackgroundAnalysis(analysisId, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }
 
-        private void QueueBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void QueueBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
             _backgroundDispatcher.Enqueue(
                 "PrimaryBackgroundAnalysis",
@@ -2975,7 +2988,28 @@ namespace Wds.SixStars.Api.Engine
                         await _backgroundAnalysisQueue.WaitAsync(workToken).ConfigureAwait(false);
                         try
                         {
-                            StarInteractionResponse analyzed = await analyzer.AnalyzeTurnAsync(profile, request, state, foregroundResponse, workToken).ConfigureAwait(false);
+                            if (_forgeInteractionReviewService == null)
+                            {
+                                throw new InvalidOperationException("Forge interaction review service is not configured.");
+                            }
+                            ForgeInteractionReviewResult reviewResult = await _forgeInteractionReviewService.ReviewInteractionAsync(
+                                new ForgeInteractionReviewRequest
+                                {
+                                    ReviewId = analysisId,
+                                    Actor = new ForgeActorReference
+                                    {
+                                        ForgeId = "six-stars",
+                                        ActorId = string.IsNullOrWhiteSpace(profile.ActorId) ? profile.StarId : profile.ActorId,
+                                        ActorType = string.IsNullOrWhiteSpace(profile.ActorType) ? "star" : profile.ActorType
+                                    },
+                                    Context = _forgeContextCardFactory.CreateInteractionReviewBundle(profile, request, state, foregroundResponse),
+                                    Profile = profile,
+                                    Interaction = request,
+                                    StateBeforeTurn = state,
+                                    ForegroundResponse = foregroundResponse
+                                },
+                                workToken).ConfigureAwait(false);
+                            StarInteractionResponse analyzed = reviewResult.Analysis;
                             ApplyVoiceDefaults(profile, analyzed);
                             await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, workToken).ConfigureAwait(false);
                             BackgroundAnalysisCompleted?.Invoke(this, analyzed);
@@ -2997,7 +3031,6 @@ namespace Wds.SixStars.Api.Engine
                             _pendingBackgroundAnalysis[analysisId] = new PendingBackgroundAnalysis
                             {
                                 AnalysisId = analysisId,
-                                Analyzer = analyzer,
                                 Profile = profile,
                                 Request = request,
                                 StateBeforeTurn = state,
@@ -3891,7 +3924,6 @@ namespace Wds.SixStars.Api.Engine
         private sealed class PendingBackgroundAnalysis
         {
             public string AnalysisId { get; set; } = string.Empty;
-            public IStarTurnAnalyzer Analyzer { get; set; } = default!;
             public StarProfile Profile { get; set; } = default!;
             public StarInteractionRequest Request { get; set; } = default!;
             public StarState StateBeforeTurn { get; set; } = default!;
