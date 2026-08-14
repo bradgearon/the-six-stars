@@ -20,6 +20,34 @@ internal sealed class MobileVoiceDeliveryService
     public int ConnectedClients => _audioHost()?.ClientCount ?? 0;
     public bool IsConnected => ConnectedClients > 0;
 
+    public async Task<bool> WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        MobileBridgeAudioSocketHost? host = _audioHost();
+        if (host == null) return false;
+        if (host.ClientCount > 0) return true;
+        if (timeout <= TimeSpan.Zero) return false;
+
+        TaskCompletionSource<bool> connected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<string> handler = (_, __) =>
+        {
+            if (host.ClientCount > 0) connected.TrySetResult(true);
+        };
+        host.StatusChanged += handler;
+        try
+        {
+            if (host.ClientCount > 0) return true;
+            Task timeoutTask = Task.Delay(timeout, cancellationToken);
+            Task completed = await Task.WhenAny(connected.Task, timeoutTask).ConfigureAwait(false);
+            if (ReferenceEquals(completed, connected.Task)) return true;
+            await timeoutTask.ConfigureAwait(false); // propagate cancellation; otherwise this was the timeout
+            return host.ClientCount > 0;
+        }
+        finally
+        {
+            host.StatusChanged -= handler;
+        }
+    }
+
     public MobileAudioStreamSession? CreateStreamSession(
         string streamId,
         long streamOrdinal,

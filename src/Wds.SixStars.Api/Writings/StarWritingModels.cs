@@ -254,6 +254,16 @@ namespace Wds.SixStars.Api.Writings
         public bool IsPosted => PostedAt.HasValue;
     }
 
+    /// <summary>
+    /// Version marker for shelf-selection policy changes that need a one-time replay of the
+    /// append-only writing statement log. This is deliberately separate from the JSON schema
+    /// version so clearing a Star can create a fresh state without resurrecting old shelf work.
+    /// </summary>
+    public static class StarWritingPersistencePolicy
+    {
+        public const int CurrentVersion = 2;
+    }
+
     /// <summary>One current-story desire seed contributed by a souled actor during the light pass.</summary>
     public sealed class StarWritingStoryWish
     {
@@ -375,7 +385,8 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 15;
+        public int Version { get; set; } = 16;
+        public int PersistencePolicyVersion { get; set; }
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();

@@ -11,14 +11,29 @@ namespace Wds.SixStars.Api.Writings
 {
     public sealed class StarWritingService
     {
-        private const string GlobalOverallRuleId = "global-overall-excellence";
-        private const double DefaultGlobalOverallValueThreshold = 80.0;
+        private const string SparkOverallRuleId = "reader-overall-top-shelf";
+        private const string ConstellationOverallRuleId = "reader-overall-constellation-shelf";
+        private const double DefaultConstellationOverallValueThreshold = 55.0;
+        private const double DefaultSparkOverallValueThreshold = 60.0;
         private const int SparkPerformanceElitePoolLimit = 100;
         private const int SparkPerformanceCandidateLimit = 25;
         private const int SparkPerformanceTopAnchorCount = 5;
         private const int SparkPerformanceContrastCount = 2;
         private const double SparkPerformanceContrastBandStart = 0.60;
-        private static readonly double GlobalOverallValueThreshold = ReadGlobalOverallValueThreshold();
+        private static readonly IReadOnlyDictionary<string, double> DefaultSparkOverallValueThresholds =
+            new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                // ReaderEmotionIuV1 is actor-neutral, but the local reviewer still uses visibly different
+                // numeric ranges for each Star. Recalibrated from the Aug-14 canonical statement
+                // corpus after Auerlis/Khavia/Nyxari were repeatedly left with zero saved Sparks.
+                // These are durable shelf gates, not per-emotion contracts; the vector format stays shared.
+                ["Auerlis"] = 55.0,
+                ["Elusiaa"] = 40.0,
+                ["Kaelia"] = 50.0,
+                ["Khavia"] = 45.0,
+                ["Maera"] = 55.0,
+                ["Nyxari"] = 45.0
+            };
 
         private readonly IStarProfileProvider _profiles;
         private readonly IStarWritingAgent _agent;
@@ -49,9 +64,15 @@ namespace Wds.SixStars.Api.Writings
 
         public string RootDirectory => _store.RootDirectory;
 
-        public Task<StarWritingNotesState> GetStateAsync(string starId, CancellationToken cancellationToken)
+        public async Task<StarWritingNotesState> GetStateAsync(string starId, CancellationToken cancellationToken)
         {
-            return _store.LoadAsync(starId, cancellationToken);
+            await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                StarProfile profile = _profiles.GetProfile(starId);
+                return await LoadStateWithCurrentPersistencePolicyAsync(profile, cancellationToken).ConfigureAwait(false);
+            }
+            finally { _operationGate.Release(); }
         }
 
         public Task<StarWritingCreateResult> GenerateAndReviewAsync(
@@ -77,7 +98,7 @@ namespace Wds.SixStars.Api.Writings
             {
                 System.Diagnostics.Stopwatch totalTimer = System.Diagnostics.Stopwatch.StartNew();
                 StarProfile profile = _profiles.GetProfile(starId);
-                StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState state = await LoadStateWithCurrentPersistencePolicyAsync(profile, cancellationToken).ConfigureAwait(false);
                 string writingMethod = string.IsNullOrWhiteSpace(requestedWritingMethod)
                     ? _methodOptions.SelectMethod(_random)
                     : StarWritingMethods.Normalize(requestedWritingMethod);
@@ -764,7 +785,7 @@ namespace Wds.SixStars.Api.Writings
             try
             {
                 StarProfile profile = _profiles.GetProfile(starId);
-                StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+                StarWritingNotesState state = await LoadStateWithCurrentPersistencePolicyAsync(profile, cancellationToken).ConfigureAwait(false);
                 if (string.Equals(normalizedOutputType, StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase))
                 {
                     return await PrepareConstellationStoryPerformanceAsync(profile, state, cancellationToken).ConfigureAwait(false);
@@ -1702,6 +1723,163 @@ namespace Wds.SixStars.Api.Writings
                 .ToList();
         }
 
+        private async Task<StarWritingNotesState> LoadStateWithCurrentPersistencePolicyAsync(
+            StarProfile profile,
+            CancellationToken cancellationToken)
+        {
+            StarWritingNotesState state = await _store.LoadAsync(profile.StarId, cancellationToken).ConfigureAwait(false);
+            if (state.PersistencePolicyVersion >= StarWritingPersistencePolicy.CurrentVersion) return state;
+
+            IReadOnlyList<StarWritingStatementLogEntry> logged = await _store
+                .ReadStatementLogAsync(profile.StarId, cancellationToken)
+                .ConfigureAwait(false);
+
+            IEnumerable<StarWritingStatementLogEntry> candidates = logged.Count > 0
+                ? logged
+                : (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>())
+                    .Where(x => x != null)
+                    .Select(CreateStatementCandidateFromHistory);
+
+            foreach (StarWritingStatementLogEntry entry in candidates
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
+                .GroupBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last())
+                .OrderBy(x => x.GeneratedAt)
+                .ThenBy(x => x.Index))
+            {
+                if (!string.Equals(
+                        StarWritingReviewDisciplines.Normalize(entry.ReviewDiscipline),
+                        StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                        entry.EmotionalVector,
+                        out string normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    continue;
+                }
+
+                string outputType = string.Equals(
+                        StarWritingMethods.Normalize(entry.WritingMethod),
+                        StarWritingMethods.ConstellationForge,
+                        StringComparison.OrdinalIgnoreCase)
+                    ? StarWritingOutputTypes.ConstellationStory
+                    : StarWritingOutputTypes.Normalize(entry.OutputType);
+                List<string> matchedRules = string.Equals(outputType, StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)
+                    ? GetMatchedConstellationRuleIds(profile, values)
+                    : GetMatchedRuleIds(profile, values);
+                if (matchedRules.Count == 0) continue;
+
+                double overall = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+                PersistedStarWriting? existing = (state.PersistedWritings ?? new List<PersistedStarWriting>())
+                    .FirstOrDefault(x => x != null && string.Equals(x.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
+                if (existing == null)
+                {
+                    existing = new PersistedStarWriting
+                    {
+                        Id = entry.Id,
+                        WritingMethod = StarWritingMethods.Normalize(entry.WritingMethod),
+                        OutputType = outputType,
+                        Title = entry.Title ?? string.Empty,
+                        ContributingStarIds = (entry.ContributingStarIds ?? new List<string>()).ToList(),
+                        StoryCharacters = (entry.StoryCharacters ?? new List<string>()).ToList(),
+                        StorySubjects = (entry.StorySubjects ?? new List<string>()).ToList(),
+                        StoryWishes = (entry.StoryWishes ?? new List<StarWritingStoryWish>()).Select(CloneStoryWish).ToList(),
+                        SourceBatchId = entry.SourceBatchId ?? string.Empty,
+                        WordsUsed = (entry.WordsUsed ?? new List<string>()).ToList(),
+                        Writing = entry.Statement ?? string.Empty,
+                        ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                        EmotionalVector = normalizedVector,
+                        EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                        OverallValue = overall,
+                        MatchedPersistenceRuleIds = matchedRules.ToList(),
+                        GeneratedAt = entry.GeneratedAt,
+                        PersistedAt = entry.GeneratedAt == default ? DateTimeOffset.UtcNow : entry.GeneratedAt,
+                        ToldCount = 0
+                    };
+                    state.PersistedWritings.Add(existing);
+                }
+                else
+                {
+                    // Keep performance/posting history intact while refreshing the deterministic
+                    // shelf decision and canonical ReaderEmotion vector.
+                    existing.WritingMethod = StarWritingMethods.Normalize(entry.WritingMethod);
+                    existing.OutputType = outputType;
+                    existing.Title = entry.Title ?? string.Empty;
+                    existing.ContributingStarIds = (entry.ContributingStarIds ?? new List<string>()).ToList();
+                    existing.StoryCharacters = (entry.StoryCharacters ?? new List<string>()).ToList();
+                    existing.StorySubjects = (entry.StorySubjects ?? new List<string>()).ToList();
+                    existing.StoryWishes = (entry.StoryWishes ?? new List<StarWritingStoryWish>()).Select(CloneStoryWish).ToList();
+                    existing.SourceBatchId = entry.SourceBatchId ?? string.Empty;
+                    existing.WordsUsed = (entry.WordsUsed ?? new List<string>()).ToList();
+                    existing.Writing = entry.Statement ?? string.Empty;
+                    existing.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    existing.EmotionalVector = normalizedVector;
+                    existing.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                    existing.OverallValue = overall;
+                    existing.MatchedPersistenceRuleIds = matchedRules.ToList();
+                    existing.GeneratedAt = entry.GeneratedAt;
+                }
+
+                StarWritingHistoryItem? recent = (state.RecentWritingHistory ?? new List<StarWritingHistoryItem>())
+                    .FirstOrDefault(x => x != null && string.Equals(x.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
+                if (recent != null)
+                {
+                    recent.Persisted = true;
+                    recent.MatchedPersistenceRuleIds = matchedRules.ToList();
+                    recent.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    recent.EmotionalVector = normalizedVector;
+                    recent.OverallValue = overall;
+                }
+            }
+
+            state.PersistencePolicyVersion = StarWritingPersistencePolicy.CurrentVersion;
+            RebuildUsedWordsFromPersistedWritings(state);
+            await _store.SaveAsync(state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
+        private static StarWritingStatementLogEntry CreateStatementCandidateFromHistory(StarWritingHistoryItem item)
+        {
+            return new StarWritingStatementLogEntry
+            {
+                Id = item.Id,
+                SourceBatchId = item.SourceBatchId,
+                StarId = string.Empty,
+                WritingMethod = item.WritingMethod,
+                OutputType = item.OutputType,
+                Title = item.Title,
+                ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList(),
+                StoryCharacters = (item.StoryCharacters ?? new List<string>()).ToList(),
+                StorySubjects = (item.StorySubjects ?? new List<string>()).ToList(),
+                StoryWishes = (item.StoryWishes ?? new List<StarWritingStoryWish>()).Select(CloneStoryWish).ToList(),
+                GeneratedAt = item.GeneratedAt,
+                Index = item.Index,
+                WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
+                Statement = item.Writing,
+                ReviewDiscipline = item.ReviewDiscipline,
+                EmotionalVector = item.EmotionalVector,
+                OverallValue = item.OverallValue,
+                Persisted = item.Persisted,
+                MatchedPersistenceRuleIds = (item.MatchedPersistenceRuleIds ?? new List<string>()).ToList()
+            };
+        }
+
+        private static StarWritingStoryWish CloneStoryWish(StarWritingStoryWish wish)
+        {
+            return new StarWritingStoryWish
+            {
+                SourceActorId = wish?.SourceActorId ?? string.Empty,
+                SourceDisplayName = wish?.SourceDisplayName ?? string.Empty,
+                SourceActorType = wish?.SourceActorType ?? string.Empty,
+                Wish = wish?.Wish ?? string.Empty
+            };
+        }
+
         private static List<string> GetMatchedConstellationRuleIds(
             StarProfile profile,
             IReadOnlyDictionary<string, StarWritingEmotionValue> values)
@@ -1729,11 +1907,12 @@ namespace Wds.SixStars.Api.Writings
             {
                 matched.AddRange(MatchPersistenceRules(rules, values));
             }
+            double overallThreshold = ReadConstellationOverallValueThreshold(profile.StarId);
             if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
-                && overall.Value > GlobalOverallValueThreshold
-                && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
+                && overall.Value >= overallThreshold
+                && !matched.Contains(ConstellationOverallRuleId, StringComparer.OrdinalIgnoreCase))
             {
-                matched.Add(GlobalOverallRuleId);
+                matched.Add(ConstellationOverallRuleId);
             }
             return matched;
         }
@@ -1760,9 +1939,9 @@ namespace Wds.SixStars.Api.Writings
 
         private static List<string> GetMatchedRuleIds(StarProfile profile, IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
-            // Keep the authored Spark gate and rule shapes intact. The only exception is the global
-            // Overall excellence backstop, which is an independent integrated judgment and must not
-            // disappear merely because an excellent tiny Spark has a concentrated emotional profile.
+            // Keep the authored Spark gate and rule shapes intact. The independent Overall top-shelf
+            // route must not disappear merely because an excellent tiny Spark has a concentrated
+            // emotional profile instead of two huge per-emotion values.
             bool passesProfileGate = PassesPersistenceQualityGate(profile.WritingPersistenceQualityGate, values);
             List<string> matched = new List<string>();
 
@@ -1787,15 +1966,15 @@ namespace Wds.SixStars.Api.Writings
                 matched.AddRange(MatchPersistenceRules(rules, values));
             }
 
-            // Every Star also gets the same conservative excellence backstop. The comparison is
-            // deliberately strict: an Overall value of exactly 80 does not qualify at the default
-            // threshold, while 80.01 and above do. Character-specific rules remain the primary
-            // route; this catches rare excellent pieces whose strengths do not fit their rule shape.
+            // The ReaderEmotion scale is shared, but compact Sparks from each Star occupy different
+            // natural ranges. A calibrated per-Star Overall backstop keeps the shelf selective while
+            // preventing the old 80+ rule from making persistence mathematically unreachable.
+            double overallThreshold = ReadSparkOverallValueThreshold(profile.StarId);
             if (values.TryGetValue("Overall", out StarWritingEmotionValue? overall)
-                && overall.Value > GlobalOverallValueThreshold
-                && !matched.Contains(GlobalOverallRuleId, StringComparer.OrdinalIgnoreCase))
+                && overall.Value >= overallThreshold
+                && !matched.Contains(SparkOverallRuleId, StringComparer.OrdinalIgnoreCase))
             {
-                matched.Add(GlobalOverallRuleId);
+                matched.Add(SparkOverallRuleId);
             }
 
             return matched;
@@ -1831,9 +2010,12 @@ namespace Wds.SixStars.Api.Writings
             return matched >= requiredMatches;
         }
 
-        private static double ReadGlobalOverallValueThreshold()
+        private static double ReadSparkOverallValueThreshold(string starId)
         {
-            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_VALUE_THRESHOLD")
+            string suffix = NormalizeEnvironmentSuffix(starId);
+            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_SPARK_OVERALL_VALUE_THRESHOLD_" + suffix)
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_SPARK_OVERALL_VALUE_THRESHOLD")
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_VALUE_THRESHOLD")
                 ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_THRESHOLD");
             if (!string.IsNullOrWhiteSpace(configured)
                 && double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
@@ -1841,7 +2023,34 @@ namespace Wds.SixStars.Api.Writings
                 return Math.Max(0.0, parsed);
             }
 
-            return DefaultGlobalOverallValueThreshold;
+            return DefaultSparkOverallValueThresholds.TryGetValue(starId ?? string.Empty, out double calibrated)
+                ? calibrated
+                : DefaultSparkOverallValueThreshold;
+        }
+
+        private static double ReadConstellationOverallValueThreshold(string starId)
+        {
+            string suffix = NormalizeEnvironmentSuffix(starId);
+            string? configured = Environment.GetEnvironmentVariable("WDS_STAR_WRITING_CONSTELLATION_OVERALL_VALUE_THRESHOLD_" + suffix)
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_CONSTELLATION_OVERALL_VALUE_THRESHOLD")
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_VALUE_THRESHOLD")
+                ?? Environment.GetEnvironmentVariable("WDS_STAR_WRITING_GLOBAL_OVERALL_THRESHOLD");
+            if (!string.IsNullOrWhiteSpace(configured)
+                && double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+            {
+                return Math.Max(0.0, parsed);
+            }
+
+            return DefaultConstellationOverallValueThreshold;
+        }
+
+        private static string NormalizeEnvironmentSuffix(string starId)
+        {
+            string normalized = new string((starId ?? string.Empty)
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToUpperInvariant)
+                .ToArray());
+            return string.IsNullOrWhiteSpace(normalized) ? "STAR" : normalized;
         }
 
         private static IEnumerable<KeyValuePair<string, StarWritingEmotionValue>> ReadEmotionValues(PersistedStarWriting writing)

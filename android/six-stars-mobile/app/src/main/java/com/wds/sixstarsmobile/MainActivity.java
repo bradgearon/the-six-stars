@@ -768,6 +768,7 @@ public final class MainActivity extends ComponentActivity {
         messageEdit.setMaxLines(4);
 
         refreshProdStarUi(selectedStarName());
+        loadProdConversationCacheIfNeeded(selectedStarName());
         refreshProdConversationWindow();
         updateProdRecordingUi();
         updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, false, "Prod ready");
@@ -1366,7 +1367,16 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void startStarVoiceAnimationMarkers(PhoneVoicePlaybackService.PhoneVoiceClip clip, long fallbackDurationMs, long playbackElapsedMs) {
-        if (!prodMode || clip == null || !clip.fromDesktop) return;
+        if (!prodMode || clip == null) return;
+
+        // Lip/talking animation is a property of the audio being played, not of how that audio
+        // reached the phone. Prepared thoughts and prefetched Listen lines are intentionally
+        // played from Android's local WAV cache (fromDesktop=false), but they retain the same
+        // speechActivitySegmentsMs timeline that the desktop computed from WAV loudness. The
+        // old fromDesktop guard therefore made cached speech audibly play while the Star stayed
+        // on idle.gif. Drive the animation markers for every real phone-voice clip. Clips that
+        // have no activity timeline still use StarAnimationCoordinator's whole-clip talking
+        // fallback, so local/test WAVs never regress to silent-looking idle playback.
         activeAnimatedVoiceClip = clip;
         starVoicePlaybackActive = true;
         starAnimationCoordinator.beginVoice(fallbackDurationMs, clip.speechActivitySegmentsMs, playbackElapsedMs);
@@ -1375,6 +1385,7 @@ public final class MainActivity extends ComponentActivity {
     private void appendProdConversationLine(String speaker, String text) {
         if (!prodMode || text == null || text.trim().length() == 0) return;
         String star = selectedStarName();
+        loadProdConversationCacheIfNeeded(star);
         ArrayList<String> lines = prodConversationByStar.get(star);
         if (lines == null) {
             lines = new ArrayList<>();
@@ -1384,7 +1395,23 @@ public final class MainActivity extends ComponentActivity {
         // Newest-first means the Star response should appear above the player line once it arrives.
         lines.add(0, line);
         while (lines.size() > 12) lines.remove(lines.size() - 1);
+        persistProdConversationCache(star);
         refreshProdConversationWindow();
+    }
+
+    private void loadProdConversationCacheIfNeeded(String starId) {
+        if (!prodMode || settingsService == null || starId == null || starId.trim().isEmpty()) return;
+        ArrayList<String> existing = prodConversationByStar.get(starId);
+        if (existing != null && !existing.isEmpty()) return;
+        java.util.List<String> saved = settingsService.prodConversationLines(starId);
+        if (saved == null || saved.isEmpty()) return;
+        prodConversationByStar.put(starId, new ArrayList<>(saved));
+    }
+
+    private void persistProdConversationCache(String starId) {
+        if (!prodMode || settingsService == null || starId == null || starId.trim().isEmpty()) return;
+        ArrayList<String> lines = prodConversationByStar.get(starId);
+        settingsService.setProdConversationLines(starId, lines == null ? new ArrayList<>() : lines);
     }
 
     private boolean recentProdConversationAlreadyHas(String speaker, String text) {
@@ -1746,6 +1773,8 @@ public final class MainActivity extends ComponentActivity {
             String current = selectedStarName();
             settingsService.setSelectedStarId(current);
             refreshProdStarUi(current);
+            loadProdConversationCacheIfNeeded(current);
+            refreshProdConversationWindow();
         }
     }
 
@@ -2198,8 +2227,22 @@ public final class MainActivity extends ComponentActivity {
         try {
             final String starId = selectedStarName();
             final boolean constellationPlayback = "constellation-story".equalsIgnoreCase(writingOutputType);
+            final boolean foregroundPerformance = "TellStarWriting".equalsIgnoreCase(commandType);
             starWritingRequestRunning = true;
             updateProdWritingButtons();
+            if (foregroundPerformance) {
+                pauseStarInitiativeBackgroundService("Android is playing saved Star writing in the foreground.");
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Saved Star writing requested; keeping the phone awake until the voice stream starts.");
+                if (returnAudio) {
+                    // The control WebSocket and phone-audio TCP socket are independent. A stale
+                    // audio socket used to make Story/Spark return text but play nothing. Start a
+                    // connection immediately on the active route, then refresh /health so a custom
+                    // desktop audio port or newly promoted IPv6 route can replace it before TTS.
+                    String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
+                    ensureAudioSocket(BridgeAddressService.hostFromBaseUrl(activeUrl), BridgeAddressService.audioPort(activeUrl));
+                    if (viewModel != null) viewModel.refreshPhoneVoiceConnection();
+                }
+            }
             if (prodMiniStatusText != null) {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
                         ? starId + " is choosing words, creating, and rating shelf work…"
@@ -2239,6 +2282,10 @@ public final class MainActivity extends ComponentActivity {
                                 response.optString("message", commandType));
                     }
                     setDebug("Writing shelf request complete", clip(response.toString(), 5000));
+                    if (foregroundPerformance) {
+                        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved Star writing response returned; voice stream/playback now owns wake state.");
+                        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("saved writing performance finished; prepare the next Listen response", true), 6500L);
+                    }
                 });
             }, error -> runOnUiThread(() -> {
                 starWritingRequestRunning = false;
@@ -2246,11 +2293,17 @@ public final class MainActivity extends ComponentActivity {
                 if (prodMiniStatusText != null) prodMiniStatusText.setText("Writing request failed.");
                 setDebug("Writing shelf request failed", error.toString());
                 appendVoiceDebug("Writing shelf request failed", error.toString());
+                if (foregroundPerformance) {
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved writing request failed.");
+                    syncStarInitiativeBackgroundService("saved writing request failed; resume at-rest preparation", true);
+                }
             }));
         } catch (Exception ex) {
             starWritingRequestRunning = false;
             updateProdWritingButtons();
             setDebug("Writing shelf request failed", ex.toString());
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved writing request failed before dispatch.");
+            syncStarInitiativeBackgroundService("saved writing dispatch failed; resume at-rest preparation", true);
         }
     }
 
@@ -2470,26 +2523,46 @@ public final class MainActivity extends ComponentActivity {
 
     private void seedProdConversationFromStateIfNeeded(String starId, JSONObject state) {
         if (!prodMode || starId == null || state == null) return;
-        ArrayList<String> existing = prodConversationByStar.get(starId);
-        if (existing != null && existing.size() > 0) return;
+        loadProdConversationCacheIfNeeded(starId);
 
         JSONArray history = optJsonArrayEither(state, "recentConversationHistory", "RecentConversationHistory");
-        if (history == null || history.length() == 0) return;
+        if (history == null || history.length() == 0) {
+            refreshProdConversationWindow();
+            return;
+        }
 
-        ArrayList<String> lines = new ArrayList<>();
-        for (int i = 0; i < history.length() && lines.size() < 12; i++) {
+        // Desktop state is canonical and newest-first. Merge it with the phone's tiny durable cache
+        // instead of refusing to hydrate just because one local line already exists. This makes
+        // conversation history appear immediately after app/activity restarts and still recovers
+        // older lines when the desktop reconnects a moment later.
+        ArrayList<String> remote = new ArrayList<>();
+        for (int i = 0; i < history.length() && remote.size() < 12; i++) {
             JSONObject item = history.optJSONObject(i);
             if (item == null) continue;
             String player = optStringEither(item, "playerText", "PlayerText", "").trim().replace('\n', ' ');
             String star = optStringEither(item, "starResponse", "StarResponse", "").trim().replace('\n', ' ');
-            if (star.length() > 0) lines.add(starId + ": " + clip(star, 520));
-            if (player.length() > 0 && lines.size() < 12) lines.add("You: " + clip(player, 360));
+            if (star.length() > 0) remote.add(starId + ": " + clip(star, 520));
+            if (player.length() > 0 && remote.size() < 12) remote.add("You: " + clip(player, 360));
         }
 
-        if (lines.size() > 0) {
-            prodConversationByStar.put(starId, lines);
+        ArrayList<String> merged = new ArrayList<>();
+        for (String line : remote) {
+            if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
+            if (merged.size() >= 12) break;
+        }
+        ArrayList<String> local = prodConversationByStar.get(starId);
+        if (local != null) {
+            for (String line : local) {
+                if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
+                if (merged.size() >= 12) break;
+            }
+        }
+
+        if (!merged.isEmpty()) {
+            prodConversationByStar.put(starId, merged);
+            persistProdConversationCache(starId);
             refreshProdConversationWindow();
-            appendVoiceDebug("Nyxari restored conversation history", "Loaded " + lines.size() + " recent line(s) for " + starId + " from desktop Star state.");
+            appendVoiceDebug("Nyxari restored conversation history", "Loaded/merged " + merged.size() + " recent line(s) for " + starId + " from phone cache + desktop Star state.");
         }
     }
 
@@ -2587,8 +2660,13 @@ public final class MainActivity extends ComponentActivity {
         }
 
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
-            if ("AllStarsDataCleared".equalsIgnoreCase(type)) prodConversationByStar.clear();
-            else if (starId != null && starId.length() > 0) prodConversationByStar.remove(starId);
+            if ("AllStarsDataCleared".equalsIgnoreCase(type)) {
+                prodConversationByStar.clear();
+                if (settingsService != null) settingsService.clearAllProdConversationLines();
+            } else if (starId != null && starId.length() > 0) {
+                prodConversationByStar.remove(starId);
+                if (settingsService != null) settingsService.clearProdConversationLines(starId);
+            }
             refreshProdConversationWindow();
             responseText.setText(("AllStarsDataCleared".equalsIgnoreCase(type) ? "All Star data cleared." : "History cleared for " + starId + ".") + " The next conversation starts from the refreshed Star memory.");
             setDebug("History cleared", message);
@@ -2718,6 +2796,7 @@ public final class MainActivity extends ComponentActivity {
             String lower = line.toLowerCase(Locale.US);
             if (lower.startsWith("you: [voice message]") || lower.startsWith("you: [voice")) {
                 lines.set(i, "You: " + transcript.trim().replace('\n', ' '));
+                persistProdConversationCache(star);
                 refreshProdConversationWindow();
                 return true;
             }
@@ -2979,7 +3058,12 @@ public final class MainActivity extends ComponentActivity {
     private void selectStarInSpinner(String starId) {
         if (starSpinner == null || starId == null || starId.length() == 0) return;
         int position = findStarPosition(starId);
-        if (position < 0 || position == starSpinner.getSelectedItemPosition()) return;
+        if (position < 0) return;
+        if (position == starSpinner.getSelectedItemPosition()) {
+            loadProdConversationCacheIfNeeded(starId);
+            refreshProdConversationWindow();
+            return;
+        }
         suppressStarSelectionDispatch = true;
         try {
             starSpinner.setSelection(position);
@@ -3216,6 +3300,8 @@ public final class MainActivity extends ComponentActivity {
 
     private void onSelectedStarPageChanged() {
         selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
+        loadProdConversationCacheIfNeeded(selectedStarName());
+        refreshProdConversationWindow();
         preparedSpeechSyncResult = new PreparedSpeechStore.SyncResult(new ArrayList<>(), 0, 0.0, "low");
         updatePreparedSpeechIndicator();
         syncPreparedSpeech("selected Star changed", true);

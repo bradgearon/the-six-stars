@@ -146,6 +146,60 @@ namespace Wds.SixStars.Api.Writings
             finally { _gate.Release(); }
         }
 
+        /// <summary>
+        /// Reads the append-only aggregate writing log for one Star. This is used only for
+        /// deterministic local policy migrations; it never calls an LLM and never rewrites the log.
+        /// Malformed individual lines are skipped so one interrupted append cannot block startup.
+        /// </summary>
+        public async Task<IReadOnlyList<StarWritingStatementLogEntry>> ReadStatementLogAsync(
+            string starId,
+            CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (!File.Exists(AllStatementsLogPath)) return Array.Empty<StarWritingStatementLogEntry>();
+
+                string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim();
+                List<StarWritingStatementLogEntry> entries = new List<StarWritingStatementLogEntry>();
+                using FileStream stream = new FileStream(AllStatementsLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8192, true);
+                using StreamReader reader = new StreamReader(stream, Encoding.UTF8, true, 8192, false);
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                    if (line == null) break;
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    try
+                    {
+                        StarWritingStatementLogEntry? entry = JsonSerializer.Deserialize<StarWritingStatementLogEntry>(line, _jsonOptions);
+                        if (entry == null || !string.Equals(entry.StarId?.Trim(), normalizedStarId, StringComparison.OrdinalIgnoreCase)) continue;
+                        entry.WritingMethod = StarWritingMethods.Normalize(entry.WritingMethod);
+                        entry.OutputType = string.Equals(entry.WritingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase)
+                            ? StarWritingOutputTypes.ConstellationStory
+                            : StarWritingOutputTypes.Normalize(entry.OutputType);
+                        entry.Title ??= string.Empty;
+                        entry.ContributingStarIds ??= new List<string>();
+                        entry.StoryCharacters ??= new List<string>();
+                        entry.StorySubjects ??= new List<string>();
+                        entry.StoryWishes ??= new List<StarWritingStoryWish>();
+                        entry.WordsUsed ??= new List<string>();
+                        entry.Statement ??= string.Empty;
+                        entry.MatchedPersistenceRuleIds ??= new List<string>();
+                        entries.Add(entry);
+                    }
+                    catch (JsonException)
+                    {
+                        // Keep scanning. The file is append-only and an incomplete final line is recoverable.
+                    }
+                }
+
+                return entries;
+            }
+            finally { _gate.Release(); }
+        }
+
         public async Task ClearAsync(string starId, CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -300,11 +354,16 @@ namespace Wds.SixStars.Api.Writings
 
         private string BuildPath(string starId) => Path.Combine(_rootDirectory, SafeName(starId) + "-writing-notes.json");
 
-        private static StarWritingNotesState CreateEmpty(string starId) => new StarWritingNotesState { StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(), UpdatedAt = DateTimeOffset.UtcNow };
+        private static StarWritingNotesState CreateEmpty(string starId) => new StarWritingNotesState
+        {
+            StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(),
+            UpdatedAt = DateTimeOffset.UtcNow,
+            PersistencePolicyVersion = StarWritingPersistencePolicy.CurrentVersion
+        };
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 15;
+            state.Version = 16;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);

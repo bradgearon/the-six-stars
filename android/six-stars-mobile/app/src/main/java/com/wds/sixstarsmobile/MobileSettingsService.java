@@ -3,6 +3,11 @@ package com.wds.sixstarsmobile;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
+
+import java.util.ArrayList;
+import java.util.List;
+
 /** Centralizes all durable Android companion preferences and defaults. */
 final class MobileSettingsService {
     static final String PREFS_NAME = "SixStarsMobilePrefs";
@@ -21,6 +26,7 @@ final class MobileSettingsService {
     static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     static final String PREF_AREA = "area";
     static final String PREF_QUEST = "quest";
+    static final String PREF_PROD_CONVERSATION_PREFIX = "prodConversation.";
     static final String DEFAULT_BRIDGE_URL = "http://192.168.1.179:8066";
     static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
 
@@ -93,6 +99,52 @@ final class MobileSettingsService {
     void setLastBackgroundRequestMs(long value) { prefs.edit().putLong(PREF_LAST_BACKGROUND_REQUEST_MS, Math.max(0L, value)).apply(); }
     long preparedListenNotBeforeMs() { return prefs.getLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, 0L); }
     void setPreparedListenNotBeforeMs(long value) { prefs.edit().putLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, Math.max(0L, value)).apply(); }
+
+
+    List<String> prodConversationLines(String starId) {
+        String key = conversationKey(starId);
+        String raw = prefs.getString(key, "");
+        ArrayList<String> lines = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) return lines;
+        try {
+            JSONArray array = new JSONArray(raw);
+            for (int i = 0; i < array.length() && lines.size() < 12; i++) {
+                String line = array.optString(i, "").trim();
+                if (!line.isEmpty()) lines.add(line);
+            }
+        } catch (Exception ignored) {
+            // A malformed old cache should never block app startup. Replace it on the next save.
+        }
+        return lines;
+    }
+
+    void setProdConversationLines(String starId, List<String> lines) {
+        JSONArray array = new JSONArray();
+        if (lines != null) {
+            for (String line : lines) {
+                if (line == null || line.trim().isEmpty()) continue;
+                array.put(line.trim());
+                if (array.length() >= 12) break;
+            }
+        }
+        prefs.edit().putString(conversationKey(starId), array.toString()).apply();
+    }
+
+    void clearProdConversationLines(String starId) {
+        prefs.edit().remove(conversationKey(starId)).apply();
+    }
+
+    void clearAllProdConversationLines() {
+        SharedPreferences.Editor editor = prefs.edit();
+        for (String key : prefs.getAll().keySet()) {
+            if (key != null && key.startsWith(PREF_PROD_CONVERSATION_PREFIX)) editor.remove(key);
+        }
+        editor.apply();
+    }
+
+    private static String conversationKey(String starId) {
+        return PREF_PROD_CONVERSATION_PREFIX + nonEmpty(starId, "Elusiaa").toLowerCase(java.util.Locale.US);
+    }
 
     private static String nonEmpty(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();

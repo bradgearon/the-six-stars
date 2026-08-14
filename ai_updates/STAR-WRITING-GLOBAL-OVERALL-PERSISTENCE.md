@@ -1,5 +1,10 @@
 # Global Overall writing persistence fallback
 
+> **Historical policy.** The unified `reader-emotion-iu-v1` scale now uses the calibrated
+> Spark/Constellation shelf policy in
+> `STAR-WRITING-PERSISTENCE-AND-ANDROID-STORY-PLAYBACK-FIX.md`. The strict `Overall > 80`
+> rule below is preserved only to explain the earlier behavior.
+
 ## Behavior
 
 Every Star keeps her existing character-specific writing persistence rules. In addition, the

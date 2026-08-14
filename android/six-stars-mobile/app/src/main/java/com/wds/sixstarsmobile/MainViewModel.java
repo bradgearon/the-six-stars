@@ -290,6 +290,7 @@ public final class MainViewModel extends AndroidViewModel {
     }
 
     void ensureConnected() { bridge.ensureConnected(); }
+    void refreshPhoneVoiceConnection() { connectPhoneVoiceAfterBridgeConnected(); }
     void selectStar(String starId) {
         settings.setSelectedStarId(starId);
         postState(current().withStar(settings.selectedStarId()));
