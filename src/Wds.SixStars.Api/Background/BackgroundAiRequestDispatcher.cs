@@ -22,8 +22,12 @@ namespace Wds.SixStars.Api.Background
         private int _foregroundDepth;
         private CancellationTokenSource? _activeRequestCts;
         private string _activeRequestId = string.Empty;
+        private DateTimeOffset _lastForegroundFinishedAtUtc = DateTimeOffset.MinValue;
         private bool _disposed;
         private const int MaxDelayWakeSeconds = 15;
+        private const int HighPriorityForegroundQuietSeconds = 3;
+        private const int NormalPriorityForegroundQuietSeconds = 12;
+        private const int LowPriorityForegroundQuietSeconds = 45;
 
         public event EventHandler<BackgroundAiRequestStatusEventArgs>? StatusChanged;
 
@@ -133,7 +137,7 @@ namespace Wds.SixStars.Api.Background
                     {
                         DateTimeOffset now = DateTimeOffset.UtcNow;
                         request = _queue
-                            .Where(x => x.NotBefore <= now)
+                            .Where(x => GetEffectiveNotBeforeLocked(x) <= now)
                             .OrderBy(x => (int)x.Priority)
                             .ThenBy(x => x.Sequence)
                             .FirstOrDefault();
@@ -144,7 +148,7 @@ namespace Wds.SixStars.Api.Background
                         }
                         else if (_queue.Count > 0)
                         {
-                            DateTimeOffset next = _queue.Min(x => x.NotBefore);
+                            DateTimeOffset next = _queue.Min(GetEffectiveNotBeforeLocked);
                             TimeSpan untilNext = next <= now ? TimeSpan.FromMilliseconds(100) : next - now;
                             if (untilNext > TimeSpan.FromSeconds(MaxDelayWakeSeconds)) untilNext = TimeSpan.FromSeconds(MaxDelayWakeSeconds);
                             if (untilNext < TimeSpan.FromMilliseconds(100)) untilNext = TimeSpan.FromMilliseconds(100);
@@ -217,6 +221,22 @@ namespace Wds.SixStars.Api.Background
             }
         }
 
+
+        private DateTimeOffset GetEffectiveNotBeforeLocked(QueuedBackgroundAiRequest request)
+        {
+            DateTimeOffset foregroundQuietUntil = _lastForegroundFinishedAtUtc == DateTimeOffset.MinValue
+                ? DateTimeOffset.MinValue
+                : _lastForegroundFinishedAtUtc.AddSeconds(GetForegroundQuietSeconds(request.Priority));
+            return request.NotBefore >= foregroundQuietUntil ? request.NotBefore : foregroundQuietUntil;
+        }
+
+        private static int GetForegroundQuietSeconds(BackgroundAiRequestPriority priority)
+        {
+            if (priority == BackgroundAiRequestPriority.High) return HighPriorityForegroundQuietSeconds;
+            if (priority == BackgroundAiRequestPriority.Normal) return NormalPriorityForegroundQuietSeconds;
+            return LowPriorityForegroundQuietSeconds;
+        }
+
         private async Task WaitForForegroundIdleAsync(CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -239,11 +259,24 @@ namespace Wds.SixStars.Api.Background
 
         private void LeaveForeground(string reason)
         {
+            bool becameIdle = false;
             lock (_gate)
             {
                 if (_foregroundDepth > 0) _foregroundDepth--;
+                if (_foregroundDepth <= 0)
+                {
+                    _lastForegroundFinishedAtUtc = DateTimeOffset.UtcNow;
+                    becameIdle = true;
+                }
             }
-            Publish("ForegroundFinished", "foreground", reason ?? string.Empty, "Foreground reply request finished; background AI stacks may resume.", QueuedCount);
+            Publish(
+                "ForegroundFinished",
+                "foreground",
+                reason ?? string.Empty,
+                becameIdle
+                    ? "Foreground reply request finished; background AI is held briefly so follow-up speech and phone TTS keep priority."
+                    : "Foreground reply request finished; another foreground lease remains active.",
+                QueuedCount);
             SafeReleaseSignal();
         }
 

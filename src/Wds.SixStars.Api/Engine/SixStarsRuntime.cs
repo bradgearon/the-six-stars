@@ -1443,14 +1443,11 @@ namespace Wds.SixStars.Api.Engine
                             Reason = reason ?? string.Empty,
                             State = context
                         });
-                        if (_dailyStateService != null)
-                        {
-                            await _dailyStateService.QueueForcedRefreshAsync(
-                                normalizedSessionId,
-                                normalizedStarId,
-                                "girlfriend wants-to-say state updated",
-                                workToken).ConfigureAwait(false);
-                        }
+                        // The foreground prompt consumes girlfriend hourly state directly, so do not
+                        // immediately force a second large daily-state LLM generation here. That old
+                        // chain could occupy the single local model for another 8-12 seconds after a
+                        // 20-30 second hourly refresh. Normal daily refresh scheduling will fold this
+                        // state in later without delaying live conversation.
                     }
                     catch (OperationCanceledException)
                     {
@@ -3111,7 +3108,10 @@ namespace Wds.SixStars.Api.Engine
                         BackgroundAnalysisFailed?.Invoke(this, ex);
                     }
                 },
-                delay: TimeSpan.FromSeconds(5));
+                // Give the player a natural beat to answer after voice generation. The Forge
+                // review is durable background work and should not seize the single local LLM
+                // immediately when the Star finishes speaking.
+                delay: TimeSpan.FromSeconds(12));
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)

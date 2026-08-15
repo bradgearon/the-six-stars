@@ -54,7 +54,10 @@ namespace Wds.SixStars.Api.Ai
             // generation while new calls pile up behind it. Keep one HTTP generation in flight per
             // client. The background dispatcher already prevents new background work while a
             // foreground lease is active, so this gate mainly protects the handoff edge.
+            System.Diagnostics.Stopwatch requestGateStopwatch = System.Diagnostics.Stopwatch.StartNew();
             await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            requestGateStopwatch.Stop();
+            LogRequestGateWait(debugLabel, requestGateStopwatch.ElapsedMilliseconds);
             try
             {
                 List<Dictionary<string, string>> wireMessages = messages
@@ -124,7 +127,10 @@ namespace Wds.SixStars.Api.Ai
 
         public async Task<string> CompleteTextStreamingAsync(IReadOnlyList<ChatMessage> messages, int? maxTokens, string debugLabel, Action<string>? onTextDelta, CancellationToken cancellationToken)
         {
+            System.Diagnostics.Stopwatch requestGateStopwatch = System.Diagnostics.Stopwatch.StartNew();
             await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            requestGateStopwatch.Stop();
+            LogRequestGateWait(debugLabel, requestGateStopwatch.ElapsedMilliseconds);
             try
             {
                 List<Dictionary<string, string>> wireMessages = messages
@@ -451,6 +457,21 @@ namespace Wds.SixStars.Api.Ai
             return maxTokens.HasValue && maxTokens.Value > 0
                 ? maxTokens.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : "not sent; backend/model default";
+        }
+
+        private void LogRequestGateWait(string debugLabel, long waitMs)
+        {
+            if (waitMs < 25) return;
+            string exchangeId = LlmExchangeFileLogger.CreateExchangeId((debugLabel ?? "llm") + "-gate-wait");
+            LogExchange(
+                "LLM request waited for local model gate",
+                "WaitMs: " + waitMs + Environment.NewLine
+                    + "DebugLabel: " + (debugLabel ?? string.Empty) + Environment.NewLine
+                    + "Meaning: another local-model generation already owned the single request gate before this request could be logged/sent.",
+                "gate_wait",
+                exchangeId,
+                debugLabel ?? string.Empty,
+                "gate_wait");
         }
 
         private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, object? requestedResponseFormat, int? effectiveMaxTokens)

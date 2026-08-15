@@ -36,6 +36,12 @@ public sealed class MobileBridgeRequest
     public string PhotoBase64 { get; set; } = string.Empty;
     public string PhotoMimeType { get; set; } = "image/jpeg";
     public string PhotoCaption { get; set; } = string.Empty;
+
+    // Internal transport hint. Persistent WebSocket calls already receive one correlated response;
+    // publishing MobileConversationResponseReady before that response reaches Android makes the same
+    // logical Star reply appear twice. Keep the queued event only as reconnect/failure recovery.
+    [JsonIgnore]
+    public bool DeferConversationResponseEventUntilTransportFailure { get; set; }
 }
 
 

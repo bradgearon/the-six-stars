@@ -592,12 +592,14 @@ public sealed class MobileBridgeHttpServer : IDisposable
             case "message":
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                request.DeferConversationResponseEventUntilTransportFailure = true;
                 MobileBridgeResponse response = await _messageHandler(request, cancellationToken).ConfigureAwait(false);
                 return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }
             case "audio":
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                request.DeferConversationResponseEventUntilTransportFailure = true;
                 MobileBridgeResponse response = await _audioHandler(request, cancellationToken).ConfigureAwait(false);
                 return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }

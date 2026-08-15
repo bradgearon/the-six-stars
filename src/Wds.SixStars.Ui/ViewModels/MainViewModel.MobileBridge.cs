@@ -1961,7 +1961,7 @@ public sealed partial class MainViewModel
                 livePhoneVoice = await TryStartMobileLiveVoiceAsync(request, linkedCts.Token).ConfigureAwait(false);
                 if (livePhoneVoice != null)
                 {
-                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Live voice armed before LLM", "The Android audio stream is open; each § speech chunk will enter Qwen TTS immediately."));
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Live TTS armed before LLM", "Each § speech chunk will enter Qwen TTS immediately; Android audio delivery remains gated until the correlated text response has been delivered."));
                 }
             }
 
@@ -2020,7 +2020,7 @@ public sealed partial class MainViewModel
                 response.VoiceBytesSent = livePhoneVoice.BytesSent;
                 response.VoiceError = livePhoneVoice.ErrorMessage;
                 response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
-                    ? "Streamed " + livePhoneVoice.ChunksSent + " live voice chunk(s) to Android while the LLM was still generating."
+                    ? "Live TTS was pre-generating while the LLM was running; Android audio delivery begins immediately after text transport."
                     : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
             }
             response.GateWaitMs = gateWaitMs;
@@ -2100,13 +2100,13 @@ public sealed partial class MainViewModel
             }
             else if (livePhoneVoice != null)
             {
-                // Audio has already been able to flow during LLM generation. Return the correlated
-                // text response as soon as the LLM/runtime is done, then only drain/close the live
-                // TTS queue after transport so Android is not forced to wait for all WAVs.
+                // Qwen TTS has already been allowed to work during LLM generation, but preserve the
+                // Android transport contract that has proven stable: deliver the correlated text
+                // response first, then start the ordered phone stream and drain the warmed WAV queue.
                 MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
                 string exactAnalysisId = backgroundAnalysisId;
                 response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
-                response.VoiceMessage = "Live voice started during LLM generation; remaining queued speech will finish after this text response is delivered.";
+                response.VoiceMessage = "Live TTS warmed during LLM generation; Android voice starts immediately after this text response is delivered.";
                 response.AfterTransportResponseAsync = async () =>
                 {
                     await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);
@@ -2124,8 +2124,8 @@ public sealed partial class MainViewModel
                     return Task.CompletedTask;
                 };
                 OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                    "Live phone voice active while text returns",
-                    "chunks already sent=" + exactLiveRun.ChunksSent + ", bytes=" + exactLiveRun.BytesSent + "."));
+                    "Live phone voice waiting for text transport",
+                    "Qwen is allowed to pre-generate; chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
             }
             else if (wantsPhoneAudio)
             {
@@ -2180,14 +2180,39 @@ public sealed partial class MainViewModel
             if (!wantsInlineAudio) response.VoiceSocketConnected = _services.MobileVoice.IsConnected;
             if (!mobileRequest.PrefetchForListen)
             {
-                PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                if (mobileRequest.DeferConversationResponseEventUntilTransportFailure)
+                {
+                    // A persistent WebSocket request already returns this exact reply through its
+                    // correlated response. Publishing the recovery event before that transport made
+                    // Android render a silent first copy and then handle the direct copy that starts
+                    // voice. Preserve recovery semantics by publishing only if direct transport fails.
+                    Func<Task>? existingTransportFailure = response.OnTransportFailureAsync;
+                    response.OnTransportFailureAsync = async () =>
+                    {
+                        try
+                        {
+                            if (existingTransportFailure != null)
+                            {
+                                await existingTransportFailure().ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                        }
+                    };
+                }
+                else
+                {
+                    PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                }
             }
             OnUiThread(() =>
             {
                 MobileBridgeStatus = wantsInlineAudio
                     ? "Prepared Android Listen cache: " + response.VoiceChunksCached + " chunk(s), " + response.VoiceBytesCached + " bytes."
                     : livePhoneVoice != null
-                        ? "Android text response ready; live voice already started and remaining queued chunks continue after transport."
+                        ? "Android text response ready; warmed live TTS will start on the phone immediately after transport."
                         : wantsPhoneAudio
                             ? "Android text response returned. Phone voice generation continues in the background."
                             : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
@@ -2516,12 +2541,6 @@ public sealed partial class MainViewModel
         LiveStarVoiceResponsePipeline? pipeline = null;
         try
         {
-            await _services.MobileVoice.SendControlAsync(
-                stream.AudioSession,
-                "start",
-                "Starting live Android voice stream " + stream.StreamId + ". Speech chunks may arrive before the text response completes.",
-                voiceCts.Token).ConfigureAwait(false);
-
             generator = CreateStreamingVoiceGenerator();
             pipeline = new LiveStarVoiceResponsePipeline(
                 generator,
@@ -2546,6 +2565,12 @@ public sealed partial class MainViewModel
                 try
                 {
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
+
+                    // Preserve the stable Android wire order. This blocks only the pipeline's
+                    // audio-consumer lane; Qwen generation continues independently and can queue
+                    // WAVs while the LLM is still finishing the reply.
+                    run.TransportReady.Wait(stream.CancellationToken);
+
                     int chunkIndex = args.Sequence;
                     int knownTotal = chunkIndex + 1;
                     MobileAudioFrameContext frameContext = new MobileAudioFrameContext
@@ -2582,7 +2607,13 @@ public sealed partial class MainViewModel
             };
 
             pipeline.Start(request.SessionId, template, voiceCts.Token);
-            request.SpokenChunkReady = pipeline.EnqueueTextChunk;
+
+            // Prewarm only the first completed speech chunk while the LLM is still generating.
+            // LM Studio and Qwen share the same GPU on the target machine; generating every TTS
+            // chunk concurrently with the rest of the LLM reply can slow the foreground model
+            // enough to erase the streaming win. One warm first chunk preserves instant post-text
+            // speech while later chunks wait in cheap RAM until the text response is complete.
+            request.SpokenChunkReady = run.EnqueueForegroundTextChunk;
             return run;
         }
         catch
@@ -2603,6 +2634,24 @@ public sealed partial class MainViewModel
         if (run == null) return;
         try
         {
+            if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+            {
+                await _services.MobileVoice.SendControlAsync(
+                    run.Stream.AudioSession,
+                    "start",
+                    "Starting warmed Android voice stream " + run.Stream.StreamId + " after text transport. Qwen may already have speech queued.",
+                    run.VoiceCts.Token).ConfigureAwait(false);
+            }
+
+            // Release the ordered consumer only after Android has accepted the stream start.
+            // The first WAV may already be warm. Once text transport is complete, feed the
+            // remaining delimiter chunks to Qwen so TTS no longer competes with LLM generation.
+            run.TransportReady.Set();
+            foreach (string deferredChunk in run.DrainDeferredTextChunks())
+            {
+                run.Pipeline.EnqueueTextChunk(deferredChunk);
+            }
+
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
             if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
             {
@@ -2626,7 +2675,10 @@ public sealed partial class MainViewModel
         }
         finally
         {
+            // Never leave the consumer lane parked if start/transport failed.
+            try { run.TransportReady.Set(); } catch { }
             run.Pipeline.Dispose();
+            try { run.TransportReady.Dispose(); } catch { }
             run.VoiceCts.Dispose();
             EndMobileVoiceStream(run.Stream, "live foreground voice completed or was replaced");
             run.Finished = true;
@@ -2636,8 +2688,10 @@ public sealed partial class MainViewModel
     private void AbortMobileLiveVoice(MobileLiveVoiceRun? run, string reason)
     {
         if (run == null || run.Finished) return;
+        try { run.TransportReady.Set(); } catch { }
         try { run.Pipeline.CancelCurrentSpeech(); } catch { }
         try { run.Pipeline.Dispose(); } catch { }
+        try { run.TransportReady.Dispose(); } catch { }
         try { run.VoiceCts.Dispose(); } catch { }
         try { EndMobileVoiceStream(run.Stream, reason); } catch { }
         run.Finished = true;
@@ -2655,11 +2709,49 @@ public sealed partial class MainViewModel
         public MobileVoiceStreamScope Stream { get; }
         public LiveStarVoiceResponsePipeline Pipeline { get; }
         public CancellationTokenSource VoiceCts { get; }
+        private readonly object _textChunkGate = new object();
+        private readonly List<string> _deferredTextChunks = new List<string>();
+        private bool _prewarmChunkQueued;
+
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
         public int BytesSent { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public bool Finished { get; set; }
+        public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);
+
+        public void EnqueueForegroundTextChunk(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            bool prewarmNow = false;
+            lock (_textChunkGate)
+            {
+                if (!_prewarmChunkQueued)
+                {
+                    _prewarmChunkQueued = true;
+                    prewarmNow = true;
+                }
+                else
+                {
+                    _deferredTextChunks.Add(text);
+                }
+            }
+
+            if (prewarmNow)
+            {
+                Pipeline.EnqueueTextChunk(text);
+            }
+        }
+
+        public List<string> DrainDeferredTextChunks()
+        {
+            lock (_textChunkGate)
+            {
+                List<string> copy = new List<string>(_deferredTextChunks);
+                _deferredTextChunks.Clear();
+                return copy;
+            }
+        }
     }
 
     private MobileVoiceStreamScope BeginMobileVoiceStream(StarInteractionResponse response, bool isStory, string reason)
