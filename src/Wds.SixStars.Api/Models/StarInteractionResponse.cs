@@ -9,8 +9,9 @@ namespace Wds.SixStars.Api.Models
         private string _spokenText = string.Empty;
 
         /// <summary>
-        /// Ordered TTS-ready speech chunks. The LLM is instructed to produce this as spokenText: [..]
-        /// with one or two natural sentences per part, so the TTS server does not need to guess splits.
+        /// Ordered TTS-ready speech chunks. Normal foreground Chat is built incrementally from
+        /// delimiter-streamed plain text; structured Story/StarInitiative responses may still supply
+        /// spokenText arrays. Hosts can use these final parts for display/history/fallback TTS.
         /// </summary>
         public List<string> SpokenParts { get; set; } = new List<string>();
 

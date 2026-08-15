@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using Wds.SixStars.Api.Screen;
 
 namespace Wds.SixStars.Api.Models
@@ -13,6 +15,15 @@ namespace Wds.SixStars.Api.Models
         public GameContext GameContext { get; set; } = new GameContext();
         public StoryOptions StoryOptions { get; set; } = new StoryOptions();
         public StarPhotoAttachment AttachedPhoto { get; set; } = new StarPhotoAttachment();
+
+        /// <summary>
+        /// Optional host callback for normal foreground speech. The streaming LLM path invokes this
+        /// as soon as a complete delimiter-terminated spoken chunk is available. The callback must
+        /// return quickly; hosts should enqueue work rather than synthesize/play audio inline.
+        /// Story and StarInitiative requests keep their existing structured response contracts.
+        /// </summary>
+        [JsonIgnore]
+        public Action<string>? SpokenChunkReady { get; set; }
 
         /// <summary>
         /// Recent safe summaries of the user's screen. The API keeps the last five per session,

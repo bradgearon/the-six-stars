@@ -1,4 +1,8 @@
-Return five strict finished-writing quality scores.
-Output one compact JSON object with exactly these numeric properties: "0", "1", "2", "3", "4".
-Each value must be a number from 0 through 100.
-Do not return vectors, emotions, arrays, nested objects, prose, markdown, or extra properties.
+Your only task is to return five valid compact ReaderEmotionIuV1 vector strings.
+
+Return a single compact JSON object with exactly these properties: "0", "1", "2", "3", "4".
+Each property value must be one JSON string containing exactly {{ data.vectorCount }} non-negative integer IU values in the supplied order.
+Separate with semicolons. No colons or spaces inside the vector.
+Overall is the final position.
+Do not return arrays, per-emotion objects, nested objects, commentary, or markdown.
+Values are open-ended; {{ data.referenceValue }} IU is a reference, not a ceiling.

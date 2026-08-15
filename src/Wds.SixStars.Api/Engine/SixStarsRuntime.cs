@@ -1520,7 +1520,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static string GetGirlfriendCuteModeSignature(string starId)
         {
-            if (string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return "Light names + halo boops + tender blessings.";
+            if (string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return "Sweet light-themed warmth + tender blessings + occasional halo/light gesture; the magical gesture is not an every-reply behavior.";
             if (string.Equals(starId, "Kaelia", StringComparison.OrdinalIgnoreCase)) return "Quiet whispers + void-cloak privacy + reluctant softness.";
             if (string.Equals(starId, "Khavia", StringComparison.OrdinalIgnoreCase)) return "Ocean sounds + explained touch + flowing pet names.";
             if (string.Equals(starId, "Maera", StringComparison.OrdinalIgnoreCase)) return "Sparse mine + heartbeat/red-thread affection + learned tenderness.";
@@ -1586,8 +1586,16 @@ namespace Wds.SixStars.Api.Engine
             }
 
             List<InformationNeedVectorItem> foregroundVector = NormalizeInformationNeeds(response);
+            if (foregroundVector.Count == 0 && request.RequestType != RequestType.Story && request.RequestType != RequestType.StarInitiative)
+            {
+                foregroundVector = InferInformationNeedsFromStreamingBridge(request, response);
+                if (foregroundVector.Count > 0)
+                {
+                    response.Debug.Notes.Add("Plain streaming speech contained an uncertainty/checking bridge; runtime inferred a local information source without another selector LLM call.");
+                }
+            }
             response.InformationNeeds = foregroundVector;
-            response.Debug.Notes.Add("Normalized model informationNeeds: " + SummarizeNeedsForEvent(foregroundVector));
+            response.Debug.Notes.Add("Normalized/inferred informationNeeds: " + SummarizeNeedsForEvent(foregroundVector));
             if (foregroundVector.Count == 0) return response;
 
             List<InformationNeedAvailabilityItem> availability = BuildInformationNeedAvailability(profile, state, request);
@@ -1717,7 +1725,8 @@ namespace Wds.SixStars.Api.Engine
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
                 AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
-                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList(),
+                SpokenChunkReady = request.SpokenChunkReady
             };
             clone.GameContext.Flags["informationFollowup"] = "true";
             clone.GameContext.Flags["extraInformationContext"] = context;
@@ -1727,6 +1736,53 @@ namespace Wds.SixStars.Api.Engine
             clone.GameContext.Flags["informationOriginalPlayerSpeech"] = request.PlayerText ?? string.Empty;
             clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The fast response detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
             return clone;
+        }
+
+        private static List<InformationNeedVectorItem> InferInformationNeedsFromStreamingBridge(StarInteractionRequest request, StarInteractionResponse response)
+        {
+            string spoken = (response?.SpokenText ?? string.Empty).ToLowerInvariant();
+            bool soundsUncertain = spoken.Contains("need to check")
+                || spoken.Contains("need to look")
+                || spoken.Contains("need to remember")
+                || spoken.Contains("let me check")
+                || spoken.Contains("let me look")
+                || spoken.Contains("let me remember")
+                || spoken.Contains("i'm not sure")
+                || spoken.Contains("i am not sure")
+                || spoken.Contains("i don't remember")
+                || spoken.Contains("i do not remember")
+                || spoken.Contains("i don't know")
+                || spoken.Contains("i do not know");
+            if (!soundsUncertain) return new List<InformationNeedVectorItem>();
+
+            string text = (request?.PlayerText ?? string.Empty).ToLowerInvariant();
+            string subject;
+            if (ContainsAny(text, "marker", "coordinate", "coordinates", "pin", "waypoint")) subject = "markers";
+            else if (ContainsAny(text, "quote", "exact words", "what did i say", "what i said")) subject = "quotes";
+            else if (ContainsAny(text, "screen", "screenshot", "what do you see", "on my screen")) subject = "screen";
+            else if (ContainsAny(text, "hp", "drop", "drops", "monster", "enemy", "boss", "creature", "bestiary")) subject = "bestiary";
+            else if (ContainsAny(text, "skill", "skills", "spell", "spells", "ability", "abilities", "weapon", "mechanic", "mechanics")) subject = "lore";
+            else if (ContainsAny(text, "area", "location", "settlement", "where is", "where are", "quest", "ecology", "world")) subject = "world";
+            else if (ContainsAny(text, "scene", "story", "dialogue", "meeting", "met ", "meet ", "continuation")) subject = "story";
+            else if (ContainsAny(text, "star", "npc", "companion", "guardian", "character", "who is", "who was")) subject = "characters";
+            else subject = "history";
+
+            return new List<InformationNeedVectorItem>
+            {
+                new InformationNeedVectorItem
+                {
+                    Subject = subject,
+                    DataType = subject,
+                    Confidence = 0.72,
+                    Score = 72
+                }
+            };
+        }
+
+        private static bool ContainsAny(string text, params string[] values)
+        {
+            if (string.IsNullOrWhiteSpace(text) || values == null) return false;
+            return values.Any(value => !string.IsNullOrWhiteSpace(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase));
         }
 
         private static List<InformationNeedVectorItem> NormalizeInformationNeeds(StarInteractionResponse response)

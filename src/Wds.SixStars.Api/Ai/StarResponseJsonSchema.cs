@@ -233,7 +233,7 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "id", StringProperty(80) },
-                        { "oldValue", NumberProperty(0, 100) },
+                        { "oldValue", NonNegativeNumberProperty() },
                         { "newWordSet", new Dictionary<string, object>
                             {
                                 { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
@@ -241,7 +241,7 @@ namespace Wds.SixStars.Api.Ai
                             }
                         },
                         { "newWriting", StringProperty(1400) },
-                        { "newValue", NumberProperty(0, 100) }
+                        { "newValue", NonNegativeNumberProperty() }
                     }
                 }
             };
@@ -397,15 +397,34 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "score" } },
+                { "required", new[] { "valueVector" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        // Review output is intentionally one bounded finished-writing quality score.
-                        { "score", NumberProperty(0, 100) }
+                        // One compact positional vector keeps local-model completion work small.
+                        // ReaderEmotionIuV1 contains 30 reader-emotion IU values plus Overall last.
+                        { "valueVector", StringProperty(1024) }
                     }
                 }
             };
-            return WrapSchema("six_stars_story_quality_score_review", schema);
+            return WrapSchema("six_stars_story_reader_emotion_review", schema);
+        }
+
+        public static object CreateStarWritingSingleReviewRepairResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "valueVector" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        // A malformed five-Spark response is repaired one candidate at a time.
+                        // Keeping the repair output to one 31-value string dramatically reduces count drift.
+                        { "valueVector", StringProperty(512) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_single_review_repair", schema);
         }
 
         public static object CreateStarWritingReviewResponseFormat()
@@ -413,8 +432,9 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                // One numeric quality score per Spark keeps the review contract tiny and actor-neutral.
-                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = NumberProperty(0, 100);
+                // One compact value-only vector string per writing minimizes completion tokens.
+                // Each value contains exactly 31 semicolon-delimited open-ended reader-emotion IU values (30 emotions + Overall).
+                properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
             }
 
             Dictionary<string, object> schema = new Dictionary<string, object>
@@ -424,7 +444,7 @@ namespace Wds.SixStars.Api.Ai
                 { "required", new[] { "0", "1", "2", "3", "4" } },
                 { "properties", properties }
             };
-            return WrapSchema("six_stars_writing_quality_scores", schema);
+            return WrapSchema("six_stars_writing_review", schema);
         }
 
         public static object CreateStarXPostSelectionResponseFormat()
@@ -610,7 +630,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "thingsLearnedOrSuggestedByPlayer", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
@@ -631,6 +651,7 @@ namespace Wds.SixStars.Api.Ai
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(450) },
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
                         { "importantPlayerQuotes", EmptyStringArray() },
                         { "memoryNotes", StringArray(6) },
                         { "rememberedMarkers", RememberedMarkerArray(4) },

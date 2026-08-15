@@ -282,15 +282,7 @@ namespace Wds.SixStars.Api.Writings
                 string normalizedVector = string.Empty;
                 Dictionary<string, double> namedValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 double overallValue = item.OverallValue;
-                string valueUnit = StarWritingValueUnits.InformationUnits;
-                if (string.Equals(reviewDiscipline, StarWritingReviewDisciplines.WritingQualityScoreV1, StringComparison.OrdinalIgnoreCase))
-                {
-                    overallValue = NormalizeWritingQualityScore(item.OverallValue);
-                    namedValues["Score"] = overallValue;
-                    normalizedVector = string.Empty;
-                    valueUnit = StarWritingValueUnits.Score;
-                }
-                else if (string.Equals(reviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(reviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
                 {
                     string readerVector = item.EmotionalVector;
                     if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out normalizedVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
@@ -342,7 +334,7 @@ namespace Wds.SixStars.Api.Writings
                     EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? string.Empty : normalizedVector,
                     EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
                     OverallValue = overallValue,
-                    ValueUnit = valueUnit,
+                    ValueUnit = StarWritingValueUnits.InformationUnits,
                     Values = namedValues,
                     Persisted = item.Persisted,
                     MatchedPersistenceRuleIds = (item.MatchedPersistenceRuleIds ?? new List<string>()).ToList()
@@ -463,13 +455,7 @@ namespace Wds.SixStars.Api.Writings
             {
                 item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
                 item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
-                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.WritingQualityScoreV1, StringComparison.OrdinalIgnoreCase))
-                {
-                    item.EmotionalVector = string.Empty;
-                    item.OverallValue = NormalizeWritingQualityScore(item.OverallValue);
-                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
-                }
-                else if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
                 {
                     string readerVector = item.EmotionalVector;
                     if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out string normalizedReaderVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
@@ -537,13 +523,7 @@ namespace Wds.SixStars.Api.Writings
                 item.PostedText ??= string.Empty;
                 item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
                 item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
-                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.WritingQualityScoreV1, StringComparison.OrdinalIgnoreCase))
-                {
-                    item.EmotionalVector = string.Empty;
-                    item.OverallValue = NormalizeWritingQualityScore(item.OverallValue);
-                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
-                }
-                else if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
                 {
                     string readerVector = item.EmotionalVector;
                     if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out string normalizedReaderVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
@@ -738,13 +718,6 @@ namespace Wds.SixStars.Api.Writings
                 phase.StorySnapshot ??= string.Empty;
             }
             development.Phases = development.Phases.Where(x => x != null).OrderBy(x => x.PhaseNumber).ToList();
-        }
-
-
-        private static double NormalizeWritingQualityScore(double value)
-        {
-            if (double.IsNaN(value) || double.IsInfinity(value)) return 0;
-            return Math.Max(0.0, Math.Min(100.0, value));
         }
 
         private static string SafeName(string? value)

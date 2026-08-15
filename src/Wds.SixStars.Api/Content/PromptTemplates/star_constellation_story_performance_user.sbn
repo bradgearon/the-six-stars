@@ -3,7 +3,8 @@ PREPARE THIS COMPLETE CONSTELLATION STORY FOR SPOKEN PLAYBACK
 Star: {{ data.displayName }}
 Story ID: {{ data.storyId }}
 Title: {{ data.title }}
-Quality score: {{ data.overallValue }}/100
+Overall value: {{ data.overallValue }} {{ data.valueUnit }}
+Deterministic public value: {{ data.publicValue }} {{ data.valueUnit }}
 
 COMPLETE STORY
 {{ data.story }}

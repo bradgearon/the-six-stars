@@ -17,6 +17,6 @@ Durable memory / quote / marker context:
 
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
+Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.
 No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.

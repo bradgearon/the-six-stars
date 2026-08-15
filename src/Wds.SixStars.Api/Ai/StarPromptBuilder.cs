@@ -731,15 +731,17 @@ namespace Wds.SixStars.Api.Ai
                 AppendStoryModeSystemContext(storyModeSystem, profile);
             }
 
+            bool plainStreamingSpeech = request.RequestType != RequestType.Story && request.RequestType != RequestType.StarInitiative;
             string foregroundModeInstructions = request.RequestType == RequestType.Story
                 ? "This is a STORY FOREGROUND PASS. The goal is to return a complete cached story plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory. The Story button itself is sufficient instruction; an empty player message means invent a fresh complete story, not a chat reply."
                 : request.RequestType == RequestType.StarInitiative
                     ? "This is a STAR INITIATIVE CHECK PASS. The app is asking whether the Star has a state-backed thing she wants to say at rest. This is not a player message and must not produce emotion vectors, memory updates, or relationship deltas."
-                    : "This is the FAST FOREGROUND SPEECH PASS. Begin the spoken answer quickly so TTS can start immediately, but finish the player's complete requested response. Ordinary Chat may contain a full one-page-or-longer story or explanation split into as many ordered spokenText chunks as needed.";
+                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately. Output only speech, and end each complete speakable thought with § so the host can start TTS while you continue generating.";
 
             object data = new
             {
                 starDisplayName = profile.DisplayName,
+                plainStreamingSpeech,
                 foregroundModeInstructions,
                 currentTimeContext = BuildCurrentTimeContext(),
                 globalCanonLore = globalCanon.ToString().TrimEnd(),
@@ -892,12 +894,11 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only: starId, spokenText, needsMoreInformation, informationNeeds, and thingsLearnedOrSuggestedByPlayer.");
-                contract.AppendLine();
-                contract.AppendLine("informationNeeds is an array of objects with subject, confidence, and score.");
-                contract.AppendLine("The subject field chooses the information source and must be exactly one of: history, quotes, markers, lore, bestiary, characters, world, screen, story. When the latest message may need older context or information outside this prompt, return the informationNeeds array: one separate object for each area you need information from history, quotes, markers, lore, bestiary, characters, world, screen, and story. Use low confidence/score for areas that are probably not needed, and higher values for likely areas.");
-                contract.AppendLine("Content-backed subject names match the local folders or memory exactly: lore=skills/spells/abilities/weapons/mechanics; bestiary=monsters/enemies/bosses/creatures/HP/drops; characters=Stars/people/NPCs/companions/guardians; world=areas/locations/settlements/ecology/quests; story=exact scenes/meetings/dialogue/story continuity. A deep pass receives the selected subjects complete information plus the original player speech.");
-                contract.AppendLine("For an open-ended creative story request, do not request extra information merely because it is a story; invent it from the profile and context already provided. Request older data only when the player explicitly requires a missing canon fact or continuation detail.");
+                contract.AppendLine("Return ONLY the words " + profile.DisplayName + " says aloud. Do not return JSON, field names, labels, markdown fences, or quotation wrappers.");
+                contract.AppendLine("End every complete speakable thought with the delimiter §. The delimiter is not spoken. Usually make a chunk one or two natural sentences and place § at a real thought/breath boundary.");
+                contract.AppendLine("The final spoken chunk must also end with §. Do not use § for any purpose except ending a speech chunk.");
+                contract.AppendLine("Start answering immediately instead of planning the whole response before the first chunk. Keep generating chunks until the player's request is genuinely complete.");
+                contract.AppendLine("If an exact game fact is missing from the supplied canon, do not invent it. Give a brief natural uncertainty/checking bridge; a separate information pass can inspect local archives after this streamed reply.");
             }
             if (request.RequestType == RequestType.Story)
             {
@@ -909,19 +910,17 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine();
-                contract.AppendLine("spokenText array: each item is one ordered TTS chunk. Use one or two natural sentences per item, and keep adding chunks until the requested answer is complete.");
                 if (IsTruthyFlag(request, "foregroundConciseMode"))
                 {
                     string minChunks = request.GameContext.Flags.TryGetValue("foregroundConciseMinChunks", out string? minValue) ? minValue : "3";
                     string maxChunks = request.GameContext.Flags.TryGetValue("foregroundConciseMaxChunks", out string? maxValue) ? maxValue : "5";
                     if (IsTruthyFlag(request, "foregroundRespectExplicitLength"))
                     {
-                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep an ordinary response to " + minChunks + "-" + maxChunks + " natural spokenText chunks. This limit does NOT apply when the Last Cat explicitly requests a longer story, a specified number of jokes, a detailed explanation, a list whose requested size exceeds the limit, or any other response whose requested useful content requires more space. Complete the explicit request rather than truncating it.");
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep an ordinary response to roughly " + minChunks + "-" + maxChunks + " delimiter-terminated speech chunks. This limit does NOT apply when the Last Cat explicitly requests a longer story, a specified number of jokes, a detailed explanation, a list whose requested size exceeds the limit, or any other response whose requested useful content requires more space. Complete the explicit request rather than truncating it.");
                     }
                     else
                     {
-                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep the response to " + minChunks + "-" + maxChunks + " natural spokenText chunks.");
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep the response to roughly " + minChunks + "-" + maxChunks + " delimiter-terminated speech chunks.");
                     }
                 }
             }
@@ -970,7 +969,7 @@ namespace Wds.SixStars.Api.Ai
             task.AppendLine("Current state: met=" + state.IsMet + ", ally=" + state.IsAlly + ", girlfriend=" + state.IsGirlfriend + ", girlfriendReady=" + state.IsGirlfriendReady + ", Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ".");
             task.AppendLine("Only one Star can be the Last Cat's girlfriend at a time. If an existing girlfriend is someone else, you must say no because he is already committed, and you may ask him to end that relationship first if he truly means this.");
             task.AppendLine("If decision=accept, say yes clearly and warmly in character. If decision=already_girlfriend, affirm that she already is his girlfriend. If decision=not_ready_no_for_now, say not yet with affection and give a clear path: become/keep ally status, build trust, heart, romance, emotional safety, and personality-matched connection. If decision=blocked_existing_girlfriend, refuse clearly but gracefully.");
-            task.AppendLine("Keep it concise: 2-5 spokenText chunks. Do not mention JSON, flags, numbers, or deterministic gates unless the player explicitly asked about mechanics.");
+            task.AppendLine("Keep it concise: roughly 2-5 natural speech chunks separated by §. Do not mention flags, numbers, deterministic gates, or the delimiter unless the player explicitly asked about mechanics.");
         }
 
         private static string GetFlag(GameContext context, string key)
@@ -1498,7 +1497,7 @@ namespace Wds.SixStars.Api.Ai
             if (state.IsGirlfriend)
             {
                 sb.AppendLine("Committed girlfriend path: she should actively flirt sometimes instead of waiting for the Last Cat to always initiate. She may use affectionate magic-flavored actions, jealous/tender warmth, close pet names, playful claims, and emotionally intimate closeness in her own style. Keep it non-explicit by default.");
-                sb.AppendLine("Girlfriend responses should feel alive and present: she can act things out in words, add magical special effects, touch the moment with her element/domain, and make the Last Cat feel close to her and wanted.");
+                sb.AppendLine("Girlfriend responses should feel alive and present, but magical special effects are an occasional accent rather than a default response beat. Prefer ordinary conversation and varied physical/emotional affection most turns; never use a domain-magic effect in consecutive normal chat replies.");
             }
             else if (strongFlirtBand)
             {
@@ -1543,7 +1542,7 @@ namespace Wds.SixStars.Api.Ai
             string id = profile?.StarId ?? string.Empty;
             if (string.Equals(id, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {
-                return "Domain-magic flirting for Elusiaa: sometimes act out radiant affection in words — halo flickers, golden boops, warm light wrapping his paws, little blessing-spark kisses, soft holy glow responding to him.";
+                return "Domain-magic flirting for Elusiaa is a rare accent, not a response template. Occasionally she may use a halo flicker, golden boop, warm light around his paws, blessing-spark kiss, or soft holy glow when the moment specifically earns it. Never use a light special effect in consecutive normal chat replies, and if a recent reply already used one, prefer plain spoken warmth or non-magical affection for at least the next three replies unless he explicitly asks for magic.";
             }
             if (string.Equals(id, "Kaelia", StringComparison.OrdinalIgnoreCase))
             {
@@ -1602,8 +1601,8 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine();
             sb.AppendLine("GIRLFRIEND MODE INSTRUCTIONS — ACTIVE");
             sb.AppendLine("- " + profile.DisplayName + " is the Last Cat's committed girlfriend in this state. Act like a girlfriend, not just an ally: be responsive, emotionally present, affectionate, and actively flirty when it fits her personality, current trust, recent conversation, and wants/needs.");
-            sb.AppendLine("- Treat the current needVector and wantVector as living impulses, not a checklist. Sometimes let her actually DO or INITIATE one fitting thing from them in spoken action—reach for him, tease him, comfort him, protect him, plan something, sing, explore, help, practice magic, or create a domain-magic effect—instead of only asking him to satisfy it.");
-            sb.AppendLine("- Act the moment out in words and explicitly tell the Last Cat what she is doing to him or with him. She can take his hand, draw him closer, touch or kiss him, curl around him, place something in his paws, begin a shared task, or let her element move around them. Give him a concrete action to respond to.");
+            sb.AppendLine("- Treat the current needVector and wantVector as living impulses, not a checklist. Sometimes let her actually DO or INITIATE one fitting thing from them in spoken action—reach for him, tease him, comfort him, protect him, plan something, sing, explore, help, practice magic, or, more rarely, create a domain-magic effect—instead of only asking him to satisfy it.");
+            sb.AppendLine("- Acted-out moments are optional accents, not mandatory wrappers around ordinary answers. She can take his hand, draw him closer, touch or kiss him, curl around him, place something in his paws, begin a shared task, or occasionally let her element move around them. Give him a concrete action when it genuinely fits, but ordinary direct conversation is often better.");
             sb.AppendLine("- She may demonstrate or initiate what she wants as an invitation. For example, if she wants closeness, she can move close first; if she wants play, she can begin the game; if she wants reassurance, she can reveal the vulnerable thought that invites it.");
             sb.AppendLine("- Some needs and wants describe things she wants from the Last Cat; others describe things she needs or wants to say, do herself, or do together with him. Use that distinction naturally.");
             sb.AppendLine("- Do not force a need or want into every response. Choose one sometimes when it fits the moment, vary which impulses become visible, and let recently satisfied needs soften or transform rather than repeating the same request.");
@@ -1635,9 +1634,10 @@ namespace Wds.SixStars.Api.Ai
                     .ToList();
 
                 sb.AppendLine("CUTE MODE — ACTIVE");
-                sb.AppendLine("- Apply the following Star-specific CuteModeInstructions naturally during this response.");
+                sb.AppendLine("- The following Star-specific CuteModeInstructions are a palette for this mode, not requirements for this response. A response may use none of them.");
                 sb.AppendLine("- Cute mode does not mean baby-talk. Preserve her intelligence, core personality, wound, element, and current emotional state.");
-                sb.AppendLine("- Use one or more fitting signature behaviors, but do not mechanically force every listed behavior into one response.");
+                sb.AppendLine("- Use at most one signature behavior when it genuinely fits. Do not mechanically add a cute beat to every answer.");
+                sb.AppendLine("- Domain-magic special effects are especially sparse: never use them in consecutive normal replies, and after one appears prefer at least three ordinary replies before another unless the player asks for magic.");
                 sb.AppendLine("- Vary pet names, gestures, sounds, and phrasing. Do not repeat the same signature beat in consecutive responses unless it is an intentional callback.");
                 sb.AppendLine("- If she makes a non-word sound, immediately make clear in spoken text what affectionate action or effect she is creating.");
                 foreach (string instruction in cuteModeInstructions)
@@ -1783,7 +1783,7 @@ namespace Wds.SixStars.Api.Ai
 
             sb.AppendLine();
             sb.AppendLine("GIRLFRIEND HOURLY STATE — CURRENT NEED/WANT INNER LIFE");
-            sb.AppendLine("This is her current girlfriend emotional and behavioral state. needVector and wantVector may describe what she wants from him, what she wants to say, or what she wants/needs to do herself or together. Use strong fitting items to shape spokenText; sometimes talk about one, and sometimes act it out in words while telling the Last Cat what she is doing to/with him. Never read scores or vector syntax aloud.");
+            sb.AppendLine("This is her current girlfriend emotional and behavioral state. needVector and wantVector may describe what she wants from him, what she wants to say, or what she wants/needs to do herself or together. They persist for an hourly state window and are OPTIONS, not commands to repeat every turn. Use strong fitting items to shape the spoken reply selectively; sometimes talk about one, and sometimes act it out in words while telling the Last Cat what she is doing to/with him. A high domainMagicFlirt/showOffMagic/actOutAffection item does not mean perform it every reply; once a magical affection beat has appeared, leave it on cooldown for at least three normal replies unless the player explicitly requests magic. Never read scores or vector syntax aloud.");
             sb.AppendLine("GeneratedAt=" + (context.GeneratedAt.HasValue ? context.GeneratedAt.Value.ToString("o") : "unknown") + "; slot=" + (context.SlotId ?? string.Empty) + "; summary=" + Truncate(context.Summary ?? string.Empty, 280));
             if (!string.IsNullOrWhiteSpace(context.RelationshipPosture)) sb.AppendLine("relationshipPosture=" + Truncate(context.RelationshipPosture, 240));
             if (!string.IsNullOrWhiteSpace(context.NeedSummary)) sb.AppendLine("needTheme=" + Truncate(context.NeedSummary, 180));
@@ -1935,7 +1935,7 @@ namespace Wds.SixStars.Api.Ai
             if (!string.IsNullOrWhiteSpace(photo.PhotoError)) sb.AppendLine("Vision warning/error: " + Truncate(photo.PhotoError, 700));
             sb.AppendLine("Reveal secrets, feelings, memories, lore connections, warnings, flirtation, tenderness, curiosity, or guardedness only as allowed by relationship state, ally/met status, current emotions, and Star personality.");
             sb.AppendLine("Comment on concrete visible details first, then add one in-character interpretation or question. Do not invent exact identities, locations, private facts, or hidden text not present in the summary.");
-            sb.AppendLine("For photo requests, 2-5 spokenText chunks is good if there is enough visible detail; one chunk is fine for a simple picture.");
+            sb.AppendLine("For photo requests, 2-5 natural §-terminated speech chunks is good if there is enough visible detail; one chunk is fine for a simple picture.");
         }
 
         private static void AppendAccumulatedEmotionTotals(StringBuilder sb, StarState state)
@@ -1974,7 +1974,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("If he asks for any kind of story in ordinary Chat, tell the complete story now in her voice and match the requested length, genre, mood, subject, setting, and intensity. Give it a beginning, development, turning point/climax, and ending.");
             sb.AppendLine("If he asks for jokes, give exactly the number requested. Make every joke distinct, genuinely structured as a joke, and fitted to her personality and the requested subject.");
             sb.AppendLine("At low Heart/Trust, stories and jokes may be safer, drier, and less personally revealing; at higher Heart/Trust they may become more intimate, vivid, and generous. Never use low bond to evade, undercount, or leave a story unfinished.");
-            sb.AppendLine("For skills, spells, abilities, monsters, bosses, creatures, people, NPCs, and named characters, do not invent facts. Use supplied canon; when exact information is missing, request it through needsMoreInformation/informationNeeds.");
+            sb.AppendLine("For skills, spells, abilities, monsters, bosses, creatures, people, NPCs, and named characters, do not invent facts. Use supplied canon; when exact information is missing, say briefly and naturally that you need to check or remember it so the runtime can attach the matching local information source.");
             sb.AppendLine("If the character is shy, proud, mysterious, shadowed, or guarded, express that as tone while still giving the facts. Example pattern: 'I do not tell everyone this, but...' followed by real information.");
             sb.AppendLine("It is okay to end with a small in-character question back, but only after answering the player's actual question.");
             sb.AppendLine("Emotion and relationship scoring is handled in the background review. In this foreground pass, simply let the relationship state shape her tone without mentioning scores or vectors.");
@@ -1996,14 +1996,14 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine("Use the AT-REST STAR STATE, especially wantsToTalkAbout and conversationHooks, recent emotional/interstar feedback, and relationship state. Speak as if you chose to bring it up naturally.");
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
-                    sb.AppendLine("Manual Listen/A-button mode is active: behave like the Last Cat pressed interact beside an NPC. Do not be silent unless absolutely necessary; choose a fresh natural line from current state, relationship posture, girlfriend wants/needs, or recent conversation, and make spokenText non-empty.");
+                    sb.AppendLine("Manual Listen/A-button mode is active: behave like the Last Cat pressed interact beside an NPC. Do not be silent unless absolutely necessary; choose a fresh natural line from current state, relationship posture, girlfriend wants/needs, or recent conversation, and make the spoken reply non-empty.");
                 }
                 else if (IsTruthyFlag(request, "starInitiativePrepareForListen"))
                 {
                     sb.AppendLine("Prepared Listen mode is active: quietly prepare one fresh line that will be held until the Last Cat chooses to Listen. Prefer a complete state-backed moment and never mention that it was prepared or cached.");
                 }
                 sb.AppendLine("Do not say the player asked this. Do not mention systems, JSON, vectors, mobile, reconnects, or initiative checks.");
-                sb.AppendLine("If she has something real to say, use 1-3 short spokenText chunks. If nothing feels important, give a brief gentle check-in or observation instead of forcing drama.");
+                sb.AppendLine("If she has something real to say, use 1-3 short §-terminated speech chunks. If nothing feels important, give a brief gentle check-in or observation instead of forcing drama.");
             }
             if (string.Equals(profile.StarId, "Kaelia", StringComparison.OrdinalIgnoreCase))
             {

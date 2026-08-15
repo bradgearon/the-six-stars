@@ -16,46 +16,56 @@ public sealed partial class MainViewModel
                 StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildWritingReviewSummary(StarWritingHistoryItem? item)
+    private static string BuildReaderEmotionReviewSummary(StarWritingHistoryItem? item)
     {
-        if (item == null) return string.Empty;
-        string discipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
-        if (string.Equals(discipline, StarWritingReviewDisciplines.WritingQualityScoreV1, StringComparison.OrdinalIgnoreCase))
+        if (item == null
+            || !string.Equals(
+                StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline),
+                StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                StringComparison.OrdinalIgnoreCase)
+            || !StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out var values))
         {
-            double score = Math.Max(0.0, Math.Min(100.0, item.OverallValue));
-            return "Quality score: " + score.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + "/100.";
+            return string.Empty;
         }
 
-        if (string.Equals(discipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase)
-            && StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out var values))
-        {
-            double overall = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
-            return "Legacy reader-emotion Overall: " + overall.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " IU.";
-        }
-
-        return string.Empty;
+        string strongest = string.Join(", ", StarWritingReaderEmotionVector.EmotionCategories
+            .Select(emotion => new { Emotion = emotion, Value = StarWritingReaderEmotionVector.ReadValue(values, emotion) })
+            .OrderByDescending(x => x.Value)
+            .Take(4)
+            .Select(x => x.Emotion + " " + x.Value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture) + " IU"));
+        double overall = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+        return "Overall " + overall.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)
+            + " IU; strongest reader effects: " + strongest + ".";
     }
 
     private static string BuildSparkBatchReviewSummary(StarWritingCreateResult result)
     {
         if (result?.Batch?.Items == null || result.Batch.Items.Count == 0) return string.Empty;
+
         string values = string.Join(", ", result.Batch.Items.Select(item =>
-            Math.Max(0.0, Math.Min(100.0, item.OverallValue)).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture)));
-        return " Quality scores: [" + values + "].";
+        {
+            if (!StarWritingReaderEmotionVector.TryNormalizeComplete(item.EmotionalVector, out _, out var readerValues))
+            {
+                return "?";
+            }
+            return StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall")
+                .ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        }));
+        return " Overall IU: [" + values + "].";
     }
 
     private static string BuildWritingGenerationStatus(string starId, StarWritingCreateResult result, string prefix = "")
     {
         string repairMessage = result.RepairedRatingCount > 0
-            ? " Re-rated " + result.RepairedRatingCount + " older writings whose quality scores were missing or invalid."
+            ? " Re-rated " + result.RepairedRatingCount + " older writings whose vectors were incomplete."
             : string.Empty;
 
         if (IsConstellationStory(result))
         {
             string persistence = result.PersistedCount > 0
-                ? "The finished Constellation Story scored at least the shelf threshold and was saved."
-                : "The finished Constellation Story was reviewed but did not reach the shelf score threshold.";
-            string review = BuildWritingReviewSummary(result.Batch.Items.FirstOrDefault());
+                ? "The finished Constellation Story passed her reader-emotion persistence rules and was saved to the shelf."
+                : "The finished Constellation Story was reviewed but did not pass her reader-emotion persistence rules.";
+            string review = BuildReaderEmotionReviewSummary(result.Batch.Items.FirstOrDefault());
             return prefix + starId + " used " + result.WritingMethod
                 + " and completed " + result.CompletedPassCount + " collaborative development phases. "
                 + persistence + (string.IsNullOrWhiteSpace(review) ? "" : " " + review)
@@ -66,7 +76,7 @@ public sealed partial class MainViewModel
         return prefix + starId + " used " + result.WritingMethod
             + " and completed " + result.CompletedPassCount + " of " + result.SelectedPassCount
             + " writing passes with " + result.AppliedImprovementCount + " accepted replacements; "
-            + result.PersistedCount + " Sparks passed the writing-quality score threshold."
+            + result.PersistedCount + " Sparks passed her persistence rules."
             + BuildSparkBatchReviewSummary(result) + " "
             + result.State.PendingCount + " are new and waiting to be told."
             + repairMessage;
@@ -88,10 +98,10 @@ public sealed partial class MainViewModel
                 }
                 output.AppendLine(item.Writing ?? string.Empty);
                 output.AppendLine();
-                string review = BuildWritingReviewSummary(item);
+                string review = BuildReaderEmotionReviewSummary(item);
                 if (!string.IsNullOrWhiteSpace(review))
                 {
-                    output.AppendLine("Writing review: " + review);
+                    output.AppendLine("Reader-emotion review: " + review);
                 }
                 output.AppendLine(item.Persisted
                     ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds ?? new System.Collections.Generic.List<string>())
@@ -111,14 +121,14 @@ public sealed partial class MainViewModel
             StarWritingHistoryItem item = result.Batch.Items[i];
             output.Append(i + 1).Append(". [").Append(string.Join(" + ", item.WordsUsed)).AppendLine("]");
             output.AppendLine(item.Writing);
-            string review = BuildWritingReviewSummary(item);
+            string review = BuildReaderEmotionReviewSummary(item);
             if (!string.IsNullOrWhiteSpace(review))
             {
-                output.AppendLine("Writing review: " + review);
+                output.AppendLine("Reader-emotion review: " + review);
             }
             output.AppendLine(item.Persisted
                 ? "Saved to the writing shelf by: " + string.Join(", ", item.MatchedPersistenceRuleIds)
-                : "Not persisted by the current writing-quality score threshold.");
+                : "Not persisted by this Star's current reader-effect rules.");
             output.AppendLine();
         }
         return output.ToString().TrimEnd();

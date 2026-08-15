@@ -1271,6 +1271,50 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return new VoiceWavArchivePlaybackEndpoint(playbackEndpoint, outputDirectory, saveMetadataText);
     }
 
+    private StarInteractionResponse CreateLiveVoiceTemplateResponse(string starId)
+    {
+        StarProfile profile = _profileProvider.GetProfile(starId);
+        string voiceDesign = string.IsNullOrWhiteSpace(profile.VoiceDesignPrompt)
+            ? string.Join(" ", new[] { profile.PersonalityShort, profile.VoiceArchetype, profile.SpeakingStyle }.Where(x => !string.IsNullOrWhiteSpace(x)))
+            : profile.VoiceDesignPrompt;
+
+        VoiceDirective directive = new VoiceDirective
+        {
+            VoiceId = string.IsNullOrWhiteSpace(profile.VoiceId) ? profile.StarId : profile.VoiceId,
+            VoiceDesignPrompt = voiceDesign,
+            VoiceCloneAudioFile = profile.VoiceCloneAudioFile ?? string.Empty,
+            VoiceCloneRefText = profile.VoiceCloneRefText ?? string.Empty,
+            DeliveryInstructions = "Speak in character with the Star's stable voice identity, natural timing, and emotionally grounded delivery. Use the exact streamed speech chunk without adding words.",
+            PrimaryEmotion = "in-character",
+            EmotionIntensity = 0.55,
+            Pace = "natural",
+            Pitch = "natural",
+            Volume = "normal",
+            Prosody = string.IsNullOrWhiteSpace(profile.SpeakingStyle) ? "natural, character-consistent" : profile.SpeakingStyle,
+            Language = "English"
+        };
+        directive.AudioTags.Add("character voice");
+        foreach (string rule in profile.VoiceGenerationRules.Take(3))
+        {
+            if (!string.IsNullOrWhiteSpace(rule)) directive.Avoid.Add("Do not violate voice rule: " + rule);
+        }
+
+        StarInteractionResponse response = new StarInteractionResponse
+        {
+            StarId = profile.StarId,
+            VoiceDirective = directive
+        };
+        PrepareVoiceCloneReferenceForTts(response);
+        return response;
+    }
+
+    private bool ShouldUseLiveForegroundSpeech(RequestType requestType)
+    {
+        return _useStreamingTts
+            && requestType != RequestType.Story
+            && requestType != RequestType.StarInitiative;
+    }
+
     private IStreamingVoiceGenerator CreateStreamingVoiceGenerator()
     {
         string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
@@ -2536,7 +2580,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 DebugJson = JsonSerializer.Serialize(new
                 {
                     feature = "star-writing-iterative-pass-generation",
-                    reviewDiscipline = StarWritingReviewDisciplines.WritingQualityScoreV1,
+                    vectorCategoryOrder = StarWritingReaderEmotionVector.Categories,
                     result
                 }, _jsonOptions);
                 Status = BuildWritingGenerationStatus(starId, result);
@@ -2568,11 +2612,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        CancellationToken token = _operationController.BeginNewOperation("Tell top-scored Sparks.");
+        CancellationToken token = _operationController.BeginNewOperation("Tell favorite high-IU Sparks.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is loading her five highest-scoring untold Sparks.";
+            Status = starId + " is choosing five favorites from a 25-Spark weighted-IU listening set drawn from her top 100 untold Sparks.";
         });
         try
         {
@@ -2600,7 +2644,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     response = result.Response,
                     pendingAfter = PendingWritingCount
                 }, _jsonOptions);
-                Status = starId + " is performing the " + result.SelectedWritings.Count + " highest-scoring untold Spark(s) from a " + result.ElitePoolCount + "-item score-ranked shelf. " + PendingWritingCount + " remain new.";
+                Status = starId + " selected " + result.SelectedWritings.Count + " Spark(s) from a weighted " + result.CandidateCount + "-item set drawn from the top " + result.ElitePoolCount + " IU pool (" + result.AnchorCount + " peak anchors, " + result.ContrastCount + " contrast picks). " + PendingWritingCount + " remain new.";
             });
 
             await PublishWritingShelfEventAsync("StarWritingPerformanceReady", starId, result.State, result.Response.SpokenParts, Status).ConfigureAwait(false);
@@ -2938,7 +2982,37 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             IsProcessingRuntime = true;
             CancellationToken runtimeToken = _operationController.BeginNewOperation("typed message to " + request.StarId);
-            StarInteractionResponse response = await _services.Conversations.ProcessAsync(request, runtimeToken);
+            LiveStarVoiceResponsePipeline? liveSpeech = null;
+            if (ShouldUseLiveForegroundSpeech(request.RequestType))
+            {
+                StarInteractionResponse liveVoiceTemplate = CreateLiveVoiceTemplateResponse(request.StarId);
+                liveSpeech = new LiveStarVoiceResponsePipeline(
+                    CreateStreamingVoiceGenerator(),
+                    _playbackEndpoint,
+                    _speechPipeline,
+                    _interruptionManager)
+                {
+                    AutoPlayChunks = true
+                };
+                liveSpeech.GenerationError += (_, args) => OnUiThread(() => Status = "Live voice generation error: " + args.ErrorMessage);
+                liveSpeech.ChunkReadyForConsumer += (_, args) => OnUiThread(() =>
+                    Status = "Live voice chunk " + (args.Sequence + 1) + " ready while the Star is still replying...");
+                liveSpeech.Start(DefaultSessionId, liveVoiceTemplate, runtimeToken);
+                request.SpokenChunkReady = liveSpeech.EnqueueTextChunk;
+                Status = "⏳ Streaming the Star reply; speech will start at the first § chunk...";
+            }
+
+            StarInteractionResponse response;
+            try
+            {
+                response = await _services.Conversations.ProcessAsync(request, runtimeToken);
+            }
+            catch
+            {
+                liveSpeech?.CancelCurrentSpeech();
+                liveSpeech?.Dispose();
+                throw;
+            }
 
             // Check if response came from real LLM or mock
             bool usedRealLlm = !response.Debug.RiskFlags.Contains("llm_primary_failed");
@@ -2984,7 +3058,56 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Diagnostics.Debug.WriteLine("\n" + _stateChangeTracker.GetCombinedSummary());
             System.Diagnostics.Debug.WriteLine("================================\n");
 
-            await SpeakStarResponseAsync(response, runtimeToken);
+            if (liveSpeech != null)
+            {
+                if (liveSpeech.TextChunksEnqueued == 0)
+                {
+                    foreach (string part in response.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    {
+                        liveSpeech.EnqueueTextChunk(part);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+                {
+                    _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
+                }
+
+                try
+                {
+                    await liveSpeech.CompleteInputAsync().ConfigureAwait(false);
+                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice generation/playback completed normally.");
+                    OnUiThread(() => Status = "Live streaming voice playback complete.");
+                }
+                catch (OperationCanceledException)
+                {
+                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice was cancelled after the foreground response completed.");
+                    OnUiThread(() => Status = "Live voice generation/playback cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice failed after the foreground response completed: " + ex.Message);
+                    OnUiThread(() => Status = "Live voice generation/playback error: " + ex.Message);
+                    System.Diagnostics.Debug.WriteLine("[Live TTS Error] " + ex);
+                }
+                finally
+                {
+                    OnUiThread(() =>
+                    {
+                        IsProcessingRuntime = false;
+                        if (!IsRecording)
+                        {
+                            RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                            CancelStopButtonText = "Cancel";
+                        }
+                    });
+                    liveSpeech.Dispose();
+                }
+            }
+            else
+            {
+                await SpeakStarResponseAsync(response, runtimeToken);
+            }
         }
         catch (OperationCanceledException)
         {

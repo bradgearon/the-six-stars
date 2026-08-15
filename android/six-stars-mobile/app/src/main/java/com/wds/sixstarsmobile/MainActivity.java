@@ -262,6 +262,10 @@ public final class MainActivity extends ComponentActivity {
     private volatile boolean destroyed;
 
     private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
+    // Build 13: desktop history is a one-time hydration source, not a live renderer.  State events
+    // arrive frequently; re-merging them on every event made the Android transcript repaint and
+    // jump back to the top over and over.
+    private final HashSet<String> prodConversationDesktopHydratedStars = new HashSet<>();
     private int keepScreenAwakeReasonMask;
 
     private final BroadcastReceiver starInitiativeServiceReceiver = new BroadcastReceiver() {
@@ -1031,7 +1035,7 @@ public final class MainActivity extends ComponentActivity {
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks loads the five highest-scoring untold Sparks. The main Listen → Constellation choice deterministically plays the highest-score unplayed story and queues its full narration in spoken chunks.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks builds a 25-item weighted-IU listening set from the top 100 untold Sparks. The main Listen → Constellation choice deterministically plays the highest-Overall-IU unplayed story and queues its full narration in spoken chunks.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 
@@ -1454,7 +1458,9 @@ public final class MainActivity extends ComponentActivity {
         prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain);
         prodStarSubtitleText.setContentDescription("Current Star: " + meta.id + ". Open Star selector.");
         if (prodSpriteView != null && !shirtOffAnimationActive) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
-        refreshProdConversationWindow();
+        // Conversation rendering is intentionally NOT tied to Star-state rendering. Relationship,
+        // writing, daily-state, and background events can update many times while the user is
+        // reading the transcript. Only real conversation changes / Star selection should repaint it.
     }
 
     private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
@@ -1773,8 +1779,12 @@ public final class MainActivity extends ComponentActivity {
             String current = selectedStarName();
             settingsService.setSelectedStarId(current);
             refreshProdStarUi(current);
-            loadProdConversationCacheIfNeeded(current);
-            refreshProdConversationWindow();
+            // Roster refreshes are background state maintenance. Do not repaint the conversation
+            // unless rebuilding the adapter actually changed the selected Star.
+            if (!current.equalsIgnoreCase(selected)) {
+                loadProdConversationCacheIfNeeded(current);
+                refreshProdConversationWindow();
+            }
         }
     }
 
@@ -2247,8 +2257,8 @@ public final class MainActivity extends ComponentActivity {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
                         ? starId + " is choosing words, creating, and rating shelf work…"
                         : constellationPlayback
-                            ? starId + " is loading her highest-score unplayed Constellation Story and preparing the complete spoken queue…"
-                            : starId + " is loading her five highest-scoring untold Sparks…");
+                            ? starId + " is loading her highest-IU unplayed Constellation Story and preparing the complete spoken queue…"
+                            : starId + " is reading a weighted set of 25 from her top 100 IU Sparks, then choosing five…");
             }
 
             JSONObject json = new JSONObject();
@@ -2263,8 +2273,8 @@ public final class MainActivity extends ComponentActivity {
             json.put("reason", "GenerateStarWriting".equalsIgnoreCase(commandType)
                     ? "Android requested new writing shelf work."
                     : constellationPlayback
-                        ? "Android requested the highest-score unplayed Constellation Story, formatted into a complete spokenText queue for phone narration."
-                        : "Android requested the five highest-scoring untold Sparks for performance.");
+                        ? "Android requested the highest-Overall-IU unplayed Constellation Story, formatted into a complete spokenText queue for phone narration."
+                        : "Android requested a Spark performance from a 25-item weighted-IU listening set drawn from the top-100 untold Sparks.");
             json.put("returnAudio", returnAudio);
             json.put("returnAudioInline", false);
             json.put("clientName", "SixStarsMobileAndroidWritingShelf");
@@ -2525,16 +2535,14 @@ public final class MainActivity extends ComponentActivity {
         if (!prodMode || starId == null || state == null) return;
         loadProdConversationCacheIfNeeded(starId);
 
-        JSONArray history = optJsonArrayEither(state, "recentConversationHistory", "RecentConversationHistory");
-        if (history == null || history.length() == 0) {
-            refreshProdConversationWindow();
-            return;
-        }
+        // The bridge emits Star-state payloads for many unrelated background changes. Hydrate the
+        // transcript from desktop state once per Star per activity lifetime; afterwards, actual
+        // Conversation/Transcript bridge events and the local cache own the visible window.
+        if (prodConversationDesktopHydratedStars.contains(starId)) return;
 
-        // Desktop state is canonical and newest-first. Merge it with the phone's tiny durable cache
-        // instead of refusing to hydrate just because one local line already exists. This makes
-        // conversation history appear immediately after app/activity restarts and still recovers
-        // older lines when the desktop reconnects a moment later.
+        JSONArray history = optJsonArrayEither(state, "recentConversationHistory", "RecentConversationHistory");
+        if (history == null || history.length() == 0) return;
+
         ArrayList<String> remote = new ArrayList<>();
         for (int i = 0; i < history.length() && remote.size() < 12; i++) {
             JSONObject item = history.optJSONObject(i);
@@ -2544,25 +2552,31 @@ public final class MainActivity extends ComponentActivity {
             if (star.length() > 0) remote.add(starId + ": " + clip(star, 520));
             if (player.length() > 0 && remote.size() < 12) remote.add("You: " + clip(player, 360));
         }
+        if (remote.isEmpty()) return;
 
+        ArrayList<String> before = prodConversationByStar.get(starId);
         ArrayList<String> merged = new ArrayList<>();
-        for (String line : remote) {
-            if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
-            if (merged.size() >= 12) break;
-        }
-        ArrayList<String> local = prodConversationByStar.get(starId);
-        if (local != null) {
-            for (String line : local) {
+
+        // Preserve the phone cache at the front when it exists. It may contain the just-finished
+        // turn while the desktop state snapshot is a fraction of a second behind. Desktop history
+        // then fills older/missing lines without shuffling the visible transcript on every event.
+        if (before != null) {
+            for (String line : before) {
                 if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
                 if (merged.size() >= 12) break;
             }
         }
+        for (String line : remote) {
+            if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
+            if (merged.size() >= 12) break;
+        }
 
-        if (!merged.isEmpty()) {
+        prodConversationDesktopHydratedStars.add(starId);
+        if (!merged.isEmpty() && (before == null || !before.equals(merged))) {
             prodConversationByStar.put(starId, merged);
             persistProdConversationCache(starId);
-            refreshProdConversationWindow();
-            appendVoiceDebug("Nyxari restored conversation history", "Loaded/merged " + merged.size() + " recent line(s) for " + starId + " from phone cache + desktop Star state.");
+            if (starId.equalsIgnoreCase(selectedStarName())) refreshProdConversationWindow();
+            appendVoiceDebug("Nyxari restored conversation history", "Hydrated " + merged.size() + " recent line(s) for " + starId + " once from phone cache + desktop Star state.");
         }
     }
 
@@ -2662,9 +2676,11 @@ public final class MainActivity extends ComponentActivity {
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
             if ("AllStarsDataCleared".equalsIgnoreCase(type)) {
                 prodConversationByStar.clear();
+                prodConversationDesktopHydratedStars.clear();
                 if (settingsService != null) settingsService.clearAllProdConversationLines();
             } else if (starId != null && starId.length() > 0) {
                 prodConversationByStar.remove(starId);
+                prodConversationDesktopHydratedStars.remove(starId);
                 if (settingsService != null) settingsService.clearProdConversationLines(starId);
             }
             refreshProdConversationWindow();
@@ -2711,7 +2727,7 @@ public final class MainActivity extends ComponentActivity {
                 ? starId + " — new shelf work"
                 : constellationPlayback
                     ? starId + " — Constellation Story: " + storyTitle
-                    : starId + " — top-scored Sparks";
+                    : starId + " — favorite high-IU Sparks";
         responseText.setText(title + "\n\n" + (visible.length() > 0 ? visible.toString() : message)
                 + (constellationPlayback ? "" : "\n\nNew Sparks: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount));
         if (prodMiniStatusText != null) {
@@ -3058,12 +3074,7 @@ public final class MainActivity extends ComponentActivity {
     private void selectStarInSpinner(String starId) {
         if (starSpinner == null || starId == null || starId.length() == 0) return;
         int position = findStarPosition(starId);
-        if (position < 0) return;
-        if (position == starSpinner.getSelectedItemPosition()) {
-            loadProdConversationCacheIfNeeded(starId);
-            refreshProdConversationWindow();
-            return;
-        }
+        if (position < 0 || position == starSpinner.getSelectedItemPosition()) return;
         suppressStarSelectionDispatch = true;
         try {
             starSpinner.setSelection(position);

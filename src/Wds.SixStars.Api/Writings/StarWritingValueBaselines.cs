@@ -26,7 +26,6 @@ namespace Wds.SixStars.Api.Writings
 
     public static class StarWritingValueUnits
     {
-        public const string Score = "score";
         public const string InformationUnits = "information-units";
         public const string DisplayName = "information units";
         public const string Abbreviation = "IU";
