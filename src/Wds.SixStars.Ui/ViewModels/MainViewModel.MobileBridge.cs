@@ -32,6 +32,7 @@ public sealed partial class MainViewModel
 {
     private readonly object _mobileVoiceStreamGate = new object();
     private CancellationTokenSource? _mobileVoiceStreamCts;
+    private CancellationTokenSource? _backgroundPreparedSpeechCts;
     private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
     private Task? _pendingMobileStoryThinkingVoiceTask;
     private long _mobileVoiceStreamOrdinal;
@@ -450,8 +451,39 @@ public sealed partial class MainViewModel
         string sessionId = string.IsNullOrWhiteSpace(command.SessionId) ? "android-phone-dev" : command.SessionId;
         string starId = ResolveDefaultStarId(command.StarId);
 
+        // Build 15H: any explicit phone control is foreground player activity. Quiet automatic
+        // RefreshState and at-rest initiative traffic are intentionally excluded so background
+        // writing can still run while the phone is truly idle. A separate PlayerActivity command
+        // is sent on Android touch/local playback so even controls that never need the LLM can
+        // immediately cancel the current writing iteration.
+        if (!commandType.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("MaybeStarInitiative", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase))
+        {
+            NotifyBackgroundWritingLoopForegroundActivity("Android command " + commandType);
+        }
+
         switch (commandType)
         {
+            case "PlayerActivity":
+            {
+                string activityReason = string.IsNullOrWhiteSpace(command.Reason)
+                    ? "Android app activity"
+                    : command.Reason.Trim();
+                NotifyBackgroundWritingLoopForegroundActivity(activityReason);
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+                    BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+                    Message = "Background writing was preempted for player activity and will wait for 30 idle seconds before resuming.",
+                    SuppressEventPublication = true
+                };
+            }
             case "SelectStar":
             {
                 OnUiThread(() =>
@@ -2770,10 +2802,13 @@ public sealed partial class MainViewModel
     {
         CancellationTokenSource cts = new CancellationTokenSource();
         CancellationTokenSource? previous = null;
+        CancellationTokenSource? preparedBackgroundVoice = null;
         long ordinal;
         lock (_mobileVoiceStreamGate)
         {
             previous = _mobileVoiceStreamCts;
+            preparedBackgroundVoice = _backgroundPreparedSpeechCts;
+            _backgroundPreparedSpeechCts = null;
             if (_pendingMobileStoryVoiceStream != null && ReferenceEquals(_pendingMobileStoryVoiceStream.CancellationSource, previous))
             {
                 _pendingMobileStoryVoiceStream = null;
@@ -2784,6 +2819,13 @@ public sealed partial class MainViewModel
         }
 
         try { previous?.Cancel(); } catch { }
+        try { preparedBackgroundVoice?.Cancel(); } catch { }
+        if (preparedBackgroundVoice != null)
+        {
+            OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                "Foreground voice preempted prepared cache TTS",
+                "A live Android voice stream took priority over background prepared-speech synthesis."));
+        }
 
         string streamId = "android-voice-" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
         MobileAudioStreamSession? audioSession = _services.MobileVoice.CreateStreamSession(
@@ -2935,6 +2977,14 @@ public sealed partial class MainViewModel
         try
         {
             string normalizedStarId = ResolveDefaultStarId(starId);
+            if (ShouldDeferPreparedSpeechForForeground())
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Prepared speech yielded to foreground",
+                    normalizedStarId + " preparation was deferred because a foreground interaction or Android voice stream is active."));
+                SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity has priority");
+                return;
+            }
             for (int prepared = 0; prepared < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPreparedItemsPerStar); prepared++)
             {
                 StarSpeechIntent? intent = await _runtime.GetNextSpeechIntentToPrepareAsync(normalizedStarId, CancellationToken.None).ConfigureAwait(false);
@@ -2943,6 +2993,13 @@ public sealed partial class MainViewModel
                 if (locked == null) return;
                 try
                 {
+                    if (ShouldDeferPreparedSpeechForForeground())
+                    {
+                        await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity has priority over prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                        SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity became active");
+                        return;
+                    }
+
                     MobileBridgeRequest request = new MobileBridgeRequest
                     {
                         SessionId = "android-phone-prod",
@@ -2964,9 +3021,56 @@ public sealed partial class MainViewModel
                         SpeechIntentPriority = intent.Priority,
                         SpeechIntentScore = intent.EffectiveScore
                     };
-                    MobileBridgeResponse response = await ProcessMobileConversationAsync(request, string.Empty, CancellationToken.None).ConfigureAwait(false);
+
+                    CancellationTokenSource preparedOperationCts = new CancellationTokenSource();
+                    bool foregroundWonRace = false;
+                    lock (_mobileVoiceStreamGate)
+                    {
+                        if (_mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested)
+                        {
+                            foregroundWonRace = true;
+                        }
+                        else
+                        {
+                            try { _backgroundPreparedSpeechCts?.Cancel(); } catch { }
+                            try { _backgroundPreparedSpeechCts?.Dispose(); } catch { }
+                            _backgroundPreparedSpeechCts = preparedOperationCts;
+                        }
+                    }
+
+                    if (foregroundWonRace)
+                    {
+                        preparedOperationCts.Dispose();
+                        await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground Android voice became active before prepared speech generation could start.", CancellationToken.None).ConfigureAwait(false);
+                        SchedulePreparedSpeechRetry(normalizedStarId, "foreground Android voice won the prepared-speech start race");
+                        return;
+                    }
+
+                    MobileBridgeResponse response;
+                    try
+                    {
+                        response = await ProcessMobileConversationAsync(request, string.Empty, preparedOperationCts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_mobileVoiceStreamGate)
+                        {
+                            if (ReferenceEquals(_backgroundPreparedSpeechCts, preparedOperationCts))
+                            {
+                                _backgroundPreparedSpeechCts = null;
+                            }
+                        }
+                        preparedOperationCts.Dispose();
+                    }
                     if (!response.Ok || !response.InitiativeShouldSpeak || response.InlineVoiceChunks == null || response.InlineVoiceChunks.Count == 0)
                     {
+                        if (ShouldDeferPreparedSpeechForForeground())
+                        {
+                            await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity preempted prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                            SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity preempted prepared cache generation");
+                            return;
+                        }
+
                         string failure = FirstNonEmptyForMobile(response.VoiceError, response.InitiativeReason, "The Star did not produce prepared speech.");
                         await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, failure, CancellationToken.None).ConfigureAwait(false);
                         if (locked.PrepareAttempts < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPrepareAttempts))
@@ -3006,6 +3110,16 @@ public sealed partial class MainViewModel
                         SpeechIntentStatus = ready?.Status ?? StarSpeechIntentStatuses.Ready
                     });
                 }
+                catch (OperationCanceledException)
+                {
+                    // This background preparation uses its own CTS. Live Android voice cancels that
+                    // CTS so foreground speech can take over immediately; cancellation is a defer,
+                    // not a failed preparation attempt.
+                    await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity cancelled prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Prepared speech preempted", normalizedStarId + " cache generation yielded to foreground speech/activity."));
+                    SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity cancelled prepared cache generation");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, ex.Message, CancellationToken.None).ConfigureAwait(false);
@@ -3024,6 +3138,15 @@ public sealed partial class MainViewModel
         }
     }
 
+    private bool ShouldDeferPreparedSpeechForForeground()
+    {
+        if (IsForegroundStarInteractionActive()) return true;
+        lock (_mobileVoiceStreamGate)
+        {
+            return _mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested;
+        }
+    }
+
     private void SchedulePreparedSpeechRetry(string starId, string reason)
     {
         _ = Task.Run(async () =>
@@ -3035,12 +3158,33 @@ public sealed partial class MainViewModel
 
     private async Task<List<MobileInlineVoiceChunk>> GenerateMobileInlineVoiceChunksAsync(StarInteractionResponse starResponse, CancellationToken cancellationToken)
     {
+        // Prepared Listen audio is background cache work. It must never register itself as the
+        // currently interruptible foreground speech, because SpeechInterruptionManager starts a new
+        // generation by cancelling the previous one. That allowed a prepared-thought TTS request to
+        // cancel a live Spark/Story/Chat voice stream while the phone still showed the text.
+        lock (_mobileVoiceStreamGate)
+        {
+            if (_mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested)
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Prepared cache TTS deferred",
+                    (starResponse.StarId ?? "Star") + " cache audio yielded because foreground Android voice is active."));
+                return new List<MobileInlineVoiceChunk>();
+            }
+        }
+
         PrepareVoiceCloneReferenceForTts(starResponse);
         List<byte[]> generated = new List<byte[]>();
         object generatedGate = new object();
 
         using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
-        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+        // This is offline/cache synthesis, not audible Star speech. Do not attach the shared
+        // playback observer or SpeechInterruptionManager. Foreground streams own those.
+        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(
+            generator,
+            new NullWavePlaybackEndpoint(),
+            null,
+            null)
         {
             AutoPlayChunks = false
         };

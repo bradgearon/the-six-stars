@@ -30,6 +30,7 @@ import android.os.SystemClock;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -125,6 +126,7 @@ public final class MainActivity extends ComponentActivity {
     private static final int KEEP_AWAKE_REASON_REQUEST = 1;
     private static final int KEEP_AWAKE_REASON_VOICE_STREAM = 2;
     private static final int KEEP_AWAKE_REASON_AUDIO_PLAYBACK = 4;
+    private static final long PLAYER_ACTIVITY_SIGNAL_THROTTLE_MS = 750L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
@@ -260,6 +262,7 @@ public final class MainActivity extends ComponentActivity {
     private boolean bridgeEventsPrimed;
 
     private volatile boolean destroyed;
+    private volatile long lastDesktopPlayerActivitySignalMs;
 
     private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
     private String lastRenderedProdConversationStar = "";
@@ -299,6 +302,14 @@ public final class MainActivity extends ComponentActivity {
     };
 
     @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (event != null && event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            notifyDesktopPlayerActivity("Android app touch");
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         viewModel = new ViewModelProvider(this).get(MainViewModel.class);
@@ -314,6 +325,7 @@ public final class MainActivity extends ComponentActivity {
         starInitiativeEnabled = settingsService.isStarInitiativeEnabled();
         starInitiativeBackgroundEnabled = starInitiativeEnabled;
         buildUi();
+        wirePlayerActivityTextWatcher();
         // Restore the durable phone selection before syncStarInitiativeRuntimePrefs() copies the
         // spinner value back into preferences. Without this, a newly built spinner defaults to the
         // first Star and silently overwrites the saved selection during startup.
@@ -432,6 +444,7 @@ public final class MainActivity extends ComponentActivity {
         activityResumed = true;
         registerStarInitiativeServiceReceiver();
         ensureBridgeWebSocket();
+        notifyDesktopPlayerActivity("Android app resumed");
         loadPrefetchedInitiativeIntoMemory("Android activity resumed");
         selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
         syncPreparedSpeech("Android activity resumed", true);
@@ -484,6 +497,26 @@ public final class MainActivity extends ComponentActivity {
 
     private boolean isDesktopVoiceStreamActive() {
         return phoneVoiceService != null && phoneVoiceService.isDesktopStreamActive();
+    }
+
+    private void wirePlayerActivityTextWatcher() {
+        if (messageEdit == null) return;
+        messageEdit.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+                if (text != null && text.length() > 0) {
+                    notifyDesktopPlayerActivity("Android text entry");
+                }
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable editable) {
+            }
+        });
     }
 
     private void buildUi() {
@@ -1275,6 +1308,7 @@ public final class MainActivity extends ComponentActivity {
         settingsService.setProductionMode(useProd);
         invalidatePrefetchedInitiative("Android session mode changed.");
         buildUi();
+        wirePlayerActivityTextWatcher();
         syncStarInitiativeBackgroundService("Android UI mode switched", true);
         testConnection(false);
     }
@@ -1661,6 +1695,28 @@ public final class MainActivity extends ComponentActivity {
         else bridgeConnectionService.ensureConnected();
     }
 
+    private void notifyDesktopPlayerActivity(String reason) {
+        if (destroyed) return;
+        long nowMs = SystemClock.elapsedRealtime();
+        long previous = lastDesktopPlayerActivitySignalMs;
+        if (previous > 0L && nowMs - previous < PLAYER_ACTIVITY_SIGNAL_THROTTLE_MS) return;
+        lastDesktopPlayerActivitySignalMs = nowMs;
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-activity-" + System.currentTimeMillis());
+            json.put("commandType", "PlayerActivity");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("reason", reason == null || reason.trim().length() == 0 ? "Android app activity" : reason.trim());
+            sendSocketRequest("dispatch", json, 10000L, response -> { }, error -> { });
+        } catch (Exception ignored) {
+            // This ping is deliberately best-effort. The real foreground request still carries
+            // its own cancellation/foreground lease if the control socket is temporarily down.
+        }
+    }
+
     private void sendSocketRequest(String operation, JSONObject payload, long timeoutMs, Consumer<JSONObject> onSuccess, Consumer<Throwable> onFailure) {
         ensureBridgeWebSocket();
         if (bridgeConnectionService == null) {
@@ -1982,6 +2038,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private boolean playPrefetchedInitiativeIfAvailable() {
+        notifyDesktopPlayerActivity("Android local prepared thought playback");
         if (isDesktopVoiceStreamActive() || (phoneVoiceService != null && !phoneVoiceService.isIdle())) {
             appendVoiceDebug("Prepared Listen held",
                     "Existing Star speech is still playing, so the prepared at-rest line remains queued instead of clearing the voice queue.");
@@ -2313,7 +2370,14 @@ public final class MainActivity extends ComponentActivity {
                     setDebug("Writing shelf request complete", clip(response.toString(), 5000));
                     if (foregroundPerformance) {
                         setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved Star writing response returned; voice stream/playback now owns wake state.");
-                        mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("saved writing performance finished; prepare the next Listen response", true), 6500L);
+                        // When audio was requested, the phone voice stream / queue-idle callbacks
+                        // are the authoritative signal that foreground narration is finished. A
+                        // fixed timer here could restart prepared Listen work while Qwen was still
+                        // generating a five-Spark performance.
+                        if (!returnAudio) {
+                            allowPreparedListenAfter(2500L, "Saved writing returned without phone audio.");
+                            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("saved writing text-only performance finished", true), 2800L);
+                        }
                     }
                 });
             }, error -> runOnUiThread(() -> {
@@ -3518,6 +3582,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void playPreparedSpeech(PreparedSpeechStore.CachedItem item, String reason) {
         if (item == null || preparedSpeechPlaybackActive || item.chunks == null || item.chunks.isEmpty()) return;
+        notifyDesktopPlayerActivity("Android local prepared thought playback");
         boolean playOnPhone = playOnPhoneCheck == null || playOnPhoneCheck.isChecked();
         if (!playOnPhone) return;
         preparedSpeechPlaybackActive = true;
@@ -3583,6 +3648,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void completePreparedSpeechPlayback(PreparedSpeechStore.CachedItem item, String url) {
         if (item == null) return;
+        notifyDesktopPlayerActivity("Android local prepared thought finished");
         preparedSpeechPlaybackActive = false;
         activePreparedSpeechItem = null;
         try {
@@ -3613,6 +3679,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void sendMessage() {
+        notifyDesktopPlayerActivity("Android text message");
         String playerText = messageEdit == null ? "" : messageEdit.getText().toString();
         String requestType = requestTypeSpinner == null || requestTypeSpinner.getSelectedItem() == null ? "Chat" : requestTypeSpinner.getSelectedItem().toString();
         if (playerText.trim().length() == 0 && !"Story".equalsIgnoreCase(requestType)) {
@@ -3659,6 +3726,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void startRecording() {
+        notifyDesktopPlayerActivity("Android voice recording started");
         if (voiceCaptureService == null || !voiceCaptureService.hasPermission()) {
             startRecordingAfterAudioPermission = true;
             requestAudioPermissionIfNeeded();
@@ -3969,6 +4037,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void playSavedVoiceAudio() {
+        notifyDesktopPlayerActivity("Android local voice replay");
         if (phoneVoiceService != null) phoneVoiceService.playSavedVoice();
     }
 

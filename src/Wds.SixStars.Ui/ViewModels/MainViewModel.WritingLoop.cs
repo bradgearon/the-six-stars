@@ -25,7 +25,7 @@ public sealed partial class MainViewModel
         }
     }
 
-    private static readonly TimeSpan BackgroundWritingIdleDelay = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan BackgroundWritingIdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BackgroundWritingPollDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BackgroundWritingBetweenStarsDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan BackgroundWritingErrorDelay = TimeSpan.FromSeconds(5);
@@ -63,7 +63,7 @@ public sealed partial class MainViewModel
                     _backgroundWritingNextStarIndex = ResolveBackgroundWritingStartIndex(SelectedStarId);
                 }
 
-                SetBackgroundWritingLoopStatus("Enabled. Waiting for a few idle seconds before generating for " + BackgroundWritingStarOrder[_backgroundWritingNextStarIndex] + ".");
+                SetBackgroundWritingLoopStatus("Enabled. Waiting until the player has been idle for 30 seconds before generating for " + BackgroundWritingStarOrder[_backgroundWritingNextStarIndex] + ".");
                 EnsureBackgroundWritingLoopStarted();
             }
             else
@@ -156,7 +156,7 @@ public sealed partial class MainViewModel
             TimeSpan idleFor = DateTimeOffset.UtcNow - lastForegroundActivity;
             if (!startNow && idleFor < BackgroundWritingIdleDelay)
             {
-                SetBackgroundWritingLoopStatus("Waiting for a few idle seconds before generating for " + BackgroundWritingStarOrder[nextStarIndex] + ".");
+                SetBackgroundWritingLoopStatus("Waiting until the player has been idle for 30 seconds before generating for " + BackgroundWritingStarOrder[nextStarIndex] + ".");
                 await Task.Delay(BackgroundWritingPollDelay, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -185,7 +185,7 @@ public sealed partial class MainViewModel
                         _backgroundWritingIterationCts = null;
                     }
                 }
-                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after a few idle seconds.");
+                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after 30 idle seconds.");
                 await Task.Delay(BackgroundWritingPollDelay, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -221,7 +221,7 @@ public sealed partial class MainViewModel
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after a few idle seconds.");
+                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after 30 idle seconds.");
             }
             catch (Exception ex)
             {
@@ -323,7 +323,7 @@ public sealed partial class MainViewModel
 
         if (enabled)
         {
-            SetBackgroundWritingLoopStatus("Paused for " + reason + ". It will resume after a few idle seconds.");
+            SetBackgroundWritingLoopStatus("Paused for " + reason + ". It will resume after 30 idle seconds.");
         }
     }
 

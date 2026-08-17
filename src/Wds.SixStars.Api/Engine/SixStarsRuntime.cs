@@ -336,6 +336,9 @@ namespace Wds.SixStars.Api.Engine
         public Task<StarSpeechIntent?> MarkSpeechIntentFailedAsync(string intentId, string error, CancellationToken cancellationToken)
             => _speechIntentService.MarkFailedAsync(intentId, error, cancellationToken);
 
+        public Task<StarSpeechIntent?> MarkSpeechIntentDeferredAsync(string intentId, string reason, CancellationToken cancellationToken)
+            => _speechIntentService.MarkDeferredAsync(intentId, reason, cancellationToken);
+
         public Task<StarSpeechIntent?> LeaseSpeechIntentAsync(string intentId, CancellationToken cancellationToken)
             => _speechIntentService.LeaseAsync(intentId, cancellationToken);
 

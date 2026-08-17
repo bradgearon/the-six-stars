@@ -147,6 +147,7 @@ public sealed class MobileBridgeDispatcher
     {
         if (string.IsNullOrWhiteSpace(value)) return "RefreshState";
         string compact = value.Trim().Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty);
+        if (compact.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("UserActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("ForegroundPlayerActivity", StringComparison.OrdinalIgnoreCase)) return "PlayerActivity";
         if (compact.Equals("SelectStar", StringComparison.OrdinalIgnoreCase) || compact.Equals("SelectedStar", StringComparison.OrdinalIgnoreCase)) return "SelectStar";
         if (compact.Equals("SetMet", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleMet", StringComparison.OrdinalIgnoreCase)) return "SetMet";
         if (compact.Equals("SetAlly", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAlly", StringComparison.OrdinalIgnoreCase)) return "SetAlly";
