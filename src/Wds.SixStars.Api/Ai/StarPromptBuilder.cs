@@ -579,7 +579,7 @@ namespace Wds.SixStars.Api.Ai
                 request,
                 state,
                 foregroundResponse,
-                Math.Min(6, Clamp(_options.RecentHistoryCount, 1, 20)));
+                Math.Min(3, Clamp(_options.RecentHistoryCount, 1, 20)));
 
             object data = new
             {
@@ -591,6 +591,7 @@ namespace Wds.SixStars.Api.Ai
                 relationshipContext = _forgeContextRenderer.Render(forgeContext.Relationship),
                 recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
                 durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
+                unresolvedStateContext = BuildCompactUnresolvedReviewContext(state),
                 storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
@@ -788,6 +789,12 @@ namespace Wds.SixStars.Api.Ai
                 AppendForegroundImportantMemoryContext(importantMemory, profile, state);
             }
 
+            StringBuilder unresolvedContinuity = new StringBuilder();
+            if (!storyRequest)
+            {
+                AppendForegroundUnresolvedContext(unresolvedContinuity, state);
+            }
+
             StringBuilder relationship = new StringBuilder();
             if (storyRequest)
             {
@@ -941,6 +948,7 @@ namespace Wds.SixStars.Api.Ai
                 storyHistoryContext = storyHistory.ToString().TrimEnd(),
                 recentConversationTurns = recentTurns.ToString().TrimEnd(),
                 importantMemoryContext = importantMemory.ToString().TrimEnd(),
+                unresolvedContinuityContext = unresolvedContinuity.ToString().TrimEnd(),
                 latestScreenOneLine = BuildLatestScreenOneLine(request.RecentScreenCaptures),
                 todayStarStateContext = todayStateContext.ToString().TrimEnd(),
                 taskSpecificGuidance = task.ToString().TrimEnd(),
@@ -1019,6 +1027,60 @@ namespace Wds.SixStars.Api.Ai
                 }
                 i++;
             }
+        }
+
+        private static void AppendForegroundUnresolvedContext(StringBuilder sb, StarState state)
+        {
+            if (sb == null || state == null) return;
+            List<StarUnresolvedVectorCodec.IncomingThread> incoming = StarUnresolvedVectorCodec.ParseIncomingItems(state.IncomingUnresolvedVectors, 10)
+                .OrderByDescending(x => x.Confidence)
+                .Take(2)
+                .Select(x => new StarUnresolvedVectorCodec.IncomingThread
+                {
+                    Id = x.Id,
+                    Confidence = x.Confidence,
+                    Tags = x.Tags,
+                    OpenQuestion = Truncate(x.OpenQuestion, 190),
+                    ResolutionIntent = Truncate(x.ResolutionIntent, 210)
+                })
+                .ToList();
+            List<StarUnresolvedVectorCodec.OutgoingThread> outgoing = StarUnresolvedVectorCodec.ParseOutgoingItems(state.OutgoingUnresolvedVectors, 10)
+                .OrderByDescending(x => x.Priority)
+                .Take(2)
+                .Select(x => new StarUnresolvedVectorCodec.OutgoingThread
+                {
+                    Id = x.Id,
+                    Priority = x.Priority,
+                    Tags = x.Tags,
+                    OpenThread = Truncate(x.OpenThread, 190),
+                    ResolutionIntent = Truncate(x.ResolutionIntent, 210),
+                    IntendedEffects = Truncate(x.IntendedEffects, 150)
+                })
+                .ToList();
+            if (incoming.Count == 0 && outgoing.Count == 0) return;
+
+            sb.AppendLine("UNRESOLVED CONTINUITY VECTORS — private optional continuity hooks. Use at most one naturally unless several genuinely connect. Resolve one, deepen one, or let it breathe. Never recite ids/scores/tags/vector syntax.");
+            if (incoming.Count > 0)
+            {
+                sb.AppendLine("IN from Last Cat, format id^confidence^tags^open^resolutionIntent:");
+                sb.AppendLine(StarUnresolvedVectorCodec.EncodeIncomingVector(incoming, 2));
+            }
+            if (outgoing.Count > 0)
+            {
+                sb.AppendLine("OUT from you, format id^priority^tags^open^resolutionIntent^intendedEffects:");
+                sb.AppendLine(StarUnresolvedVectorCodec.EncodeOutgoingVector(outgoing, 2));
+            }
+        }
+
+        private static string BuildCompactUnresolvedReviewContext(StarState state)
+        {
+            if (state == null) return "ExistingIncomingUnresolvedVector=\nExistingOutgoingUnresolvedVector=\nRecentUnresolvedResolutionVector=";
+            string incoming = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.IncomingUnresolvedVectors ?? new List<string>()).Take(10));
+            string outgoing = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.OutgoingUnresolvedVectors ?? new List<string>()).Take(10));
+            string resolved = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.UnresolvedResolutionHistory ?? new List<string>()).Take(2));
+            return "ExistingIncomingUnresolvedVector=" + incoming + Environment.NewLine
+                + "ExistingOutgoingUnresolvedVector=" + outgoing + Environment.NewLine
+                + "RecentUnresolvedResolutionVector=" + resolved;
         }
 
         private static void AppendForegroundImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
@@ -1976,7 +2038,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("At low Heart/Trust, stories and jokes may be safer, drier, and less personally revealing; at higher Heart/Trust they may become more intimate, vivid, and generous. Never use low bond to evade, undercount, or leave a story unfinished.");
             sb.AppendLine("For skills, spells, abilities, monsters, bosses, creatures, people, NPCs, and named characters, do not invent facts. Use supplied canon; when exact information is missing, say briefly and naturally that you need to check or remember it so the runtime can attach the matching local information source.");
             sb.AppendLine("If the character is shy, proud, mysterious, shadowed, or guarded, express that as tone while still giving the facts. Example pattern: 'I do not tell everyone this, but...' followed by real information.");
-            sb.AppendLine("It is okay to end with a small in-character question back, but only after answering the player's actual question.");
+            sb.AppendLine("A closing question is optional. Sometimes use a generative question inspired by an unresolved thread or a current need/want, but many replies should end on a complete statement, action, joke, tease, image, promise, or quiet beat. Do not habitually close with 'Tell me...' or 'Tell me, ...'; ask directly without that phrase when a question is actually useful.");
             sb.AppendLine("Emotion and relationship scoring is handled in the background review. In this foreground pass, simply let the relationship state shape her tone without mentioning scores or vectors.");
             sb.AppendLine("Connection system guidance: the API stores EmotionalConnectionPercent separately from Heart/Trust/Romance. The Star knows the current percent, but she should not talk about the number unless the player explicitly asks about relationship mechanics. To become girlfriend-ready, she must be an ally, have high connection, and have enough Heart/Trust/Romance. Non-allies should not act romantically available.");
             if (state != null && state.IsGirlfriend)

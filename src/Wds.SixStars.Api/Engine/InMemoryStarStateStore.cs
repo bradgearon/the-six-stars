@@ -74,6 +74,9 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
                 GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>(),
                 GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>(),
+                IncomingUnresolvedVectors = new List<string>(),
+                OutgoingUnresolvedVectors = new List<string>(),
+                UnresolvedResolutionHistory = new List<string>(),
                 OtherStars = new List<InterstarRelationshipState>()
             };
         }
@@ -102,6 +105,9 @@ namespace Wds.SixStars.Api.Engine
             if (state.GirlfriendCoupleActivityScores == null) state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
             if (state.GirlfriendCoupleActivityHistory == null) state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
             if (state.GirlfriendCoupleActivityBestExamples == null) state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
+            if (state.IncomingUnresolvedVectors == null) state.IncomingUnresolvedVectors = new List<string>();
+            if (state.OutgoingUnresolvedVectors == null) state.OutgoingUnresolvedVectors = new List<string>();
+            if (state.UnresolvedResolutionHistory == null) state.UnresolvedResolutionHistory = new List<string>();
             if (state.IsAlly) state.IsMet = true;
             if (string.Equals(state.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {

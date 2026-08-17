@@ -4,7 +4,7 @@ RequestType: {{ data.requestType }}
 {{ data.currentTimeContext }}
 Player latest message:
 {{ data.playerTextBlock }}
-Exact foreground spokenText already sent to voice generation. Use this array only for conversationSummary context; do not copy spokenText into your response unless the schema explicitly asks for it:
+Foreground spokenText already sent to voice generation. Normal Chat replies are included exactly; if an unusually long response exceeds the compact review budget, the middle may be omitted while both the beginning and ending are preserved. Use this array for conversationSummary, unresolved-thread analysis, girlfriend/couple-activity detection, and other background interpretation explicitly requested by the schema. Do not copy spokenText into your response:
 {{ data.foregroundSpokenPartsJson }}
 Relationship before this review:
 {{ data.relationshipContext }}
@@ -15,8 +15,11 @@ Recent history for continuity:
 Durable memory / quote / marker context:
 {{ data.durableMemoryContext }}
 
+UNRESOLVED THREAD STATE BEFORE THIS TURN:
+{{ data.unresolvedStateContext }}
+
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
+Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, incomingUnresolvedVector, outgoingUnresolvedVector, unresolvedResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.
 No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.

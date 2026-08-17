@@ -24,6 +24,9 @@ namespace Wds.SixStars.Api.State
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+        public string UnresolvedResolutionVector { get; set; } = string.Empty;
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
         public List<string> ReferencedMemoryMarkerIds { get; set; } = new List<string>();
         public List<string> SecretsUnlocked { get; set; } = new List<string>();

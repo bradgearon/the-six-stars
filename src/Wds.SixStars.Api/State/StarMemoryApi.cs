@@ -119,6 +119,7 @@ namespace Wds.SixStars.Api.State
             // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
             List<string> newlyLearnedOrSuggested = AddUniqueWithResult(state.ThingsLearnedOrSuggestedByPlayer, request.ThingsLearnedOrSuggestedByPlayer, _options.MaxThingsLearnedOrSuggestedByPlayer);
+            UpdateUnresolvedThreadState(state, request);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
             UpsertRememberedMarkers(state, markersToStore, now);
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
@@ -468,6 +469,158 @@ namespace Wds.SixStars.Api.State
                 if (string.Equals(compact, keyCompact, StringComparison.OrdinalIgnoreCase)) return key;
             }
             return compact;
+        }
+
+        private static void UpdateUnresolvedThreadState(StarState state, StarStateUpdateRequest request)
+        {
+            if (state == null || request == null) return;
+            state.IncomingUnresolvedVectors ??= new List<string>();
+            state.OutgoingUnresolvedVectors ??= new List<string>();
+            state.UnresolvedResolutionHistory ??= new List<string>();
+
+            List<StarUnresolvedVectorCodec.IncomingThread> incoming = StarUnresolvedVectorCodec.ParseIncomingItems(state.IncomingUnresolvedVectors, 20);
+            List<StarUnresolvedVectorCodec.OutgoingThread> outgoing = StarUnresolvedVectorCodec.ParseOutgoingItems(state.OutgoingUnresolvedVectors, 20);
+            List<StarUnresolvedVectorCodec.IncomingThread> incomingUpdates = StarUnresolvedVectorCodec.ParseIncomingVector(request.IncomingUnresolvedVector, 10);
+            List<StarUnresolvedVectorCodec.OutgoingThread> outgoingUpdates = StarUnresolvedVectorCodec.ParseOutgoingVector(request.OutgoingUnresolvedVector, 10);
+            List<StarUnresolvedVectorCodec.Resolution> resolutions = StarUnresolvedVectorCodec.ParseResolutionVector(request.UnresolvedResolutionVector, 8);
+
+            foreach (StarUnresolvedVectorCodec.IncomingThread update in incomingUpdates)
+            {
+                StarUnresolvedVectorCodec.IncomingThread? existing = incoming.FirstOrDefault(x =>
+                    string.Equals(x.Id, update.Id, StringComparison.OrdinalIgnoreCase)
+                    || SameUnresolvedText(x.OpenQuestion, update.OpenQuestion));
+                if (existing == null) incoming.Add(update);
+                else
+                {
+                    existing.Confidence = update.Confidence;
+                    existing.Tags = update.Tags;
+                    existing.OpenQuestion = update.OpenQuestion;
+                    existing.ResolutionIntent = update.ResolutionIntent;
+                }
+            }
+
+            foreach (StarUnresolvedVectorCodec.OutgoingThread update in outgoingUpdates)
+            {
+                StarUnresolvedVectorCodec.OutgoingThread? existing = outgoing.FirstOrDefault(x =>
+                    string.Equals(x.Id, update.Id, StringComparison.OrdinalIgnoreCase)
+                    || SameUnresolvedText(x.OpenThread, update.OpenThread));
+                if (existing == null) outgoing.Add(update);
+                else
+                {
+                    existing.Priority = update.Priority;
+                    existing.Tags = update.Tags;
+                    existing.OpenThread = update.OpenThread;
+                    existing.ResolutionIntent = update.ResolutionIntent;
+                    existing.IntendedEffects = update.IntendedEffects;
+                }
+            }
+
+            List<StarUnresolvedVectorCodec.Resolution> priorResolutionHistory = StarUnresolvedVectorCodec.ParseResolutionItems(state.UnresolvedResolutionHistory, 24);
+            foreach (StarUnresolvedVectorCodec.Resolution resolution in resolutions)
+            {
+                bool matchedActive = false;
+                if (string.Equals(resolution.Direction, "in", StringComparison.OrdinalIgnoreCase))
+                {
+                    StarUnresolvedVectorCodec.IncomingThread? matched = incoming.FirstOrDefault(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    if (matched != null)
+                    {
+                        matchedActive = true;
+                        if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = matched.ResolutionIntent;
+                        incoming.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+                else
+                {
+                    StarUnresolvedVectorCodec.OutgoingThread? matched = outgoing.FirstOrDefault(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    if (matched != null)
+                    {
+                        matchedActive = true;
+                        if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = matched.ResolutionIntent;
+                        if (string.IsNullOrWhiteSpace(resolution.IntendedEffects)) resolution.IntendedEffects = matched.IntendedEffects;
+                        outgoing.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+
+                // A recently resolved outgoing thread can receive a later "how it landed" update on
+                // the next player turn. Merge that evidence into the existing resolution record rather
+                // than reviving the active thread or losing the original plan/intended effect.
+                StarUnresolvedVectorCodec.Resolution? prior = priorResolutionHistory.FirstOrDefault(x =>
+                    string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Direction, resolution.Direction, StringComparison.OrdinalIgnoreCase));
+                if (!matchedActive && prior == null) continue; // ignore hallucinated/unknown resolution ids
+                if (prior != null)
+                {
+                    if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = prior.ResolutionIntent;
+                    if (string.IsNullOrWhiteSpace(resolution.IntendedEffects)) resolution.IntendedEffects = prior.IntendedEffects;
+                    if (string.IsNullOrWhiteSpace(resolution.LandedEffect)) resolution.LandedEffect = prior.LandedEffect;
+                    if (string.IsNullOrWhiteSpace(resolution.ResolutionText)) resolution.ResolutionText = prior.ResolutionText;
+                }
+
+                string encoded = StarUnresolvedVectorCodec.EncodeResolutionHistory(resolution);
+                if (!string.IsNullOrWhiteSpace(encoded))
+                {
+                    state.UnresolvedResolutionHistory.RemoveAll(x => ResolutionHistoryMatches(x, resolution.Id, resolution.Direction));
+                    state.UnresolvedResolutionHistory.Insert(0, encoded);
+                    priorResolutionHistory.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.Direction, resolution.Direction, StringComparison.OrdinalIgnoreCase));
+                    priorResolutionHistory.Insert(0, resolution);
+                }
+            }
+
+            incoming = incoming
+                .GroupBy(x => NormalizeUnresolvedText(x.OpenQuestion), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.OrderByDescending(y => y.Confidence).First())
+                .OrderByDescending(x => x.Confidence)
+                .Take(10)
+                .ToList();
+            outgoing = outgoing
+                .GroupBy(x => NormalizeUnresolvedText(x.OpenThread), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.OrderByDescending(y => y.Priority).First())
+                .OrderByDescending(x => x.Priority)
+                .Take(10)
+                .ToList();
+
+            // Keep one tiny active working set across both directions. Incoming confidence is
+            // compared on the same 0-100 scale as outgoing priority.
+            while (incoming.Count + outgoing.Count > 10)
+            {
+                double weakestIncoming = incoming.Count == 0 ? double.MaxValue : incoming[incoming.Count - 1].Confidence * 100.0;
+                double weakestOutgoing = outgoing.Count == 0 ? double.MaxValue : outgoing[outgoing.Count - 1].Priority;
+                if (weakestIncoming <= weakestOutgoing && incoming.Count > 0) incoming.RemoveAt(incoming.Count - 1);
+                else if (outgoing.Count > 0) outgoing.RemoveAt(outgoing.Count - 1);
+                else break;
+            }
+
+            state.IncomingUnresolvedVectors = incoming
+                .Select(StarUnresolvedVectorCodec.EncodeIncoming)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+            state.OutgoingUnresolvedVectors = outgoing
+                .Select(StarUnresolvedVectorCodec.EncodeOutgoing)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            Trim(state.UnresolvedResolutionHistory, 24);
+        }
+
+        private static bool ResolutionHistoryMatches(string raw, string id, string direction)
+        {
+            StarUnresolvedVectorCodec.Resolution? parsed = StarUnresolvedVectorCodec.ParseResolutionItems(new[] { raw }, 1).FirstOrDefault();
+            return parsed != null
+                && string.Equals(parsed.Id, id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parsed.Direction, direction, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool SameUnresolvedText(string? a, string? b)
+        {
+            string left = NormalizeUnresolvedText(a);
+            string right = NormalizeUnresolvedText(b);
+            return !string.IsNullOrWhiteSpace(left) && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeUnresolvedText(string? value)
+        {
+            return new string((value ?? string.Empty).ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c)).ToArray()).Trim();
         }
 
         private static void UpdateGirlfriendCoupleActivityHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
@@ -867,6 +1020,9 @@ namespace Wds.SixStars.Api.State
                 state.ThingsLearnedOrSuggestedByPlayer = new List<string>();
                 changed = true;
             }
+            if (state.IncomingUnresolvedVectors == null) { state.IncomingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.OutgoingUnresolvedVectors == null) { state.OutgoingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.UnresolvedResolutionHistory == null) { state.UnresolvedResolutionHistory = new List<string>(); changed = true; }
             if (state.GirlfriendHistory == null)
             {
                 state.GirlfriendHistory = new List<string>();

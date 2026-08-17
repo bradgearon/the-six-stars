@@ -13,6 +13,7 @@ Last remembered reply from {{ data.starDisplayName }}: {{ data.lastRememberedRep
 {{ data.storyHistoryContext }}
 {{ data.recentConversationTurns }}
 {{ data.importantMemoryContext }}
+{{ data.unresolvedContinuityContext }}
 Latest screen/vision update: {{ data.latestScreenOneLine }}
 
 STAR STATE RESPONSE

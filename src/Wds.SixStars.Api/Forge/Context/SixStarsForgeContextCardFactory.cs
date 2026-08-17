@@ -78,10 +78,8 @@ namespace Wds.SixStars.Api.Forge.Context
                     + "; active=" + (state.GirlfriendCuteModeEnabled && hourly.CuteModeActive).ToString().ToLowerInvariant()
                     + "; probability=" + (state.GirlfriendCuteModeEnabled ? (hourly.CuteModeProbability <= 0 ? 0.35 : hourly.CuteModeProbability) : 0).ToString("0.00", CultureInfo.InvariantCulture)
                     + "; signature=" + Truncate(hourly.CuteModeSignature, 140));
-                Add(card, "Need vector", FormatGirlfriendVector(hourly.NeedVector, 8));
-                Add(card, "Want vector", FormatGirlfriendVector(hourly.WantVector, 8));
-                AddList(card, "Top things she wants to say", (hourly.ThingsSheWantsToSay ?? new List<string>()).Take(4).Select(x => Truncate(x, 160)));
-                AddList(card, "Top cute girlfriend lines", (hourly.CuteThingsSheWantsToSay ?? new List<string>()).Take(4).Select(x => Truncate(x, 160)));
+                Add(card, "Need vector", FormatGirlfriendVector(hourly.NeedVector, 6));
+                Add(card, "Want vector", FormatGirlfriendVector(hourly.WantVector, 6));
             }
 
             StarDialogueProgressState dialogue = snapshot.Memory.CurrentDialogue ?? new StarDialogueProgressState();
@@ -94,8 +92,9 @@ namespace Wds.SixStars.Api.Forge.Context
                 Add(card, "Dialogue summary", Truncate(dialogue.SummarySoFar, 1000));
                 Add(card, "Last authored line", Truncate(dialogue.LastAuthoredLine, 500));
                 Add(card, "Next expected beat", Truncate(dialogue.NextExpectedBeat, 500));
-                Add(card, "Full authored script text", Truncate(dialogue.FullScriptText, 1800));
-                Add(card, "Full authored script JSON", Truncate(dialogue.FullScriptJson, 1800));
+                // Background turn review only needs the current authored beat. The foreground speech
+                // contract receives the richer dialogue context; repeating full script text/JSON here
+                // lengthened a background model call that can otherwise block the next foreground turn.
             }
             AddList(card, "Recent authored dialogue", snapshot.Memory.RecentDialogueHistory.Select(x =>
                 "id=" + x.Id + " | dialog=" + x.DialogId + " | node=" + x.NodeId + " | title=" + Truncate(x.Title, 120)

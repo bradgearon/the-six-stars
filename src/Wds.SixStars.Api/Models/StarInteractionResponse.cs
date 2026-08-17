@@ -101,6 +101,15 @@ namespace Wds.SixStars.Api.Models
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
+        /// <summary>Compact incoming unresolved updates produced by the background review after seeing the player text and foreground reply.</summary>
+        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact outgoing unresolved updates produced by the background review after seeing what the Star actually said.</summary>
+        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact unresolved resolution events detected this turn.</summary>
+        public string UnresolvedResolutionVector { get; set; } = string.Empty;
+
         /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();

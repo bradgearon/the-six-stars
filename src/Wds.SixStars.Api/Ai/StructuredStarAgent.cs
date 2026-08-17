@@ -2778,6 +2778,9 @@ namespace Wds.SixStars.Api.Ai
                 EmotionalPurpose = model.EmotionalPurpose ?? string.Empty,
                 EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
+                IncomingUnresolvedVector = model.IncomingUnresolvedVector ?? string.Empty,
+                OutgoingUnresolvedVector = model.OutgoingUnresolvedVector ?? string.Empty,
+                UnresolvedResolutionVector = model.UnresolvedResolutionVector ?? string.Empty,
                 VoiceDirective = model.VoiceDirective ?? VoiceDirective.Empty(),
                 SuggestedStateDeltas = model.SuggestedStateDeltas ?? RelationshipDelta.Zero(),
                 ConversationSummary = string.IsNullOrWhiteSpace(model.ConversationSummary)
@@ -2825,6 +2828,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add($"Background computed emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
             if (response.InterstarEmotionVectors.Count > 0) response.Debug.Notes.Add("Interstar relationship vectors returned: " + response.InterstarEmotionVectors.Count + ".");
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
+            response.Debug.Notes.Add("Unresolved vectors: incoming=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", outgoing=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
         }
@@ -3462,6 +3466,9 @@ namespace Wds.SixStars.Api.Ai
             model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
             model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
             model.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
+            model.IncomingUnresolvedVector = StarUnresolvedVectorCodec.NormalizeIncomingVector(model.IncomingUnresolvedVector, 10);
+            model.OutgoingUnresolvedVector = StarUnresolvedVectorCodec.NormalizeOutgoingVector(model.OutgoingUnresolvedVector, 10);
+            model.UnresolvedResolutionVector = StarUnresolvedVectorCodec.NormalizeResolutionVector(model.UnresolvedResolutionVector, 8);
             model.InterstarEmotionVectors = NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors);
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();

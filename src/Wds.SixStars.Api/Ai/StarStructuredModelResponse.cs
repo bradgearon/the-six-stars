@@ -37,6 +37,15 @@ namespace Wds.SixStars.Api.Ai
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
+        /// <summary>Compact full/updated incoming unresolved vector. Format is documented in StarUnresolvedVectorCodec.</summary>
+        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact full/updated outgoing unresolved vector with priority, tags, planned resolution, and intended effects.</summary>
+        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact resolution events detected this turn, including how a prior intended effect appears to have landed when evidence exists.</summary>
+        public string UnresolvedResolutionVector { get; set; } = string.Empty;
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();

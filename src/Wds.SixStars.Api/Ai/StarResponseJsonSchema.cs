@@ -630,7 +630,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "thingsLearnedOrSuggestedByPlayer", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "thingsLearnedOrSuggestedByPlayer", "incomingUnresolvedVector", "outgoingUnresolvedVector", "unresolvedResolutionVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
@@ -652,6 +652,9 @@ namespace Wds.SixStars.Api.Ai
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(450) },
                         { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
+                        { "incomingUnresolvedVector", StringProperty(4800) },
+                        { "outgoingUnresolvedVector", StringProperty(6000) },
+                        { "unresolvedResolutionVector", StringProperty(4200) },
                         { "importantPlayerQuotes", EmptyStringArray() },
                         { "memoryNotes", StringArray(6) },
                         { "rememberedMarkers", RememberedMarkerArray(4) },

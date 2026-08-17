@@ -825,48 +825,57 @@ namespace Wds.SixStars.Api.Writings
                 performanceCandidates,
                 cancellationToken).ConfigureAwait(false);
 
-            HashSet<string> candidateIds = new HashSet<string>(performanceCandidates.Select(x => x.Id), StringComparer.OrdinalIgnoreCase);
             int targetCount = Math.Min(5, performanceCandidates.Count);
             List<string> requestedIds = (plan.SelectedWritingIds ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim())
                 .ToList();
-            List<string> invalidIds = requestedIds
-                .Where(id => !candidateIds.Contains(id))
+
+            // Gemma occasionally preserves the GUID portion of a stored Spark ID but drops the
+            // deterministic "writing-" prefix. Treat that as the same ID when it maps uniquely to
+            // one candidate. The old exact-only check made the Tell Sparks button fail even though
+            // the model had selected five valid items and returned five matching spoken parts.
+            List<string> canonicalRequestedIds = requestedIds
+                .Select(id => ResolvePerformanceCandidateId(performanceCandidates, id))
+                .ToList();
+            List<string> invalidIds = canonicalRequestedIds
+                .Select((canonical, index) => new { canonical, requested = requestedIds[index] })
+                .Where(x => string.IsNullOrWhiteSpace(x.canonical))
+                .Select(x => x.requested)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            List<string> selectedIds = requestedIds
+            List<string> selectedIds = canonicalRequestedIds
+                .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (invalidIds.Count > 0 || selectedIds.Count != targetCount || requestedIds.Count != selectedIds.Count)
-            {
-                throw new InvalidOperationException(
-                    profile.StarId + " Spark performance selection was invalid. Expected "
-                    + targetCount.ToString(CultureInfo.InvariantCulture)
-                    + " distinct IDs from the weighted IU listening set, received "
-                    + requestedIds.Count.ToString(CultureInfo.InvariantCulture)
-                    + " entries / " + selectedIds.Count.ToString(CultureInfo.InvariantCulture)
-                    + " distinct; invalid IDs=" + (invalidIds.Count == 0 ? "none" : string.Join(",", invalidIds))
-                    + ". Raw model response: " + DiagnosticPreview(plan.RawModelJson));
-            }
-
-            List<PersistedStarWriting> selected = selectedIds
-                .Select(id => performanceCandidates.First(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             List<string> spoken = (plan.SpokenText ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Select(x => x.Trim())
                 .ToList();
-            if (spoken.Count != selected.Count)
+
+            bool modelSelectionUsable = invalidIds.Count == 0
+                && selectedIds.Count == targetCount
+                && requestedIds.Count == selectedIds.Count
+                && spoken.Count == selectedIds.Count;
+
+            if (!modelSelectionUsable)
             {
-                throw new InvalidOperationException(
-                    profile.StarId + " Spark performance returned "
-                    + spoken.Count.ToString(CultureInfo.InvariantCulture)
-                    + " spoken parts for " + selected.Count.ToString(CultureInfo.InvariantCulture)
-                    + " selected Sparks. Raw model response: " + DiagnosticPreview(plan.RawModelJson));
+                // Tell Sparks is an explicit foreground action. A malformed selection should never
+                // turn the button into a no-op. Fall back deterministically to the strongest items
+                // in the listening set and speak the stored text verbatim. This keeps the user's
+                // action reliable without issuing a second LLM request and adding more latency.
+                selectedIds = StarWritingDeterministicRanker.TakeHighestRanked(performanceCandidates, targetCount)
+                    .Select(x => x.Id)
+                    .ToList();
+                spoken = selectedIds
+                    .Select(id => performanceCandidates.First(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)).Writing.Trim())
+                    .ToList();
             }
+
+            List<PersistedStarWriting> selected = selectedIds
+                .Select(id => performanceCandidates.First(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
 
             DateTimeOffset toldAt = DateTimeOffset.UtcNow;
             foreach (PersistedStarWriting item in selected)
@@ -2067,6 +2076,40 @@ namespace Wds.SixStars.Api.Writings
 
             StarWritingEmotionVector.Normalize(writing?.EmotionalVector, out Dictionary<string, StarWritingEmotionValue> values);
             return values;
+        }
+
+
+        private static string ResolvePerformanceCandidateId(IReadOnlyList<PersistedStarWriting> candidates, string requestedId)
+        {
+            if (candidates == null || string.IsNullOrWhiteSpace(requestedId)) return string.Empty;
+            string requested = requestedId.Trim();
+
+            List<string> exact = candidates
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id)
+                    && string.Equals(x.Id.Trim(), requested, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Id.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (exact.Count == 1) return exact[0];
+
+            string normalizedRequested = requested.StartsWith("writing-", StringComparison.OrdinalIgnoreCase)
+                ? requested.Substring("writing-".Length)
+                : requested;
+            if (string.IsNullOrWhiteSpace(normalizedRequested)) return string.Empty;
+
+            List<string> suffixMatches = candidates
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Id))
+                .Select(x => x.Id.Trim())
+                .Where(id =>
+                {
+                    string normalizedCandidate = id.StartsWith("writing-", StringComparison.OrdinalIgnoreCase)
+                        ? id.Substring("writing-".Length)
+                        : id;
+                    return string.Equals(normalizedCandidate, normalizedRequested, StringComparison.OrdinalIgnoreCase);
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return suffixMatches.Count == 1 ? suffixMatches[0] : string.Empty;
         }
 
         private static VoiceDirective CreateConstellationStoryVoiceDirective(StarProfile profile, PersistedStarWriting story)

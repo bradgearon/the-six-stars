@@ -97,6 +97,9 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>(),
                 GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>(),
                 GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>(),
+                IncomingUnresolvedVectors = new List<string>(),
+                OutgoingUnresolvedVectors = new List<string>(),
+                UnresolvedResolutionHistory = new List<string>(),
                 OtherStars = new List<InterstarRelationshipState>(),
                 GirlfriendReadinessSummary = "Not ready: requires ally status, EmotionalConnectionPercent >= 85, Heart >= 20, Trust >= 15, and Romance >= 12."
             };
@@ -184,6 +187,9 @@ namespace Wds.SixStars.Api.Engine
                 state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
                 changed = true;
             }
+            if (state.IncomingUnresolvedVectors == null) { state.IncomingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.OutgoingUnresolvedVectors == null) { state.OutgoingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.UnresolvedResolutionHistory == null) { state.UnresolvedResolutionHistory = new List<string>(); changed = true; }
             if (state.ActiveEffectors == null)
             {
                 state.ActiveEffectors = new List<StarRelationshipEffector>();
