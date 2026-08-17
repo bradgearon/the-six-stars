@@ -22,7 +22,7 @@ namespace Wds.SixStars.Api.Voice
         private readonly SpeechInterruptionManager? _interruptionManager;
         private readonly object _textGate = new object();
         private readonly object _audioGate = new object();
-        private readonly Queue<string> _textQueue = new Queue<string>();
+        private readonly Queue<List<string>> _textQueue = new Queue<List<string>>();
         private readonly Queue<LiveVoiceChunkReadyEventArgs> _audioQueue = new Queue<LiveVoiceChunkReadyEventArgs>();
         private readonly SemaphoreSlim _textSignal = new SemaphoreSlim(0);
         private readonly SemaphoreSlim _audioSignal = new SemaphoreSlim(0);
@@ -30,7 +30,7 @@ namespace Wds.SixStars.Api.Voice
         private CancellationTokenSource? _runCts;
         private Task? _generationTask;
         private Task? _consumerTask;
-        private TaskCompletionSource<bool>? _currentGenerationCompletion;
+        private TaskCompletionSource<GenerationCompleteEventArgs>? _currentGenerationCompletion;
         private StarInteractionResponse? _voiceTemplate;
         private string _sessionId = string.Empty;
         private volatile bool _inputComplete;
@@ -109,16 +109,32 @@ namespace Wds.SixStars.Api.Voice
         /// </summary>
         public void EnqueueTextChunk(string? text)
         {
-            if (!_started || _inputComplete || _runCts?.IsCancellationRequested == true || string.IsNullOrWhiteSpace(text)) return;
-            string chunk = text.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+            EnqueueTextChunks(new[] { text });
+        }
+
+        /// <summary>
+        /// Queues several already-final LLM speech chunks as one Qwen request. The Qwen server still
+        /// returns one WAV per text part, in order, but batching avoids opening a brand-new synthesis
+        /// request for every sentence after the foreground text has already reached the phone.
+        /// </summary>
+        public void EnqueueTextChunks(IEnumerable<string>? texts)
+        {
+            if (!_started || _inputComplete || _runCts?.IsCancellationRequested == true || texts == null) return;
+            List<string> parts = texts
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .ToList();
+            if (parts.Count == 0) return;
+
             lock (_textGate)
             {
                 if (_inputComplete) return;
-                _textQueue.Enqueue(chunk);
-                Interlocked.Increment(ref _textChunksEnqueued);
+                _textQueue.Enqueue(parts);
+                Interlocked.Add(ref _textChunksEnqueued, parts.Count);
             }
             _textSignal.Release();
-            Debug.WriteLine("[LiveStarVoiceResponsePipeline] Queued streamed text chunk: " + Preview(chunk));
+            Debug.WriteLine("[LiveStarVoiceResponsePipeline] Queued " + parts.Count + " streamed text part(s) as one Qwen batch: " + Preview(parts[0]));
         }
 
         /// <summary>
@@ -197,13 +213,13 @@ namespace Wds.SixStars.Api.Voice
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
-                    string? text = null;
+                    List<string>? textParts = null;
                     lock (_textGate)
                     {
-                        if (_textQueue.Count > 0) text = _textQueue.Dequeue();
+                        if (_textQueue.Count > 0) textParts = _textQueue.Dequeue();
                     }
 
-                    if (text == null)
+                    if (textParts == null)
                     {
                         if (_inputComplete) break;
                         await _textSignal.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -211,23 +227,7 @@ namespace Wds.SixStars.Api.Voice
                     }
 
                     StarInteractionResponse template = _voiceTemplate ?? throw new InvalidOperationException("Live voice template is missing.");
-                    TaskCompletionSource<bool> completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    _currentGenerationCompletion = completion;
-
-                    VoiceSynthesisRequest request = new VoiceSynthesisRequest
-                    {
-                        SessionId = _sessionId,
-                        StarId = template.StarId,
-                        Text = text,
-                        TextParts = new List<string> { text },
-                        SourceResponse = template,
-                        VoiceSettings = CreateSettingsFromResponse(template)
-                    };
-
-                    Debug.WriteLine("[LiveStarVoiceResponsePipeline] Starting Qwen TTS for streamed chunk: " + Preview(text));
-                    await _generator.GenerateStreamingAsync(request, cancellationToken).ConfigureAwait(false);
-                    await completion.Task.ConfigureAwait(false);
-                    _currentGenerationCompletion = null;
+                    await GenerateTextPartsWithTailRetryAsync(template, textParts, cancellationToken).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -240,6 +240,62 @@ namespace Wds.SixStars.Api.Voice
                 _audioSignal.Release();
                 _interruptionManager?.SpeechGenerationCompleted();
                 Debug.WriteLine("[LiveStarVoiceResponsePipeline] Text/TTS generation queue drained.");
+            }
+        }
+
+
+        private async Task GenerateTextPartsWithTailRetryAsync(
+            StarInteractionResponse template,
+            List<string> requestedParts,
+            CancellationToken cancellationToken)
+        {
+            List<string> pending = requestedParts;
+            bool retriedMissingTail = false;
+
+            while (pending.Count > 0)
+            {
+                int audioBefore = Volatile.Read(ref _audioSequence);
+                TaskCompletionSource<GenerationCompleteEventArgs> completion =
+                    new TaskCompletionSource<GenerationCompleteEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _currentGenerationCompletion = completion;
+
+                VoiceSynthesisRequest request = new VoiceSynthesisRequest
+                {
+                    SessionId = _sessionId,
+                    StarId = template.StarId,
+                    Text = string.Join(" ", pending),
+                    TextParts = new List<string>(pending),
+                    SourceResponse = template,
+                    VoiceSettings = CreateSettingsFromResponse(template)
+                };
+
+                Debug.WriteLine("[LiveStarVoiceResponsePipeline] Starting Qwen TTS batch with " + pending.Count + " part(s): " + Preview(pending[0]));
+                await _generator.GenerateStreamingAsync(request, cancellationToken).ConfigureAwait(false);
+                GenerationCompleteEventArgs completed = await completion.Task.ConfigureAwait(false);
+                _currentGenerationCompletion = null;
+
+                if (completed.WasCancelled)
+                {
+                    throw new OperationCanceledException("Qwen reported that the live speech batch was cancelled.", cancellationToken);
+                }
+
+                int emitted = Math.Max(0, Volatile.Read(ref _audioSequence) - audioBefore);
+                if (emitted >= pending.Count) return;
+
+                // The Qwen wire protocol sends text parts strictly in order. If a nominally complete
+                // request returned fewer WAVs than text parts, retry only the missing tail once. This
+                // avoids duplicating sentences that already reached Android while preventing a silent
+                // final sentence from being accepted as a successful live-voice run.
+                if (retriedMissingTail)
+                {
+                    throw new InvalidOperationException(
+                        "Qwen completed live speech with " + emitted + " WAV(s) for " + pending.Count + " remaining text part(s) after one missing-tail retry.");
+                }
+
+                int consumed = Math.Min(emitted, pending.Count);
+                pending = pending.Skip(consumed).ToList();
+                retriedMissingTail = true;
+                Debug.WriteLine("[LiveStarVoiceResponsePipeline] Qwen omitted " + pending.Count + " trailing WAV part(s); retrying only the missing tail once.");
             }
         }
 
@@ -323,7 +379,7 @@ namespace Wds.SixStars.Api.Voice
 
         private void OnGenerationComplete(object? sender, GenerationCompleteEventArgs e)
         {
-            _currentGenerationCompletion?.TrySetResult(true);
+            _currentGenerationCompletion?.TrySetResult(e);
         }
 
         private void OnGenerationError(object? sender, GenerationErrorEventArgs e)

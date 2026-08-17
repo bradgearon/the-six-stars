@@ -262,6 +262,8 @@ public final class MainActivity extends ComponentActivity {
     private volatile boolean destroyed;
 
     private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
+    private String lastRenderedProdConversationStar = "";
+    private String lastRenderedProdConversationText = "";
     // Build 13: desktop history is a one-time hydration source, not a live renderer.  State events
     // arrive frequently; re-merging them on every event made the Android transcript repaint and
     // jump back to the top over and over.
@@ -410,7 +412,10 @@ public final class MainActivity extends ComponentActivity {
             }
         });
         viewModel.bridgeEvents().observe(this, event -> {
-            if (event != null) handleBridgeEvent(event.payload);
+            // MainViewModel has already sequence-filtered socket events. Do not filter them a
+            // second time here: initial/state hydration can legitimately know about a newer
+            // sequence before an already-accepted LiveData event reaches this observer.
+            if (event != null) handleBridgeEvent(event.payload, true);
         });
         viewModel.mobileStatePayload().observe(this, payload -> {
             if (payload != null) applyMobileStatePayload(payload);
@@ -1431,21 +1436,32 @@ public final class MainActivity extends ComponentActivity {
 
     private void refreshProdConversationWindow() {
         if (prodConversationText == null) return;
-        ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
+        String selectedStar = selectedStarName();
+        ArrayList<String> lines = prodConversationByStar.get(selectedStar);
+        String nextText;
         if (lines == null || lines.size() == 0) {
-            prodConversationText.setText("No conversation yet.");
-            if (prodConversationScroll != null) {
-                prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
+            nextText = "No conversation yet.";
+        } else {
+            StringBuilder sb = new StringBuilder();
+            int end = Math.min(lines.size(), 10);
+            for (int i = 0; i < end; i++) {
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(lines.get(i));
             }
+            nextText = sb.toString();
+        }
+
+        // Conversation is a WebSocket/event-driven surface. Relationship/daily-state traffic may
+        // repaint other controls, but it should never make this TextView flash, reset layout, or
+        // jump to the top when its transcript bytes did not actually change.
+        if (selectedStar.equalsIgnoreCase(lastRenderedProdConversationStar)
+                && nextText.equals(lastRenderedProdConversationText)) {
             return;
         }
-        StringBuilder sb = new StringBuilder();
-        int end = Math.min(lines.size(), 10);
-        for (int i = 0; i < end; i++) {
-            if (sb.length() > 0) sb.append('\n');
-            sb.append(lines.get(i));
-        }
-        prodConversationText.setText(sb.toString());
+
+        lastRenderedProdConversationStar = selectedStar;
+        lastRenderedProdConversationText = nextText;
+        prodConversationText.setText(nextText);
         if (prodConversationScroll != null) {
             prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
         }
@@ -1524,11 +1540,11 @@ public final class MainActivity extends ComponentActivity {
     private StarMeta starMeta(String starId) {
         String id = starId == null ? "Elusiaa" : starId;
         if (id.equalsIgnoreCase("Kaelia")) return new StarMeta("Kaelia", "Void", "Fatalism", 0xFF8B5CF6, R.drawable.portrait_kaelia, new int[]{R.drawable.star_kaelia_idle_0});
-        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0, R.drawable.star_maera_idle_1, R.drawable.star_maera_idle_2, R.drawable.star_maera_idle_3, R.drawable.star_maera_idle_4, R.drawable.star_maera_idle_5});
+        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0});
         if (id.equalsIgnoreCase("Khavia")) return new StarMeta("Khavia", "Water", "Friendship", 0xFF22D3EE, R.drawable.portrait_khavia, new int[]{R.drawable.star_khavia_idle_0});
         if (id.equalsIgnoreCase("Auerlis")) return new StarMeta("Auerlis", "Fire", "Joy", 0xFFF97316, R.drawable.portrait_auerlis, new int[]{R.drawable.star_auerlis_idle_0});
         if (id.equalsIgnoreCase("Nyxari")) return new StarMeta("Nyxari", "Shadow", "Fragmentation", 0xFF60A5FA, R.drawable.portrait_nyxari, new int[]{R.drawable.star_nyxari_idle_0});
-        if (id.equalsIgnoreCase("Elusiaa")) return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0, R.drawable.star_elusiaa_idle_1, R.drawable.star_elusiaa_idle_2, R.drawable.star_elusiaa_idle_3, R.drawable.star_elusiaa_idle_4, R.drawable.star_elusiaa_idle_5});
+        if (id.equalsIgnoreCase("Elusiaa")) return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0});
         return new StarMeta(id, "Star", "Configured", 0xFF38E8FF, R.drawable.ui_cat_avatar, new int[]{R.drawable.ui_cat_avatar});
     }
 
@@ -1712,7 +1728,10 @@ public final class MainActivity extends ComponentActivity {
                 });
                 if (!promoted && (playOnPhoneCheck == null || playOnPhoneCheck.isChecked())) ensureAudioSocket(host, audioPort);
                 refreshActiveStarRoster();
-                fetchMobileState(false);
+                // MainViewModel hydrates Star state once on bridge connect and all later changes
+                // arrive over the subscribed WebSocket event stream. A routine health check must
+                // not refetch state (or indirectly make the conversation surface look polled).
+                if (manual) fetchMobileState(true);
             } catch (Exception ex) {
                 if (manual) runOnUiThread(() -> setDebug("Health parse failed", ex.toString()));
             }
@@ -2622,8 +2641,12 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handleBridgeEvent(JSONObject event) {
+        handleBridgeEvent(event, false);
+    }
+
+    private void handleBridgeEvent(JSONObject event, boolean sequenceAlreadyFiltered) {
         long seq = optLongEither(event, "sequence", "Sequence", 0L);
-        if (seq > 0L && seq <= lastBridgeEventSequence) return;
+        if (!sequenceAlreadyFiltered && seq > 0L && seq <= lastBridgeEventSequence) return;
         if (seq > lastBridgeEventSequence) lastBridgeEventSequence = seq;
         String type = optStringEither(event, "eventType", "EventType", "BridgeEvent");
         String selected = optStringEither(event, "selectedStarId", "SelectedStarId", "");
@@ -3709,7 +3732,11 @@ public final class MainActivity extends ComponentActivity {
                 setDebug("Recording too short", "Captured " + captured.pcm16.length + " bytes. Record at least about one second.");
                 return;
             }
-            appendProdConversationLine("You", "[voice message]");
+            // Put one stable row in the event-driven conversation surface immediately so a
+            // screen recording always shows that the Last Cat spoke before the Star answers.
+            // MobileTranscriptReady replaces this exact row with Whisper's real text; it is not a
+            // polling refresh and it never creates a second player turn.
+            appendProdConversationLine("You", "[voice message — transcribing…]");
             sendAudio(captured.pcm16);
         }));
     }

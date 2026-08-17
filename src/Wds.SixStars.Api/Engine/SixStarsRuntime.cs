@@ -1588,7 +1588,7 @@ namespace Wds.SixStars.Api.Engine
                 foregroundVector = InferInformationNeedsFromStreamingBridge(request, response);
                 if (foregroundVector.Count > 0)
                 {
-                    response.Debug.Notes.Add("Plain streaming speech contained an uncertainty/checking bridge; runtime inferred a local information source without another selector LLM call.");
+                    response.Debug.Notes.Add("Plain streaming speech contained an explicit lookup/checking bridge; runtime inferred a local information source without another selector LLM call.");
                 }
             }
             response.InformationNeeds = foregroundVector;
@@ -1738,18 +1738,17 @@ namespace Wds.SixStars.Api.Engine
         private static List<InformationNeedVectorItem> InferInformationNeedsFromStreamingBridge(StarInteractionRequest request, StarInteractionResponse response)
         {
             string spoken = (response?.SpokenText ?? string.Empty).ToLowerInvariant();
+            // Streaming speech cannot return the old structured informationNeeds vector, so this
+            // bridge must be deliberately conservative. Only phrases that explicitly promise a
+            // lookup/recall should trigger a second foreground response. Generic conversational
+            // uncertainty (for example "I do not know how to answer that") is normal dialogue and
+            // must never be mistaken for a request to search local archives.
             bool soundsUncertain = spoken.Contains("need to check")
                 || spoken.Contains("need to look")
                 || spoken.Contains("need to remember")
                 || spoken.Contains("let me check")
                 || spoken.Contains("let me look")
-                || spoken.Contains("let me remember")
-                || spoken.Contains("i'm not sure")
-                || spoken.Contains("i am not sure")
-                || spoken.Contains("i don't remember")
-                || spoken.Contains("i do not remember")
-                || spoken.Contains("i don't know")
-                || spoken.Contains("i do not know");
+                || spoken.Contains("let me remember");
             if (!soundsUncertain) return new List<InformationNeedVectorItem>();
 
             string text = (request?.PlayerText ?? string.Empty).ToLowerInvariant();

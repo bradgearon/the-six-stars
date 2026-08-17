@@ -263,7 +263,12 @@ public final class MainViewModel extends AndroidViewModel {
             if (event.sequence > 0L && event.sequence <= lastBridgeEventSequence) return;
             if (event.sequence > lastBridgeEventSequence) lastBridgeEventSequence = event.sequence;
         }
-        bridgeEvents.postValue(event);
+        // MutableLiveData.postValue() coalesces pending values when several socket events arrive
+        // before the main thread drains them. That is unacceptable for a transport event stream:
+        // a MobileTranscriptReady event can otherwise be overwritten by the Star response/state
+        // event that follows it, making the user's spoken line appear to vanish. Queue setValue()
+        // onto the main looper instead so every bridge event is delivered in socket order.
+        mainHandler.post(() -> bridgeEvents.setValue(event));
     }
 
     LiveData<UiState> uiState() { return uiState; }

@@ -649,6 +649,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             AtomicBoolean started = new AtomicBoolean(false);
             AtomicBoolean finished = new AtomicBoolean(false);
             boolean completed = false;
+            boolean playbackDrained = false;
+            boolean drainInterrupted = false;
+            long finalPlaybackFrames = 0L;
             Thread watcher = null;
             int offset = 0;
             try {
@@ -661,13 +664,30 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     if (written <= 0) break;
                     offset += written;
                 }
+
+                // WRITE_BLOCKING means the PCM has entered AudioTrack, not necessarily that the last
+                // phoneme has reached the speaker. Never advance to the next Star sentence merely
+                // because all bytes were accepted. Wait for the playback head to consume the entire
+                // WAV and give the device a tiny hardware drain guard before stop/flush/release.
                 long waitStarted = System.currentTimeMillis();
-                long maxWait = Math.max(250L, durationMs + 750L);
-                while (running && Integer.toUnsignedLong(track.getPlaybackHeadPosition()) < expectedFrames
-                        && System.currentTimeMillis() - waitStarted < maxWait) {
-                    try { Thread.sleep(12L); } catch (InterruptedException interrupted) { break; }
+                long maxWait = Math.max(1200L, durationMs + 1500L);
+                while (running && System.currentTimeMillis() - waitStarted < maxWait) {
+                    finalPlaybackFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+                    if (finalPlaybackFrames >= expectedFrames) {
+                        playbackDrained = true;
+                        break;
+                    }
+                    try {
+                        Thread.sleep(12L);
+                    } catch (InterruptedException interrupted) {
+                        drainInterrupted = true;
+                        break;
+                    }
                 }
-                completed = running && offset >= parsed.pcm.length;
+                if (playbackDrained && running && !drainInterrupted) {
+                    try { Thread.sleep(70L); } catch (InterruptedException interrupted) { drainInterrupted = true; }
+                }
+                completed = running && !drainInterrupted && playbackDrained && offset >= parsed.pcm.length;
             } finally {
                 finished.set(true);
                 if (watcher != null) watcher.interrupt();
@@ -680,11 +700,17 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 boolean finalCompleted = completed;
                 int finalOffset = offset;
                 int totalPcmBytes = parsed.pcm.length;
+                long finalPlayedFrames = finalPlaybackFrames;
+                long finalExpectedFrames = expectedFrames;
+                boolean finalDrainInterrupted = drainInterrupted;
+                boolean finalPlaybackDrained = playbackDrained;
                 post(() -> {
                     if (!finalCompleted) {
                         listener.onDebug("Phone voice playback interrupted",
                                 clip.label + ", wrote=" + finalOffset + "/" + totalPcmBytes
-                                        + " PCM bytes. Check the preceding voice journal entry for an explicit clear, service shutdown, or AudioTrack failure.");
+                                        + " PCM bytes, playedFrames=" + finalPlayedFrames + "/" + finalExpectedFrames
+                                        + ", drained=" + finalPlaybackDrained + ", interrupted=" + finalDrainInterrupted
+                                        + ". The next sentence will no longer silently classify an interrupted drain as successful playback.");
                     }
                     listener.onPlaybackFinished(clip, finalCompleted);
                     if (isIdle()) {

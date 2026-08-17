@@ -38,8 +38,86 @@ namespace Wds.SixStars.Api.Writings
         {
             string? configured = Environment.GetEnvironmentVariable("SIX_STARS_WRITING_NOTES_DIRECTORY");
             if (!string.IsNullOrWhiteSpace(configured)) return new StarWritingFileStore(configured);
-            string root = FindProjectRoot(AppContext.BaseDirectory);
-            return new StarWritingFileStore(Path.Combine(root, "state", "writing-notes"));
+
+            // Runtime writing state must survive replacing/extracting a new project build. Older builds
+            // stored the shelf under <project>/state/writing-notes, which made every fresh extraction
+            // look like a brand-new empty shelf. Keep the project folder only as a one-time migration
+            // seed and use a stable per-user application-data directory from then on.
+            string projectRoot = FindProjectRoot(AppContext.BaseDirectory);
+            string projectSeedDirectory = Path.Combine(projectRoot, "state", "writing-notes");
+            string stableRoot = ResolveStableWritingNotesDirectory(projectRoot);
+            SeedStableStoreOnce(stableRoot, projectSeedDirectory);
+            return new StarWritingFileStore(stableRoot);
+        }
+
+        private static string ResolveStableWritingNotesDirectory(string projectRoot)
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrWhiteSpace(localAppData))
+            {
+                return Path.Combine(localAppData, "Wds.SixStars", "state", "writing-notes");
+            }
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(userProfile))
+            {
+                return Path.Combine(userProfile, ".wds-six-stars", "state", "writing-notes");
+            }
+
+            // Last-resort compatibility fallback for unusual hosts with no user-data directory.
+            return Path.Combine(projectRoot, "state", "writing-notes");
+        }
+
+        private static void SeedStableStoreOnce(string stableRoot, string projectSeedDirectory)
+        {
+            try
+            {
+                Directory.CreateDirectory(stableRoot);
+                string markerPath = Path.Combine(stableRoot, ".stable-writing-store-v1");
+                if (File.Exists(markerPath)) return;
+
+                if (!PathsEqual(stableRoot, projectSeedDirectory) && Directory.Exists(projectSeedDirectory))
+                {
+                    foreach (string sourcePath in Directory.EnumerateFiles(projectSeedDirectory, "*-writing-notes.json", SearchOption.TopDirectoryOnly))
+                    {
+                        string destinationPath = Path.Combine(stableRoot, Path.GetFileName(sourcePath));
+                        if (!File.Exists(destinationPath)) File.Copy(sourcePath, destinationPath, false);
+                    }
+
+                    string sourceLog = Path.Combine(projectSeedDirectory, "all-star-writing-statements.jsonl");
+                    string destinationLog = Path.Combine(stableRoot, "all-star-writing-statements.jsonl");
+                    if (File.Exists(sourceLog) && !File.Exists(destinationLog))
+                    {
+                        File.Copy(sourceLog, destinationLog, false);
+                    }
+                }
+
+                File.WriteAllText(
+                    markerPath,
+                    "Stable Six Stars writing store initialized " + DateTimeOffset.UtcNow.ToString("O")
+                    + Environment.NewLine
+                    + "Project seed: " + projectSeedDirectory
+                    + Environment.NewLine);
+            }
+            catch
+            {
+                // Failure to migrate must never prevent the app from starting. The store itself will
+                // still create the target directory/file on the first successful save.
+            }
+        }
+
+        private static bool PathsEqual(string left, string right)
+        {
+            try
+            {
+                string a = Path.GetFullPath(left ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string b = Path.GetFullPath(right ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         public async Task<StarWritingNotesState> LoadAsync(string starId, CancellationToken cancellationToken)

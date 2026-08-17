@@ -2572,7 +2572,7 @@ public sealed partial class MainViewModel
                     run.TransportReady.Wait(stream.CancellationToken);
 
                     int chunkIndex = args.Sequence;
-                    int knownTotal = chunkIndex + 1;
+                    int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
                     MobileAudioFrameContext frameContext = new MobileAudioFrameContext
                     {
                         IsStory = false,
@@ -2643,16 +2643,27 @@ public sealed partial class MainViewModel
                     run.VoiceCts.Token).ConfigureAwait(false);
             }
 
-            // Release the ordered consumer only after Android has accepted the stream start.
-            // The first WAV may already be warm. Once text transport is complete, feed the
-            // remaining delimiter chunks to Qwen so TTS no longer competes with LLM generation.
-            run.TransportReady.Set();
-            foreach (string deferredChunk in run.DrainDeferredTextChunks())
+            // The first WAV may already be warm. Once text transport is complete, feed all
+            // remaining delimiter chunks to Qwen as ONE multi-part request. Qwen still returns one
+            // ordered WAV per immutable LLM part, but this restores the stable pre-streaming TTS
+            // request shape instead of repeatedly starting a fresh synthesis request per sentence.
+            List<string> deferredChunks = run.DrainDeferredTextChunks();
+            if (deferredChunks.Count > 0)
             {
-                run.Pipeline.EnqueueTextChunk(deferredChunk);
+                run.Pipeline.EnqueueTextChunks(deferredChunks);
             }
+            run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
+
+            // Release the ordered Android consumer only after the complete expected chunk count is
+            // known, so every phone frame carries authoritative response-total metadata.
+            run.TransportReady.Set();
 
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
+            if (run.ExpectedChunks > 0 && run.ChunksSent != run.ExpectedChunks)
+            {
+                throw new InvalidOperationException(
+                    "Live Android voice completed with " + run.ChunksSent + " sent WAV(s) for " + run.ExpectedChunks + " streamed speech chunk(s).");
+            }
             if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
             {
                 await _services.MobileVoice.SendControlAsync(
@@ -2716,6 +2727,7 @@ public sealed partial class MainViewModel
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
         public int BytesSent { get; set; }
+        public int ExpectedChunks { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public bool Finished { get; set; }
         public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);

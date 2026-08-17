@@ -898,7 +898,7 @@ namespace Wds.SixStars.Api.Ai
                 contract.AppendLine("End every complete speakable thought with the delimiter §. The delimiter is not spoken. Usually make a chunk one or two natural sentences and place § at a real thought/breath boundary.");
                 contract.AppendLine("The final spoken chunk must also end with §. Do not use § for any purpose except ending a speech chunk.");
                 contract.AppendLine("Start answering immediately instead of planning the whole response before the first chunk. Keep generating chunks until the player's request is genuinely complete.");
-                contract.AppendLine("If an exact game fact is missing from the supplied canon, do not invent it. Give a brief natural uncertainty/checking bridge; a separate information pass can inspect local archives after this streamed reply.");
+                contract.AppendLine("If an exact game fact is missing from the supplied canon, do not invent it. Use an explicit lookup bridge such as 'Let me check that' or 'I need to remember that'; a separate information pass can inspect local archives after this streamed reply. Generic conversational uncertainty such as 'I do not know how to answer that' is NOT a lookup bridge.");
             }
             if (request.RequestType == RequestType.Story)
             {
