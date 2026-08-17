@@ -212,8 +212,9 @@ internal static class Program
         env["SIX_STARS_REQUIRE_CUDA"] = "true";
         env["QWEN_TTS_DEVICE"] = "cuda";
         env["QWEN_TTS_PRELOAD_MODEL"] = env.TryGetValue("QWEN_TTS_PRELOAD_MODEL", out var preloadTts) ? preloadTts : "true";
-        env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "parallel";
+        env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "first_then_parallel";
         env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "0";
+        env["QWEN_TTS_AFTER_FIRST_MAX_PARALLEL_CHUNKS"] = "1";
         env["QWEN_TTS_PARALLEL_CHUNKS"] = "true";
         env["QWEN_TTS_USE_FASTER_QWEN3"] = env.TryGetValue("QWEN_TTS_USE_FASTER_QWEN3", out var faster) ? faster : "true";
         env["QWEN_TTS_USE_CUDA_GRAPHS"] = env.TryGetValue("QWEN_TTS_USE_CUDA_GRAPHS", out var graphs) ? graphs : "true";
@@ -410,8 +411,9 @@ internal sealed class RuntimeSupervisor : IDisposable
             env["WHISPER_COMPUTE_TYPE"] = "float16";
             env["QWEN_TTS_DEVICE"] = "cuda";
             env["QWEN_TTS_PARALLEL_CHUNKS"] = "true";
-            env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "parallel";
+            env["QWEN_TTS_CHUNK_GENERATION_MODE"] = "first_then_parallel";
             env["QWEN_TTS_MAX_PARALLEL_CHUNKS"] = "0";
+            env["QWEN_TTS_AFTER_FIRST_MAX_PARALLEL_CHUNKS"] = "1";
         }
         else if (pack.Id.Contains("cpu", StringComparison.OrdinalIgnoreCase))
         {

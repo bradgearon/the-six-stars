@@ -471,6 +471,9 @@ public sealed partial class MainViewModel
                     ? "Android app activity"
                     : command.Reason.Trim();
                 NotifyBackgroundWritingLoopForegroundActivity(activityReason);
+                // Player activity also preempts an already-running local-model background review
+                // or prepared-thought request before the actual text/voice command reaches us.
+                try { _services.MobileConversation.CancelBackgroundAnalysis(activityReason + " preempted active background AI work."); } catch { }
                 return new MobileBridgeDispatchResult
                 {
                     Ok = true,
@@ -977,7 +980,7 @@ public sealed partial class MainViewModel
                 result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
                     EventType = photoResponse.Ok ? "PhotoResponseReady" : "PhotoResponseFailed",
-                    CommandId = command.CommandId,
+                    CommandId = !string.IsNullOrWhiteSpace(photoResponse.StreamingResponseId) ? photoResponse.StreamingResponseId : command.CommandId,
                     SourceClientId = command.SourceClientId,
                     SessionId = sessionId,
                     StarId = starId,
@@ -1008,6 +1011,11 @@ public sealed partial class MainViewModel
                     EmotionalEffectVector = FirstNonEmptyForMobile(photoResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
                     NegativeEmotionVector = FirstNonEmptyForMobile(photoResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
                     LastEmotionVectorsText = FirstNonEmptyForMobile(photoResponse.LastEmotionVectorsText, FormatEmotionVectors(photoResponse.EmotionalEffectVector, photoResponse.NegativeEmotionVector)),
+                    StreamingChunkIndex = photoResponse.StreamedTextChunkCount,
+                    FirstStreamedTextChunkMs = photoResponse.FirstStreamedTextChunkMs,
+                    ServerElapsedMs = photoResponse.ServerElapsedMs,
+                    RuntimeElapsedMs = photoResponse.RuntimeElapsedMs,
+                    GateWaitMs = photoResponse.GateWaitMs,
                     InterstarStatusText = InterstarStatusText
                 });
                 return result;
@@ -1139,7 +1147,7 @@ public sealed partial class MainViewModel
         AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%, top=" + FormatTopAffectedEmotions(state.LastTopAffectedEmotions));
     }
 
-    private void PublishMobileConversationFailureEventIfNeeded(MobileBridgeRequest mobileRequest, string starId, RequestType requestType, string error)
+    private void PublishMobileConversationFailureEventIfNeeded(MobileBridgeRequest mobileRequest, string starId, RequestType requestType, string error, string streamingResponseId = "")
     {
         if (requestType == RequestType.StarInitiative || requestType == RequestType.Photo) return;
         try
@@ -1147,7 +1155,9 @@ public sealed partial class MainViewModel
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "MobileConversationResponseFailed",
-                CommandId = "direct-mobile-failed-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CommandId = !string.IsNullOrWhiteSpace(streamingResponseId)
+                    ? streamingResponseId
+                    : "direct-mobile-failed-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
                 SessionId = string.IsNullOrWhiteSpace(mobileRequest.SessionId) ? "android-phone-dev" : mobileRequest.SessionId,
                 StarId = starId ?? string.Empty,
@@ -1171,7 +1181,9 @@ public sealed partial class MainViewModel
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = response.Ok ? "MobileConversationResponseReady" : "MobileConversationResponseFailed",
-                CommandId = "direct-mobile-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CommandId = !string.IsNullOrWhiteSpace(response.StreamingResponseId)
+                    ? response.StreamingResponseId
+                    : "direct-mobile-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
                 SessionId = request.SessionId ?? string.Empty,
                 StarId = response.StarId ?? request.StarId ?? string.Empty,
@@ -1204,6 +1216,11 @@ public sealed partial class MainViewModel
                 NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
                 LastEmotionVectorsText = response.LastEmotionVectorsText ?? string.Empty,
                 InterstarStatusText = InterstarStatusText,
+                StreamingChunkIndex = response.StreamedTextChunkCount,
+                FirstStreamedTextChunkMs = response.FirstStreamedTextChunkMs,
+                ServerElapsedMs = response.ServerElapsedMs,
+                RuntimeElapsedMs = response.RuntimeElapsedMs,
+                GateWaitMs = response.GateWaitMs,
                 DailyStateSlotId = response.DailyStateSlotId ?? string.Empty,
                 DailyStateLocalDate = response.DailyStateLocalDate ?? string.Empty,
                 DailyStateGeneratedAt = response.DailyStateGeneratedAt,
@@ -1273,6 +1290,9 @@ public sealed partial class MainViewModel
             ServerElapsedMs = response.ServerElapsedMs,
             RuntimeElapsedMs = response.RuntimeElapsedMs,
             GateWaitMs = response.GateWaitMs,
+            StreamingResponseId = response.StreamingResponseId,
+            StreamedTextChunkCount = response.StreamedTextChunkCount,
+            FirstStreamedTextChunkMs = response.FirstStreamedTextChunkMs,
             StoryId = response.StoryId,
             StoryTitle = response.StoryTitle,
             StoryMarkdown = response.StoryMarkdown,
@@ -1907,6 +1927,11 @@ public sealed partial class MainViewModel
             : null;
         MobileConversationService.Lease? mobileLease = null;
         MobileLiveVoiceRun? livePhoneVoice = null;
+        string streamingResponseId = string.Empty;
+        int streamedTextChunkCount = 0;
+        long firstStreamedTextChunkMs = 0;
+        object streamedTextGate = new object();
+        StringBuilder streamedText = new StringBuilder();
         System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         if (isPrefetchInitiative)
@@ -1980,6 +2005,56 @@ public sealed partial class MainViewModel
 
             MobileAttachedPhotoResult photoResult = await AddMobileAttachedPhotoContextAsync(request, mobileRequest, cancellationToken).ConfigureAwait(false);
 
+            // Normal Chat/Photo speech is already split by the LLM into immutable § chunks. Send
+            // each committed chunk to Android immediately as a transient cumulative conversation
+            // row instead of waiting for model EOS. This is display-only: the proven Build 15A
+            // voice contract still keeps Android audio gated until the final correlated response
+            // has been transported.
+            if (!isAtRestInitiative && ShouldUseLiveForegroundSpeech(request.RequestType))
+            {
+                streamingResponseId = Guid.NewGuid().ToString("N");
+                request.SpokenChunkReady = chunk =>
+                {
+                    if (string.IsNullOrWhiteSpace(chunk)) return;
+
+                    string cumulative;
+                    int chunkIndex;
+                    long elapsedMs;
+                    lock (streamedTextGate)
+                    {
+                        if (streamedText.Length > 0) streamedText.Append(' ');
+                        streamedText.Append(chunk.Trim());
+                        streamedTextChunkCount++;
+                        chunkIndex = streamedTextChunkCount;
+                        elapsedMs = totalStopwatch.ElapsedMilliseconds;
+                        if (firstStreamedTextChunkMs <= 0) firstStreamedTextChunkMs = elapsedMs;
+                        cumulative = streamedText.ToString();
+                    }
+
+                    try
+                    {
+                        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                        {
+                            EventType = "MobileConversationStreamChunk",
+                            CommandId = streamingResponseId,
+                            SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
+                            SessionId = request.SessionId ?? string.Empty,
+                            StarId = request.StarId ?? starId,
+                            SelectedStarId = SelectedStarId,
+                            SpokenText = cumulative,
+                            StreamingChunkIndex = chunkIndex,
+                            FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
+                            ServerElapsedMs = elapsedMs,
+                            Message = "Committed foreground speech chunk " + chunkIndex + " is ready for immediate Android display; final response/state is still generating."
+                        });
+                    }
+                    catch (Exception streamEventError)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish streamed Android text chunk: " + streamEventError.Message);
+                    }
+                };
+            }
+
             ResetLlmDebugLog(request);
             CancellationToken runtimeToken = isPrefetchInitiative
                 ? cancellationToken
@@ -1993,7 +2068,7 @@ public sealed partial class MainViewModel
                 livePhoneVoice = await TryStartMobileLiveVoiceAsync(request, linkedCts.Token).ConfigureAwait(false);
                 if (livePhoneVoice != null)
                 {
-                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Live TTS armed before LLM", "Each § speech chunk will enter Qwen TTS immediately; Android audio delivery remains gated until the correlated text response has been delivered."));
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "Committed § speech chunks will be buffered in RAM while Gemma runs. Qwen starts after LLM EOS, and Android audio delivery remains gated until correlated text transport."));
                 }
             }
 
@@ -2004,17 +2079,31 @@ public sealed partial class MainViewModel
                     "Prepare " + starId + "'s private Android Listen response only after foreground conversation is idle.",
                     linkedCts.Token).ConfigureAwait(false)
                 : await _services.MobileConversation.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
+
+            if (livePhoneVoice != null)
+            {
+                // Gemma has reached EOS. Start Qwen at the first possible host instruction, before
+                // even loading the post-turn state, so TTS can overlap only cheap host/disk/network
+                // work and never compete with foreground Gemma inference on the GPU.
+                List<string> postLlmChunks = livePhoneVoice.DrainDeferredTextChunks();
+                if (postLlmChunks.Count == 0)
+                {
+                    postLlmChunks = starResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+                }
+                if (postLlmChunks.Count > 0)
+                {
+                    livePhoneVoice.Pipeline.EnqueueTextChunks(postLlmChunks);
+                }
+                livePhoneVoice.ExpectedChunks = livePhoneVoice.Pipeline.TextChunksEnqueued;
+                livePhoneVoice.PostLlmSynthesisStarted = true;
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Post-LLM Qwen synthesis started",
+                    "Gemma EOS reached; queued " + livePhoneVoice.ExpectedChunks + " immutable speech chunk(s) before state reload/final Android text transport."));
+            }
+
             StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
-
-            if (livePhoneVoice != null && livePhoneVoice.Pipeline.TextChunksEnqueued == 0)
-            {
-                foreach (string part in starResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)))
-                {
-                    livePhoneVoice.Pipeline.EnqueueTextChunk(part);
-                }
-            }
 
             if (photoResult.Attached)
             {
@@ -2052,12 +2141,15 @@ public sealed partial class MainViewModel
                 response.VoiceBytesSent = livePhoneVoice.BytesSent;
                 response.VoiceError = livePhoneVoice.ErrorMessage;
                 response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
-                    ? "Live TTS was pre-generating while the LLM was running; Android audio delivery begins immediately after text transport."
+                    ? "Voice chunks were buffered during Gemma and Qwen started only after LLM EOS; Android audio delivery begins after text transport."
                     : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
             }
             response.GateWaitMs = gateWaitMs;
             response.RuntimeElapsedMs = runtimeElapsedMs;
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
+            response.StreamingResponseId = streamingResponseId;
+            response.StreamedTextChunkCount = streamedTextChunkCount;
+            response.FirstStreamedTextChunkMs = firstStreamedTextChunkMs;
             if (requestType == RequestType.StarInitiative && (!starResponse.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(starResponse.SpokenText)))
             {
                 wantsPhoneAudio = false;
@@ -2102,6 +2194,9 @@ public sealed partial class MainViewModel
                         response.ServerElapsedMs,
                         response.RuntimeElapsedMs,
                         response.GateWaitMs,
+                        response.StreamingResponseId,
+                        response.StreamedTextChunkCount,
+                        response.FirstStreamedTextChunkMs,
                         storyMarkdownChars = response.StoryMarkdown?.Length ?? 0,
                         storyChunkCount = response.StoryChunkCount,
                         storyMarkdownReady = response.StoryMarkdownReady,
@@ -2132,13 +2227,13 @@ public sealed partial class MainViewModel
             }
             else if (livePhoneVoice != null)
             {
-                // Qwen TTS has already been allowed to work during LLM generation, but preserve the
-                // Android transport contract that has proven stable: deliver the correlated text
-                // response first, then start the ordered phone stream and drain the warmed WAV queue.
+                // Keep the Android transport contract that has proven stable: Qwen may synthesize
+                // only after Gemma EOS, but Android still receives the correlated text response first;
+                // then start the ordered phone stream and drain WAVs in immutable § order.
                 MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
                 string exactAnalysisId = backgroundAnalysisId;
                 response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
-                response.VoiceMessage = "Live TTS warmed during LLM generation; Android voice starts immediately after this text response is delivered.";
+                response.VoiceMessage = "Android text streams during Gemma; Qwen starts only after LLM EOS and may warm during final text transport; Android playback still starts after text transport.";
                 response.AfterTransportResponseAsync = async () =>
                 {
                     await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);
@@ -2157,7 +2252,7 @@ public sealed partial class MainViewModel
                 };
                 OnUiThread(() => AppendMobileBridgeVoiceDebug(
                     "Live phone voice waiting for text transport",
-                    "Qwen is allowed to pre-generate; chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
+                    "Qwen started only after Gemma EOS and may be synthesizing while final text transport completes; chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
             }
             else if (wantsPhoneAudio)
             {
@@ -2262,11 +2357,14 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 RequestType = requestType.ToString(),
                 VoiceError = "Android bridge request was cancelled.",
+                StreamingResponseId = streamingResponseId,
+                StreamedTextChunkCount = streamedTextChunkCount,
+                FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
                 GateWaitMs = gateWaitMs,
                 RuntimeElapsedMs = runtimeElapsedMs,
                 ServerElapsedMs = totalStopwatch.ElapsedMilliseconds
             };
-            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError);
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError, streamingResponseId);
             return cancelled;
         }
         catch (Exception ex)
@@ -2280,12 +2378,15 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 RequestType = requestType.ToString(),
                 VoiceError = ex.Message,
+                StreamingResponseId = streamingResponseId,
+                StreamedTextChunkCount = streamedTextChunkCount,
+                FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
                 GateWaitMs = gateWaitMs,
                 RuntimeElapsedMs = runtimeElapsedMs,
                 ServerElapsedMs = totalStopwatch.ElapsedMilliseconds,
                 Notes = { ex.GetType().Name }
             };
-            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message);
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message, streamingResponseId);
             return failed;
         }
         finally
@@ -2599,8 +2700,8 @@ public sealed partial class MainViewModel
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
 
                     // Preserve the stable Android wire order. This blocks only the pipeline's
-                    // audio-consumer lane; Qwen generation continues independently and can queue
-                    // WAVs while the LLM is still finishing the reply.
+                    // audio-consumer lane; after Gemma EOS, Qwen generation can queue WAVs while
+                    // final response/state transport is finishing, but no audio reaches Android yet.
                     run.TransportReady.Wait(stream.CancellationToken);
 
                     int chunkIndex = args.Sequence;
@@ -2640,12 +2741,17 @@ public sealed partial class MainViewModel
 
             pipeline.Start(request.SessionId, template, voiceCts.Token);
 
-            // Prewarm only the first completed speech chunk while the LLM is still generating.
-            // LM Studio and Qwen share the same GPU on the target machine; generating every TTS
-            // chunk concurrently with the rest of the LLM reply can slow the foreground model
-            // enough to erase the streaming win. One warm first chunk preserves instant post-text
-            // speech while later chunks wait in cheap RAM until the text response is complete.
-            request.SpokenChunkReady = run.EnqueueForegroundTextChunk;
+            // Build 15N: do not run Qwen inference while the foreground LLM is generating. The
+            // August 17 traces show foreground Gemma falling from roughly 80-110 tok/s to ~18 tok/s
+            // while first-chunk Qwen competes for the same GPU. Keep every immutable § chunk in RAM;
+            // Android still receives committed text immediately, then Qwen starts at Gemma EOS with
+            // the GPU available for foreground speech synthesis while final text transport finishes.
+            Action<string>? existingChunkReady = request.SpokenChunkReady;
+            request.SpokenChunkReady = text =>
+            {
+                try { existingChunkReady?.Invoke(text); } catch { }
+                run.EnqueueForegroundTextChunk(text);
+            };
             return run;
         }
         catch
@@ -2666,28 +2772,31 @@ public sealed partial class MainViewModel
         if (run == null) return;
         try
         {
+            // Qwen normally starts immediately after Gemma EOS, before final response transport,
+            // so synthesis can overlap only cheap host/network work. Keep a defensive fallback for
+            // any path where no post-LLM synthesis was started.
+            if (!run.PostLlmSynthesisStarted)
+            {
+                List<string> deferredChunks = run.DrainDeferredTextChunks();
+                if (deferredChunks.Count > 0)
+                {
+                    run.Pipeline.EnqueueTextChunks(deferredChunks);
+                }
+                run.PostLlmSynthesisStarted = true;
+            }
+            run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
+
             if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
             {
                 await _services.MobileVoice.SendControlAsync(
                     run.Stream.AudioSession,
                     "start",
-                    "Starting warmed Android voice stream " + run.Stream.StreamId + " after text transport. Qwen may already have speech queued.",
+                    "Starting ordered Android voice stream " + run.Stream.StreamId + " after text transport; foreground Qwen synthesis now has the GPU.",
                     run.VoiceCts.Token).ConfigureAwait(false);
             }
 
-            // The first WAV may already be warm. Once text transport is complete, feed all
-            // remaining delimiter chunks to Qwen as ONE multi-part request. Qwen still returns one
-            // ordered WAV per immutable LLM part, but this restores the stable pre-streaming TTS
-            // request shape instead of repeatedly starting a fresh synthesis request per sentence.
-            List<string> deferredChunks = run.DrainDeferredTextChunks();
-            if (deferredChunks.Count > 0)
-            {
-                run.Pipeline.EnqueueTextChunks(deferredChunks);
-            }
-            run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
-
             // Release the ordered Android consumer only after the complete expected chunk count is
-            // known, so every phone frame carries authoritative response-total metadata.
+            // known and the text-before-audio start signal has been sent.
             run.TransportReady.Set();
 
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
@@ -2754,12 +2863,12 @@ public sealed partial class MainViewModel
         public CancellationTokenSource VoiceCts { get; }
         private readonly object _textChunkGate = new object();
         private readonly List<string> _deferredTextChunks = new List<string>();
-        private bool _prewarmChunkQueued;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
         public int BytesSent { get; set; }
         public int ExpectedChunks { get; set; }
+        public bool PostLlmSynthesisStarted { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public bool Finished { get; set; }
         public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);
@@ -2767,23 +2876,9 @@ public sealed partial class MainViewModel
         public void EnqueueForegroundTextChunk(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            bool prewarmNow = false;
             lock (_textChunkGate)
             {
-                if (!_prewarmChunkQueued)
-                {
-                    _prewarmChunkQueued = true;
-                    prewarmNow = true;
-                }
-                else
-                {
-                    _deferredTextChunks.Add(text);
-                }
-            }
-
-            if (prewarmNow)
-            {
-                Pipeline.EnqueueTextChunk(text);
+                _deferredTextChunks.Add(text);
             }
         }
 

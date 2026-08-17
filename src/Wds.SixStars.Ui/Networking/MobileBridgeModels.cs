@@ -85,6 +85,9 @@ public sealed class MobileBridgeResponse
     public long ServerElapsedMs { get; set; }
     public long RuntimeElapsedMs { get; set; }
     public long GateWaitMs { get; set; }
+    public string StreamingResponseId { get; set; } = string.Empty;
+    public int StreamedTextChunkCount { get; set; }
+    public long FirstStreamedTextChunkMs { get; set; }
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;

@@ -133,6 +133,9 @@ namespace Wds.SixStars.Api.Ai
             LogRequestGateWait(debugLabel, requestGateStopwatch.ElapsedMilliseconds);
             try
             {
+                System.Diagnostics.Stopwatch streamStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                long firstDeltaMs = -1;
+                int streamedDeltaCount = 0;
                 List<Dictionary<string, string>> wireMessages = messages
                     .Select(x => new Dictionary<string, string>
                     {
@@ -232,6 +235,8 @@ namespace Wds.SixStars.Api.Ai
                                 string delta = ExtractStreamingContentDelta(data);
                                 if (string.IsNullOrEmpty(delta)) continue;
 
+                                if (firstDeltaMs < 0) firstDeltaMs = streamStopwatch.ElapsedMilliseconds;
+                                streamedDeltaCount++;
                                 content.Append(delta);
                                 if (onTextDelta != null)
                                 {
@@ -262,6 +267,14 @@ namespace Wds.SixStars.Api.Ai
                         }
 
                         string finalContent = content.ToString();
+                        streamStopwatch.Stop();
+                        LogExchange(
+                            "LLM streaming timing",
+                            "FirstDeltaMs: " + firstDeltaMs + "\nTotalStreamMs: " + streamStopwatch.ElapsedMilliseconds + "\nDeltaCount: " + streamedDeltaCount + "\nFinalChars: " + finalContent.Length,
+                            "stream_timing",
+                            exchangeId,
+                            debugLabel,
+                            "stream_text");
                         LogExchange(
                             "LLM streamed extracted content before Star parsing",
                             FormatExtractedContentForDebug("stream_text / " + debugLabel, finalContent),

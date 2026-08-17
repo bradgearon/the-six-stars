@@ -715,10 +715,10 @@ namespace Wds.SixStars.Api.Engine
 
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
-            // Pending durable analyses must survive. Do not abort an LLM HTTP request already in
-            // flight: several local servers continue generating after a disconnected client, which
-            // can leave the next foreground request waiting behind invisible abandoned work. Queued
-            // background work is already held while a foreground lease is active.
+            // Build 15N: the bundled llama.cpp server cancels its server-side task when the HTTP
+            // request token is cancelled. Durable primary interaction review catches cancellation
+            // and requeues the exact pending analysis, so foreground priority does not discard it.
+            _backgroundDispatcher.CancelActiveRequest(reason);
             lock (_backgroundGate)
             {
                 try
@@ -731,7 +731,7 @@ namespace Wds.SixStars.Api.Engine
                 }
                 _backgroundStoryGenerationCts = new CancellationTokenSource();
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Active background work preempted without discarding pending state analysis: " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Active background model work preempted without discarding pending durable state analysis: " + reason);
         }
 
         public async Task<StarInteractionResponse> ProcessWhenForegroundIdleAsync(
@@ -3111,9 +3111,9 @@ namespace Wds.SixStars.Api.Engine
                     }
                 },
                 // Give the player a natural beat to answer after voice generation. The Forge
-                // review is durable background work and should not seize the single local LLM
-                // immediately when the Star finishes speaking.
-                delay: TimeSpan.FromSeconds(12));
+                // review is durable background work and should not seize the single local LLM or
+                // evict the foreground prompt cache while the player is still hearing/responding.
+                delay: TimeSpan.FromSeconds(20));
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)

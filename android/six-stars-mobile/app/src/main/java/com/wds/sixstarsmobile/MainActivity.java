@@ -265,6 +265,11 @@ public final class MainActivity extends ComponentActivity {
     private volatile long lastDesktopPlayerActivitySignalMs;
 
     private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
+    // The current foreground LLM reply is rendered as a transient row as soon as each immutable
+    // § chunk arrives. It is deliberately not persisted; the final correlated response replaces it
+    // with the normal durable conversation row.
+    private final TreeMap<String, String> prodStreamingResponseIdByStar = new TreeMap<>();
+    private final TreeMap<String, String> prodStreamingResponseTextByStar = new TreeMap<>();
     private String lastRenderedProdConversationStar = "";
     private String lastRenderedProdConversationText = "";
     // Build 13: desktop history is a one-time hydration source, not a live renderer.  State events
@@ -1472,18 +1477,19 @@ public final class MainActivity extends ComponentActivity {
         if (prodConversationText == null) return;
         String selectedStar = selectedStarName();
         ArrayList<String> lines = prodConversationByStar.get(selectedStar);
-        String nextText;
-        if (lines == null || lines.size() == 0) {
-            nextText = "No conversation yet.";
-        } else {
-            StringBuilder sb = new StringBuilder();
-            int end = Math.min(lines.size(), 10);
+        String streamingText = prodStreamingResponseTextByStar.get(selectedStar);
+        StringBuilder sb = new StringBuilder();
+        if (streamingText != null && streamingText.trim().length() > 0) {
+            sb.append(selectedStar).append(": ").append(streamingText.trim().replace('\n', ' '));
+        }
+        if (lines != null && lines.size() > 0) {
+            int end = Math.min(lines.size(), streamingText != null && streamingText.trim().length() > 0 ? 9 : 10);
             for (int i = 0; i < end; i++) {
                 if (sb.length() > 0) sb.append('\n');
                 sb.append(lines.get(i));
             }
-            nextText = sb.toString();
         }
+        String nextText = sb.length() == 0 ? "No conversation yet." : sb.toString();
 
         // Conversation is a WebSocket/event-driven surface. Relationship/daily-state traffic may
         // repaint other controls, but it should never make this TextView flash, reset layout, or
@@ -2740,6 +2746,8 @@ public final class MainActivity extends ComponentActivity {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
         } else if (isWritingBridgeEvent(type)) {
             handleWritingBridgeEvent(event, type, seq, starId, message);
+        } else if (isConversationStreamBridgeEvent(type)) {
+            handleConversationStreamBridgeEvent(event, type, seq, starId, message);
         } else if (isConversationBridgeEvent(type)) {
             handleConversationBridgeEvent(event, type, seq, starId, message);
         } else if (isPhotoBridgeEvent(type)) {
@@ -2763,10 +2771,14 @@ public final class MainActivity extends ComponentActivity {
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
             if ("AllStarsDataCleared".equalsIgnoreCase(type)) {
                 prodConversationByStar.clear();
+                prodStreamingResponseIdByStar.clear();
+                prodStreamingResponseTextByStar.clear();
                 prodConversationDesktopHydratedStars.clear();
                 if (settingsService != null) settingsService.clearAllProdConversationLines();
             } else if (starId != null && starId.length() > 0) {
                 prodConversationByStar.remove(starId);
+                prodStreamingResponseIdByStar.remove(starId);
+                prodStreamingResponseTextByStar.remove(starId);
                 prodConversationDesktopHydratedStars.remove(starId);
                 if (settingsService != null) settingsService.clearProdConversationLines(starId);
             }
@@ -2823,6 +2835,46 @@ public final class MainActivity extends ComponentActivity {
         appendVoiceDebug("Writing shelf updated", "#" + seq + " " + type + ", pending=" + selectedStarPendingWritingCount + ", saved=" + selectedStarPersistedWritingCount);
     }
 
+    private boolean isConversationStreamBridgeEvent(String type) {
+        return "MobileConversationStreamChunk".equalsIgnoreCase(type);
+    }
+
+    private void handleConversationStreamBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        if (event == null || starId == null || starId.trim().length() == 0) return;
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        String cumulative = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        if (streamId.length() == 0 || cumulative.length() == 0) return;
+
+        String activeId = prodStreamingResponseIdByStar.get(starId);
+        if (activeId == null || !activeId.equals(streamId)) {
+            prodStreamingResponseIdByStar.put(starId, streamId);
+        }
+        prodStreamingResponseTextByStar.put(starId, cumulative);
+        refreshProdConversationWindow();
+
+        int chunkIndex = optIntEither(event, "streamingChunkIndex", "StreamingChunkIndex", 0);
+        long firstChunkMs = optLongEither(event, "firstStreamedTextChunkMs", "FirstStreamedTextChunkMs", 0L);
+        long elapsedMs = optLongEither(event, "serverElapsedMs", "ServerElapsedMs", 0L);
+        responseText.setText(starId + " — replying…\n\n" + cumulative);
+        if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " is replying…");
+        appendVoiceDebug(starId + " streamed text", "#" + seq + " stream=" + streamId + ", chunk=" + chunkIndex
+                + ", first=" + firstChunkMs + " ms, elapsed=" + elapsedMs + " ms, chars=" + cumulative.length());
+    }
+
+    private void finishProdStreamingConversation(String starId, String streamId) {
+        if (starId == null || starId.trim().length() == 0) return;
+        String activeId = prodStreamingResponseIdByStar.get(starId);
+        if (activeId == null) return;
+        if (streamId != null && streamId.trim().length() > 0 && !activeId.equals(streamId.trim())) return;
+        prodStreamingResponseIdByStar.remove(starId);
+        prodStreamingResponseTextByStar.remove(starId);
+    }
+
+    private void clearProdStreamingConversationForStar(String starId) {
+        finishProdStreamingConversation(starId, "");
+        refreshProdConversationWindow();
+    }
+
     private boolean isConversationBridgeEvent(String type) {
         return "MobileConversationResponseReady".equalsIgnoreCase(type)
                 || "MobileConversationResponseFailed".equalsIgnoreCase(type)
@@ -2831,6 +2883,8 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handleConversationBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        finishProdStreamingConversation(starId, streamId);
         String transcript = optStringEither(event, "transcript", "Transcript", "").trim();
         String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
         String storyMarkdown = optStringEither(event, "storyMarkdown", "StoryMarkdown", "").trim();
@@ -2864,6 +2918,7 @@ public final class MainActivity extends ComponentActivity {
             appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct WebSocket request promise was interrupted.");
             setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star response arrived; screen can rest after voice/playback completes.");
         } else if ("MobileConversationResponseFailed".equalsIgnoreCase(type)) {
+            refreshProdConversationWindow();
             responseText.setText("Star response failed — " + starId + "\n\n" + clip(error.length() > 0 ? error : message, 2000));
             setDebug("Queued Star response failed", "event=#" + seq + " " + type + " — " + clip(error.length() > 0 ? error : message, 1200));
             setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star failure arrived.");
@@ -3020,7 +3075,14 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handlePhotoBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        finishProdStreamingConversation(starId, streamId);
         String spoken = optStringEither(event, "spokenText", "SpokenText", "");
+        if (spoken.trim().length() > 0 && !recentProdConversationAlreadyHas(starId, spoken)) {
+            appendProdConversationLine(starId, spoken);
+        } else {
+            refreshProdConversationWindow();
+        }
         String photoSummary = optStringEither(event, "photoSummary", "PhotoSummary", "");
         String photoError = optStringEither(event, "photoError", "PhotoError", "");
         StringBuilder out = new StringBuilder();
@@ -3307,6 +3369,7 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
 
+        clearProdStreamingConversationForStar(starName);
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
@@ -3689,6 +3752,7 @@ public final class MainActivity extends ComponentActivity {
         }
 
         String starName = selectedStarName();
+        clearProdStreamingConversationForStar(starName);
         appendProdConversationLine("You", playerText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
@@ -3800,6 +3864,7 @@ public final class MainActivity extends ComponentActivity {
                 setDebug("Recording too short", "Captured " + captured.pcm16.length + " bytes. Record at least about one second.");
                 return;
             }
+            clearProdStreamingConversationForStar(selectedStarName());
             // Put one stable row in the event-driven conversation surface immediately so a
             // screen recording always shows that the Last Cat spoke before the Star answers.
             // MobileTranscriptReady replaces this exact row with Whisper's real text; it is not a
@@ -3880,6 +3945,9 @@ public final class MainActivity extends ComponentActivity {
                 long serverElapsedMs = optLongEither(json, "serverElapsedMs", "ServerElapsedMs", 0L);
                 long runtimeElapsedMs = optLongEither(json, "runtimeElapsedMs", "RuntimeElapsedMs", 0L);
                 long gateWaitMs = optLongEither(json, "gateWaitMs", "GateWaitMs", 0L);
+                String streamingResponseId = optStringEither(json, "streamingResponseId", "StreamingResponseId", "").trim();
+                int streamedTextChunkCount = optIntEither(json, "streamedTextChunkCount", "StreamedTextChunkCount", 0);
+                long firstStreamedTextChunkMs = optLongEither(json, "firstStreamedTextChunkMs", "FirstStreamedTextChunkMs", 0L);
                 long clientQueueMs = optLongEither(json, "clientQueueMs", "ClientQueueMs", 0L);
                 long clientSocketRoundTripMs = optLongEither(json, "clientSocketRoundTripMs", "ClientSocketRoundTripMs", 0L);
                 long clientAfterSendMs = optLongEither(json, "clientAfterSendMs", "ClientAfterSendMs", 0L);
@@ -3937,8 +4005,11 @@ public final class MainActivity extends ComponentActivity {
                         appendProdConversationLine("You", transcript);
                     }
                 }
+                finishProdStreamingConversation(starId, streamingResponseId);
                 if (!recentProdConversationAlreadyHas(starId, visibleResponse)) {
                     appendProdConversationLine(starId, visibleResponse);
+                } else {
+                    refreshProdConversationWindow();
                 }
 
                 String header = title + " — " + starId;
@@ -3952,6 +4023,8 @@ public final class MainActivity extends ComponentActivity {
                         + "\nServer total: " + serverElapsedMs + " ms"
                         + "\nRuntime: " + runtimeElapsedMs + " ms"
                         + "\nRuntime gate wait: " + gateWaitMs + " ms"
+                        + "\nFirst streamed text chunk: " + firstStreamedTextChunkMs + " ms"
+                        + "\nStreamed text chunks: " + streamedTextChunkCount
                         + "\nAndroid request queue: " + clientQueueMs + " ms"
                         + "\nWebSocket round trip: " + clientSocketRoundTripMs + " ms"
                         + "\nAfter socket send: " + clientAfterSendMs + " ms"

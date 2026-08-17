@@ -188,14 +188,14 @@ require_cuda_runtime()
 DEBUG_OUTPUT_DIR = os.environ.get("QWEN_TTS_DEBUG_OUTPUT_DIR", "").strip()
 SAVE_SERVER_WAVS = os.environ.get("QWEN_TTS_SAVE_WAVS", "false").strip().lower() in {"1", "true", "yes"}
 # Chunk generation mode:
-# - parallel (default): start every chunk generation task immediately and send results in order.
-#   This is fastest when your local Qwen build/GPU can handle concurrent chunk generation.
+# - parallel: start every chunk generation task immediately and send results in order.
+#   Use only when your local Qwen build/GPU is known to tolerate concurrent chunk generation.
 # - first_then_prefetch: generate chunk 1 alone, send it immediately, then start chunk 2 while
 #   the client plays chunk 1. Safer if parallel mode overloads your model/GPU.
-# - first_then_parallel: generate chunk 1 alone, send it, then generate remaining chunks with
-#   bounded parallelism and send them in order.
+# - first_then_parallel (default): generate chunk 1 alone, send it, then generate remaining chunks
+#   with bounded parallelism and send them in order. This minimizes time-to-first-audio and GPU spikes.
 # - sequential: generate and send one chunk at a time. Functionally safe, but less explicit.
-CHUNK_GENERATION_MODE = os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "parallel").strip().lower()
+CHUNK_GENERATION_MODE = os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "first_then_parallel").strip().lower()
 PARALLEL_CHUNK_GENERATION = os.environ.get("QWEN_TTS_PARALLEL_CHUNKS", "true").strip().lower() not in {"0", "false", "no"}
 # 0 means start generation for every chunk immediately in legacy parallel mode.
 MAX_PARALLEL_CHUNKS = int(os.environ.get("QWEN_TTS_MAX_PARALLEL_CHUNKS", "0"))
@@ -221,7 +221,7 @@ def _resolve_chunk_generation_mode(settings: Dict[str, Any]) -> str:
         settings.get("chunkGenerationMode")
         or settings.get("chunk_generation_mode")
         or CHUNK_GENERATION_MODE
-        or "parallel"
+        or "first_then_parallel"
     ).strip().lower()
 
     if PARALLEL_CHUNK_GENERATION and mode in {"first_then_prefetch", "pipelined", "sequential"}:
@@ -239,8 +239,8 @@ def _resolve_chunk_generation_mode(settings: Dict[str, Any]) -> str:
         "prefetch",
         "sequential",
     }:
-        logger.warning("Unknown chunkGenerationMode=%s; falling back to parallel", mode)
-        mode = "parallel"
+        logger.warning("Unknown chunkGenerationMode=%s; falling back to first_then_parallel", mode)
+        mode = "first_then_parallel"
 
     return mode
 

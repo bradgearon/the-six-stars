@@ -254,6 +254,9 @@ public sealed class MobileBridgeDispatchResult
     public long ServerElapsedMs { get; set; }
     public long RuntimeElapsedMs { get; set; }
     public long GateWaitMs { get; set; }
+    public string StreamingResponseId { get; set; } = string.Empty;
+    public int StreamedTextChunkCount { get; set; }
+    public long FirstStreamedTextChunkMs { get; set; }
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;
@@ -388,6 +391,8 @@ public sealed class MobileBridgeDispatchEvent
     public long ServerElapsedMs { get; set; }
     public long RuntimeElapsedMs { get; set; }
     public long GateWaitMs { get; set; }
+    public int StreamingChunkIndex { get; set; }
+    public long FirstStreamedTextChunkMs { get; set; }
     public bool PhotoAttached { get; set; }
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;

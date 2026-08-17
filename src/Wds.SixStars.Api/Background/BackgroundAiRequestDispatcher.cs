@@ -25,9 +25,12 @@ namespace Wds.SixStars.Api.Background
         private DateTimeOffset _lastForegroundFinishedAtUtc = DateTimeOffset.MinValue;
         private bool _disposed;
         private const int MaxDelayWakeSeconds = 15;
-        private const int HighPriorityForegroundQuietSeconds = 3;
-        private const int NormalPriorityForegroundQuietSeconds = 12;
-        private const int LowPriorityForegroundQuietSeconds = 45;
+        // Build 15N: keep the local model truly foreground-first. The app serializes all LLM calls
+        // through one client request gate, so background work restarting a few seconds after a reply
+        // can destroy the foreground prompt cache and collide with the player's next turn.
+        private const int HighPriorityForegroundQuietSeconds = 30;
+        private const int NormalPriorityForegroundQuietSeconds = 45;
+        private const int LowPriorityForegroundQuietSeconds = 90;
 
         public event EventHandler<BackgroundAiRequestStatusEventArgs>? StatusChanged;
 
@@ -51,14 +54,14 @@ namespace Wds.SixStars.Api.Background
                 activeRequestId = _activeRequestId;
             }
 
-            // Do not cancel an HTTP generation already inside the local LLM server. Some local
-            // OpenAI-compatible servers keep generating after the client disconnects; immediately
-            // sending the foreground request then leaves both calls queued and makes the server look
-            // permanently stuck. New background work is still blocked by _foregroundDepth, and the
-            // chat client serializes the final handoff safely.
+            // The bundled llama.cpp server used by Six Stars honors HTTP cancellation by cancelling
+            // its active task. Preempt the already-running background generation so foreground can
+            // acquire the single model gate instead of waiting behind stale background inference.
+            // Durable primary reviews requeue themselves when cancelled.
             if (!string.IsNullOrWhiteSpace(activeRequestId))
             {
-                Publish("ForegroundWaiting", "foreground", activeRequestId, "Foreground work is waiting for the already-running background generation to finish safely.", QueuedCount);
+                CancelActiveRequest("Foreground request preempted active background generation: " + (reason ?? string.Empty));
+                Publish("ForegroundPreempting", "foreground", activeRequestId, "Foreground work cancelled the active background model call and is taking priority.", QueuedCount);
             }
 
             Publish("ForegroundStarted", "foreground", reason ?? string.Empty, "A foreground reply request is active; queued background AI stacks will wait.", 0);
@@ -189,10 +192,28 @@ namespace Wds.SixStars.Api.Background
                 try
                 {
                     linked = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken, request.CancellationToken);
+                    bool foregroundWonRace = false;
                     lock (_gate)
                     {
-                        _activeRequestCts = linked;
-                        _activeRequestId = request.Id;
+                        // A foreground lease can begin in the tiny gap after WaitForForegroundIdleAsync
+                        // returns but before this background request publishes itself as active. Never
+                        // let that race sneak background inference onto the model after player activity.
+                        if (_foregroundDepth > 0)
+                        {
+                            _queue.Add(request);
+                            foregroundWonRace = true;
+                        }
+                        else
+                        {
+                            _activeRequestCts = linked;
+                            _activeRequestId = request.Id;
+                        }
+                    }
+                    if (foregroundWonRace)
+                    {
+                        Publish("DeferredForForeground", request.StackName, request.Id, "Foreground activity won the start race; background request returned to the queue.", QueuedCount);
+                        SafeReleaseSignal();
+                        continue;
                     }
                     Publish("Started", request.StackName, request.Id, request.Description, QueuedCount);
                     await request.ExecuteAsync(linked.Token).ConfigureAwait(false);
