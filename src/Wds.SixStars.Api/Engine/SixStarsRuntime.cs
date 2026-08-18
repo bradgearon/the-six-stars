@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Ai;
 using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.DailyState;
@@ -1677,12 +1678,14 @@ namespace Wds.SixStars.Api.Engine
 
             if (!decision.ShouldRequestMoreInformation)
             {
+                StreamedResponseTraceLogger.AppendInformationRoutingDecision(profile, request, foregroundVector, availability, decision, 0);
                 response.Debug.Notes.Add("informationNeeds was present, but deterministic API selection did not request a deep second pass: " + decision.Reason);
                 return response;
             }
 
             List<InformationNeedVectorItem> selectedNeeds = BuildSelectedInformationNeeds(decision, foregroundVector);
             string context = BuildRequestedInformationContext(profile, state, selectedNeeds, request.PlayerText, 180000, request);
+            StreamedResponseTraceLogger.AppendInformationRoutingDecision(profile, request, foregroundVector, availability, decision, context.Length);
             response.InformationFollowupAttempted = true;
             response.InformationFollowupContextSummary = SummarizeInformationNeedDecision(decision, foregroundVector, availability, context.Length);
 

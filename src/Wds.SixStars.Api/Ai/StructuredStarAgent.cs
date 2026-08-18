@@ -2577,15 +2577,40 @@ namespace Wds.SixStars.Api.Ai
             if (!isStructuredForeground)
             {
                 StreamingStarResponseMediator mediator = new StreamingStarResponseMediator(request.SpokenChunkReady, request.StreamActionReady);
-                string streamedText = await _client.CompleteTextStreamingAsync(
-                    _promptBuilder.BuildSpeechMessages(profile, request, state),
-                    maxTokens,
-                    purpose,
-                    mediator.Append,
-                    cancellationToken).ConfigureAwait(false);
-                mediator.Complete();
+                string streamedText;
+                try
+                {
+                    streamedText = await _client.CompleteTextStreamingAsync(
+                        _promptBuilder.BuildSpeechMessages(profile, request, state),
+                        maxTokens,
+                        purpose,
+                        mediator.Append,
+                        cancellationToken).ConfigureAwait(false);
+                    mediator.Complete();
+                }
+                catch (Exception ex)
+                {
+                    string failedTracePath = StreamedResponseTraceLogger.Append(
+                        profile,
+                        request,
+                        purpose,
+                        "failed",
+                        mediator.RawReceivedText,
+                        mediator.SpokenParts,
+                        mediator.OutgoingUnresolvedVector,
+                        mediator.InformationNeeds,
+                        mediator.TraceEntries,
+                        ex.ToString());
+                    if (!string.IsNullOrWhiteSpace(failedTracePath))
+                    {
+                        System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Failed foreground stream trace written to " + failedTracePath);
+                    }
+                    throw;
+                }
 
                 List<string> spokenParts = mediator.SpokenParts.ToList();
+                List<string> mediationTrace = mediator.TraceEntries.ToList();
+                string rawStreamForTrace = string.IsNullOrWhiteSpace(mediator.RawReceivedText) ? streamedText : mediator.RawReceivedText;
                 string foregroundOutgoingUnresolved = mediator.OutgoingUnresolvedVector;
                 List<InformationNeedVectorItem> foregroundInformationNeeds = mediator.InformationNeeds.ToList();
                 if (spokenParts.Count == 0 && !string.IsNullOrWhiteSpace(streamedText))
@@ -2599,7 +2624,21 @@ namespace Wds.SixStars.Api.Ai
                     spokenParts = fallbackMediator.SpokenParts.ToList();
                     foregroundOutgoingUnresolved = MergeOutgoingUnresolvedVectors(foregroundOutgoingUnresolved, fallbackMediator.OutgoingUnresolvedVector);
                     foregroundInformationNeeds = MergeInformationNeeds(foregroundInformationNeeds, fallbackMediator.InformationNeeds);
+                    mediationTrace.Add("fallback mediator used because the primary streaming callback produced no speech chunks");
+                    mediationTrace.AddRange(fallbackMediator.TraceEntries);
+                    if (string.IsNullOrWhiteSpace(rawStreamForTrace)) rawStreamForTrace = fallbackMediator.RawReceivedText;
                 }
+
+                string streamTracePath = StreamedResponseTraceLogger.Append(
+                    profile,
+                    request,
+                    purpose,
+                    "completed",
+                    rawStreamForTrace,
+                    spokenParts,
+                    foregroundOutgoingUnresolved,
+                    foregroundInformationNeeds,
+                    mediationTrace);
 
                 StarInteractionResponse streamedResponse = new StarInteractionResponse
                 {
@@ -2643,6 +2682,14 @@ namespace Wds.SixStars.Api.Ai
                 if (foregroundInformationNeeds.Count > 0)
                 {
                     streamedResponse.Debug.Notes.Add("Foreground stream requested local information: " + string.Join(", ", foregroundInformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0"))));
+                }
+                else
+                {
+                    streamedResponse.Debug.Notes.Add("Foreground stream emitted no accepted ~info controls. Check the streamed-response trace to distinguish model omission from malformed/rejected controls.");
+                }
+                if (!string.IsNullOrWhiteSpace(streamTracePath))
+                {
+                    streamedResponse.Debug.Notes.Add("Outgoing stream mediation trace: " + streamTracePath);
                 }
                 return streamedResponse;
             }
