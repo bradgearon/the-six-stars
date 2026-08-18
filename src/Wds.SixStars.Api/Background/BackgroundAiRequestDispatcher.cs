@@ -23,6 +23,7 @@ namespace Wds.SixStars.Api.Background
         private CancellationTokenSource? _activeRequestCts;
         private string _activeRequestId = string.Empty;
         private DateTimeOffset _lastForegroundFinishedAtUtc = DateTimeOffset.MinValue;
+        private DateTimeOffset _backgroundSuppressedUntilUtc = DateTimeOffset.MinValue;
         private bool _disposed;
         private const int MaxDelayWakeSeconds = 15;
         // Build 15N: keep the local model truly foreground-first. The app serializes all LLM calls
@@ -82,6 +83,56 @@ namespace Wds.SixStars.Api.Background
             if (activeToCancel == null || activeToCancel.IsCancellationRequested) return;
             try { activeToCancel.Cancel(); } catch { }
             Publish("Preempted", "background", activeRequestId, reason ?? "Background request cancelled.", QueuedCount);
+        }
+
+        /// <summary>
+        /// Records lightweight player activity without creating a full foreground lease. Background
+        /// requests stay queued until the quiet window expires, and an already-running background
+        /// model request is cancelled once so repeated touch/typing pings cannot create a
+        /// cancel/restart storm while the player is preparing the next message.
+        /// </summary>
+        public void SuppressBackgroundFor(TimeSpan duration, string reason)
+        {
+            if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+
+            CancellationTokenSource? activeToCancel;
+            string activeRequestId;
+            DateTimeOffset suppressedUntil;
+            lock (_gate)
+            {
+                ThrowIfDisposedLocked();
+                DateTimeOffset requestedUntil = DateTimeOffset.UtcNow.Add(duration);
+                if (requestedUntil > _backgroundSuppressedUntilUtc)
+                {
+                    _backgroundSuppressedUntilUtc = requestedUntil;
+                }
+
+                suppressedUntil = _backgroundSuppressedUntilUtc;
+                activeToCancel = _activeRequestCts;
+                activeRequestId = _activeRequestId;
+            }
+
+            bool cancelledActive = false;
+            if (activeToCancel != null && !activeToCancel.IsCancellationRequested)
+            {
+                try
+                {
+                    activeToCancel.Cancel();
+                    cancelledActive = true;
+                }
+                catch
+                {
+                }
+            }
+
+            Publish(
+                "ForegroundActivitySuppressed",
+                "foreground-activity",
+                activeRequestId,
+                (cancelledActive ? "Cancelled the active background model call once and " : string.Empty)
+                    + "held queued background AI until " + suppressedUntil.ToString("O") + ". " + (reason ?? string.Empty),
+                QueuedCount);
+            SafeReleaseSignal();
         }
 
         public BackgroundAiRequestReceipt Enqueue(
@@ -198,7 +249,7 @@ namespace Wds.SixStars.Api.Background
                         // A foreground lease can begin in the tiny gap after WaitForForegroundIdleAsync
                         // returns but before this background request publishes itself as active. Never
                         // let that race sneak background inference onto the model after player activity.
-                        if (_foregroundDepth > 0)
+                        if (_foregroundDepth > 0 || _backgroundSuppressedUntilUtc > DateTimeOffset.UtcNow)
                         {
                             _queue.Add(request);
                             foregroundWonRace = true;
@@ -211,7 +262,7 @@ namespace Wds.SixStars.Api.Background
                     }
                     if (foregroundWonRace)
                     {
-                        Publish("DeferredForForeground", request.StackName, request.Id, "Foreground activity won the start race; background request returned to the queue.", QueuedCount);
+                        Publish("DeferredForForeground", request.StackName, request.Id, "Foreground activity/quiet suppression won the start race; background request returned to the queue.", QueuedCount);
                         SafeReleaseSignal();
                         continue;
                     }
@@ -248,7 +299,9 @@ namespace Wds.SixStars.Api.Background
             DateTimeOffset foregroundQuietUntil = _lastForegroundFinishedAtUtc == DateTimeOffset.MinValue
                 ? DateTimeOffset.MinValue
                 : _lastForegroundFinishedAtUtc.AddSeconds(GetForegroundQuietSeconds(request.Priority));
-            return request.NotBefore >= foregroundQuietUntil ? request.NotBefore : foregroundQuietUntil;
+            DateTimeOffset effective = request.NotBefore >= foregroundQuietUntil ? request.NotBefore : foregroundQuietUntil;
+            if (_backgroundSuppressedUntilUtc > effective) effective = _backgroundSuppressedUntilUtc;
+            return effective;
         }
 
         private static int GetForegroundQuietSeconds(BackgroundAiRequestPriority priority)

@@ -1985,17 +1985,59 @@ namespace Wds.SixStars.Api.Ai
                 new ChatMessage("user", _templates.Render("star_writing_performance_user.sbn", data))
             };
 
-            string json = await _client.CompleteJsonAsync(
+            // Build 15O: the Spark performance pass no longer asks the local model to build a
+            // JSON object/arrays. Stream tiny positional records instead: exact-id^spokenText§.
+            // This keeps the selection contract cheap while retaining the deterministic validation
+            // and fallback in StarWritingService. Qwen still waits for Gemma EOS so they never
+            // compete for the GPU.
+            StreamingSpokenTextParser parser = new StreamingSpokenTextParser(null);
+            string streamed = await _client.CompleteTextStreamingAsync(
                 messages,
-                StarResponseJsonSchema.CreateStarWritingPerformanceResponseFormat(),
                 0,
-                "star-writing-perform",
+                "star-writing-perform-stream",
+                parser.Append,
                 cancellationToken).ConfigureAwait(false);
-            StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Writing performance returned empty JSON.");
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
-            result.RawModelJson = json;
-            return result;
+            parser.Complete();
+
+            List<string> selectedIds = new List<string>();
+            List<string> spokenText = new List<string>();
+            foreach (string record in parser.Parts)
+            {
+                int separator = record.IndexOf('^');
+                if (separator <= 0 || separator >= record.Length - 1) continue;
+                string id = record.Substring(0, separator).Trim();
+                string spoken = record.Substring(separator + 1).Trim();
+                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(spoken)) continue;
+                selectedIds.Add(id);
+                spokenText.Add(spoken);
+            }
+
+            // Defensive fallback for a client that returns a final body but never forwards SSE
+            // deltas. Parsing the final body through the same delimiter parser keeps one contract.
+            if (selectedIds.Count == 0 && !string.IsNullOrWhiteSpace(streamed))
+            {
+                StreamingSpokenTextParser finalParser = new StreamingSpokenTextParser(null);
+                finalParser.Append(streamed);
+                finalParser.Complete();
+                foreach (string record in finalParser.Parts)
+                {
+                    int separator = record.IndexOf('^');
+                    if (separator <= 0 || separator >= record.Length - 1) continue;
+                    string id = record.Substring(0, separator).Trim();
+                    string spoken = record.Substring(separator + 1).Trim();
+                    if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(spoken)) continue;
+                    selectedIds.Add(id);
+                    spokenText.Add(spoken);
+                }
+            }
+
+            return new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = selectedIds,
+                SpokenText = spokenText,
+                RawModelJson = streamed
+            };
         }
 
         public async Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(
@@ -2239,6 +2281,16 @@ namespace Wds.SixStars.Api.Ai
             // previously persisted shelf: that creates a self-reinforcing per-actor exchange rate.
             // The curated pack is deliberately actor-neutral and identical for every reviewer.
             return _valueBaselines.GetSharedReaderEmotionCalibrationReferences(outputType, maximum);
+        }
+
+        private static bool IsTruthyFlag(StarInteractionRequest request, string key)
+        {
+            if (request?.GameContext?.Flags == null || string.IsNullOrWhiteSpace(key)) return false;
+            if (!request.GameContext.Flags.TryGetValue(key, out string? value) || string.IsNullOrWhiteSpace(value)) return false;
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("1", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("on", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string PromptText(string? value, int maximumCharacters)
@@ -2503,14 +2555,19 @@ namespace Wds.SixStars.Api.Ai
 
             bool isStory = request.RequestType == RequestType.Story;
             bool isStarInitiative = request.RequestType == RequestType.StarInitiative;
-            bool isStructuredForeground = isStory || isStarInitiative;
+            bool isManualStreamingInitiative = isStarInitiative
+                && IsTruthyFlag(request, "starInitiativeForce")
+                && !IsTruthyFlag(request, "starInitiativePrepareForListen");
+            bool isStructuredForeground = isStory || (isStarInitiative && !isManualStreamingInitiative);
             bool isStoryContinuation = isStory && request.StoryOptions != null && request.StoryOptions.ContinueActiveStory;
             int maxTokens = isStory && !isStoryContinuation
                 ? _storyPlanMaxTokens
                 : (isStarInitiative ? _initiativeMaxTokens : _speechMaxTokens);
             string purpose = isStory
                 ? (isStoryContinuation ? "story-continuation-spoken-response" : "story-plan-and-first-spoken-response")
-                : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response-stream");
+                : (isManualStreamingInitiative
+                    ? "star-initiative-manual-spoken-stream"
+                    : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response-stream"));
 
             if (!isStructuredForeground)
             {
@@ -2534,8 +2591,13 @@ namespace Wds.SixStars.Api.Ai
                 StarInteractionResponse streamedResponse = new StarInteractionResponse
                 {
                     StarId = profile.StarId,
-                    EmotionalPurpose = "Foreground spoken reply only; background emotion/vector/memory review pending.",
+                    EmotionalPurpose = isManualStreamingInitiative
+                        ? "Manual at-rest Thought/Listen stream; no player emotion scoring or relationship update."
+                        : "Foreground spoken reply only; background emotion/vector/memory review pending.",
                     InitiativeShouldSpeak = true,
+                    InitiativePriority = isManualStreamingInitiative ? 1.0 : 0.0,
+                    InitiativeTopic = isManualStreamingInitiative ? "fresh at-rest thought" : string.Empty,
+                    InitiativeReason = isManualStreamingInitiative ? "The Last Cat deliberately chose to hear a Thought now." : string.Empty,
                     EmotionalEffectVector = string.Empty,
                     NegativeEmotionVector = string.Empty,
                     VoiceDirective = BuildDefaultVoiceDirective(profile, request),
@@ -2552,9 +2614,13 @@ namespace Wds.SixStars.Api.Ai
                     }
                 };
                 streamedResponse.SetSpokenParts(spokenParts);
-                streamedResponse.Debug.Notes.Add("StructuredStarAgent used REAL LLM plain-text streaming foreground speech pass.");
-                streamedResponse.Debug.Notes.Add("Normal foreground speech used § as an LLM-only speakable-thought delimiter; each completed chunk could be queued to TTS before EOS.");
-                streamedResponse.Debug.Notes.Add("Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
+                streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
+                    ? "StructuredStarAgent used the manual Thought/Listen plain-text streaming speech contract."
+                    : "StructuredStarAgent used REAL LLM plain-text streaming foreground speech pass.");
+                streamedResponse.Debug.Notes.Add((isManualStreamingInitiative ? "Manual Thought" : "Normal foreground speech") + " used § as the speakable-thought delimiter; each completed chunk can stream to Android immediately.");
+                streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
+                    ? "Manual Thought/Listen does not run player emotion/memory review or relationship deltas."
+                    : "Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
                 streamedResponse.Debug.Notes.Add(maxTokens > 0
                     ? $"Per-pass max_tokens cap used: {maxTokens}."
                     : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");

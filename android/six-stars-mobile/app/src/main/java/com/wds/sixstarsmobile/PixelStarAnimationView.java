@@ -16,6 +16,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.View;
 
@@ -61,6 +62,13 @@ public final class PixelStarAnimationView extends View {
     private final Map<String, Drawable> gifCache = new ConcurrentHashMap<>();
     private final Set<String> gifPreloadsInFlight = ConcurrentHashMap.newKeySet();
     private final Set<String> missingGifAssets = ConcurrentHashMap.newKeySet();
+    private StarLipSyncConfig lipSyncConfig;
+    private Drawable lipTalkingDrawable;
+    private String lipTalkingAssetPath = "";
+    private boolean lipTalkingActive;
+    private String activeBaseStar = "";
+    private String activeBaseState = "";
+    private long baseAnimationStartedAtMs;
     private Bitmap[] frames = new Bitmap[0];
     private int frameIndex;
     private String activeKey = "";
@@ -97,44 +105,56 @@ public final class PixelStarAnimationView extends View {
         paint.setAntiAlias(false);
         paint.setFilterBitmap(false);
         paint.setDither(false);
+        lipSyncConfig = StarLipSyncConfig.load(getContext());
         setWillNotDraw(false);
     }
 
     public void setStarAnimation(String starId, String state, int[] fallbackResourceIds) {
         String normalizedStar = normalizeAssetPart(starId);
         String normalizedState = normalizeAssetPart(state == null || state.length() == 0 ? "idle" : state);
-        String key = normalizedStar + ":" + normalizedState;
-        if (key.equals(activeKey) && (activeDrawable != null || frames.length > 0)) {
-            preloadStarGifs(normalizedStar);
-            return;
-        }
-        activeKey = key;
 
-        clearCurrentAnimation();
+        // When lip anchors + lips-talking.gif are available, speech is composited over
+        // idle.gif instead of swapping the entire character to talking.gif. That keeps
+        // the body on the exact same idle frame/timeline while only the mouth animates.
+        boolean useLipComposite = "talking".equals(normalizedState) && canUseLipTalking(normalizedStar);
+        String baseState = useLipComposite ? "idle" : normalizedState;
+        String key = normalizedStar + ":" + baseState;
+        boolean sameBase = key.equals(activeKey) && (activeDrawable != null || frames.length > 0);
 
-        String[] candidates = new String[]{
-                "star_animations/" + normalizedStar + "/" + normalizedState + ".gif",
-                "star_animations/" + normalizedStar + "/idle.gif"
-        };
-        boolean loadedGif = false;
-        for (String path : candidates) {
-            if (loadGif(path)) {
-                loadedGif = true;
-                break;
+        if (!sameBase) {
+            activeKey = key;
+            clearCurrentAnimation();
+
+            String[] candidates = new String[]{
+                    "star_animations/" + normalizedStar + "/" + baseState + ".gif",
+                    "star_animations/" + normalizedStar + "/idle.gif"
+            };
+            boolean loadedGif = false;
+            for (String path : candidates) {
+                if (loadGif(path)) {
+                    loadedGif = true;
+                    break;
+                }
             }
-        }
 
-        if (!loadedGif) {
-            int[] conventionFrames = findConventionFrameResources(normalizedStar, normalizedState);
-            if (conventionFrames.length == 0 && !"idle".equals(normalizedState)) {
-                conventionFrames = findConventionFrameResources(normalizedStar, "idle");
+            if (!loadedGif) {
+                int[] conventionFrames = findConventionFrameResources(normalizedStar, baseState);
+                if (conventionFrames.length == 0 && !"idle".equals(baseState)) {
+                    conventionFrames = findConventionFrameResources(normalizedStar, "idle");
+                }
+                setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
             }
-            setFrameResources(conventionFrames.length > 0 ? conventionFrames : fallbackResourceIds);
+            activeBaseStar = normalizedStar;
+            activeBaseState = baseState;
         }
 
-        // Decode the currently selected Star's idle and talking GIFs while the
-        // user is looking at the screen. Switching to talking then reuses the
-        // same decoded drawable instead of reopening the asset at speech start.
+        if (useLipComposite) {
+            startLipTalking(normalizedStar);
+        } else {
+            stopLipTalking();
+        }
+
+        // Preload the selected Star's base states and the optional cropped lip GIF.
         preloadStarGifs(normalizedStar);
     }
 
@@ -197,8 +217,67 @@ public final class PixelStarAnimationView extends View {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
         preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/lips-talking.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt-off.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt_off.gif");
+    }
+
+    private boolean canUseLipTalking(String normalizedStar) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || lipSyncConfig == null) return false;
+        StarLipSyncConfig.AnimationPositions positions = lipSyncConfig.animation(normalizedStar, "idle");
+        if (positions == null || !positions.hasConfiguredPosition) return false;
+        return getOrDecodeGif("star_animations/" + normalizedStar + "/lips-talking.gif") != null;
+    }
+
+    @TargetApi(Build.VERSION_CODES.P)
+    private Drawable getOrDecodeGif(String assetPath) {
+        if (missingGifAssets.contains(assetPath)) return null;
+        Drawable drawable = gifCache.get(assetPath);
+        if (drawable != null) return drawable;
+        drawable = decodeAnimatedGif(assetPath);
+        if (drawable == null) {
+            missingGifAssets.add(assetPath);
+            return null;
+        }
+        Drawable cached = gifCache.putIfAbsent(assetPath, drawable);
+        return cached == null ? drawable : cached;
+    }
+
+    private void startLipTalking(String normalizedStar) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
+        String assetPath = "star_animations/" + normalizedStar + "/lips-talking.gif";
+        Drawable drawable = getOrDecodeGif(assetPath);
+        if (drawable == null) return;
+        if (lipTalkingActive && drawable == lipTalkingDrawable && assetPath.equals(lipTalkingAssetPath)) return;
+
+        stopLipTalking();
+        lipTalkingDrawable = drawable;
+        lipTalkingAssetPath = assetPath;
+        lipTalkingActive = true;
+        lipTalkingDrawable.setFilterBitmap(false);
+        lipTalkingDrawable.setCallback(this);
+        lipTalkingDrawable.setVisible(true, true);
+        if (lipTalkingDrawable instanceof AnimatedImageDrawable) {
+            ((AnimatedImageDrawable) lipTalkingDrawable).setRepeatCount(AnimatedImageDrawable.REPEAT_INFINITE);
+        }
+        if (lipTalkingDrawable instanceof Animatable && isAttachedToWindow()) {
+            ((Animatable) lipTalkingDrawable).start();
+        }
+        invalidate();
+    }
+
+    private void stopLipTalking() {
+        lipTalkingActive = false;
+        lipTalkingAssetPath = "";
+        if (lipTalkingDrawable instanceof Animatable) {
+            ((Animatable) lipTalkingDrawable).stop();
+        }
+        if (lipTalkingDrawable != null) {
+            lipTalkingDrawable.setVisible(false, false);
+            lipTalkingDrawable.setCallback(null);
+        }
+        lipTalkingDrawable = null;
+        invalidate();
     }
 
     @TargetApi(Build.VERSION_CODES.P)
@@ -226,11 +305,15 @@ public final class PixelStarAnimationView extends View {
         activeDrawable = drawable;
         activeDrawable.setFilterBitmap(false);
         activeDrawable.setCallback(this);
+        activeDrawable.setVisible(true, true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && activeDrawable instanceof AnimatedImageDrawable) {
             ((AnimatedImageDrawable) activeDrawable).setRepeatCount(AnimatedImageDrawable.REPEAT_INFINITE);
         }
         if (activeDrawable instanceof Animatable && isAttachedToWindow()) {
+            baseAnimationStartedAtMs = SystemClock.uptimeMillis();
             ((Animatable) activeDrawable).start();
+        } else {
+            baseAnimationStartedAtMs = SystemClock.uptimeMillis();
         }
         invalidate();
     }
@@ -374,6 +457,7 @@ public final class PixelStarAnimationView extends View {
     private void clearCurrentAnimation() {
         animationGeneration++;
         handler.removeCallbacks(animator);
+        stopLipTalking();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                 && activeDrawable instanceof Animatable2
                 && activeAnimationCallback != null) {
@@ -383,20 +467,32 @@ public final class PixelStarAnimationView extends View {
         if (activeDrawable instanceof Animatable) {
             ((Animatable) activeDrawable).stop();
         }
-        if (activeDrawable != null) activeDrawable.setCallback(null);
+        if (activeDrawable != null) {
+            activeDrawable.setVisible(false, false);
+            activeDrawable.setCallback(null);
+        }
         activeDrawable = null;
         frames = new Bitmap[0];
         frameIndex = 0;
+        activeBaseStar = "";
+        activeBaseState = "";
+        baseAnimationStartedAtMs = 0L;
     }
 
     @Override protected boolean verifyDrawable(Drawable who) {
-        return who == activeDrawable || super.verifyDrawable(who);
+        return who == activeDrawable || who == lipTalkingDrawable || super.verifyDrawable(who);
     }
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         if (activeDrawable instanceof Animatable) {
+            baseAnimationStartedAtMs = SystemClock.uptimeMillis();
+            activeDrawable.setVisible(true, true);
             ((Animatable) activeDrawable).start();
+        }
+        if (lipTalkingDrawable instanceof Animatable && lipTalkingActive) {
+            lipTalkingDrawable.setVisible(true, true);
+            ((Animatable) lipTalkingDrawable).start();
         }
         if (activeDrawable == null && frames.length > 1) {
             handler.removeCallbacks(animator);
@@ -409,6 +505,9 @@ public final class PixelStarAnimationView extends View {
         if (activeDrawable instanceof Animatable) {
             ((Animatable) activeDrawable).stop();
         }
+        if (lipTalkingDrawable instanceof Animatable) {
+            ((Animatable) lipTalkingDrawable).stop();
+        }
         super.onDetachedFromWindow();
     }
 
@@ -418,21 +517,50 @@ public final class PixelStarAnimationView extends View {
         int vh = getHeight() - getPaddingTop() - getPaddingBottom();
         if (vw <= 0 || vh <= 0) return;
 
+        Rect baseDestination = null;
+        int sourceWidth = 0;
+        int sourceHeight = 0;
+
         if (activeDrawable != null) {
-            Rect destination = destinationRect(
-                    activeDrawable.getIntrinsicWidth(),
-                    activeDrawable.getIntrinsicHeight(),
-                    vw,
-                    vh);
-            activeDrawable.setBounds(destination);
+            sourceWidth = activeDrawable.getIntrinsicWidth();
+            sourceHeight = activeDrawable.getIntrinsicHeight();
+            baseDestination = destinationRect(sourceWidth, sourceHeight, vw, vh);
+            activeDrawable.setBounds(baseDestination);
             activeDrawable.draw(canvas);
-            return;
+        } else if (frames.length > 0 && frames[frameIndex] != null) {
+            Bitmap bitmap = frames[frameIndex];
+            sourceWidth = bitmap.getWidth();
+            sourceHeight = bitmap.getHeight();
+            baseDestination = destinationRect(sourceWidth, sourceHeight, vw, vh);
+            canvas.drawBitmap(bitmap, null, new RectF(baseDestination), paint);
         }
 
-        if (frames.length == 0 || frames[frameIndex] == null) return;
-        Bitmap bitmap = frames[frameIndex];
-        Rect destination = destinationRect(bitmap.getWidth(), bitmap.getHeight(), vw, vh);
-        canvas.drawBitmap(bitmap, null, new RectF(destination), paint);
+        if (baseDestination != null) {
+            drawTalkingLips(canvas, baseDestination, sourceWidth, sourceHeight);
+        }
+    }
+
+    private void drawTalkingLips(Canvas canvas, Rect baseDestination, int sourceWidth, int sourceHeight) {
+        if (!lipTalkingActive || lipTalkingDrawable == null || lipSyncConfig == null
+                || !"idle".equals(activeBaseState)) return;
+
+        StarLipSyncConfig.AnimationPositions positions = lipSyncConfig.animation(activeBaseStar, activeBaseState);
+        if (positions == null || !positions.hasConfiguredPosition) return;
+
+        long elapsedMs = baseAnimationStartedAtMs <= 0L
+                ? 0L
+                : Math.max(0L, SystemClock.uptimeMillis() - baseAnimationStartedAtMs);
+        StarLipSyncConfig.LipPosition position = positions.positionForElapsed(elapsedMs);
+        if (position == null) return;
+
+        float scaleX = baseDestination.width() / (float) Math.max(1, positions.sourceWidth);
+        float scaleY = baseDestination.height() / (float) Math.max(1, positions.sourceHeight);
+        int lipWidth = Math.max(1, Math.round(lipTalkingDrawable.getIntrinsicWidth() * scaleX));
+        int lipHeight = Math.max(1, Math.round(lipTalkingDrawable.getIntrinsicHeight() * scaleY));
+        int left = baseDestination.left + Math.round(position.x * scaleX);
+        int top = baseDestination.top + Math.round(position.y * scaleY);
+        lipTalkingDrawable.setBounds(left, top, left + lipWidth, top + lipHeight);
+        lipTalkingDrawable.draw(canvas);
     }
 
     private Rect destinationRect(int sourceWidth, int sourceHeight, int availableWidth, int availableHeight) {

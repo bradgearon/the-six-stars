@@ -54,6 +54,9 @@ internal sealed class MobileConversationService : IDisposable
     public Task<StarState> GetStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
         => _runtime.GetStarStateAsync(sessionId, starId, cancellationToken);
 
+    public void SuppressBackgroundAnalysisForPlayerActivity(TimeSpan quietWindow, string reason)
+        => _runtime.SuppressBackgroundAnalysisForPlayerActivity(quietWindow, reason);
+
     public void CancelBackgroundAnalysis(string reason) => _runtime.CancelBackgroundAnalysis(reason);
 
     public void Dispose() => _gate.Dispose();

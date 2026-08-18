@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
@@ -931,38 +932,17 @@ namespace Wds.SixStars.Api.Writings
             double overallValue = StarWritingDeterministicRanker.OverallValue(selected);
             double publicValue = StarWritingDeterministicRanker.PublicSharingValue(selected);
 
-            // Only the selected story is sent in full. The LLM's job here is not to choose or rewrite it;
-            // it simply turns the complete stored prose into the ordered spokenText array used by the
-            // existing phone TTS queue.
-            StarWritingPerformancePlan plan = await _agent.PrepareConstellationStoryPerformanceAsync(
-                profile,
-                state,
-                selected,
-                cancellationToken).ConfigureAwait(false);
-
-            List<string> selectedIds = (plan.SelectedWritingIds ?? new List<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (selectedIds.Count != 1 || !string.Equals(selectedIds[0], selected.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new InvalidOperationException(
-                    profile.StarId + " Constellation Story playback formatter returned the wrong story ID. Expected "
-                    + selected.Id + ", received " + (selectedIds.Count == 0 ? "none" : string.Join(",", selectedIds))
-                    + ". Raw model response: " + DiagnosticPreview(plan.RawModelJson));
-            }
-
-            List<string> spoken = (plan.SpokenText ?? new List<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.Trim())
-                .ToList();
+            // Build 15O: this story is already final prose. Do not spend a second Gemma request just
+            // asking the model to put the exact same text into a JSON spokenText array. Split it
+            // deterministically at natural speech boundaries and hand those immutable pieces straight
+            // to the same live Qwen queue used by foreground speech. This removes the entire story
+            // playback LLM wait while preserving every story word in order.
+            List<string> spoken = SplitConstellationStoryForStreamingSpeech(selected.Writing);
             if (spoken.Count == 0)
             {
                 throw new InvalidOperationException(
-                    profile.StarId + " Constellation Story playback formatter returned no spokenText chunks for “"
-                    + (string.IsNullOrWhiteSpace(selected.Title) ? selected.Id : selected.Title)
-                    + "”. Raw model response: " + DiagnosticPreview(plan.RawModelJson));
+                    profile.StarId + " Constellation Story playback could not split stored story text for “"
+                    + (string.IsNullOrWhiteSpace(selected.Title) ? selected.Id : selected.Title) + "”.");
             }
 
             selected.ToldCount++;
@@ -2078,6 +2058,63 @@ namespace Wds.SixStars.Api.Writings
             return values;
         }
 
+
+        private static List<string> SplitConstellationStoryForStreamingSpeech(string? story)
+        {
+            List<string> chunks = new List<string>();
+            if (string.IsNullOrWhiteSpace(story)) return chunks;
+
+            // Normalize only whitespace for speech; word order/content is otherwise untouched.
+            StringBuilder normalized = new StringBuilder();
+            bool previousWhitespace = false;
+            foreach (char ch in story.Trim())
+            {
+                if (char.IsWhiteSpace(ch))
+                {
+                    if (!previousWhitespace && normalized.Length > 0) normalized.Append(' ');
+                    previousWhitespace = true;
+                }
+                else
+                {
+                    normalized.Append(ch);
+                    previousWhitespace = false;
+                }
+            }
+
+            string[] words = normalized.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            StringBuilder current = new StringBuilder();
+            const int naturalMinimum = 240;
+            const int hardMaximum = 440;
+
+            foreach (string word in words)
+            {
+                if (current.Length > 0) current.Append(' ');
+                current.Append(word);
+
+                bool naturalBoundary = current.Length >= naturalMinimum && EndsNaturalSpeechBoundary(word);
+                bool hardBoundary = current.Length >= hardMaximum;
+                if (naturalBoundary || hardBoundary)
+                {
+                    chunks.Add(current.ToString().Trim());
+                    current.Clear();
+                }
+            }
+
+            if (current.Length > 0) chunks.Add(current.ToString().Trim());
+            return chunks.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        }
+
+        private static bool EndsNaturalSpeechBoundary(string word)
+        {
+            if (string.IsNullOrWhiteSpace(word)) return false;
+            for (int i = word.Length - 1; i >= 0; i--)
+            {
+                char ch = word[i];
+                if (ch == '"' || ch == '\'' || ch == ')' || ch == ']' || ch == '}' || ch == '”' || ch == '’') continue;
+                return ch == '.' || ch == '!' || ch == '?' || ch == '…' || ch == ';' || ch == ':';
+            }
+            return false;
+        }
 
         private static string ResolvePerformanceCandidateId(IReadOnlyList<PersistedStarWriting> candidates, string requestedId)
         {

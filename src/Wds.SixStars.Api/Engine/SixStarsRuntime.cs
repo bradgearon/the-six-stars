@@ -713,6 +713,31 @@ namespace Wds.SixStars.Api.Engine
             await _screenContextStore.AddAsync(sessionId, capture, cancellationToken).ConfigureAwait(false);
         }
 
+        public void SuppressBackgroundAnalysisForPlayerActivity(TimeSpan quietWindow, string reason = "Player activity")
+        {
+            if (quietWindow < TimeSpan.Zero) quietWindow = TimeSpan.Zero;
+            _backgroundDispatcher.SuppressBackgroundFor(quietWindow, reason);
+
+            // Story-generation workers have their own CTS outside the dispatcher. Cancel an active
+            // one without replacing the CTS on every touch; the next real story worker creates a
+            // fresh CTS when it actually starts. This keeps repeated PlayerActivity pings cheap.
+            lock (_backgroundGate)
+            {
+                try
+                {
+                    if (_backgroundStoryGenerationCts != null && !_backgroundStoryGenerationCts.IsCancellationRequested)
+                    {
+                        _backgroundStoryGenerationCts.Cancel();
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Player activity suppressed background AI for " + quietWindow.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s: " + reason);
+        }
+
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
             // Build 15N: the bundled llama.cpp server cancels its server-side task when the HTTP

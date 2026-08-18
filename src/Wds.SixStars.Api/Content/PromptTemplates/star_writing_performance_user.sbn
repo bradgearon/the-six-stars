@@ -6,21 +6,15 @@ Element: {{ data.element }}
 Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Personality: {{ data.personalityShort }}
-Deep personality: {{ data.deepPersonality }}
 Speaking style: {{ data.speakingStyle }}
-Performance direction: {{ data.voiceDirection }}
 
 WEIGHTED HIGH-VALUE LISTENING SET
-There are {{ data.totalPendingCount }} untold shelf entries in the supplied state. The shelf layer first considered the highest-valued untold Sparks, then built the {{ data.candidateCount }}-item mixed listening set below so you have enough context room to read the stronger pieces carefully while still seeing a little contrast.
-The order below is randomized. Judge the actual work and its IU evidence rather than its position.
-
-The two IU values beside each Spark are calibration evidence. The deterministic public value already summarizes its saved review vector, so spend your attention on reading the actual writing rather than reconstructing the review math.
+There are {{ data.totalPendingCount }} untold Sparks. Select from only the {{ data.candidateCount }} exact IDs below. Order is randomized.
 {{ for item in data.persistedWritings }}
 ID: {{ item.id }}
-Overall value: {{ item.overallValue }} IU
-Deterministic public value: {{ item.deterministicPublicValue }} IU
+Overall: {{ item.overallValue }} IU | Public: {{ item.deterministicPublicValue }} IU
 Writing: {{ item.writing }}
 ---
 {{ end }}
 
-Choose the required Sparks by their exact IDs and produce the one-to-one spokenText array. Return only JSON.
+Return exactly the required number of records as exact-id^spoken text§ with no other output.

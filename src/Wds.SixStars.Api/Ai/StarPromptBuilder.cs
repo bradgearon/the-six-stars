@@ -55,10 +55,16 @@ namespace Wds.SixStars.Api.Ai
         {
             if (request.RequestType == RequestType.StarInitiative)
             {
+                bool manualStreamingThought = IsTruthyFlag(request, "starInitiativeForce")
+                    && !IsTruthyFlag(request, "starInitiativePrepareForListen");
                 return new List<ChatMessage>
                 {
-                    new ChatMessage("system", BuildStarInitiativeSystemMessage(profile)),
-                    new ChatMessage("user", BuildStarInitiativeUserMessage(profile, request, state))
+                    new ChatMessage("system", manualStreamingThought
+                        ? BuildStarInitiativeStreamingSystemMessage(profile)
+                        : BuildStarInitiativeSystemMessage(profile)),
+                    new ChatMessage("user", manualStreamingThought
+                        ? BuildStarInitiativeStreamingUserMessage(profile, request, state)
+                        : BuildStarInitiativeUserMessage(profile, request, state))
                 };
             }
 
@@ -617,7 +623,36 @@ namespace Wds.SixStars.Api.Ai
             return _templates.Render("initiative_system.sbn", data).TrimEnd();
         }
 
+        private string BuildStarInitiativeStreamingSystemMessage(StarProfile profile)
+        {
+            object data = new
+            {
+                star = new
+                {
+                    displayName = profile.DisplayName,
+                    element = profile.Element,
+                    domain = profile.Domain,
+                    personality = string.IsNullOrWhiteSpace(profile.PersonalityShort) ? string.Empty : Truncate(profile.PersonalityShort, 220),
+                    speakingStyle = string.IsNullOrWhiteSpace(profile.SpeakingStyle) ? string.Empty : Truncate(profile.SpeakingStyle, 260),
+                    voiceRules = profile.SpokenResponseRules == null || profile.SpokenResponseRules.Count == 0
+                        ? string.Empty
+                        : string.Join("; ", profile.SpokenResponseRules.Take(4).Select(x => Truncate(x, 180)))
+                }
+            };
+            return _templates.Render("initiative_stream_system.sbn", data).TrimEnd();
+        }
+
         private string BuildStarInitiativeUserMessage(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            return _templates.Render("initiative_user.sbn", BuildStarInitiativeTemplateData(profile, request, state)).TrimEnd();
+        }
+
+        private string BuildStarInitiativeStreamingUserMessage(StarProfile profile, StarInteractionRequest request, StarState state)
+        {
+            return _templates.Render("initiative_stream_user.sbn", BuildStarInitiativeTemplateData(profile, request, state)).TrimEnd();
+        }
+
+        private object BuildStarInitiativeTemplateData(StarProfile profile, StarInteractionRequest request, StarState state)
         {
             StringBuilder gate = new StringBuilder();
             if (request.GameContext != null && request.GameContext.Flags != null)
@@ -640,7 +675,7 @@ namespace Wds.SixStars.Api.Ai
                 })
                 .ToList();
 
-            object data = new
+            return new
             {
                 starDisplayName = profile.DisplayName,
                 currentTimeContext = BuildCurrentTimeContext(),
@@ -662,8 +697,6 @@ namespace Wds.SixStars.Api.Ai
                 manualInteract = IsTruthyFlag(request, "starInitiativeForce"),
                 preparedListen = IsTruthyFlag(request, "starInitiativePrepareForListen")
             };
-
-            return _templates.Render("initiative_user.sbn", data).TrimEnd();
         }
 
         private void AppendCompactInitiativeDailyState(StringBuilder sb, StarInteractionRequest request)

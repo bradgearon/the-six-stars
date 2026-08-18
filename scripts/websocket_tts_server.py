@@ -22,7 +22,7 @@ Environment examples, CMD:
     set QWEN_TTS_DEVICE=cuda
     set QWEN_TTS_LANGUAGE=English
     set QWEN_TTS_MODEL_PATH=Qwen/Qwen3-TTS-12Hz-1.7B-Base
-    python scripts\websocket_tts_server.py
+    python scripts\websocket_tts_server.py 
 
 Environment examples, PowerShell:
     $env:PYTHONNOUSERSITE = "1"
@@ -1093,7 +1093,7 @@ def append_wav_tail_silence(wav_bytes: bytes, silence_ms: int) -> bytes:
 
 
 def minimum_plausible_speech_duration_ms(text: str) -> float:
-    words = re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", text or "")
+    words = re.findall(r"[A-Za-z0-9]+(?:[''][A-Za-z0-9]+)?", text or "")
     if len(words) < 5:
         return 0.0
     words_per_second = max(3.0, MIN_COMPLETE_SPEECH_WORDS_PER_SECOND)

@@ -104,6 +104,11 @@ namespace Wds.SixStars.Api.Engine
             return _runtime.StartBackgroundAnalysisAfterVoiceReady(backgroundAnalysisId, reason);
         }
 
+        public void SuppressBackgroundAnalysisForPlayerActivity(System.TimeSpan quietWindow, string reason = "Player activity")
+        {
+            _runtime.SuppressBackgroundAnalysisForPlayerActivity(quietWindow, reason);
+        }
+
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
             _runtime.CancelBackgroundAnalysis(reason);
