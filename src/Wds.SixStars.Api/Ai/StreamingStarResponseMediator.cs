@@ -21,6 +21,11 @@ namespace Wds.SixStars.Api.Ai
             "happy", "confused", "sad", "angry", "love"
         };
 
+        private static readonly string[] KnownControlMarkers =
+        {
+            "~e^", "~q^", "~i^"
+        };
+
         private readonly StringBuilder _buffer = new StringBuilder();
         private readonly StringBuilder _rawReceived = new StringBuilder();
         private readonly List<string> _spokenParts = new List<string>();
@@ -65,15 +70,28 @@ namespace Wds.SixStars.Api.Ai
                 return;
             }
 
-            if (tail[0] == ControlPrefix)
+            int embeddedControl = FindFirstKnownControlMarker(tail, 0);
+            if (tail[0] == ControlPrefix || embeddedControl == 0)
             {
                 _traceEntries.Add("discarded unterminated control tail at EOS: " + Preview(tail));
                 _buffer.Clear();
                 return;
             }
 
-            _traceEntries.Add("accepted unterminated speech tail at EOS for compatibility: " + Preview(tail));
+            if (embeddedControl > 0)
+            {
+                string speech = Clean(tail.Substring(0, embeddedControl));
+                if (!string.IsNullOrWhiteSpace(speech))
+                {
+                    _traceEntries.Add("accepted speech before unterminated embedded control at EOS: " + Preview(speech));
+                    AcceptSpeech(speech);
+                }
+                _traceEntries.Add("discarded unterminated embedded control at EOS: " + Preview(tail.Substring(embeddedControl)));
+                _buffer.Clear();
+                return;
+            }
 
+            _traceEntries.Add("accepted unterminated speech tail at EOS for compatibility: " + Preview(tail));
             EmitBufferedChunk();
         }
 
@@ -83,15 +101,87 @@ namespace Wds.SixStars.Api.Ai
             _buffer.Clear();
             if (string.IsNullOrWhiteSpace(chunk)) return;
 
-            if (chunk[0] == ControlPrefix)
+            RouteCompletedChunk(chunk);
+        }
+
+        private void RouteCompletedChunk(string chunk)
+        {
+            // The model contract requires speech and controls to occupy separate § chunks. Local
+            // models occasionally append a control to the end of an otherwise valid sentence, e.g.
+            // "Do you need that?~info^bestiary^slime hit points^100§". Recover that protocol
+            // mistake here without doing any sentence splitting: the model still owns sentence
+            // boundaries; this mediator only recognizes explicit ~ control markers.
+            int controlIndex = FindFirstKnownControlMarker(chunk, 0);
+            if (controlIndex < 0)
             {
-                RouteControl(chunk);
+                if (chunk[0] == ControlPrefix) RouteControl(chunk);
+                else AcceptSpeech(chunk);
                 return;
             }
 
-            _spokenParts.Add(chunk);
-            _traceEntries.Add("speech accepted: " + Preview(chunk));
-            _onSpeechReady?.Invoke(chunk);
+            if (controlIndex > 0)
+            {
+                string speech = Clean(chunk.Substring(0, controlIndex));
+                if (!string.IsNullOrWhiteSpace(speech))
+                {
+                    _traceEntries.Add("mixed speech/control chunk repaired; speech separated before embedded control: " + Preview(speech));
+                    AcceptSpeech(speech);
+                }
+            }
+
+            string controls = Clean(chunk.Substring(controlIndex));
+            RouteControlSequence(controls);
+        }
+
+        private void RouteControlSequence(string controls)
+        {
+            if (string.IsNullOrWhiteSpace(controls)) return;
+
+            int cursor = 0;
+            while (cursor < controls.Length)
+            {
+                int start = FindFirstKnownControlMarker(controls, cursor);
+                if (start < 0)
+                {
+                    string remainder = Clean(controls.Substring(cursor));
+                    if (!string.IsNullOrWhiteSpace(remainder))
+                    {
+                        _traceEntries.Add("discarded text after protocol-control recovery because it was not a complete control chunk: " + Preview(remainder));
+                    }
+                    return;
+                }
+
+                int next = FindFirstKnownControlMarker(controls, start + 1);
+                string control = Clean(next < 0
+                    ? controls.Substring(start)
+                    : controls.Substring(start, next - start));
+                if (!string.IsNullOrWhiteSpace(control)) RouteControl(control);
+                if (next < 0) return;
+                cursor = next;
+            }
+        }
+
+        private void AcceptSpeech(string chunk)
+        {
+            string speech = Clean(chunk);
+            if (string.IsNullOrWhiteSpace(speech)) return;
+            _spokenParts.Add(speech);
+            _traceEntries.Add("speech accepted: " + Preview(speech));
+            _onSpeechReady?.Invoke(speech);
+        }
+
+        private static int FindFirstKnownControlMarker(string value, int startIndex)
+        {
+            if (string.IsNullOrWhiteSpace(value) || startIndex >= value.Length) return -1;
+            if (startIndex < 0) startIndex = 0;
+
+            int best = -1;
+            foreach (string marker in KnownControlMarkers)
+            {
+                int index = value.IndexOf(marker, startIndex, StringComparison.OrdinalIgnoreCase);
+                if (index >= 0 && (best < 0 || index < best)) best = index;
+            }
+            return best;
         }
 
         private void RouteControl(string chunk)
@@ -113,7 +203,7 @@ namespace Wds.SixStars.Api.Ai
 
             string kind = Clean(parts[0]).ToLowerInvariant();
 
-            if (kind == "emotion")
+            if (kind == "e")
             {
                 if (parts.Length < 2)
                 {
@@ -138,7 +228,7 @@ namespace Wds.SixStars.Api.Ai
                 return;
             }
 
-            if (kind == "unresolved")
+            if (kind == "q")
             {
                 if (parts.Length < 7)
                 {
@@ -165,35 +255,50 @@ namespace Wds.SixStars.Api.Ai
                 return;
             }
 
-            if (kind == "info")
+            if (kind == "i")
             {
-                if (parts.Length < 4)
+                if (parts.Length < 3)
                 {
-                    _traceEntries.Add("info rejected: expected ~info^source^subject^score, received " + parts.Length + " fields");
+                    _traceEntries.Add("info rejected: expected at least ~info^source^subject, received " + parts.Length + " fields");
                     return;
                 }
 
-                // Control format: ~info^source^subject^score§
-                // source is one of the runtime's compact local-data categories; subject is the
-                // actual detail/query to search for; score is 0-100 and doubles as confidence.
+                // Preferred control format: ~info^source^subject^score§
+                // Be tolerant of two common local-model protocol mistakes so a valid lookup does
+                // not leak into speech or get lost: omitted score, or an accidental extra ^ inside
+                // the subject. An explicit ~info means the model is asking for data, so a missing
+                // score safely defaults to a strong request.
                 string source = NormalizeInformationSource(parts[1]);
-                string subject = Clean(parts[2]);
                 if (string.IsNullOrWhiteSpace(source))
                 {
                     _traceEntries.Add("info rejected: unsupported source '" + Clean(parts[1]) + "'");
                     return;
                 }
 
+                double score = 100;
+                bool hasExplicitScore = false;
+                int subjectFieldCount = Math.Max(1, parts.Length - 2);
+                if (parts.Length >= 4 && double.TryParse(Clean(parts[parts.Length - 1]), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsedScore))
+                {
+                    score = parsedScore;
+                    hasExplicitScore = true;
+                    subjectFieldCount = Math.Max(1, parts.Length - 3);
+                }
+
+                string subject = string.Join(" ", parts.Skip(2).Take(subjectFieldCount).Select(Clean).Where(x => !string.IsNullOrWhiteSpace(x)));
                 if (string.IsNullOrWhiteSpace(subject))
                 {
                     _traceEntries.Add("info rejected: empty subject for source=" + source);
                     return;
                 }
 
-                if (!double.TryParse(Clean(parts[3]), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score))
+                if (!hasExplicitScore)
                 {
-                    _traceEntries.Add("info rejected: invalid score '" + Clean(parts[3]) + "' for source=" + source + "; subject=" + Preview(subject));
-                    return;
+                    _traceEntries.Add("info repaired: score omitted/invalid; defaulted to 100 for explicit lookup source=" + source + "; subject=" + Preview(subject));
+                }
+                else if (parts.Length > 4)
+                {
+                    _traceEntries.Add("info repaired: extra ^ field(s) inside subject were joined; source=" + source + "; subject=" + Preview(subject));
                 }
 
                 if (score < 0) score = 0;
@@ -259,6 +364,7 @@ namespace Wds.SixStars.Api.Ai
                 case "coordinates":
                     return "markers";
                 case "bestiary":
+                case "beastiary":
                 case "monster":
                 case "monsters":
                 case "creature":
@@ -292,7 +398,40 @@ namespace Wds.SixStars.Api.Ai
         private static string NormalizeEmotion(string? value)
         {
             string normalized = Clean(value).ToLowerInvariant();
-            return EmotionAnimations.Contains(normalized) ? normalized : string.Empty;
+            if (EmotionAnimations.Contains(normalized)) return normalized;
+
+            // Keep the Android protocol normalized to the five installed animation names even if
+            // the local model uses an obvious nearby adjective. The prompt still asks for exact
+            // names; these aliases are only a defensive compatibility layer.
+            switch (normalized)
+            {
+                case "tender":
+                case "tenderness":
+                case "affection":
+                case "affectionate":
+                case "warm":
+                case "warmth":
+                case "romantic":
+                    return "love";
+                case "joy":
+                case "joyful":
+                case "excited":
+                case "amused":
+                    return "happy";
+                case "confusion":
+                case "puzzled":
+                    return "confused";
+                case "sorrow":
+                case "sadness":
+                case "grief":
+                    return "sad";
+                case "anger":
+                case "mad":
+                case "furious":
+                    return "angry";
+                default:
+                    return string.Empty;
+            }
         }
 
         private static string NormalizeChunk(string value)

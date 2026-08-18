@@ -936,14 +936,14 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Speech plus only the optional ~ controls defined by the system streaming contract; no JSON/labels/markdown. End every complete speech or control chunk with §, including the final chunk. Start the actual answer immediately. When natural, make speech chunk 1 one short sentence so first voice can begin quickly; later speech chunks may be one or two sentences.");
+                contract.AppendLine("Speech plus only the optional ~ controls defined by the system streaming contract; no JSON/labels/markdown. Keep speech and controls in separate § chunks. Default to one complete spoken sentence per speech chunk: after . ? or ! emit § immediately, then begin the next sentence or control. A ~ control must be the first non-space text in its own chunk and must end with its own §. Never append ~emotion, ~unresolved, or ~info to spoken words before the same §. Start the actual answer immediately; when natural, make speech chunk 1 one short useful sentence so first voice can begin quickly.");
                 if (IsTruthyFlag(request, "informationFollowup"))
                 {
                     contract.AppendLine("MATCHED-INFORMATION FOLLOW-UP: answer from the attached local reference now. Do not emit another ~info control in this pass. Do not repeat the earlier lookup/checking bridge.");
                 }
                 else
                 {
-                    contract.AppendLine("Missing information: do not invent it. Finish normal speech first, then put any ~info^source^subject^score§ lookup controls at the very end. The control itself requests the lookup; no exact spoken trigger phrase is required.");
+                    contract.AppendLine("Missing information: do not invent it. Finish the final normal spoken sentence with § first, then put any ~info^source^subject^score§ lookup controls in their own chunks at the very end. score is required. Never attach ~info to the end of a spoken sentence before its §. The control itself requests the lookup; no exact spoken trigger phrase is required.");
                 }
             }
             if (request.RequestType == RequestType.Story)
