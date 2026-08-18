@@ -937,7 +937,14 @@ namespace Wds.SixStars.Api.Ai
             else
             {
                 contract.AppendLine("Speech plus only the optional ~ controls defined by the system streaming contract; no JSON/labels/markdown. End every complete speech or control chunk with §, including the final chunk. Start the actual answer immediately. When natural, make speech chunk 1 one short sentence so first voice can begin quickly; later speech chunks may be one or two sentences.");
-                contract.AppendLine("Missing exact game fact: do not invent it; use an explicit lookup bridge such as 'Let me check that' or 'I need to remember that'. Generic uncertainty is not a lookup bridge.");
+                if (IsTruthyFlag(request, "informationFollowup"))
+                {
+                    contract.AppendLine("MATCHED-INFORMATION FOLLOW-UP: answer from the attached local reference now. Do not emit another ~info control in this pass. Do not repeat the earlier lookup/checking bridge.");
+                }
+                else
+                {
+                    contract.AppendLine("Missing information: do not invent it. Finish normal speech first, then put any ~info^source^subject^score§ lookup controls at the very end. The control itself requests the lookup; no exact spoken trigger phrase is required.");
+                }
             }
             if (request.RequestType == RequestType.Story)
             {

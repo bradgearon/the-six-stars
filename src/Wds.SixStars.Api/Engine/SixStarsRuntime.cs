@@ -1805,11 +1805,9 @@ namespace Wds.SixStars.Api.Engine
         private static List<InformationNeedVectorItem> InferInformationNeedsFromStreamingBridge(StarInteractionRequest request, StarInteractionResponse response)
         {
             string spoken = (response?.SpokenText ?? string.Empty).ToLowerInvariant();
-            // Streaming speech cannot return the old structured informationNeeds vector, so this
-            // bridge must be deliberately conservative. Only phrases that explicitly promise a
-            // lookup/recall should trigger a second foreground response. Generic conversational
-            // uncertainty (for example "I do not know how to answer that") is normal dialogue and
-            // must never be mistaken for a request to search local archives.
+            // Legacy compatibility fallback: current fast speech can emit explicit ~info controls,
+            // but older/stale models may still only say a lookup/checking bridge. Keep this
+            // deliberately conservative so generic uncertainty never becomes an accidental search.
             bool soundsUncertain = spoken.Contains("need to check")
                 || spoken.Contains("need to look")
                 || spoken.Contains("need to remember")
@@ -1821,9 +1819,9 @@ namespace Wds.SixStars.Api.Engine
             string text = (request?.PlayerText ?? string.Empty).ToLowerInvariant();
             string subject;
             if (ContainsAny(text, "marker", "coordinate", "coordinates", "pin", "waypoint")) subject = "markers";
-            else if (ContainsAny(text, "quote", "exact words", "what did i say", "what i said")) subject = "quotes";
+            else if (ContainsAny(text, "quote", "exact words", "what did i say", "what i said", "exactly what i said")) subject = "quotes";
             else if (ContainsAny(text, "screen", "screenshot", "what do you see", "on my screen")) subject = "screen";
-            else if (ContainsAny(text, "hp", "drop", "drops", "monster", "enemy", "boss", "creature", "bestiary")) subject = "bestiary";
+            else if (ContainsAny(text, "hp", "hit point", "hit points", "health points", "slime", "slimes", "drop", "drops", "loot", "monster", "enemy", "boss", "creature", "bestiary")) subject = "bestiary";
             else if (ContainsAny(text, "skill", "skills", "spell", "spells", "ability", "abilities", "weapon", "mechanic", "mechanics")) subject = "lore";
             else if (ContainsAny(text, "area", "location", "settlement", "where is", "where are", "quest", "ecology", "world")) subject = "world";
             else if (ContainsAny(text, "scene", "story", "dialogue", "meeting", "met ", "meet ", "continuation")) subject = "story";
@@ -1836,6 +1834,8 @@ namespace Wds.SixStars.Api.Engine
                 {
                     Subject = subject,
                     DataType = subject,
+                    Query = request?.PlayerText ?? string.Empty,
+                    Reason = "legacy spoken lookup bridge",
                     Confidence = 0.72,
                     Score = 72
                 }
@@ -1858,6 +1858,8 @@ namespace Wds.SixStars.Api.Engine
                 {
                     Subject = NormalizeInformationDataType(x.Subject),
                     DataType = NormalizeInformationDataType(x.Subject),
+                    Query = FirstNonEmpty(x.Query, x.Reason),
+                    Reason = FirstNonEmpty(x.Reason, x.Query),
                     Confidence = Clamp01(x.Confidence),
                     Score = ClampScore(x.Score)
                 })
@@ -1881,6 +1883,11 @@ namespace Wds.SixStars.Api.Engine
             int oldArchives = state.OldConversationArchives == null ? 0 : state.OldConversationArchives.Count;
             int recentHistory = state.MemoryLog == null ? 0 : state.MemoryLog.Count;
             int learnedItems = state.ThingsLearnedOrSuggestedByPlayer == null ? 0 : state.ThingsLearnedOrSuggestedByPlayer.Count;
+            int memoryNotes = state.MemoryNotes == null ? 0 : state.MemoryNotes.Count;
+            int relationshipEvents = state.RelationshipEvents == null ? 0 : state.RelationshipEvents.Count;
+            int unresolvedMemory = (state.IncomingUnresolvedVectors == null ? 0 : state.IncomingUnresolvedVectors.Count)
+                + (state.OutgoingUnresolvedVectors == null ? 0 : state.OutgoingUnresolvedVectors.Count)
+                + (state.UnresolvedResolutionHistory == null ? 0 : state.UnresolvedResolutionHistory.Count);
             int quotes = state.AllImportantPlayerQuotes == null ? 0 : state.AllImportantPlayerQuotes.Count;
             int markers = state.RememberedMarkers == null ? 0 : state.RememberedMarkers.Count(x => x.IsActive);
             int stories = state.StoryHistory == null ? 0 : state.StoryHistory.Count;
@@ -1888,7 +1895,10 @@ namespace Wds.SixStars.Api.Engine
 
             List<InformationNeedAvailabilityItem> result = new List<InformationNeedAvailabilityItem>
             {
-                Availability("history", oldArchives + recentHistory + learnedItems, oldArchives > 0 ? oldArchives + " old archives plus " + recentHistory + " recent turns and " + learnedItems + " durable learned item(s)" : recentHistory + " recent turns plus " + learnedItems + " durable learned item(s); no old archive yet", state.ThingsLearnedOrSuggestedByPlayer?.Take(4)),
+                Availability("history", oldArchives + recentHistory + learnedItems + memoryNotes + relationshipEvents + unresolvedMemory, oldArchives > 0
+                    ? oldArchives + " old archives plus " + recentHistory + " recent turns, " + learnedItems + " learned item(s), " + memoryNotes + " memory note(s), and " + unresolvedMemory + " unresolved/resolution memory item(s)"
+                    : recentHistory + " recent turns plus " + learnedItems + " learned item(s), " + memoryNotes + " memory note(s), and " + unresolvedMemory + " unresolved/resolution memory item(s); no old archive yet",
+                    (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Concat(state.MemoryNotes ?? new List<string>()).Take(6)),
                 Availability("quotes", quotes, quotes + " durable important player quote(s)", state.AllImportantPlayerQuotes?.Select(x => x.Quote).Take(4)),
                 Availability("markers", markers, markers + " active remembered marker(s)", state.RememberedMarkers?.Where(x => x.IsActive).Select(x => x.MarkerName).Take(6)),
                 BuildLoreIndexAvailability("lore"),
@@ -1958,6 +1968,8 @@ namespace Wds.SixStars.Api.Engine
                     {
                         DataType = normalizedSource,
                         Subject = normalizedSource,
+                        Query = FirstNonEmpty(x.Query, x.Reason),
+                        Reason = FirstNonEmpty(x.Reason, x.Query),
                         Confidence = Clamp01(x.Confidence),
                         Score = ClampScore(x.Score)
                     };
@@ -1977,6 +1989,7 @@ namespace Wds.SixStars.Api.Engine
                     {
                         DataType = aiType,
                         Subject = aiType,
+                        Query = FirstNonEmpty(aiSelection.Subject, aiSelection.Reason),
                         Confidence = Clamp01(aiSelection.Confidence),
                         Score = ClampScore(aiSelection.Score),
                         Reason = FirstNonEmpty(aiSelection.Reason, "AI selector chose this source.")
@@ -2047,6 +2060,7 @@ namespace Wds.SixStars.Api.Engine
                 {
                     DataType = selectedType,
                     Subject = selectedType,
+                    Query = FirstNonEmpty(decision.Subject, decision.Reason),
                     Confidence = Clamp01(decision.Confidence),
                     Score = ClampScore(decision.Score),
                     Reason = decision.Reason
@@ -2081,6 +2095,50 @@ namespace Wds.SixStars.Api.Engine
             bool wantsScreen = Wants(needs, "screen");
             bool wantsStory = Wants(needs, "story");
             bool attachedCanonicalIndex = AppendMatchedLoreIndexes(sb, needs);
+
+            if (wantsHistory)
+            {
+                if (!string.IsNullOrWhiteSpace(state.ConversationSummary))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("CURRENT DURABLE CONVERSATION SUMMARY:");
+                    sb.AppendLine(TruncateForInfo(state.ConversationSummary, 1400));
+                }
+
+                if (state.MemoryNotes != null && state.MemoryNotes.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("DURABLE MEMORY NOTES (selected slice):");
+                    foreach (string note in state.MemoryNotes.Where(x => !string.IsNullOrWhiteSpace(x)).OrderByDescending(x => RelevanceScore(x, needs, playerText)).Take(40))
+                    {
+                        sb.AppendLine("- " + TruncateForInfo(note, 600));
+                    }
+                }
+
+                if (state.RelationshipEvents != null && state.RelationshipEvents.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("RELATIONSHIP / CONTINUITY EVENTS (selected slice):");
+                    foreach (string item in state.RelationshipEvents.Where(x => !string.IsNullOrWhiteSpace(x)).OrderByDescending(x => RelevanceScore(x, needs, playerText)).Take(24))
+                    {
+                        sb.AppendLine("- " + TruncateForInfo(item, 520));
+                    }
+                }
+
+                List<string> unresolvedMemory = (state.IncomingUnresolvedVectors ?? new List<string>())
+                    .Concat(state.OutgoingUnresolvedVectors ?? new List<string>())
+                    .Concat(state.UnresolvedResolutionHistory ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .OrderByDescending(x => RelevanceScore(x, needs, playerText))
+                    .Take(20)
+                    .ToList();
+                if (unresolvedMemory.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("UNRESOLVED / RECENTLY RESOLVED CONTINUITY MEMORY (compact host vectors):");
+                    foreach (string item in unresolvedMemory) sb.AppendLine("- " + TruncateForInfo(item, 700));
+                }
+            }
 
             if (wantsQuotes && state.AllImportantPlayerQuotes != null && state.AllImportantPlayerQuotes.Count > 0)
             {
@@ -2236,6 +2294,7 @@ namespace Wds.SixStars.Api.Engine
             List<string> raw = new List<string>();
             raw.Add(playerText ?? string.Empty);
             raw.AddRange(needs.Select(x => x.Subject ?? string.Empty));
+            raw.AddRange(needs.Select(x => x.Query ?? string.Empty));
             raw.AddRange(needs.Select(x => x.Reason ?? string.Empty));
             return Regex.Split(string.Join(" ", raw).ToLowerInvariant(), @"[^a-z0-9_]+")
                 .Where(x => x.Length >= 3 && !IsStopToken(x))
@@ -2288,7 +2347,12 @@ namespace Wds.SixStars.Api.Engine
 
         private static string SummarizeNeedsForEvent(List<InformationNeedVectorItem> needs)
         {
-            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x => (string.IsNullOrWhiteSpace(x.Subject) ? NormalizeInformationDataType(x.DataType) : x.Subject) + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0")));
+            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x =>
+            {
+                string source = string.IsNullOrWhiteSpace(x.Subject) ? NormalizeInformationDataType(x.DataType) : x.Subject;
+                string query = FirstNonEmpty(x.Query, x.Reason);
+                return source + (string.IsNullOrWhiteSpace(query) ? string.Empty : "[" + TruncateForInfo(query, 100) + "]") + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0");
+            }));
         }
 
         private static double Clamp01(double value)

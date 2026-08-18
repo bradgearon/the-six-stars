@@ -24,6 +24,7 @@ namespace Wds.SixStars.Api.Ai
         private readonly StringBuilder _buffer = new StringBuilder();
         private readonly List<string> _spokenParts = new List<string>();
         private readonly List<StarUnresolvedVectorCodec.OutgoingThread> _outgoingUnresolved = new List<StarUnresolvedVectorCodec.OutgoingThread>();
+        private readonly List<InformationNeedVectorItem> _informationNeeds = new List<InformationNeedVectorItem>();
         private readonly Action<string>? _onSpeechReady;
         private readonly Action<StarStreamAction>? _onActionReady;
 
@@ -35,6 +36,7 @@ namespace Wds.SixStars.Api.Ai
 
         public IReadOnlyList<string> SpokenParts => _spokenParts;
         public string OutgoingUnresolvedVector => StarUnresolvedVectorCodec.EncodeOutgoingVector(_outgoingUnresolved, 10);
+        public IReadOnlyList<InformationNeedVectorItem> InformationNeeds => _informationNeeds;
 
         public void Append(string? delta)
         {
@@ -116,6 +118,90 @@ namespace Wds.SixStars.Api.Ai
                     || string.Equals(x.OpenThread, item.OpenThread, StringComparison.OrdinalIgnoreCase));
                 if (existingIndex >= 0) _outgoingUnresolved[existingIndex] = item;
                 else _outgoingUnresolved.Add(item);
+            }
+
+            if (kind == "info" && parts.Length >= 4)
+            {
+                // Control format: ~info^source^subject^score§
+                // source is one of the runtime's compact local-data categories; subject is the
+                // actual detail/query to search for; score is 0-100 and doubles as confidence.
+                string source = NormalizeInformationSource(parts[1]);
+                string subject = Clean(parts[2]);
+                if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(subject)) return;
+                if (!double.TryParse(Clean(parts[3]), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return;
+                if (score < 0) score = 0;
+                if (score > 100) score = 100;
+
+                InformationNeedVectorItem item = new InformationNeedVectorItem
+                {
+                    Subject = source,
+                    DataType = source,
+                    Query = subject,
+                    Reason = subject,
+                    Score = score,
+                    Confidence = score / 100.0
+                };
+
+                int existingIndex = _informationNeeds.FindIndex(x => string.Equals(x.DataType, source, StringComparison.OrdinalIgnoreCase));
+                if (existingIndex >= 0)
+                {
+                    if (_informationNeeds[existingIndex].Score <= item.Score) _informationNeeds[existingIndex] = item;
+                }
+                else if (_informationNeeds.Count < 3)
+                {
+                    _informationNeeds.Add(item);
+                }
+            }
+        }
+
+
+        private static string NormalizeInformationSource(string? value)
+        {
+            string normalized = Clean(value).ToLowerInvariant().Replace('_', '-');
+            switch (normalized)
+            {
+                case "history":
+                case "memory":
+                case "conversation":
+                case "conversation-history":
+                case "archive":
+                    return "history";
+                case "quote":
+                case "quotes":
+                    return "quotes";
+                case "marker":
+                case "markers":
+                case "coordinate":
+                case "coordinates":
+                    return "markers";
+                case "bestiary":
+                case "monster":
+                case "monsters":
+                case "creature":
+                case "creatures":
+                    return "bestiary";
+                case "character":
+                case "characters":
+                case "profile":
+                case "profiles":
+                    return "characters";
+                case "lore":
+                case "skills":
+                case "powers":
+                case "mechanics":
+                    return "lore";
+                case "world":
+                case "places":
+                case "locations":
+                    return "world";
+                case "screen":
+                case "vision":
+                    return "screen";
+                case "story":
+                case "stories":
+                    return "story";
+                default:
+                    return string.Empty;
             }
         }
 

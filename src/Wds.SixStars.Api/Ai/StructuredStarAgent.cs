@@ -2587,6 +2587,7 @@ namespace Wds.SixStars.Api.Ai
 
                 List<string> spokenParts = mediator.SpokenParts.ToList();
                 string foregroundOutgoingUnresolved = mediator.OutgoingUnresolvedVector;
+                List<InformationNeedVectorItem> foregroundInformationNeeds = mediator.InformationNeeds.ToList();
                 if (spokenParts.Count == 0 && !string.IsNullOrWhiteSpace(streamedText))
                 {
                     // Some compatible clients only return the final body and never forward deltas.
@@ -2597,6 +2598,7 @@ namespace Wds.SixStars.Api.Ai
                     fallbackMediator.Complete();
                     spokenParts = fallbackMediator.SpokenParts.ToList();
                     foregroundOutgoingUnresolved = MergeOutgoingUnresolvedVectors(foregroundOutgoingUnresolved, fallbackMediator.OutgoingUnresolvedVector);
+                    foregroundInformationNeeds = MergeInformationNeeds(foregroundInformationNeeds, fallbackMediator.InformationNeeds);
                 }
 
                 StarInteractionResponse streamedResponse = new StarInteractionResponse
@@ -2615,8 +2617,8 @@ namespace Wds.SixStars.Api.Ai
                     SuggestedStateDeltas = RelationshipDelta.Zero(),
                     ConversationSummary = BuildFallbackConversationSummary(state, request, string.Join(" ", spokenParts)),
                     ChangesSummary = BuildFallbackChangesSummary(request, string.Join(" ", spokenParts)),
-                    NeedsMoreInformation = false,
-                    InformationNeeds = new List<InformationNeedVectorItem>(),
+                    NeedsMoreInformation = foregroundInformationNeeds.Count > 0,
+                    InformationNeeds = foregroundInformationNeeds,
                     ThingsLearnedOrSuggestedByPlayer = new List<string>(),
                     OutgoingUnresolvedVector = foregroundOutgoingUnresolved,
                     Debug = new DebugInfo
@@ -2637,7 +2639,11 @@ namespace Wds.SixStars.Api.Ai
                     ? $"Per-pass max_tokens cap used: {maxTokens}."
                     : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
                 streamedResponse.Debug.Notes.Add($"Streamed speech parts: {streamedResponse.SpokenParts.Count}; joined length: {streamedResponse.SpokenText.Length} characters.");
-                streamedResponse.Debug.Notes.Add("Foreground stream is speech-only; information selection and durable learning are handled by secondary/background passes.");
+                streamedResponse.Debug.Notes.Add("Foreground stream mediated speech plus complete ~ controls; deliberate information needs can route immediately without a selector LLM pass, while durable learning remains background work.");
+                if (foregroundInformationNeeds.Count > 0)
+                {
+                    streamedResponse.Debug.Notes.Add("Foreground stream requested local information: " + string.Join(", ", foregroundInformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0"))));
+                }
                 return streamedResponse;
             }
 
@@ -2755,6 +2761,25 @@ namespace Wds.SixStars.Api.Ai
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
             return response;
+        }
+
+        private static List<InformationNeedVectorItem> MergeInformationNeeds(IEnumerable<InformationNeedVectorItem>? first, IEnumerable<InformationNeedVectorItem>? second)
+        {
+            List<InformationNeedVectorItem> merged = new List<InformationNeedVectorItem>();
+            foreach (InformationNeedVectorItem item in (first ?? Array.Empty<InformationNeedVectorItem>()).Concat(second ?? Array.Empty<InformationNeedVectorItem>()))
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.DataType)) continue;
+                int existing = merged.FindIndex(x => string.Equals(x.DataType, item.DataType, StringComparison.OrdinalIgnoreCase));
+                if (existing < 0)
+                {
+                    merged.Add(item);
+                }
+                else if (Math.Max(item.Confidence, item.Score / 100.0) >= Math.Max(merged[existing].Confidence, merged[existing].Score / 100.0))
+                {
+                    merged[existing] = item;
+                }
+            }
+            return merged.OrderByDescending(x => Math.Max(x.Confidence, x.Score / 100.0)).Take(3).ToList();
         }
 
         private static string MergeOutgoingUnresolvedVectors(string? first, string? second)
