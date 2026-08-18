@@ -8,6 +8,7 @@ Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Personality: {{ data.personalityShort }}
 Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
 Character attributes: {{ data.characterAttributes }}
 
 CHARACTERISTIC INTERESTS / BEHAVIOR

@@ -65,9 +65,11 @@ namespace Wds.SixStars.Api.Models
                 if (parts.Length < 4) continue;
                 string question = CleanField(parts.Length > 3 ? parts[3] : string.Empty, 280);
                 if (string.IsNullOrWhiteSpace(question)) continue;
+                string rawId = CleanId(parts.Length > 0 ? parts[0] : string.Empty);
+                if (rawId.StartsWith("out-", StringComparison.OrdinalIgnoreCase)) continue;
                 IncomingThread item = new IncomingThread
                 {
-                    Id = NormalizeId(parts.Length > 0 ? parts[0] : string.Empty, "in", question),
+                    Id = NormalizeId(rawId, "in", question),
                     Confidence = Clamp01(ParseNumber(parts.Length > 1 ? parts[1] : string.Empty)),
                     Tags = CleanTags(parts.Length > 2 ? parts[2] : string.Empty),
                     OpenQuestion = question,
@@ -97,9 +99,11 @@ namespace Wds.SixStars.Api.Models
                 if (parts.Length < 4) continue;
                 string thread = CleanField(parts.Length > 3 ? parts[3] : string.Empty, 280);
                 if (string.IsNullOrWhiteSpace(thread)) continue;
+                string rawId = CleanId(parts.Length > 0 ? parts[0] : string.Empty);
+                if (rawId.StartsWith("in-", StringComparison.OrdinalIgnoreCase)) continue;
                 OutgoingThread item = new OutgoingThread
                 {
-                    Id = NormalizeId(parts.Length > 0 ? parts[0] : string.Empty, "out", thread),
+                    Id = NormalizeId(rawId, "out", thread),
                     Priority = Clamp100(ParseNumber(parts.Length > 1 ? parts[1] : string.Empty)),
                     Tags = CleanTags(parts.Length > 2 ? parts[2] : string.Empty),
                     OpenThread = thread,

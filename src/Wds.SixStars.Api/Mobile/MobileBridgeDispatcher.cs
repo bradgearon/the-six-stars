@@ -365,6 +365,7 @@ public sealed class MobileBridgeDispatchEvent
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
     public string Transcript { get; set; } = string.Empty;
+    public string AnimationName { get; set; } = string.Empty;
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;

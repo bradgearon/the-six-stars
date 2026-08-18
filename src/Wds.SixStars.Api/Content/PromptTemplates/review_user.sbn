@@ -17,6 +17,11 @@ Durable memory / quote / marker context:
 
 UNRESOLVED THREAD STATE BEFORE THIS TURN:
 {{ data.unresolvedStateContext }}
+{{ if data.foregroundMarkedOutgoingUnresolved != "" }}
+DELIBERATE OUTGOING UNRESOLVED MARKERS FROM FAST SPEECH THIS TURN:
+{{ data.foregroundMarkedOutgoingUnresolved }}
+These were intentionally marked by the Star at the exact speech beat and are already eligible for durable storage. Treat them as outgoing, never copy them into incoming. You may refine the same outgoing thread if the review adds useful intent/effect detail, or resolve it only if the actual turn already paid it off.
+{{ end }}
 
 {{ data.storyFieldsContext }}
 

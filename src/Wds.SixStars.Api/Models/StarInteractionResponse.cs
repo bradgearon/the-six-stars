@@ -104,7 +104,7 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Compact incoming unresolved updates produced by the background review after seeing the player text and foreground reply.</summary>
         public string IncomingUnresolvedVector { get; set; } = string.Empty;
 
-        /// <summary>Compact outgoing unresolved updates produced by the background review after seeing what the Star actually said.</summary>
+        /// <summary>Compact outgoing unresolved updates produced by deliberate fast-stream controls and/or the later background review.</summary>
         public string OutgoingUnresolvedVector { get; set; } = string.Empty;
 
         /// <summary>Compact unresolved resolution events detected this turn.</summary>

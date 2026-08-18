@@ -218,6 +218,11 @@ public final class PixelStarAnimationView extends View {
         preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/lips-talking.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/happy.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/confused.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/sad.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/angry.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/love.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt-off.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/shirt_off.gif");
     }

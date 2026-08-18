@@ -26,6 +26,13 @@ namespace Wds.SixStars.Api.Models
         public Action<string>? SpokenChunkReady { get; set; }
 
         /// <summary>
+        /// Optional host callback for fully received non-speech control chunks from the fast stream.
+        /// The mediator invokes this only after the complete §-terminated vector has arrived.
+        /// </summary>
+        [JsonIgnore]
+        public Action<StarStreamAction>? StreamActionReady { get; set; }
+
+        /// <summary>
         /// Recent safe summaries of the user's screen. The API keeps the last five per session,
         /// but callers can also pass explicit recent captures here for stateless integrations.
         /// </summary>

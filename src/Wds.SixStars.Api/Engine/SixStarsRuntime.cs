@@ -881,6 +881,24 @@ namespace Wds.SixStars.Api.Engine
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
+
+            // Fast streaming speech can explicitly mark a deliberate outgoing unresolved at the
+            // sentence where she created it. Persist only that tiny vector immediately so the next
+            // foreground turn can see it even though the full emotion/memory review intentionally
+            // waits until after voice/player activity quiets down. This does not create a second
+            // conversation log entry or relationship update.
+            if (!string.IsNullOrWhiteSpace(response.IncomingUnresolvedVector)
+                || !string.IsNullOrWhiteSpace(response.OutgoingUnresolvedVector)
+                || !string.IsNullOrWhiteSpace(response.UnresolvedResolutionVector))
+            {
+                await _memoryApi.ApplyUnresolvedThreadUpdatesAsync(
+                    request.SessionId,
+                    request.StarId,
+                    response.IncomingUnresolvedVector,
+                    response.OutgoingUnresolvedVector,
+                    response.UnresolvedResolutionVector,
+                    cancellationToken).ConfigureAwait(false);
+            }
             response.UnityEvents.Add(new UnityEventEnvelope
             {
                 Type = "StarConversationForegroundCompleted",
@@ -965,6 +983,24 @@ namespace Wds.SixStars.Api.Engine
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
+
+            // A manually requested Thought uses the same fast stream mediator as Chat and may
+            // deliberately mark an outgoing unresolved. Persist only that compact marker here;
+            // StarInitiative still skips relationship/emotion scoring and the full memory review.
+            if (IsTruthy(GetContextFlag(request, "starInitiativeForce"))
+                && (!string.IsNullOrWhiteSpace(response.IncomingUnresolvedVector)
+                    || !string.IsNullOrWhiteSpace(response.OutgoingUnresolvedVector)
+                    || !string.IsNullOrWhiteSpace(response.UnresolvedResolutionVector)))
+            {
+                await _memoryApi.ApplyUnresolvedThreadUpdatesAsync(
+                    request.SessionId,
+                    request.StarId,
+                    response.IncomingUnresolvedVector,
+                    response.OutgoingUnresolvedVector,
+                    response.UnresolvedResolutionVector,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             response.StateDeltas = RelationshipDelta.Zero();
             response.SuggestedStateDeltas = RelationshipDelta.Zero();
             response.EmotionalConnectionPercentBefore = state.EmotionalConnectionPercent;
@@ -997,7 +1033,9 @@ namespace Wds.SixStars.Api.Engine
             }
 
             response.Debug.Notes.Add("StarInitiative state gate allowed LLM check: score=" + gate.Score.ToString("0.00") + "; " + gate.Reason);
-            response.Debug.Notes.Add("No StarMemoryApi update, emotion vector scoring, relationship update, or interstar ripple is run for RequestType=StarInitiative.");
+            response.Debug.Notes.Add(IsTruthy(GetContextFlag(request, "starInitiativeForce"))
+                ? "Manual StarInitiative Thought skips emotion/relationship/interstar updates; a deliberate fast-stream unresolved marker may be persisted separately."
+                : "No StarMemoryApi update, emotion vector scoring, relationship update, or interstar ripple is run for RequestType=StarInitiative.");
             return response;
         }
 
@@ -1751,7 +1789,8 @@ namespace Wds.SixStars.Api.Engine
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
                 AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
                 RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList(),
-                SpokenChunkReady = request.SpokenChunkReady
+                SpokenChunkReady = request.SpokenChunkReady,
+                StreamActionReady = request.StreamActionReady
             };
             clone.GameContext.Flags["informationFollowup"] = "true";
             clone.GameContext.Flags["extraInformationContext"] = context;

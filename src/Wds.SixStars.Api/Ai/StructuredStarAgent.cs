@@ -838,6 +838,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(profile.CoreQuote, 500),
                 personalityShort = PromptText(profile.PersonalityShort, 900),
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(profile.ActionBattlePreference, 700),
                 characterAttributes = BuildCharacterAttributeSummary(profile),
                 behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
                 relevantSecrets = PromptList(
@@ -908,6 +909,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
                 completeBackgroundStory = PromptText(viewpointProfile.CompleteBackgroundStory, 2200),
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
@@ -1009,6 +1011,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(contributorProfile.CoreQuote, 500),
                 personalityShort = PromptText(contributorProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(contributorProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(contributorProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(contributorProfile.BackstorySummary, 1400),
                 speakingStyle = PromptText(contributorProfile.SpeakingStyle, 1200),
                 characterAttributes = BuildCharacterAttributeSummary(contributorProfile),
@@ -1023,6 +1026,7 @@ namespace Wds.SixStars.Api.Ai
                 viewpointDomain = PromptText(viewpointProfile.Domain, 120),
                 viewpointCoreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 viewpointPersonality = PromptText(viewpointProfile.DeepPersonality, 1600),
+                viewpointActionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
                 title = PromptText(outline.Title, 0),
                 premise = PromptText(outline.Premise, 0),
                 beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
@@ -1080,6 +1084,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
                 characterAttributes = BuildCharacterAttributeSummary(viewpointProfile),
@@ -2571,21 +2576,27 @@ namespace Wds.SixStars.Api.Ai
 
             if (!isStructuredForeground)
             {
-                StreamingSpokenTextParser parser = new StreamingSpokenTextParser(request.SpokenChunkReady);
+                StreamingStarResponseMediator mediator = new StreamingStarResponseMediator(request.SpokenChunkReady, request.StreamActionReady);
                 string streamedText = await _client.CompleteTextStreamingAsync(
                     _promptBuilder.BuildSpeechMessages(profile, request, state),
                     maxTokens,
                     purpose,
-                    parser.Append,
+                    mediator.Append,
                     cancellationToken).ConfigureAwait(false);
-                parser.Complete();
+                mediator.Complete();
 
-                List<string> spokenParts = parser.Parts.ToList();
+                List<string> spokenParts = mediator.SpokenParts.ToList();
+                string foregroundOutgoingUnresolved = mediator.OutgoingUnresolvedVector;
                 if (spokenParts.Count == 0 && !string.IsNullOrWhiteSpace(streamedText))
                 {
-                    // Should only occur if a client implementation returned the final body without
-                    // forwarding deltas. Keep the normal response usable rather than dropping speech.
-                    spokenParts.Add(streamedText.Replace(StreamingSpokenTextParser.Delimiter.ToString(), string.Empty).Trim());
+                    // Some compatible clients only return the final body and never forward deltas.
+                    // Run that complete body through the same mediator so control vectors are still
+                    // kept out of visible/TTS speech and are only acted on once complete.
+                    StreamingStarResponseMediator fallbackMediator = new StreamingStarResponseMediator(request.SpokenChunkReady, request.StreamActionReady);
+                    fallbackMediator.Append(streamedText);
+                    fallbackMediator.Complete();
+                    spokenParts = fallbackMediator.SpokenParts.ToList();
+                    foregroundOutgoingUnresolved = MergeOutgoingUnresolvedVectors(foregroundOutgoingUnresolved, fallbackMediator.OutgoingUnresolvedVector);
                 }
 
                 StarInteractionResponse streamedResponse = new StarInteractionResponse
@@ -2607,6 +2618,7 @@ namespace Wds.SixStars.Api.Ai
                     NeedsMoreInformation = false,
                     InformationNeeds = new List<InformationNeedVectorItem>(),
                     ThingsLearnedOrSuggestedByPlayer = new List<string>(),
+                    OutgoingUnresolvedVector = foregroundOutgoingUnresolved,
                     Debug = new DebugInfo
                     {
                         DetectedIntent = request.RequestType.ToString(),
@@ -2737,9 +2749,27 @@ namespace Wds.SixStars.Api.Ai
             response.RequestToShowBoobs = model.RequestToShowBoobs || IsRequestToShowBoobs(request.PlayerText);
             response.EmotionalEffectVector = string.IsNullOrWhiteSpace(model.EmotionalEffectVector) ? (foregroundResponse.EmotionalEffectVector ?? string.Empty) : model.EmotionalEffectVector;
             response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
+            // Fast speech may explicitly mark an outgoing unresolved at the exact sentence where it
+            // was created. Preserve that immediate intent and merge any later background refinement.
+            response.OutgoingUnresolvedVector = MergeOutgoingUnresolvedVectors(foregroundResponse.OutgoingUnresolvedVector, response.OutgoingUnresolvedVector);
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
             return response;
+        }
+
+        private static string MergeOutgoingUnresolvedVectors(string? first, string? second)
+        {
+            List<StarUnresolvedVectorCodec.OutgoingThread> merged = new List<StarUnresolvedVectorCodec.OutgoingThread>();
+            foreach (StarUnresolvedVectorCodec.OutgoingThread item in StarUnresolvedVectorCodec.ParseOutgoingVector(first, 10)
+                .Concat(StarUnresolvedVectorCodec.ParseOutgoingVector(second, 10)))
+            {
+                int existing = merged.FindIndex(x =>
+                    string.Equals(x.Id, item.Id, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.OpenThread, item.OpenThread, StringComparison.OrdinalIgnoreCase));
+                if (existing >= 0) merged[existing] = item;
+                else merged.Add(item);
+            }
+            return StarUnresolvedVectorCodec.EncodeOutgoingVector(merged, 10);
         }
 
         private static void NormalizeInterstarRelayFields(InterstarRelayMessage relay, StarProfile originProfile, StarProfile targetProfile, StarInteractionRequest originalRequest, StarInteractionResponse originResponse)

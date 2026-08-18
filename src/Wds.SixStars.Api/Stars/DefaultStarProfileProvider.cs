@@ -33,6 +33,10 @@ namespace Wds.SixStars.Api.Stars
                 profile.ActorType = "star";
                 profile.ActorId = profile.StarId;
                 profile.Soul ??= ActorSoulConfig.FullStarSoul();
+                if (string.IsNullOrWhiteSpace(profile.ActionBattlePreference))
+                {
+                    profile.ActionBattlePreference = StarActionBattlePreferences.For(profile.StarId);
+                }
                 ApplyDefaultCharacterAttributes(profile);
                 ApplyDefaultConstellationPersistence(profile);
                 StarRelationshipPersonalityMatrix.EnsureDeterministicRelationshipConfig(profile);

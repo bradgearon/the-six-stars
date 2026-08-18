@@ -74,6 +74,25 @@ namespace Wds.SixStars.Api.State
             };
         }
 
+        public async Task<StarState> ApplyUnresolvedThreadUpdatesAsync(string sessionId, string starId, string incomingVector, string outgoingVector, string resolutionVector, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            UpdateUnresolvedThreadState(state, new StarStateUpdateRequest
+            {
+                SessionId = sessionId ?? string.Empty,
+                StarId = starId ?? string.Empty,
+                IncomingUnresolvedVector = incomingVector ?? string.Empty,
+                OutgoingUnresolvedVector = outgoingVector ?? string.Empty,
+                UnresolvedResolutionVector = resolutionVector ?? string.Empty,
+                IsInternalBackgroundUpdate = true,
+                SuppressConversationLog = true,
+                SuppressConversationSummaryUpdate = true
+            });
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
         public async Task<StarStateUpdateResult> UpdateStarWithInteractionAsync(StarStateUpdateRequest request, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);

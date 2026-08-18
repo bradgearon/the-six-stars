@@ -38,6 +38,9 @@ namespace Wds.SixStars.Api.Stars
         public string BackstorySummary { get; set; } = string.Empty;
         public string CompleteBackgroundStory { get; set; } = string.Empty;
 
+        /// <summary>Per-Star action/battle appetite used by fast speech and autonomous story writing.</summary>
+        public string ActionBattlePreference { get; set; } = string.Empty;
+
         /// <summary>Version of the compact character attribute schema used by CharacterAttributes.</summary>
         public int CharacterAttributesVersion { get; set; } = StarCharacterAttributeSchema.Version;
 

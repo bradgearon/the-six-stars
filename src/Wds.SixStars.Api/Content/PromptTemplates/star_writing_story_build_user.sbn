@@ -4,6 +4,7 @@ VIEWPOINT STAR
 {{ data.viewpointDisplayName }} — {{ data.viewpointElement }} / {{ data.viewpointDomain }}
 Core line: {{ data.viewpointCoreQuote }}
 Viewpoint personality: {{ data.viewpointPersonality }}
+Viewpoint action/battle appetite: {{ data.viewpointActionBattlePreference }}
 
 CURRENT CONTRIBUTING STAR
 Name: {{ data.displayName }}
@@ -13,6 +14,7 @@ Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Personality: {{ data.personalityShort }}
 Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
 Backstory: {{ data.backstorySummary }}
 Speaking / writing style: {{ data.speakingStyle }}
 Character attributes: {{ data.characterAttributes }}

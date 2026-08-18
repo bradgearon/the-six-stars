@@ -37,6 +37,10 @@ namespace Wds.SixStars.Api.Stars
 
                 profile.ActorId = string.IsNullOrWhiteSpace(profile.ActorId) ? profile.StarId : profile.ActorId.Trim();
                 profile.Soul ??= ActorSoulConfig.FullStarSoul();
+                if (string.IsNullOrWhiteSpace(profile.ActionBattlePreference))
+                {
+                    profile.ActionBattlePreference = StarActionBattlePreferences.For(profile.StarId);
+                }
                 if (profile.Emotions.Count == 0)
                 {
                     profile.Emotions = StarEmotionMatrix.CreateStandardEmotionSet(profile.StarId);

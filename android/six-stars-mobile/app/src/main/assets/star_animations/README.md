@@ -17,12 +17,15 @@ star_animations/maera/talking.gif
 star_animations/nyxari/idle.gif
 ```
 
-Supported state names are open-ended. The current app requests:
+Supported state names are open-ended. The current app requests the normal `idle` / `talking` states and can play these fast-speech one-shot emotion states:
 
-- `idle`
-- `talking`
+- `happy`
+- `confused`
+- `sad`
+- `angry`
+- `love`
 
-Future emotional state names can be wired by calling `setProdAnimationState("happy")`, `setProdAnimationState("hurt")`, etc. If a state GIF does not exist, the app falls back to `idle.gif`, then to PNG frame resources.
+Place them beside the existing Star GIFs, for example `star_animations/kaelia/happy.gif`. A completed fast-speech emotion control sends only the normalized state name over the bridge WebSocket; Android plays that GIF once and then returns to the current idle/talking-lips state. Missing emotion GIFs are skipped safely.
 
 Keep every GIF state for a given Star on the same source canvas. Production idle/talking assets use a 128×128 canvas. A mismatched canvas can change the integer pixel scale when Android swaps animation states, making the character visibly grow or shrink even when the artwork itself has matching proportions.
 

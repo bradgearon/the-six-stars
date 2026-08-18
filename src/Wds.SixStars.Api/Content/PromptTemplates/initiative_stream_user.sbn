@@ -12,8 +12,10 @@ CURRENT GIRLFRIEND NEED/WANT IMPULSES
 {{ data.girlfriendStateContext }}
 {{ if data.recentEmotions != "" }}Recent emotions={{ data.recentEmotions }}
 {{ end }}{{ if data.ongoingSummary != "" }}Ongoing summary={{ data.ongoingSummary }}
+{{ end }}{{ if data.continuityMemory != "" }}Continuity memory={{ data.continuityMemory }}
+{{ end }}{{ if data.unresolvedContinuityContext != "" }}{{ data.unresolvedContinuityContext }}
 {{ end }}{{ if data.recentTurns.size > 0 }}Recent turns, newest first:
 {{ for turn in data.recentTurns }}- Last Cat: {{ turn.player }} | {{ data.starDisplayName }}: {{ turn.star }}
 {{ end }}{{ end }}
 The Last Cat deliberately chose to hear a Thought now. Speak a fresh little moment rather than returning silence. Do not answer an imaginary question.
-Return only natural in-character spoken text, split into 1-3 complete § chunks. End the final chunk with §.
+Return only natural in-character speech and the optional ~ controls allowed by the streaming contract. End every chunk, including the final one, with §.

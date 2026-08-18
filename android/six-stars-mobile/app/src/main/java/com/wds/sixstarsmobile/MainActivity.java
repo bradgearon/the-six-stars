@@ -223,6 +223,9 @@ public final class MainActivity extends ComponentActivity {
     private boolean pendingShirtOffAnimation;
     private String pendingShirtOffStarId = "";
     private boolean shirtOffAnimationActive;
+    private boolean emotionAnimationActive;
+    private String pendingEmotionAnimationName = "";
+    private String pendingEmotionAnimationStarId = "";
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
@@ -1350,7 +1353,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void setProdAnimationState(String state) {
         prodAnimationState = (state == null || state.length() == 0) ? "idle" : state.toLowerCase(Locale.US);
-        if (shirtOffAnimationActive) return;
+        if (shirtOffAnimationActive || emotionAnimationActive) return;
         if (prodSpriteView != null) {
             prodSpriteView.setStarAnimation(selectedStarName(), prodAnimationState, starMeta(selectedStarName()).frameResIds);
         }
@@ -1371,6 +1374,50 @@ public final class MainActivity extends ComponentActivity {
         maybePlayPendingShirtOffAnimation();
     }
 
+    private void queueEmotionAnimation(String starId, String animationName) {
+        if (!prodMode || starId == null || animationName == null) return;
+        String normalized = animationName.trim().toLowerCase(Locale.US);
+        if (!("happy".equals(normalized)
+                || "confused".equals(normalized)
+                || "sad".equals(normalized)
+                || "angry".equals(normalized)
+                || "love".equals(normalized))) return;
+        pendingEmotionAnimationStarId = starId;
+        pendingEmotionAnimationName = normalized;
+        maybePlayPendingEmotionAnimation();
+    }
+
+    private void maybePlayPendingEmotionAnimation() {
+        if (emotionAnimationActive
+                || shirtOffAnimationActive
+                || prodSpriteView == null
+                || pendingEmotionAnimationName.length() == 0) return;
+
+        final String starId = pendingEmotionAnimationStarId;
+        final String animationName = pendingEmotionAnimationName;
+        pendingEmotionAnimationStarId = "";
+        pendingEmotionAnimationName = "";
+        if (starId.length() == 0 || !starId.equalsIgnoreCase(selectedStarName())) return;
+
+        emotionAnimationActive = true;
+        boolean started = prodSpriteView.playOneShotAnimation(starId, animationName, 120L, () -> {
+            emotionAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Emotion animation finished", starId + " returned from " + animationName + ".gif to the current idle/talking-lips state.");
+            maybePlayPendingEmotionAnimation();
+            maybePlayPendingShirtOffAnimation();
+        });
+
+        if (!started) {
+            emotionAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Emotion animation skipped", "No star_animations/" + starId.toLowerCase(Locale.US) + "/" + animationName + ".gif asset was found.");
+            maybePlayPendingEmotionAnimation();
+        } else {
+            appendVoiceDebug("Emotion animation playing", starId + " is playing " + animationName + ".gif once from a completed fast-speech control vector.");
+        }
+    }
+
     private void queueShirtOffAnimation(String starId) {
         if (!prodMode || starId == null || !starId.equalsIgnoreCase(selectedStarName())) return;
         pendingShirtOffAnimation = true;
@@ -1382,6 +1429,7 @@ public final class MainActivity extends ComponentActivity {
     private void maybePlayPendingShirtOffAnimation() {
         if (!pendingShirtOffAnimation
                 || shirtOffAnimationActive
+                || emotionAnimationActive
                 || starVoicePlaybackActive
                 || isDesktopVoiceStreamActive()
                 || !(phoneVoiceService == null || phoneVoiceService.isIdle())
@@ -1402,6 +1450,7 @@ public final class MainActivity extends ComponentActivity {
             shirtOffAnimationActive = false;
             setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
             appendVoiceDebug("Shirt-off reaction finished", starId + " returned to the current voice/idle state after the two-second final-frame hold.");
+            maybePlayPendingEmotionAnimation();
             maybePlayPendingShirtOffAnimation();
         });
 
@@ -1409,6 +1458,7 @@ public final class MainActivity extends ComponentActivity {
             shirtOffAnimationActive = false;
             setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
             appendVoiceDebug("Shirt-off reaction skipped", "No star_animations/" + starId.toLowerCase(Locale.US) + "/shirt-off.gif asset was found.");
+            maybePlayPendingEmotionAnimation();
         } else {
             appendVoiceDebug("Shirt-off reaction playing", starId + " is playing shirt-off.gif once.");
         }
@@ -2742,7 +2792,10 @@ public final class MainActivity extends ComponentActivity {
             if (paused) phoneVoiceService.pause(); else phoneVoiceService.resume();
         }
 
-        if (isTranscriptBridgeEvent(type)) {
+        if ("StarEmotionAnimationCue".equalsIgnoreCase(type)) {
+            String animationName = optStringEither(event, "animationName", "AnimationName", message);
+            queueEmotionAnimation(starId, animationName);
+        } else if (isTranscriptBridgeEvent(type)) {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
         } else if (isWritingBridgeEvent(type)) {
             handleWritingBridgeEvent(event, type, seq, starId, message);

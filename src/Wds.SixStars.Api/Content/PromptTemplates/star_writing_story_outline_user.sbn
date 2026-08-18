@@ -8,6 +8,7 @@ Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Short personality: {{ data.personalityShort }}
 Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
 Backstory: {{ data.backstorySummary }}
 Relevant background: {{ data.completeBackgroundStory }}
 Speaking / writing style: {{ data.speakingStyle }}

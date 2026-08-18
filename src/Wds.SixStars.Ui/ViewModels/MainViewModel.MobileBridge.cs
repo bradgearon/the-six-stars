@@ -2098,6 +2098,31 @@ public sealed partial class MainViewModel
                         System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish streamed Android text chunk: " + streamEventError.Message);
                     }
                 };
+
+                request.StreamActionReady = action =>
+                {
+                    if (action == null
+                        || !string.Equals(action.ActionType, "emotion", StringComparison.OrdinalIgnoreCase)
+                        || string.IsNullOrWhiteSpace(action.Name)) return;
+                    try
+                    {
+                        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                        {
+                            EventType = "StarEmotionAnimationCue",
+                            CommandId = streamingResponseId,
+                            SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
+                            SessionId = request.SessionId ?? string.Empty,
+                            StarId = request.StarId ?? starId,
+                            SelectedStarId = SelectedStarId,
+                            AnimationName = action.Name.Trim().ToLowerInvariant(),
+                            Message = action.Name.Trim().ToLowerInvariant()
+                        });
+                    }
+                    catch (Exception actionEventError)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish Star emotion animation cue: " + actionEventError.Message);
+                    }
+                };
             }
 
             ResetLlmDebugLog(request);

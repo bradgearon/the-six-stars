@@ -598,6 +598,7 @@ namespace Wds.SixStars.Api.Ai
                 recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
                 durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
                 unresolvedStateContext = BuildCompactUnresolvedReviewContext(state),
+                foregroundMarkedOutgoingUnresolved = foregroundResponse.OutgoingUnresolvedVector ?? string.Empty,
                 storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
@@ -615,6 +616,7 @@ namespace Wds.SixStars.Api.Ai
                     domain = profile.Domain,
                     personality = string.IsNullOrWhiteSpace(profile.PersonalityShort) ? string.Empty : Truncate(profile.PersonalityShort, 220),
                     speakingStyle = string.IsNullOrWhiteSpace(profile.SpeakingStyle) ? string.Empty : Truncate(profile.SpeakingStyle, 260),
+                    actionBattlePreference = string.IsNullOrWhiteSpace(profile.ActionBattlePreference) ? string.Empty : Truncate(profile.ActionBattlePreference, 420),
                     voiceRules = profile.SpokenResponseRules == null || profile.SpokenResponseRules.Count == 0
                         ? string.Empty
                         : string.Join("; ", profile.SpokenResponseRules.Take(4).Select(x => Truncate(x, 180)))
@@ -634,10 +636,12 @@ namespace Wds.SixStars.Api.Ai
                     domain = profile.Domain,
                     personality = string.IsNullOrWhiteSpace(profile.PersonalityShort) ? string.Empty : Truncate(profile.PersonalityShort, 220),
                     speakingStyle = string.IsNullOrWhiteSpace(profile.SpeakingStyle) ? string.Empty : Truncate(profile.SpeakingStyle, 260),
+                    actionBattlePreference = string.IsNullOrWhiteSpace(profile.ActionBattlePreference) ? string.Empty : Truncate(profile.ActionBattlePreference, 420),
                     voiceRules = profile.SpokenResponseRules == null || profile.SpokenResponseRules.Count == 0
                         ? string.Empty
                         : string.Join("; ", profile.SpokenResponseRules.Take(4).Select(x => Truncate(x, 180)))
-                }
+                },
+                emotionAnimationNames = "happy, confused, sad, angry, love"
             };
             return _templates.Render("initiative_stream_system.sbn", data).TrimEnd();
         }
@@ -675,6 +679,15 @@ namespace Wds.SixStars.Api.Ai
                 })
                 .ToList();
 
+            StringBuilder unresolved = new StringBuilder();
+            AppendForegroundUnresolvedContext(unresolved, state);
+            string continuityMemory = string.Join(" ~ ",
+                (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>())
+                    .Concat(state.MemoryNotes ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x) && !IsTechnicalMemoryNote(x))
+                    .Take(8)
+                    .Select(x => Truncate(x, 170)));
+
             return new
             {
                 starDisplayName = profile.DisplayName,
@@ -693,6 +706,8 @@ namespace Wds.SixStars.Api.Ai
                     ? string.Empty
                     : string.Join("; ", state.LastTopAffectedEmotions.Take(4).Select(x => x.ToString())),
                 ongoingSummary = string.IsNullOrWhiteSpace(state.ConversationSummary) ? string.Empty : Truncate(state.ConversationSummary, 360),
+                continuityMemory,
+                unresolvedContinuityContext = unresolved.ToString().TrimEnd(),
                 recentTurns,
                 manualInteract = IsTruthyFlag(request, "starInitiativeForce"),
                 preparedListen = IsTruthyFlag(request, "starInitiativePrepareForListen")
@@ -768,12 +783,13 @@ namespace Wds.SixStars.Api.Ai
                 ? "This is a STORY FOREGROUND PASS. The goal is to return a complete cached story plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory. The Story button itself is sufficient instruction; an empty player message means invent a fresh complete story, not a chat reply."
                 : request.RequestType == RequestType.StarInitiative
                     ? "This is a STAR INITIATIVE CHECK PASS. The app is asking whether the Star has a state-backed thing she wants to say at rest. This is not a player message and must not produce emotion vectors, memory updates, or relationship deltas."
-                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately. Output only speech, and end each complete speakable thought with § so the host can stream committed text immediately while you continue generating.";
+                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately. Output speech plus only the optional ~ controls defined by the streaming contract, and end every complete chunk with § so the host can route it immediately while you continue generating.";
 
             object data = new
             {
                 starDisplayName = profile.DisplayName,
                 plainStreamingSpeech,
+                emotionAnimationNames = "happy, confused, sad, angry, love",
                 foregroundModeInstructions,
                 globalCanonLore = globalCanon.ToString().TrimEnd(),
                 privateRomanceProfile = privateRomance.ToString().TrimEnd(),
@@ -920,7 +936,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Speech only; no JSON/labels/markdown. End every complete thought with §, including the final chunk. Start the actual answer immediately. When natural, make chunk 1 one short sentence so first voice can begin quickly; later chunks may be one or two sentences.");
+                contract.AppendLine("Speech plus only the optional ~ controls defined by the system streaming contract; no JSON/labels/markdown. End every complete speech or control chunk with §, including the final chunk. Start the actual answer immediately. When natural, make speech chunk 1 one short sentence so first voice can begin quickly; later speech chunks may be one or two sentences.");
                 contract.AppendLine("Missing exact game fact: do not invent it; use an explicit lookup bridge such as 'Let me check that' or 'I need to remember that'. Generic uncertainty is not a lookup bridge.");
             }
             if (request.RequestType == RequestType.Story)
@@ -2059,6 +2075,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine();
             sb.AppendLine("FAST CHAT IDENTITY / LORE CARD");
             sb.AppendLine("Identity=" + profile.DisplayName + "|element=" + profile.Element + "|domain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "|quote=" + Truncate(profile.CoreQuote, 180)));
+            if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("ActionBattlePreference=" + Truncate(profile.ActionBattlePreference, 420));
             AppendCharacterAttributeRequestContext(sb, profile);
             if (profile.CuteModeInstructions != null && profile.CuteModeInstructions.Count > 0)
             {
@@ -2119,6 +2136,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("COMPACT STORY VOICE / LORE CARD");
             sb.AppendLine("Use this for story mode. The story should sound like " + profile.DisplayName + " telling it aloud, but it should still be a complete episode with plot.");
             sb.AppendLine("Identity: " + profile.DisplayName + "; element=" + profile.Element + "; domain=" + profile.Domain + ".");
+            if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("Action/battle appetite: " + Truncate(profile.ActionBattlePreference, 420));
             if (!string.IsNullOrWhiteSpace(profile.CoreQuote)) sb.AppendLine("Core quote: " + profile.CoreQuote);
             AppendCharacterAttributeRequestContext(sb, profile);
             if (!string.IsNullOrWhiteSpace(profile.PersonalityShort)) sb.AppendLine("Personality: " + Truncate(profile.PersonalityShort, 220));
@@ -2176,6 +2194,7 @@ namespace Wds.SixStars.Api.Ai
             // small and llama.cpp can reuse a much larger stable prefix between foreground turns.
             sb.AppendLine();
             sb.AppendLine("TURN-SPECIFIC RESPONSE GUIDANCE");
+            sb.AppendLine("playContinuity=if the Last Cat has an ongoing game, riddle, challenge, playful bit, or mystery in recent history/memory/unresolveds, be eager to continue it naturally instead of resetting it.");
             if (state != null && state.IsGirlfriend)
             {
                 sb.AppendLine("girlfriendResponse=receive affectionate/emotional statements personally first; be responsive, cute/flirty in her own style, then answer any lore/philosophy; use a current need/want only when it fits.");
