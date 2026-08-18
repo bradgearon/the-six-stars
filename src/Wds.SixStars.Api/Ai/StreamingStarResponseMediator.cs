@@ -27,6 +27,7 @@ namespace Wds.SixStars.Api.Ai
         };
 
         private readonly StringBuilder _buffer = new StringBuilder();
+        private readonly StringBuilder _pendingSpeech = new StringBuilder();
         private readonly StringBuilder _rawReceived = new StringBuilder();
         private readonly List<string> _spokenParts = new List<string>();
         private readonly List<string> _traceEntries = new List<string>();
@@ -67,6 +68,7 @@ namespace Wds.SixStars.Api.Ai
             if (string.IsNullOrWhiteSpace(tail))
             {
                 _buffer.Clear();
+                FlushPendingSpeechAtEos();
                 return;
             }
 
@@ -75,6 +77,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 _traceEntries.Add("discarded unterminated control tail at EOS: " + Preview(tail));
                 _buffer.Clear();
+                FlushPendingSpeechAtEos();
                 return;
             }
 
@@ -84,15 +87,17 @@ namespace Wds.SixStars.Api.Ai
                 if (!string.IsNullOrWhiteSpace(speech))
                 {
                     _traceEntries.Add("accepted speech before unterminated embedded control at EOS: " + Preview(speech));
-                    AcceptSpeech(speech);
+                    AcceptSpeechChunk(speech);
                 }
                 _traceEntries.Add("discarded unterminated embedded control at EOS: " + Preview(tail.Substring(embeddedControl)));
                 _buffer.Clear();
+                FlushPendingSpeechAtEos();
                 return;
             }
 
             _traceEntries.Add("accepted unterminated speech tail at EOS for compatibility: " + Preview(tail));
             EmitBufferedChunk();
+            FlushPendingSpeechAtEos();
         }
 
         private void EmitBufferedChunk()
@@ -109,13 +114,13 @@ namespace Wds.SixStars.Api.Ai
             // The model contract requires speech and controls to occupy separate § chunks. Local
             // models occasionally append a control to the end of an otherwise valid sentence, e.g.
             // "Do you need that?~info^bestiary^slime hit points^100§". Recover that protocol
-            // mistake here without doing any sentence splitting: the model still owns sentence
-            // boundaries; this mediator only recognizes explicit ~ control markers.
+            // mistake here while preserving the control protocol. Speech boundaries are also
+            // hardened below so a premature delimiter cannot make TTS speak a partial clause.
             int controlIndex = FindFirstKnownControlMarker(chunk, 0);
             if (controlIndex < 0)
             {
                 if (chunk[0] == ControlPrefix) RouteControl(chunk);
-                else AcceptSpeech(chunk);
+                else AcceptSpeechChunk(chunk);
                 return;
             }
 
@@ -125,7 +130,7 @@ namespace Wds.SixStars.Api.Ai
                 if (!string.IsNullOrWhiteSpace(speech))
                 {
                     _traceEntries.Add("mixed speech/control chunk repaired; speech separated before embedded control: " + Preview(speech));
-                    AcceptSpeech(speech);
+                    AcceptSpeechChunk(speech);
                 }
             }
 
@@ -159,6 +164,58 @@ namespace Wds.SixStars.Api.Ai
                 if (next < 0) return;
                 cursor = next;
             }
+        }
+
+        /// <summary>
+        /// The streaming contract asks the model to emit one complete spoken sentence per § chunk,
+        /// but small local models can occasionally place § at a clause or phrase boundary. Do not
+        /// send those fragments to TTS individually: hold them until terminal sentence punctuation
+        /// arrives and then publish one natural immutable speech chunk.
+        /// </summary>
+        private void AcceptSpeechChunk(string chunk)
+        {
+            string speech = Clean(chunk);
+            if (string.IsNullOrWhiteSpace(speech)) return;
+
+            if (_pendingSpeech.Length > 0) _pendingSpeech.Append(' ');
+            _pendingSpeech.Append(speech);
+
+            string combined = NormalizeChunk(_pendingSpeech.ToString());
+            if (!EndsAtSentenceBoundary(combined))
+            {
+                _traceEntries.Add("speech fragment buffered until complete sentence: " + Preview(combined));
+                return;
+            }
+
+            _pendingSpeech.Clear();
+            AcceptSpeech(combined);
+        }
+
+        private void FlushPendingSpeechAtEos()
+        {
+            string speech = NormalizeChunk(_pendingSpeech.ToString());
+            _pendingSpeech.Clear();
+            if (string.IsNullOrWhiteSpace(speech)) return;
+            _traceEntries.Add("accepted incomplete-punctuation speech at EOS for compatibility: " + Preview(speech));
+            AcceptSpeech(speech);
+        }
+
+        private static bool EndsAtSentenceBoundary(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            int i = value.Length - 1;
+            while (i >= 0)
+            {
+                char ch = value[i];
+                if (char.IsWhiteSpace(ch) || ch == '"' || ch == '\'' || ch == '\u2019' || ch == '\u201d' || ch == ')' || ch == ']' || ch == '}')
+                {
+                    i--;
+                    continue;
+                }
+
+                return ch == '.' || ch == '?' || ch == '!' || ch == '\u2026';
+            }
+            return false;
         }
 
         private void AcceptSpeech(string chunk)

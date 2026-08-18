@@ -2138,7 +2138,7 @@ public sealed partial class MainViewModel
                 livePhoneVoice = await TryStartMobileLiveVoiceAsync(request, linkedCts.Token).ConfigureAwait(false);
                 if (livePhoneVoice != null)
                 {
-                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "Committed § speech chunks will be buffered in RAM while Gemma runs. Qwen starts after LLM EOS, and Android audio delivery remains gated until correlated text transport."));
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "The first complete § sentence can enter Qwen immediately for low first-voice latency; later sentences wait for Gemma EOS so TTS does not continuously compete with the foreground LLM."));
                 }
             }
 
@@ -2152,11 +2152,11 @@ public sealed partial class MainViewModel
 
             if (livePhoneVoice != null)
             {
-                // Gemma has reached EOS. Start Qwen at the first possible host instruction, before
-                // even loading the post-turn state, so TTS can overlap only cheap host/disk/network
-                // work and never compete with foreground Gemma inference on the GPU.
+                // The first complete sentence may already be synthesizing/playing. Once Gemma
+                // reaches EOS, batch the remaining committed sentences so Qwen gets the GPU without
+                // continuously dragging foreground token throughput down during the whole reply.
                 List<string> postLlmChunks = livePhoneVoice.DrainDeferredTextChunks();
-                if (postLlmChunks.Count == 0)
+                if (postLlmChunks.Count == 0 && livePhoneVoice.Pipeline.TextChunksEnqueued == 0)
                 {
                     postLlmChunks = starResponse.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
                 }
@@ -2167,8 +2167,8 @@ public sealed partial class MainViewModel
                 livePhoneVoice.ExpectedChunks = livePhoneVoice.Pipeline.TextChunksEnqueued;
                 livePhoneVoice.PostLlmSynthesisStarted = true;
                 OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                    "Post-LLM Qwen synthesis started",
-                    "Gemma EOS reached; queued " + livePhoneVoice.ExpectedChunks + " immutable speech chunk(s) before state reload/final Android text transport."));
+                    "Post-LLM Qwen tail synthesis started",
+                    "Gemma EOS reached; total queued voice chunks=" + livePhoneVoice.ExpectedChunks + ", deferred tail chunks=" + postLlmChunks.Count + "."));
             }
 
             StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
@@ -2297,13 +2297,13 @@ public sealed partial class MainViewModel
             }
             else if (livePhoneVoice != null)
             {
-                // Keep the Android transport contract that has proven stable: Qwen may synthesize
-                // only after Gemma EOS, but Android still receives the correlated text response first;
-                // then start the ordered phone stream and drain WAVs in immutable § order.
+                // The first complete streamed sentence may already be speaking. Final response
+                // transport still owns cleanup and tail-drain, while the remaining Qwen work begins
+                // after Gemma EOS so the LLM does not contend with TTS for the whole response.
                 MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
                 string exactAnalysisId = backgroundAnalysisId;
                 response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
-                response.VoiceMessage = "Android text streams during Gemma; Qwen starts only after LLM EOS and may warm during final text transport; Android playback still starts after text transport.";
+                response.VoiceMessage = "Android text streams during Gemma; the first complete sentence may synthesize and start speaking immediately, while remaining Qwen work waits for LLM EOS to limit GPU contention.";
                 response.AfterTransportResponseAsync = async () =>
                 {
                     await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);
@@ -2321,8 +2321,8 @@ public sealed partial class MainViewModel
                     return Task.CompletedTask;
                 };
                 OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                    "Live phone voice waiting for text transport",
-                    "Qwen started only after Gemma EOS and may be synthesizing while final text transport completes; chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
+                    "Live phone voice continuing through final transport",
+                    "The first complete sentence can already be speaking; remaining chunks finish after Gemma EOS. chunks sent so far=" + exactLiveRun.ChunksSent + "."));
             }
             else if (wantsPhoneAudio)
             {
@@ -2781,10 +2781,19 @@ public sealed partial class MainViewModel
                 {
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
 
-                    // Preserve the stable Android wire order. This blocks only the pipeline's
-                    // audio-consumer lane; after Gemma EOS, Qwen generation can queue WAVs while
-                    // final response/state transport is finishing, but no audio reaches Android yet.
-                    run.TransportReady.Wait(stream.CancellationToken);
+                    // The streamed text event is published before this chunk is ever enqueued to
+                    // Qwen. Therefore the first synthesized WAV can safely start the Android voice
+                    // stream immediately instead of waiting for full LLM EOS/final response transport.
+                    // Only the first sentence is synthesized during Gemma generation; later text is
+                    // deferred until EOS to avoid sustained GPU contention.
+                    if (run.TryMarkTransportStarted())
+                    {
+                        _services.MobileVoice.SendControlAsync(
+                            stream.AudioSession,
+                            "start",
+                            "Starting live Android voice after the first committed streamed sentence reached the phone text stream.",
+                            stream.CancellationToken).GetAwaiter().GetResult();
+                    }
 
                     int chunkIndex = args.Sequence;
                     int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
@@ -2823,16 +2832,22 @@ public sealed partial class MainViewModel
 
             pipeline.Start(request.SessionId, template, voiceCts.Token);
 
-            // Build 15N: do not run Qwen inference while the foreground LLM is generating. The
-            // August 17 traces show foreground Gemma falling from roughly 80-110 tok/s to ~18 tok/s
-            // while first-chunk Qwen competes for the same GPU. Keep every immutable § chunk in RAM;
-            // Android still receives committed text immediately, then Qwen starts at Gemma EOS with
-            // the GPU available for foreground speech synthesis while final text transport finishes.
+            // Low-latency compromise: synthesize only the first complete § sentence while Gemma
+            // is still generating, then hold later sentences until EOS. This restores the immediate
+            // conversational start the Android app had before Build 15N without letting Qwen compete
+            // with Gemma for the entire response. The existing callback publishes the committed text
+            // first, so audio cannot be generated until Android has already been given that sentence.
             Action<string>? existingChunkReady = request.SpokenChunkReady;
             request.SpokenChunkReady = text =>
             {
                 try { existingChunkReady?.Invoke(text); } catch { }
-                run.EnqueueForegroundTextChunk(text);
+                bool queuedEarly = run.EnqueueForegroundTextChunk(text);
+                if (queuedEarly)
+                {
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "First complete sentence entered Qwen",
+                        "Immediate first-voice synthesis started while Gemma continues generating the remaining response."));
+                }
             };
             return run;
         }
@@ -2972,9 +2987,9 @@ public sealed partial class MainViewModel
         if (run == null) return;
         try
         {
-            // Qwen normally starts immediately after Gemma EOS, before final response transport,
-            // so synthesis can overlap only cheap host/network work. Keep a defensive fallback for
-            // any path where no post-LLM synthesis was started.
+            // Normal live chat may already have synthesized its first complete sentence before
+            // Gemma EOS. Known-response paths still wait for transport. Keep a defensive fallback
+            // for any path where the post-LLM tail was not queued.
             if (!run.PostLlmSynthesisStarted)
             {
                 List<string> deferredChunks = run.DrainDeferredTextChunks();
@@ -2986,17 +3001,20 @@ public sealed partial class MainViewModel
             }
             run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
 
-            if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+            if (run.Stream.AudioSession != null
+                && !run.Stream.CancellationToken.IsCancellationRequested
+                && run.TryMarkTransportStarted())
             {
                 await _services.MobileVoice.SendControlAsync(
                     run.Stream.AudioSession,
                     "start",
-                    "Starting ordered Android voice stream " + run.Stream.StreamId + " after text transport; foreground Qwen synthesis now has the GPU.",
+                    "Starting ordered Android voice stream " + run.Stream.StreamId + " after correlated text transport.",
                     run.VoiceCts.Token).ConfigureAwait(false);
             }
 
-            // Release the ordered Android consumer only after the complete expected chunk count is
-            // known and the text-before-audio start signal has been sent.
+            // Known-response consumers intentionally wait for final correlated text transport.
+            // Live foreground consumers no longer wait here because their first sentence was already
+            // published through MobileConversationStreamChunk before TTS was enqueued.
             run.TransportReady.Set();
 
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
@@ -3062,7 +3080,10 @@ public sealed partial class MainViewModel
         public LiveStarVoiceResponsePipeline Pipeline { get; }
         public CancellationTokenSource VoiceCts { get; }
         private readonly object _textChunkGate = new object();
+        private readonly object _transportGate = new object();
         private readonly List<string> _deferredTextChunks = new List<string>();
+        private bool _firstForegroundChunkQueued;
+        private bool _transportStarted;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
@@ -3073,12 +3094,41 @@ public sealed partial class MainViewModel
         public bool Finished { get; set; }
         public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);
 
-        public void EnqueueForegroundTextChunk(string text)
+        /// <summary>
+        /// Returns true only for the first committed foreground sentence. That first sentence is
+        /// queued into Qwen immediately; later sentences are held until Gemma EOS.
+        /// </summary>
+        public bool EnqueueForegroundTextChunk(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return;
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            bool queueImmediately = false;
             lock (_textChunkGate)
             {
-                _deferredTextChunks.Add(text);
+                if (!_firstForegroundChunkQueued)
+                {
+                    _firstForegroundChunkQueued = true;
+                    queueImmediately = true;
+                }
+                else
+                {
+                    _deferredTextChunks.Add(text);
+                }
+            }
+
+            if (queueImmediately)
+            {
+                Pipeline.EnqueueTextChunk(text);
+            }
+            return queueImmediately;
+        }
+
+        public bool TryMarkTransportStarted()
+        {
+            lock (_transportGate)
+            {
+                if (_transportStarted) return false;
+                _transportStarted = true;
+                return true;
             }
         }
 
