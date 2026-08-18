@@ -4,7 +4,7 @@ RequestType: {{ data.requestType }}
 {{ data.currentTimeContext }}
 Player latest message:
 {{ data.playerTextBlock }}
-Foreground spokenText already sent to voice generation. Normal Chat replies are included exactly; if an unusually long response exceeds the compact review budget, the middle may be omitted while both the beginning and ending are preserved. Use this array for conversationSummary, unresolved-thread analysis, girlfriend/couple-activity detection, and other background interpretation explicitly requested by the schema. Do not copy spokenText into your response:
+Foreground spokenText already sent to voice generation. Use it for conversationSummary, question matching/resolution, girlfriend/couple-activity detection, and the other review fields; do not copy it into your response:
 {{ data.foregroundSpokenPartsJson }}
 Relationship before this review:
 {{ data.relationshipContext }}
@@ -15,16 +15,15 @@ Recent history for continuity:
 Durable memory / quote / marker context:
 {{ data.durableMemoryContext }}
 
-UNRESOLVED THREAD STATE BEFORE THIS TURN:
+QUESTION STATE BEFORE THIS TURN:
 {{ data.unresolvedStateContext }}
-{{ if data.foregroundMarkedOutgoingUnresolved != "" }}
-DELIBERATE OUTGOING UNRESOLVED MARKERS FROM FAST SPEECH THIS TURN:
-{{ data.foregroundMarkedOutgoingUnresolved }}
-These were intentionally marked by the Star at the exact speech beat and are already eligible for durable storage. Treat them as outgoing, never copy them into incoming. You may refine the same outgoing thread if the review adds useful intent/effect detail, or resolve it only if the actual turn already paid it off.
+{{ if data.foregroundMarkedQuestionsToLastCat != "" }}
+QUESTIONS TO LAST CAT DELIBERATELY MARKED IN FAST SPEECH THIS TURN:
+{{ data.foregroundMarkedQuestionsToLastCat }}
+These are already valid TO-LAST-CAT questions. Match them against the turn; refine only if useful, and do not copy them into FROM-LAST-CAT questions.
 {{ end }}
 
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, incomingUnresolvedVector, outgoingUnresolvedVector, unresolvedResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
-If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.
-No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.
+Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to []. Do not include emotionScores. Keep updates selective.
+If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, referencedMemoryMarkerIds should list the marker ids used.

@@ -37,14 +37,17 @@ namespace Wds.SixStars.Api.Ai
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
-        /// <summary>Compact full/updated incoming unresolved vector. Format is documented in StarUnresolvedVectorCodec.</summary>
-        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+        /// <summary>Compact questions/topics raised by the Last Cat that remain open for the Star.</summary>
+        [JsonPropertyName("questionsFromLastCatVector")]
+        public string QuestionsFromLastCatVector { get; set; } = string.Empty;
 
-        /// <summary>Compact full/updated outgoing unresolved vector with priority, tags, planned resolution, and intended effects.</summary>
-        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+        /// <summary>Compact questions/open thoughts the Star intentionally leaves with the Last Cat.</summary>
+        [JsonPropertyName("questionsToLastCatVector")]
+        public string QuestionsToLastCatVector { get; set; } = string.Empty;
 
-        /// <summary>Compact resolution events detected this turn, including how a prior intended effect appears to have landed when evidence exists.</summary>
-        public string UnresolvedResolutionVector { get; set; } = string.Empty;
+        /// <summary>Compact question-resolution events detected this turn.</summary>
+        [JsonPropertyName("questionResolutionVector")]
+        public string QuestionResolutionVector { get; set; } = string.Empty;
 
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]

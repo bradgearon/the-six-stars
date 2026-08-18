@@ -2678,14 +2678,14 @@ namespace Wds.SixStars.Api.Ai
                     ? $"Per-pass max_tokens cap used: {maxTokens}."
                     : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
                 streamedResponse.Debug.Notes.Add($"Streamed speech parts: {streamedResponse.SpokenParts.Count}; joined length: {streamedResponse.SpokenText.Length} characters.");
-                streamedResponse.Debug.Notes.Add("Foreground stream mediated speech plus complete ~ controls; deliberate information needs can route immediately without a selector LLM pass, while durable learning remains background work.");
+                streamedResponse.Debug.Notes.Add("Foreground stream mediated speech plus complete e/q/i controls; information needs can route immediately without a selector LLM pass.");
                 if (foregroundInformationNeeds.Count > 0)
                 {
                     streamedResponse.Debug.Notes.Add("Foreground stream requested local information: " + string.Join(", ", foregroundInformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0"))));
                 }
                 else
                 {
-                    streamedResponse.Debug.Notes.Add("Foreground stream emitted no accepted ~info controls. Check the streamed-response trace to distinguish model omission from malformed/rejected controls.");
+                    streamedResponse.Debug.Notes.Add("Foreground stream emitted no accepted i controls. Check the streamed-response trace to distinguish model omission from malformed/rejected controls.");
                 }
                 if (!string.IsNullOrWhiteSpace(streamTracePath))
                 {
@@ -2946,9 +2946,9 @@ namespace Wds.SixStars.Api.Ai
                 EmotionalPurpose = model.EmotionalPurpose ?? string.Empty,
                 EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
-                IncomingUnresolvedVector = model.IncomingUnresolvedVector ?? string.Empty,
-                OutgoingUnresolvedVector = model.OutgoingUnresolvedVector ?? string.Empty,
-                UnresolvedResolutionVector = model.UnresolvedResolutionVector ?? string.Empty,
+                IncomingUnresolvedVector = model.QuestionsFromLastCatVector ?? string.Empty,
+                OutgoingUnresolvedVector = model.QuestionsToLastCatVector ?? string.Empty,
+                UnresolvedResolutionVector = model.QuestionResolutionVector ?? string.Empty,
                 VoiceDirective = model.VoiceDirective ?? VoiceDirective.Empty(),
                 SuggestedStateDeltas = model.SuggestedStateDeltas ?? RelationshipDelta.Zero(),
                 ConversationSummary = string.IsNullOrWhiteSpace(model.ConversationSummary)
@@ -2996,7 +2996,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add($"Background computed emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
             if (response.InterstarEmotionVectors.Count > 0) response.Debug.Notes.Add("Interstar relationship vectors returned: " + response.InterstarEmotionVectors.Count + ".");
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
-            response.Debug.Notes.Add("Unresolved vectors: incoming=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", outgoing=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
+            response.Debug.Notes.Add("Question vectors: fromLastCat=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", toLastCat=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
         }
@@ -3634,9 +3634,9 @@ namespace Wds.SixStars.Api.Ai
             model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
             model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
             model.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
-            model.IncomingUnresolvedVector = StarUnresolvedVectorCodec.NormalizeIncomingVector(model.IncomingUnresolvedVector, 10);
-            model.OutgoingUnresolvedVector = StarUnresolvedVectorCodec.NormalizeOutgoingVector(model.OutgoingUnresolvedVector, 10);
-            model.UnresolvedResolutionVector = StarUnresolvedVectorCodec.NormalizeResolutionVector(model.UnresolvedResolutionVector, 8);
+            model.QuestionsFromLastCatVector = StarUnresolvedVectorCodec.NormalizeIncomingVector(model.QuestionsFromLastCatVector, 10);
+            model.QuestionsToLastCatVector = StarUnresolvedVectorCodec.NormalizeOutgoingVector(model.QuestionsToLastCatVector, 10);
+            model.QuestionResolutionVector = StarUnresolvedVectorCodec.NormalizeResolutionVector(model.QuestionResolutionVector, 8);
             model.InterstarEmotionVectors = NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors);
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();
@@ -4209,6 +4209,18 @@ namespace Wds.SixStars.Api.Ai
                 if (string.IsNullOrWhiteSpace(model.NegativeEmotionVector))
                 {
                     model.NegativeEmotionVector = GetCompactVectorString(root, "lastCatNegativeEmotionVector", "last_cat_negative_emotion_vector", "negativeEmotionVector", "negative_emotion_vector", "boundaryEmotionVector", "boundary_emotion_vector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionsFromLastCatVector))
+                {
+                    model.QuestionsFromLastCatVector = GetString(root, "questionsFromLastCatVector") ?? GetString(root, "incomingUnresolvedVector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionsToLastCatVector))
+                {
+                    model.QuestionsToLastCatVector = GetString(root, "questionsToLastCatVector") ?? GetString(root, "outgoingUnresolvedVector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionResolutionVector))
+                {
+                    model.QuestionResolutionVector = GetString(root, "questionResolutionVector") ?? GetString(root, "unresolvedResolutionVector") ?? string.Empty;
                 }
                 if (string.IsNullOrWhiteSpace(model.SourceStarEmotionalEffectVector))
                 {

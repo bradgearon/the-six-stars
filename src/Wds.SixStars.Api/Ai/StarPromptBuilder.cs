@@ -598,7 +598,7 @@ namespace Wds.SixStars.Api.Ai
                 recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
                 durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
                 unresolvedStateContext = BuildCompactUnresolvedReviewContext(state),
-                foregroundMarkedOutgoingUnresolved = foregroundResponse.OutgoingUnresolvedVector ?? string.Empty,
+                foregroundMarkedQuestionsToLastCat = foregroundResponse.OutgoingUnresolvedVector ?? string.Empty,
                 storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
@@ -936,14 +936,10 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Speech plus only the optional ~ controls defined by the system streaming contract; no JSON/labels/markdown. End every complete speech or control chunk with §, including the final chunk. Start the actual answer immediately. When natural, make speech chunk 1 one short sentence so first voice can begin quickly; later speech chunks may be one or two sentences.");
+                contract.AppendLine("Use the fast speech stream from the system message and answer the Last Cat directly.");
                 if (IsTruthyFlag(request, "informationFollowup"))
                 {
-                    contract.AppendLine("MATCHED-INFORMATION FOLLOW-UP: answer from the attached local reference now. Do not emit another ~info control in this pass. Do not repeat the earlier lookup/checking bridge.");
-                }
-                else
-                {
-                    contract.AppendLine("Missing information: do not invent it. Finish normal speech first, then put any ~info^source^subject^score§ lookup controls at the very end. The control itself requests the lookup; no exact spoken trigger phrase is required.");
+                    contract.AppendLine("MATCHED INFORMATION: use the attached reference to answer now. Do not request another i lookup in this pass.");
                 }
             }
             if (request.RequestType == RequestType.Story)
@@ -1098,28 +1094,28 @@ namespace Wds.SixStars.Api.Ai
                 .ToList();
             if (incoming.Count == 0 && outgoing.Count == 0) return;
 
-            sb.AppendLine("UNRESOLVED CONTINUITY VECTORS — private optional continuity hooks. Use at most one naturally unless several genuinely connect. Resolve one, deepen one, or let it breathe. Never recite ids/scores/tags/vector syntax.");
+            sb.AppendLine("QUESTION CONTINUITY — private questions/open thoughts that may matter again. Use at most one naturally unless several truly connect. Never recite ids, scores, tags, or vector syntax.");
             if (incoming.Count > 0)
             {
-                sb.AppendLine("IN from Last Cat, format id^confidence^tags^open^resolutionIntent:");
+                sb.AppendLine("FROM LAST CAT — things he raised that you still need to answer, understand, or revisit:");
                 sb.AppendLine(StarUnresolvedVectorCodec.EncodeIncomingVector(incoming, 2));
             }
             if (outgoing.Count > 0)
             {
-                sb.AppendLine("OUT from you, format id^priority^tags^open^resolutionIntent^intendedEffects:");
+                sb.AppendLine("TO LAST CAT — questions, mysteries, teaching thoughts, jokes, or implications you left with him to answer, notice, or figure out:");
                 sb.AppendLine(StarUnresolvedVectorCodec.EncodeOutgoingVector(outgoing, 2));
             }
         }
 
         private static string BuildCompactUnresolvedReviewContext(StarState state)
         {
-            if (state == null) return "ExistingIncomingUnresolvedVector=\nExistingOutgoingUnresolvedVector=\nRecentUnresolvedResolutionVector=";
+            if (state == null) return "QuestionsFromLastCatVector=\nQuestionsToLastCatVector=\nRecentQuestionResolutionVector=";
             string incoming = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.IncomingUnresolvedVectors ?? new List<string>()).Take(10));
             string outgoing = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.OutgoingUnresolvedVectors ?? new List<string>()).Take(10));
             string resolved = string.Join(StarUnresolvedVectorCodec.ItemDelimiter.ToString(), (state.UnresolvedResolutionHistory ?? new List<string>()).Take(2));
-            return "ExistingIncomingUnresolvedVector=" + incoming + Environment.NewLine
-                + "ExistingOutgoingUnresolvedVector=" + outgoing + Environment.NewLine
-                + "RecentUnresolvedResolutionVector=" + resolved;
+            return "QuestionsFromLastCatVector=" + incoming + Environment.NewLine
+                + "QuestionsToLastCatVector=" + outgoing + Environment.NewLine
+                + "RecentQuestionResolutionVector=" + resolved;
         }
 
         private static void AppendForegroundImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)

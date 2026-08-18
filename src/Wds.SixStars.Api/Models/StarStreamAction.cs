@@ -2,7 +2,7 @@ namespace Wds.SixStars.Api.Models
 {
     /// <summary>
     /// One fully received non-speech control chunk from a delimiter-streamed Star response.
-    /// The host never acts on a partial vector; the streaming mediator only publishes this after ง.
+    /// The host never acts on a partial vector; the streaming mediator only publishes this after ยง.
     /// </summary>
     public sealed class StarStreamAction
     {

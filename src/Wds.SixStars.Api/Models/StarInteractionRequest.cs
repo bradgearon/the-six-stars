@@ -27,7 +27,7 @@ namespace Wds.SixStars.Api.Models
 
         /// <summary>
         /// Optional host callback for fully received non-speech control chunks from the fast stream.
-        /// The mediator invokes this only after the complete ง-terminated vector has arrived.
+        /// The mediator invokes this only after the complete ยง-terminated vector has arrived.
         /// </summary>
         [JsonIgnore]
         public Action<StarStreamAction>? StreamActionReady { get; set; }
