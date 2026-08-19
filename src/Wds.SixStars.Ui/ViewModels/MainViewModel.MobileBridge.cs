@@ -2050,11 +2050,10 @@ public sealed partial class MainViewModel
 
             MobileAttachedPhotoResult photoResult = await AddMobileAttachedPhotoContextAsync(request, mobileRequest, cancellationToken).ConfigureAwait(false);
 
-            // Normal Chat/Photo speech is already split by the LLM into immutable § chunks. Send
-            // each committed chunk to Android immediately as a transient cumulative conversation
-            // row instead of waiting for model EOS. This is display-only: the proven Build 15A
-            // voice contract still keeps Android audio gated until the final correlated response
-            // has been transported.
+            // Normal Chat/Photo speech is split deterministically from streamed punctuation. Send
+            // each complete sentence to Android immediately as a transient cumulative conversation
+            // row instead of waiting for model EOS. The first sentence is published before its Qwen
+            // audio is released, so visible text still leads audible speech.
             if (ShouldUseMobileLiveStreamingSpeech(request))
             {
                 streamingResponseId = Guid.NewGuid().ToString("N");
@@ -2138,7 +2137,7 @@ public sealed partial class MainViewModel
                 livePhoneVoice = await TryStartMobileLiveVoiceAsync(request, linkedCts.Token).ConfigureAwait(false);
                 if (livePhoneVoice != null)
                 {
-                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "The first complete § speech sentence is queued to Qwen immediately while Gemma continues; later sentences wait only until Gemma EOS. Android audio delivery remains gated until correlated text transport."));
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "The first complete punctuated sentence is queued to Qwen immediately while Gemma continues; its streamed text is published before audio release. Later sentences are batched at Gemma EOS."));
                 }
             }
 
@@ -2152,8 +2151,8 @@ public sealed partial class MainViewModel
 
             if (livePhoneVoice != null)
             {
-                // The first committed § sentence is already synthesizing (or may even have a WAV
-                // ready). Batch all later immutable sentences now that Gemma has reached EOS. This
+                // The first punctuation-complete sentence is already synthesizing (and may already be
+                // playing). Batch all later immutable sentences now that Gemma has reached EOS. This
                 // gives first-speech latency the streaming benefit without making Qwen compete with
                 // Gemma for the entire remainder of a longer response.
                 List<string> deferredChunks = livePhoneVoice.DrainDeferredTextChunks();
@@ -2300,13 +2299,13 @@ public sealed partial class MainViewModel
             }
             else if (livePhoneVoice != null)
             {
-                // Keep the Android transport contract that has proven stable: Qwen may synthesize
-                // only after Gemma EOS, but Android still receives the correlated text response first;
-                // then start the ordered phone stream and drain WAVs in immutable § order.
+                // The first complete streamed sentence may already be speaking. The final correlated
+                // response still owns completion of the ordered stream, expected chunk count, and the
+                // remaining sentence batch after Gemma EOS.
                 MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
                 string exactAnalysisId = backgroundAnalysisId;
                 response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
-                response.VoiceMessage = "Android text streams during Gemma; Qwen starts only after LLM EOS and may warm during final text transport; Android playback still starts after text transport.";
+                response.VoiceMessage = "Android text is split into complete streamed sentences; the first sentence starts Qwen immediately and may begin playing before Gemma EOS, while later sentences batch after EOS.";
                 response.AfterTransportResponseAsync = async () =>
                 {
                     await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);
@@ -2734,8 +2733,8 @@ public sealed partial class MainViewModel
         if (request == null || !_useStreamingTts) return false;
         if (ShouldUseLiveForegroundSpeech(request.RequestType)) return true;
 
-        // Build 15O: a manually requested Thought/Listen is now a plain-text § stream just like
-        // normal chat. Prepared/automatic at-rest initiative remains the compact JSON/cache path.
+        // A manually requested Thought/Listen uses the same plain-text sentence stream as normal
+        // chat. Prepared/automatic at-rest initiative remains the compact JSON/cache path.
         return request.RequestType == RequestType.StarInitiative
             && IsTruthy(GetFlag(request, "starInitiativeForce"))
             && !IsTruthy(GetFlag(request, "starInitiativePrepareForListen"));
@@ -2747,7 +2746,7 @@ public sealed partial class MainViewModel
         if (!_services.MobileVoice.IsConnected) return null;
 
         StarInteractionResponse template = CreateLiveVoiceTemplateResponse(request.StarId);
-        MobileVoiceStreamScope stream = BeginMobileVoiceStream(template, false, "Android delimiter-streamed foreground reply");
+        MobileVoiceStreamScope stream = BeginMobileVoiceStream(template, false, "Android sentence-streamed foreground reply");
         if (stream.AudioSession == null || stream.AudioSession.TargetClientIds.Count == 0)
         {
             EndMobileVoiceStream(stream, "no connected Android audio targets for live speech");
@@ -2784,9 +2783,10 @@ public sealed partial class MainViewModel
                 {
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
 
-                    // Preserve the stable Android wire order. This blocks only the pipeline's
-                    // audio-consumer lane; after Gemma EOS, Qwen generation can queue WAVs while
-                    // final response/state transport is finishing, but no audio reaches Android yet.
+                    // The first streamed sentence is published to the Android text bridge before
+                    // Qwen is queued. Once that first text event has been published, the transport
+                    // gate opens and the WAV may follow as soon as synthesis completes; we no longer
+                    // wait for Gemma EOS just to begin audible speech.
                     run.TransportReady.Wait(stream.CancellationToken);
 
                     int chunkIndex = args.Sequence;
@@ -2826,11 +2826,10 @@ public sealed partial class MainViewModel
 
             pipeline.Start(request.SessionId, template, voiceCts.Token);
 
-            // Build 15V: the first complete § sentence is already immutable, so begin Qwen on it
-            // immediately instead of waiting for Gemma EOS. Buffer later sentences until EOS and
-            // enqueue them as one batch. This restores first-sentence TTS prewarm without returning
-            // to sustained Gemma/Qwen contention for the whole reply. The Android consumer remains
-            // blocked by TransportReady, preserving the proven text-before-audio wire order.
+            // Build 15X: sentence punctuation, not §, now commits ordinary speech. The existing
+            // callback publishes that complete sentence to Android first; then the first sentence is
+            // queued to Qwen and the audio transport is released immediately. Later sentences remain
+            // buffered until Gemma EOS so only the first Qwen request competes with foreground Gemma.
             Action<string>? existingChunkReady = request.SpokenChunkReady;
             request.SpokenChunkReady = text =>
             {
@@ -2839,9 +2838,10 @@ public sealed partial class MainViewModel
 
                 if (run.AcceptForegroundTextChunk(text))
                 {
+                    BeginMobileLiveVoiceTransportAfterFirstSentence(run);
                     OnUiThread(() => AppendMobileBridgeVoiceDebug(
                         "First streamed sentence queued to Qwen",
-                        "Qwen synthesis began from the first complete § sentence while Gemma continued generating the rest of the reply."));
+                        "Qwen synthesis began as soon as the first complete punctuated sentence arrived; Android text was published first and audio no longer waits for Gemma EOS."));
                 }
             };
             return run;
@@ -2857,6 +2857,40 @@ public sealed partial class MainViewModel
             EndMobileVoiceStream(stream, "live foreground voice could not start");
             throw;
         }
+    }
+
+    private void BeginMobileLiveVoiceTransportAfterFirstSentence(MobileLiveVoiceRun run)
+    {
+        if (run == null) return;
+        run.TryBeginTransportRelease(() => Task.Run(async () =>
+        {
+            try
+            {
+                if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+                {
+                    await _services.MobileVoice.SendControlAsync(
+                        run.Stream.AudioSession,
+                        "start",
+                        "First streamed sentence text was published; release its audio as soon as Qwen finishes synthesizing it.",
+                        run.VoiceCts.Token).ConfigureAwait(false);
+                }
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Foreground voice transport released",
+                    "The first streamed sentence was published to Android before Qwen audio; speech may now begin before Gemma reaches EOS."));
+            }
+            catch (OperationCanceledException)
+            {
+                // A newer foreground request owns the stream now.
+            }
+            catch (Exception ex)
+            {
+                run.ErrorMessage = "Early Android live voice start signal failed: " + ex.Message;
+            }
+            finally
+            {
+                try { run.TransportReady.Set(); } catch { }
+            }
+        }));
     }
 
     private MobileLiveVoiceRun? TryStartMobileKnownResponseVoice(
@@ -2982,27 +3016,32 @@ public sealed partial class MainViewModel
         if (run == null) return;
         try
         {
-            // Streaming speech normally began at the first complete § sentence. If a caller reaches
-            // finish without finalizing the count, simply mark synthesis started; the EOS caller owns
-            // the defensive final-response fallback so speech cannot be enqueued twice here.
+            // The first punctuation-complete sentence normally started Qwen and released Android
+            // audio while Gemma was still generating. If no early sentence was observed (for example,
+            // a non-streaming compatible client), retain the final-response fallback here.
             if (!run.PostLlmSynthesisStarted)
             {
                 run.PostLlmSynthesisStarted = true;
             }
             run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
 
-            if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+            if (run.TransportReleaseStarted)
             {
-                await _services.MobileVoice.SendControlAsync(
-                    run.Stream.AudioSession,
-                    "start",
-                    "Starting ordered Android voice stream " + run.Stream.StreamId + " after text transport; foreground Qwen synthesis now has the GPU.",
-                    run.VoiceCts.Token).ConfigureAwait(false);
+                Task? releaseTask = run.TransportReleaseTask;
+                if (releaseTask != null) await releaseTask.ConfigureAwait(false);
             }
-
-            // Release the ordered Android consumer only after the complete expected chunk count is
-            // known and the text-before-audio start signal has been sent.
-            run.TransportReady.Set();
+            else
+            {
+                if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+                {
+                    await _services.MobileVoice.SendControlAsync(
+                        run.Stream.AudioSession,
+                        "start",
+                        "Starting ordered Android voice stream " + run.Stream.StreamId + " after final text transport fallback.",
+                        run.VoiceCts.Token).ConfigureAwait(false);
+                }
+                run.TransportReady.Set();
+            }
 
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
             if (run.ExpectedChunks > 0 && run.ChunksSent != run.ExpectedChunks)
@@ -3018,7 +3057,7 @@ public sealed partial class MainViewModel
                     "Live Android voice stream completed after " + run.ChunksSent + " chunk(s).",
                     CancellationToken.None).ConfigureAwait(false);
             }
-            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Live Android delimiter-streamed voice generation/sending completed.");
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Live Android sentence-streamed voice generation/sending completed.");
         }
         catch (OperationCanceledException)
         {
@@ -3067,8 +3106,10 @@ public sealed partial class MainViewModel
         public LiveStarVoiceResponsePipeline Pipeline { get; }
         public CancellationTokenSource VoiceCts { get; }
         private readonly object _textChunkGate = new object();
+        private readonly object _transportGate = new object();
         private readonly List<string> _deferredTextChunks = new List<string>();
         private bool _firstSpeechChunkAccepted;
+        private bool _transportReleaseStarted;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
@@ -3077,7 +3118,27 @@ public sealed partial class MainViewModel
         public bool PostLlmSynthesisStarted { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public bool Finished { get; set; }
+        public Task? TransportReleaseTask { get; set; }
+        public bool TransportReleaseStarted
+        {
+            get
+            {
+                lock (_transportGate) return _transportReleaseStarted;
+            }
+        }
         public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);
+
+        public bool TryBeginTransportRelease(Func<Task> taskFactory)
+        {
+            if (taskFactory == null) return false;
+            lock (_transportGate)
+            {
+                if (_transportReleaseStarted) return false;
+                _transportReleaseStarted = true;
+                TransportReleaseTask = taskFactory();
+                return true;
+            }
+        }
 
         /// <summary>
         /// Returns true only for the first streamed speech sentence. That first immutable sentence

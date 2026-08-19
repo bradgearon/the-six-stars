@@ -1630,11 +1630,11 @@ public final class MainActivity extends ComponentActivity {
     private StarMeta starMeta(String starId) {
         String id = starId == null ? "Elusiaa" : starId;
         if (id.equalsIgnoreCase("Kaelia")) return new StarMeta("Kaelia", "Void", "Fatalism", 0xFF8B5CF6, R.drawable.portrait_kaelia, new int[]{R.drawable.star_kaelia_idle_0});
-        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0});
+        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0, R.drawable.star_maera_idle_1, R.drawable.star_maera_idle_2, R.drawable.star_maera_idle_3, R.drawable.star_maera_idle_4, R.drawable.star_maera_idle_5});
         if (id.equalsIgnoreCase("Khavia")) return new StarMeta("Khavia", "Water", "Friendship", 0xFF22D3EE, R.drawable.portrait_khavia, new int[]{R.drawable.star_khavia_idle_0});
         if (id.equalsIgnoreCase("Auerlis")) return new StarMeta("Auerlis", "Fire", "Joy", 0xFFF97316, R.drawable.portrait_auerlis, new int[]{R.drawable.star_auerlis_idle_0});
         if (id.equalsIgnoreCase("Nyxari")) return new StarMeta("Nyxari", "Shadow", "Fragmentation", 0xFF60A5FA, R.drawable.portrait_nyxari, new int[]{R.drawable.star_nyxari_idle_0});
-        if (id.equalsIgnoreCase("Elusiaa")) return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0});
+        if (id.equalsIgnoreCase("Elusiaa")) return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0, R.drawable.star_elusiaa_idle_1, R.drawable.star_elusiaa_idle_2, R.drawable.star_elusiaa_idle_3, R.drawable.star_elusiaa_idle_4, R.drawable.star_elusiaa_idle_5});
         return new StarMeta(id, "Star", "Configured", 0xFF38E8FF, R.drawable.ui_cat_avatar, new int[]{R.drawable.ui_cat_avatar});
     }
 

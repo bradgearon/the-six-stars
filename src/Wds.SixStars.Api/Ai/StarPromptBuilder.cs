@@ -783,7 +783,7 @@ namespace Wds.SixStars.Api.Ai
                 ? "This is a STORY FOREGROUND PASS. The goal is to return a complete cached story plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory. The Story button itself is sufficient instruction; an empty player message means invent a fresh complete story, not a chat reply."
                 : request.RequestType == RequestType.StarInitiative
                     ? "This is a STAR INITIATIVE CHECK PASS. The app is asking whether the Star has a state-backed thing she wants to say at rest. This is not a player message and must not produce emotion vectors, memory updates, or relationship deltas."
-                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately. Output speech plus only the optional ~ controls defined by the streaming contract, and end every complete chunk with § so the host can route it immediately while you continue generating.";
+                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately.";
 
             object data = new
             {

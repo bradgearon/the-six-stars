@@ -9,9 +9,9 @@ using Wds.SixStars.Api.Stars;
 namespace Wds.SixStars.Api.Ai
 {
     /// <summary>
-    /// Small append-only audit log for the foreground delimiter stream after mediation.
+    /// Small append-only audit log for the foreground streaming response after mediation.
     /// The ordinary LLM exchange log already contains the complete raw SSE result; this trace
-    /// adds the missing diagnostic layer: which § chunks became speech, which ~ controls were
+    /// adds the missing diagnostic layer: which punctuation-complete sentences became speech, which compact controls were
     /// accepted/rejected, and which information needs actually reached runtime selection.
     /// Logging is best-effort and must never interfere with live conversation.
     /// </summary>
@@ -49,8 +49,11 @@ namespace Wds.SixStars.Api.Ai
                 sb.AppendLine("Purpose: " + (purpose ?? string.Empty));
                 sb.AppendLine("Status: " + (status ?? string.Empty));
                 sb.AppendLine("PlayerText: " + OneLine(request?.PlayerText));
-                bool rawContainsInfo = (rawStream ?? string.Empty).IndexOf("~i^", StringComparison.OrdinalIgnoreCase) >= 0
-                    || (rawStream ?? string.Empty).IndexOf("~info^", StringComparison.OrdinalIgnoreCase) >= 0;
+                string raw = rawStream ?? string.Empty;
+                bool rawContainsInfo = raw.IndexOf("~i^", StringComparison.OrdinalIgnoreCase) >= 0
+                    || raw.IndexOf("~info^", StringComparison.OrdinalIgnoreCase) >= 0
+                    || raw.IndexOf(" i^", StringComparison.OrdinalIgnoreCase) >= 0
+                    || raw.StartsWith("i^", StringComparison.OrdinalIgnoreCase);
                 sb.AppendLine("RawContainsInfoControl: " + (rawContainsInfo ? "true" : "false"));
                 sb.AppendLine("ParsedInformationNeedCount: " + needs.Count);
                 if (!string.IsNullOrWhiteSpace(error)) sb.AppendLine("Error: " + OneLine(error));
