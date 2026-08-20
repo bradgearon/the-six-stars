@@ -332,10 +332,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             LoadLatestConversationDebugLog();
             Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
             PublishMobileBridgeTopEmotionUpdate(response);
+            PublishMobileBridgeBackgroundEmotionAnimationCue(response);
             DebugJson = _llmDebugLog.ToString()
                 + "\n================ BACKGROUND DETERMINISTIC EMOTION UPDATE ================\n"
                 + CreateEnhancedDebugOutput(new { backgroundUpdate = true, starId = response.StarId }, response);
         });
+        _runtime.BackgroundInformationFollowupCompleted += (_, response) => _ = HandleBackgroundInformationFollowupResponseAsync(response);
         _runtime.BackgroundAnalysisFailed += (_, ex) => OnUiThread(() =>
         {
             Status = "Background emotion/memory update failed: " + ex.Message;

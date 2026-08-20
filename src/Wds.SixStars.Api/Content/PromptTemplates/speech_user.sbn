@@ -23,7 +23,7 @@ Ongoing summary: {{ data.ongoingSummary }}
 {{ data.recentConversationTurns }}
 {{ data.unresolvedContinuityContext }}
 
-CURRENT TURN — ANSWER THIS NOW
+CURRENT TURN {{ data.currentTurnNumber }} — ANSWER THIS NOW
 {{ data.currentTimeContext }}
 The Last Cat just said:
 {{ data.playerTextBlock }}

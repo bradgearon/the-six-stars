@@ -110,7 +110,10 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Compact unresolved resolution events detected this turn.</summary>
         public string UnresolvedResolutionVector { get; set; } = string.Empty;
 
-        /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
+        /// <summary>Optional high-emotion one-shot animation selected by the private background review.</summary>
+        public string EmotionAnimationName { get; set; } = string.Empty;
+
+        /// <summary>Optional foreground/background information selection result.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();
 

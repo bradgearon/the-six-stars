@@ -17,13 +17,7 @@ Durable memory / quote / marker context:
 
 QUESTION STATE BEFORE THIS TURN:
 {{ data.unresolvedStateContext }}
-{{ if data.foregroundMarkedQuestionsToLastCat != "" }}
-QUESTIONS TO LAST CAT DELIBERATELY MARKED IN FAST SPEECH THIS TURN:
-{{ data.foregroundMarkedQuestionsToLastCat }}
-These are already valid TO-LAST-CAT questions. Match them against the turn; refine only if useful, and do not copy them into FROM-LAST-CAT questions.
-{{ end }}
-
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to []. Do not include emotionScores. Keep updates selective.
+Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to []. Do not include emotionScores. Keep updates selective. emotionAnimation must be empty unless this is clearly a high-emotion turn. Question vectors must be empty unless the Last Cat really raised an unresolved question/topic or the foreground reply really left one for him.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, referencedMemoryMarkerIds should list the marker ids used.

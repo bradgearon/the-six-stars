@@ -49,6 +49,14 @@ namespace Wds.SixStars.Api.Ai
         [JsonPropertyName("questionResolutionVector")]
         public string QuestionResolutionVector { get; set; } = string.Empty;
 
+        /// <summary>Optional high-emotion one-shot animation selected by the private background review.</summary>
+        [JsonPropertyName("emotionAnimation")]
+        public string EmotionAnimation { get; set; } = string.Empty;
+
+        /// <summary>Compact missing-reference requests: source^subject^score, separated by ~.</summary>
+        [JsonPropertyName("informationNeedsVector")]
+        public string InformationNeedsVector { get; set; } = string.Empty;
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();

@@ -66,6 +66,7 @@ namespace Wds.SixStars.Api.Engine
         private readonly ConversationDebugLogRecorder _conversationDebugLogRecorder = new ConversationDebugLogRecorder();
 
         public event EventHandler<StarInteractionResponse>? BackgroundAnalysisCompleted;
+        public event EventHandler<StarInteractionResponse>? BackgroundInformationFollowupCompleted;
         public event EventHandler<Exception>? BackgroundAnalysisFailed;
         public event EventHandler<StarInteractionResponse>? StoryGenerationCompleted;
         public event EventHandler<Exception>? StoryGenerationFailed;
@@ -880,26 +881,14 @@ namespace Wds.SixStars.Api.Engine
             }
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
-            response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
-            ApplyVoiceDefaults(profile, response);
-
-            // Fast streaming speech can explicitly mark a deliberate outgoing unresolved at the
-            // sentence where she created it. Persist only that tiny vector immediately so the next
-            // foreground turn can see it even though the full emotion/memory review intentionally
-            // waits until after voice/player activity quiets down. This does not create a second
-            // conversation log entry or relationship update.
-            if (!string.IsNullOrWhiteSpace(response.IncomingUnresolvedVector)
-                || !string.IsNullOrWhiteSpace(response.OutgoingUnresolvedVector)
-                || !string.IsNullOrWhiteSpace(response.UnresolvedResolutionVector))
+            // Fast streaming Chat/Photo returns speech only. Questions, emotion animation, and
+            // missing-reference requests are decided by the private background review. Structured
+            // Story paths may still use their existing immediate information contract.
+            if (request.RequestType == RequestType.Story)
             {
-                await _memoryApi.ApplyUnresolvedThreadUpdatesAsync(
-                    request.SessionId,
-                    request.StarId,
-                    response.IncomingUnresolvedVector,
-                    response.OutgoingUnresolvedVector,
-                    response.UnresolvedResolutionVector,
-                    cancellationToken).ConfigureAwait(false);
+                response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
             }
+            ApplyVoiceDefaults(profile, response);
             response.UnityEvents.Add(new UnityEventEnvelope
             {
                 Type = "StarConversationForegroundCompleted",
@@ -984,23 +973,6 @@ namespace Wds.SixStars.Api.Engine
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
-
-            // A manually requested Thought uses the same fast stream mediator as Chat and may
-            // deliberately mark an outgoing unresolved. Persist only that compact marker here;
-            // StarInitiative still skips relationship/emotion scoring and the full memory review.
-            if (IsTruthy(GetContextFlag(request, "starInitiativeForce"))
-                && (!string.IsNullOrWhiteSpace(response.IncomingUnresolvedVector)
-                    || !string.IsNullOrWhiteSpace(response.OutgoingUnresolvedVector)
-                    || !string.IsNullOrWhiteSpace(response.UnresolvedResolutionVector)))
-            {
-                await _memoryApi.ApplyUnresolvedThreadUpdatesAsync(
-                    request.SessionId,
-                    request.StarId,
-                    response.IncomingUnresolvedVector,
-                    response.OutgoingUnresolvedVector,
-                    response.UnresolvedResolutionVector,
-                    cancellationToken).ConfigureAwait(false);
-            }
 
             response.StateDeltas = RelationshipDelta.Zero();
             response.SuggestedStateDeltas = RelationshipDelta.Zero();
@@ -1641,7 +1613,7 @@ namespace Wds.SixStars.Api.Engine
             };
         }
 
-        private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
+        private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken, bool allowStreamingCallbacks = true)
         {
             if (request == null || response == null) return response;
             if (request.GameContext.Flags.TryGetValue("informationFollowup", out string? already) && string.Equals(already, "true", StringComparison.OrdinalIgnoreCase))
@@ -1706,7 +1678,7 @@ namespace Wds.SixStars.Api.Engine
                 return response;
             }
 
-            return await RequestStarDeepResponseWithDataAsync(profile, request, state, response, foregroundVector, selectedNeeds, decision, context, cancellationToken).ConfigureAwait(false);
+            return await RequestStarDeepResponseWithDataAsync(profile, request, state, response, foregroundVector, selectedNeeds, decision, context, cancellationToken, allowStreamingCallbacks).ConfigureAwait(false);
         }
 
         private async Task<StarInteractionResponse> RequestStarDeepResponseWithDataAsync(
@@ -1718,9 +1690,10 @@ namespace Wds.SixStars.Api.Engine
             List<InformationNeedVectorItem> selectedNeeds,
             InformationNeedSelectionResult decision,
             string context,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool allowStreamingCallbacks = true)
         {
-            StarInteractionRequest followupRequest = CloneRequestForInformationFollowup(request, context, selectedNeeds, fullVector, decision);
+            StarInteractionRequest followupRequest = CloneRequestForInformationFollowup(request, context, selectedNeeds, fullVector, decision, allowStreamingCallbacks);
             try
             {
                 StarInteractionResponse followup = await _agent.GenerateAsync(profile, followupRequest, state, cancellationToken).ConfigureAwait(false);
@@ -1779,7 +1752,7 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
-        private static StarInteractionRequest CloneRequestForInformationFollowup(StarInteractionRequest request, string context, List<InformationNeedVectorItem> selectedNeeds, List<InformationNeedVectorItem> fullVector, InformationNeedSelectionResult decision)
+        private static StarInteractionRequest CloneRequestForInformationFollowup(StarInteractionRequest request, string context, List<InformationNeedVectorItem> selectedNeeds, List<InformationNeedVectorItem> fullVector, InformationNeedSelectionResult decision, bool allowStreamingCallbacks = true)
         {
             StarInteractionRequest clone = new StarInteractionRequest
             {
@@ -1792,8 +1765,8 @@ namespace Wds.SixStars.Api.Engine
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
                 AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
                 RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList(),
-                SpokenChunkReady = request.SpokenChunkReady,
-                StreamActionReady = request.StreamActionReady
+                SpokenChunkReady = allowStreamingCallbacks ? request.SpokenChunkReady : null,
+                StreamActionReady = allowStreamingCallbacks ? request.StreamActionReady : null
             };
             clone.GameContext.Flags["informationFollowup"] = "true";
             clone.GameContext.Flags["extraInformationContext"] = context;
@@ -1801,16 +1774,16 @@ namespace Wds.SixStars.Api.Engine
             clone.GameContext.Flags["informationNeedsSelected"] = SummarizeNeedsForEvent(selectedNeeds);
             clone.GameContext.Flags["informationNeedDecision"] = SummarizeSelection(decision);
             clone.GameContext.Flags["informationOriginalPlayerSpeech"] = request.PlayerText ?? string.Empty;
-            clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The fast response detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
+            clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The private background review detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
             return clone;
         }
 
         private static List<InformationNeedVectorItem> InferInformationNeedsFromStreamingBridge(StarInteractionRequest request, StarInteractionResponse response)
         {
             string spoken = (response?.SpokenText ?? string.Empty).ToLowerInvariant();
-            // Legacy compatibility fallback: current fast speech can emit explicit ~info controls,
-            // but older/stale models may still only say a lookup/checking bridge. Keep this
-            // deliberately conservative so generic uncertainty never becomes an accidental search.
+            // Compatibility fallback for older structured paths that may express a lookup/checking
+            // bridge in speech instead of returning an information vector. Normal fast Chat no
+            // longer uses this path; its private background review owns information needs.
             bool soundsUncertain = spoken.Contains("need to check")
                 || spoken.Contains("need to look")
                 || spoken.Contains("need to remember")
@@ -3198,7 +3171,40 @@ namespace Wds.SixStars.Api.Engine
                             StarInteractionResponse analyzed = reviewResult.Analysis;
                             ApplyVoiceDefaults(profile, analyzed);
                             await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, workToken).ConfigureAwait(false);
+                            analyzed.UnityEvents.Add(CreateBackgroundReviewMetadataEvent(request));
                             BackgroundAnalysisCompleted?.Invoke(this, analyzed);
+
+                            // The private review now owns missing-reference detection. If it asks for
+                            // local data, resolve it only after the durable review has settled, then
+                            // emit a separate spoken continuation. No foreground e/q/i protocol is
+                            // needed and no second background review is scheduled for this continuation.
+                            if (analyzed.InformationNeeds != null && analyzed.InformationNeeds.Count > 0)
+                            {
+                                try
+                                {
+                                    StarState latestState = await _memoryApi.GetStarStateAsync(request.SessionId, request.StarId, workToken).ConfigureAwait(false);
+                                    StarInteractionResponse followup = await TryResolveInformationNeedAsync(
+                                        profile, request, latestState, analyzed, workToken, allowStreamingCallbacks: false).ConfigureAwait(false);
+                                    if (followup.InformationFollowupSucceeded && !string.IsNullOrWhiteSpace(followup.SpokenText))
+                                    {
+                                        followup.UnityEvents.Add(CreateBackgroundInformationFollowupMetadataEvent(request));
+                                        ApplyVoiceDefaults(profile, followup);
+                                        BackgroundInformationFollowupCompleted?.Invoke(this, followup);
+                                    }
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    // The durable review is already committed. If the player starts a new
+                                    // foreground turn while this optional continuation is looking up data,
+                                    // drop the stale continuation instead of replaying the whole review.
+                                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background information follow-up was preempted by new foreground work.");
+                                }
+                                catch (Exception infoEx)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background information follow-up failed: " + infoEx);
+                                }
+                            }
+
                             NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
                             ScheduleInterstarCycleAfterSettlement(request, analyzed);
                         }
@@ -3245,6 +3251,30 @@ namespace Wds.SixStars.Api.Engine
                 // review is durable background work and should not seize the single local LLM or
                 // evict the foreground prompt cache while the player is still hearing/responding.
                 delay: TimeSpan.FromSeconds(20));
+        }
+
+        private static UnityEventEnvelope CreateBackgroundReviewMetadataEvent(StarInteractionRequest request)
+        {
+            UnityEventEnvelope evt = new UnityEventEnvelope
+            {
+                Type = "BackgroundReviewMetadata",
+                Target = request?.StarId ?? string.Empty
+            };
+            evt.Data["sessionId"] = request?.SessionId ?? string.Empty;
+            evt.Data["requestType"] = request?.RequestType.ToString() ?? RequestType.Chat.ToString();
+            evt.Data["mobileBridge"] = request?.GameContext?.Flags != null
+                && request.GameContext.Flags.TryGetValue("mobileBridge", out string? mobile)
+                && string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase)
+                    ? "true"
+                    : "false";
+            return evt;
+        }
+
+        private static UnityEventEnvelope CreateBackgroundInformationFollowupMetadataEvent(StarInteractionRequest request)
+        {
+            UnityEventEnvelope evt = CreateBackgroundReviewMetadataEvent(request);
+            evt.Type = "BackgroundInformationFollowupReady";
+            return evt;
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)

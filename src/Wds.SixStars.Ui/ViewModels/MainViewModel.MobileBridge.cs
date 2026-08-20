@@ -1670,6 +1670,112 @@ public sealed partial class MainViewModel
         }
     }
 
+    private void PublishMobileBridgeBackgroundEmotionAnimationCue(StarInteractionResponse response)
+    {
+        if (response == null || string.IsNullOrWhiteSpace(response.EmotionAnimationName)) return;
+        string mobile = GetResponseEventData(response, "BackgroundReviewMetadata", "mobileBridge");
+        if (!string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase)) return;
+
+        string sessionId = GetResponseEventData(response, "BackgroundReviewMetadata", "sessionId");
+        try
+        {
+            string animation = response.EmotionAnimationName.Trim().ToLowerInvariant();
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "StarEmotionAnimationCue",
+                CommandId = "background-emotion-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                SourceClientId = "SixStarsBackgroundReview",
+                SessionId = sessionId,
+                StarId = response.StarId ?? string.Empty,
+                SelectedStarId = SelectedStarId,
+                AnimationName = animation,
+                Message = animation
+            });
+            AppendMobileBridgeVoiceDebug("Background emotion animation queued", (response.StarId ?? "Star") + " -> " + animation);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish background Star emotion animation cue: " + ex.Message);
+        }
+    }
+
+    private async Task HandleBackgroundInformationFollowupResponseAsync(StarInteractionResponse response)
+    {
+        if (response == null || string.IsNullOrWhiteSpace(response.SpokenText)) return;
+        string mobile = GetResponseEventData(response, "BackgroundInformationFollowupReady", "mobileBridge");
+        string sessionId = FirstNonEmptyForMobile(
+            GetResponseEventData(response, "BackgroundInformationFollowupReady", "sessionId"),
+            "android-phone-dev");
+        // The lookup answer is a new spoken continuation even if the original input arrived via
+        // Photo/voice transport, so publish it as ordinary Chat for Android conversation display.
+        RequestType requestType = RequestType.Chat;
+
+        if (string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                string starId = response.StarId ?? SelectedStarId;
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, CancellationToken.None).ConfigureAwait(false);
+                MobileBridgeRequest mobileRequest = new MobileBridgeRequest
+                {
+                    StarId = starId,
+                    RequestType = requestType.ToString(),
+                    ReturnAudio = true,
+                    SessionId = sessionId,
+                    ClientName = "SixStarsMobileAndroid-BackgroundInfo"
+                };
+                StarInteractionRequest runtimeRequest = new StarInteractionRequest
+                {
+                    SessionId = sessionId,
+                    StarId = starId,
+                    RequestType = requestType,
+                    PlayerText = string.Empty,
+                    GameContext = CreateMobileGameContext(mobileRequest, starId)
+                };
+                MobileBridgeResponse mobileResponse = CreateMobileResponse(mobileRequest, runtimeRequest, string.Empty, response, state);
+
+                // The background continuation has no direct HTTP response. Queue its visible text
+                // first, then use the ordinary phone voice stream for the answer.
+                PublishMobileConversationResponseEventIfNeeded(mobileRequest, runtimeRequest, mobileResponse, response, state);
+                OnUiThread(() =>
+                {
+                    StarOutput = FormatStarOutput(response);
+                    Status = starId + " found the requested information and is answering now.";
+                    AppendMobileBridgeVoiceDebug("Background information follow-up ready", starId + ", chars=" + response.SpokenText.Length);
+                });
+                await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Background information follow-up failed", ex.Message));
+            }
+            return;
+        }
+
+        try
+        {
+            OnUiThread(() =>
+            {
+                StarOutput = FormatStarOutput(response);
+                Status = (response.StarId ?? "Star") + " found the requested information and is answering now.";
+            });
+            await SpeakStarResponseAsync(response, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() => Status = "Background information follow-up voice failed: " + ex.Message);
+        }
+    }
+
+    private static string GetResponseEventData(StarInteractionResponse response, string eventType, string key)
+    {
+        if (response?.UnityEvents == null) return string.Empty;
+        UnityEventEnvelope? evt = response.UnityEvents.LastOrDefault(x =>
+            x != null && string.Equals(x.Type, eventType, StringComparison.OrdinalIgnoreCase));
+        if (evt?.Data != null && evt.Data.TryGetValue(key, out string? value)) return value ?? string.Empty;
+        return string.Empty;
+    }
+
     private void PublishMobileBridgeTopEmotionUpdate(StarInteractionResponse response, string eventType = "TopAffectedEmotionsChanged")
     {
         if (response == null) return;
@@ -2098,30 +2204,6 @@ public sealed partial class MainViewModel
                     }
                 };
 
-                request.StreamActionReady = action =>
-                {
-                    if (action == null
-                        || !string.Equals(action.ActionType, "emotion", StringComparison.OrdinalIgnoreCase)
-                        || string.IsNullOrWhiteSpace(action.Name)) return;
-                    try
-                    {
-                        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
-                        {
-                            EventType = "StarEmotionAnimationCue",
-                            CommandId = streamingResponseId,
-                            SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
-                            SessionId = request.SessionId ?? string.Empty,
-                            StarId = request.StarId ?? starId,
-                            SelectedStarId = SelectedStarId,
-                            AnimationName = action.Name.Trim().ToLowerInvariant(),
-                            Message = action.Name.Trim().ToLowerInvariant()
-                        });
-                    }
-                    catch (Exception actionEventError)
-                    {
-                        System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish Star emotion animation cue: " + actionEventError.Message);
-                    }
-                };
             }
 
             ResetLlmDebugLog(request);

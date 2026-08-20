@@ -598,7 +598,6 @@ namespace Wds.SixStars.Api.Ai
                 recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
                 durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
                 unresolvedStateContext = BuildCompactUnresolvedReviewContext(state),
-                foregroundMarkedQuestionsToLastCat = foregroundResponse.OutgoingUnresolvedVector ?? string.Empty,
                 storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
@@ -783,13 +782,12 @@ namespace Wds.SixStars.Api.Ai
                 ? "This is a STORY FOREGROUND PASS. The goal is to return a complete cached story plus the first spoken story chunk for TTS. Do not include emotion vectors here; background review handles scoring and memory. The Story button itself is sufficient instruction; an empty player message means invent a fresh complete story, not a chat reply."
                 : request.RequestType == RequestType.StarInitiative
                     ? "This is a STAR INITIATIVE CHECK PASS. The app is asking whether the Star has a state-backed thing she wants to say at rest. This is not a player message and must not produce emotion vectors, memory updates, or relationship deltas."
-                    : "This is the FAST STREAMING FOREGROUND SPEECH PASS. Begin the real spoken answer immediately.";
+                    : string.Empty;
 
             object data = new
             {
                 starDisplayName = profile.DisplayName,
                 plainStreamingSpeech,
-                emotionAnimationNames = "happy, confused, sad, angry, love",
                 foregroundModeInstructions,
                 globalCanonLore = globalCanon.ToString().TrimEnd(),
                 privateRomanceProfile = privateRomance.ToString().TrimEnd(),
@@ -822,8 +820,9 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
+            int currentTurnNumber = Math.Max(1, state.InteractionCount + 1);
             StringBuilder recentTurns = new StringBuilder();
-            AppendRecentConversationHistory(recentTurns, profile, state, storyRequest ? 3 : Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true);
+            AppendRecentConversationHistory(recentTurns, profile, state, storyRequest ? 3 : Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true, currentTurnNumber: currentTurnNumber);
 
             StringBuilder importantMemory = new StringBuilder();
             if (storyRequest)
@@ -936,10 +935,10 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Use the fast speech stream from the system message and answer the Last Cat directly.");
+                contract.AppendLine("Return only the spoken reply and answer the Last Cat directly. Act any actions out in first person.");
                 if (IsTruthyFlag(request, "informationFollowup"))
                 {
-                    contract.AppendLine("MATCHED INFORMATION: use the attached reference to answer now. Do not request another i lookup in this pass.");
+                    contract.AppendLine("MATCHED INFORMATION: use the attached reference to answer the original question now. Do not ask for another lookup in this pass.");
                 }
             }
             if (request.RequestType == RequestType.Story)
@@ -958,11 +957,11 @@ namespace Wds.SixStars.Api.Ai
                     string maxChunks = request.GameContext.Flags.TryGetValue("foregroundConciseMaxChunks", out string? maxValue) ? maxValue : "5";
                     if (IsTruthyFlag(request, "foregroundRespectExplicitLength"))
                     {
-                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep an ordinary response to roughly " + minChunks + "-" + maxChunks + " delimiter-terminated speech chunks. This limit does NOT apply when the Last Cat explicitly requests a longer story, a specified number of jokes, a detailed explanation, a list whose requested size exceeds the limit, or any other response whose requested useful content requires more space. Complete the explicit request rather than truncating it.");
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep an ordinary response to roughly " + minChunks + "-" + maxChunks + " natural spoken sentences. This limit does NOT apply when the Last Cat explicitly requests a longer story, a specified number of jokes, a detailed explanation, a list whose requested size exceeds the limit, or any other response whose requested useful content requires more space. Complete the explicit request rather than truncating it.");
                     }
                     else
                     {
-                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep the response to roughly " + minChunks + "-" + maxChunks + " delimiter-terminated speech chunks.");
+                        contract.AppendLine("CONCISE MODE FOR THIS TURN: keep the response to roughly " + minChunks + "-" + maxChunks + " natural spoken sentences.");
                     }
                 }
             }
@@ -973,6 +972,7 @@ namespace Wds.SixStars.Api.Ai
                 playerTextBlock = request.RequestType == RequestType.StarInitiative ? "> [No player message. This is a system at-rest state check.]" : QuoteBlock(request.PlayerText),
                 requestType = request.RequestType.ToString(),
                 currentTimeContext = BuildCurrentTimeContext(),
+                currentTurnNumber,
                 romanceMode = request.GameContext.RomanceMode.ToString(),
                 area = request.GameContext.Area ?? string.Empty,
                 quest = request.GameContext.Quest ?? string.Empty,
@@ -1012,7 +1012,7 @@ namespace Wds.SixStars.Api.Ai
             task.AppendLine("Current state: met=" + state.IsMet + ", ally=" + state.IsAlly + ", girlfriend=" + state.IsGirlfriend + ", girlfriendReady=" + state.IsGirlfriendReady + ", Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", EmotionalConnectionPercent=" + state.EmotionalConnectionPercent.ToString("0.0") + ".");
             task.AppendLine("Only one Star can be the Last Cat's girlfriend at a time. If an existing girlfriend is someone else, you must say no because he is already committed, and you may ask him to end that relationship first if he truly means this.");
             task.AppendLine("If decision=accept, say yes clearly and warmly in character. If decision=already_girlfriend, affirm that she already is his girlfriend. If decision=not_ready_no_for_now, say not yet with affection and give a clear path: become/keep ally status, build trust, heart, romance, emotional safety, and personality-matched connection. If decision=blocked_existing_girlfriend, refuse clearly but gracefully.");
-            task.AppendLine("Keep it concise: roughly 2-5 natural speech chunks separated by §. Do not mention flags, numbers, deterministic gates, or the delimiter unless the player explicitly asked about mechanics.");
+            task.AppendLine("Keep it concise: roughly 2-5 natural spoken sentences. Do not mention flags, numbers, or deterministic gates unless the player explicitly asked about mechanics.");
         }
 
         private static string GetFlag(GameContext context, string key)
@@ -1030,11 +1030,12 @@ namespace Wds.SixStars.Api.Ai
                 || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact)
+        private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact, int currentTurnNumber)
         {
             List<ConversationLogEntry> usableHistory = GetUsableRecentConversationHistory(state, Math.Max(1, maxItems));
 
             sb.AppendLine("RECENT CONVERSATION HISTORY FROM MEMORY LOG / SAVED STATE — newest first. Use this for continuity, follow-ups, pronouns, tone, and relationship pacing.");
+            sb.AppendLine("Current turn is Turn " + currentTurnNumber + ". Prior turns below use their conversation turn numbers rather than restarting at Turn 1 each request.");
             if (usableHistory.Count == 0)
             {
                 sb.AppendLine("No usable prior spoken turns are recorded for this Star yet. Technical parser-fallback turns are intentionally omitted from roleplay memory.");
@@ -1042,19 +1043,23 @@ namespace Wds.SixStars.Api.Ai
                 return;
             }
 
+            Dictionary<ConversationLogEntry, int> retainedTurnNumbers = BuildRetainedConversationTurnNumberMap(state);
             int i = 1;
             foreach (ConversationLogEntry entry in usableHistory)
             {
+                int actualTurnNumber = retainedTurnNumbers.TryGetValue(entry, out int storedTurnNumber)
+                    ? storedTurnNumber
+                    : Math.Max(1, currentTurnNumber - i);
                 if (compact)
                 {
-                    sb.AppendLine("- Turn " + i + ": requestType=" + entry.RequestType + "; player=" + QuoteInline(Truncate(entry.PlayerText, 220)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 240)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 240));
+                    sb.AppendLine("- Turn " + actualTurnNumber + (i == 1 ? " (most recent)" : string.Empty) + ": requestType=" + entry.RequestType + "; player=" + QuoteInline(Truncate(entry.PlayerText, 320)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 320)));
+                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 320));
                 }
                 else
                 {
-                    sb.AppendLine("- Turn " + i + " (" + (i == 1 ? "most recent" : "older") + ") at " + entry.CreatedAt.ToString("o") + "; requestType=" + entry.RequestType);
-                    sb.AppendLine("  player=" + QuoteInline(Truncate(entry.PlayerText, 260)));
-                    sb.AppendLine("  " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 320)));
+                    sb.AppendLine("- Turn " + actualTurnNumber + " (" + (i == 1 ? "most recent" : "older") + ") at " + entry.CreatedAt.ToString("o") + "; requestType=" + entry.RequestType);
+                    sb.AppendLine("  player=" + QuoteInline(Truncate(entry.PlayerText, 420)));
+                    sb.AppendLine("  " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 520)));
                     if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 300));
                     if (entry.ImportantQuotes.Count > 0) sb.AppendLine("  impactfulQuotes=" + string.Join(" | ", entry.ImportantQuotes.Take(4)));
                     if (entry.RelationshipEvents.Count > 0) sb.AppendLine("  relationshipEvents=" + string.Join(" | ", entry.RelationshipEvents.Take(4)));
@@ -2063,7 +2068,7 @@ namespace Wds.SixStars.Api.Ai
             sb.AppendLine("CharacterAttributesRule=Use these broad 0-100 trait pressures silently to flavor voice, flaws, instincts, restraint, and judgment. Do not recite them unless the Last Cat asks about mechanics.");
             if (profile.CharacterAttributeNotes != null && profile.CharacterAttributeNotes.Count > 0)
             {
-                sb.AppendLine("CharacterAttributeNotes=" + string.Join("; ", profile.CharacterAttributeNotes.Take(6).Select(x => Truncate(x, 180))));
+                sb.AppendLine("CharacterAttributeNotes=" + string.Join("; ", profile.CharacterAttributeNotes.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim())));
             }
         }
 
@@ -2077,22 +2082,26 @@ namespace Wds.SixStars.Api.Ai
         {
             sb.AppendLine();
             sb.AppendLine("FAST CHAT IDENTITY / LORE CARD");
-            sb.AppendLine("Identity=" + profile.DisplayName + "|element=" + profile.Element + "|domain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "|quote=" + Truncate(profile.CoreQuote, 180)));
-            if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("ActionBattlePreference=" + Truncate(profile.ActionBattlePreference, 420));
+            sb.AppendLine("Identity=" + profile.DisplayName + "|element=" + profile.Element + "|domain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "|quote=" + profile.CoreQuote.Trim()));
+            if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("ActionBattlePreference=" + profile.ActionBattlePreference.Trim());
             AppendCharacterAttributeRequestContext(sb, profile);
             if (profile.CuteModeInstructions != null && profile.CuteModeInstructions.Count > 0)
             {
-                sb.AppendLine("CutePalette=" + string.Join(" ~ ", profile.CuteModeInstructions.Where(x => !string.IsNullOrWhiteSpace(x)).Take(5).Select(x => Truncate(x, 130))));
+                List<string> cutePalette = profile.CuteModeInstructions
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x.Trim())
+                    .ToList();
+                if (cutePalette.Count > 0) sb.AppendLine("CutePalette=" + string.Join(" ~ ", cutePalette));
             }
-            sb.AppendLine("DomainMagicFlirtAccent=" + Truncate(BuildDomainMagicFlirtInstruction(profile), 300));
+            string domainMagicFlirt = BuildDomainMagicFlirtInstruction(profile);
+            if (!string.IsNullOrWhiteSpace(domainMagicFlirt)) sb.AppendLine("DomainMagicFlirtAccent=" + domainMagicFlirt.Trim());
 
-            // CompleteBackgroundStory subsumes BackstorySummary for the built-in Stars. Prefer the
-            // richer single source instead of sending the same backstory twice every turn.
-            if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Background=" + Truncate(profile.CompleteBackgroundStory, 620));
-            else if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Background=" + Truncate(profile.BackstorySummary, 520));
+            // This card is the Star's stable foreground identity reference. Keep each configured
+            // item whole so a rule, contact, secret, or lore sentence is never silently clipped
+            // in the middle before the model sees it.
+            if (!string.IsNullOrWhiteSpace(profile.CompleteBackgroundStory)) sb.AppendLine("Background=" + profile.CompleteBackgroundStory.Trim());
+            else if (!string.IsNullOrWhiteSpace(profile.BackstorySummary)) sb.AppendLine("Background=" + profile.BackstorySummary.Trim());
 
-            // Contacts are encoded as a compact vector. PeopleKnown already carries richer summaries
-            // for some of the same names, so exact duplicate contact labels are not emitted twice.
             List<string> knownNames = (profile.PeopleKnown ?? new List<KnownPerson>())
                 .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DisplayName))
                 .Select(x => x.DisplayName.Trim())
@@ -2100,35 +2109,32 @@ namespace Wds.SixStars.Api.Ai
             List<string> contacts = (profile.FriendsAndContacts ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Where(x => !knownNames.Any(name => x.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0))
+                .Select(x => x.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(8)
-                .Select(x => Truncate(x, 190))
                 .ToList();
             if (contacts.Count > 0) sb.AppendLine("Contacts=" + string.Join(" ~ ", contacts));
 
-            if (profile.PeopleKnown.Count > 0)
+            if (profile.PeopleKnown != null && profile.PeopleKnown.Count > 0)
             {
                 List<string> people = profile.PeopleKnown
                     .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DisplayName))
-                    .Take(8)
-                    .Select(person => Truncate(person.DisplayName, 70) + "^" + Truncate(person.Relationship, 90) + "^" + Truncate(person.Summary, 190))
+                    .Select(person => (person.DisplayName ?? string.Empty).Trim() + "^" + (person.Relationship ?? string.Empty).Trim() + "^" + (person.Summary ?? string.Empty).Trim())
                     .ToList();
                 if (people.Count > 0) sb.AppendLine("KnownPeople=name^relation^meaning :: " + string.Join(" ~ ", people));
             }
 
-            List<string> secrets = (profile.StarSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(5).Select(x => Truncate(x, 210)).ToList();
+            List<string> secrets = (profile.StarSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
             if (secrets.Count > 0) sb.AppendLine("Secrets=" + string.Join(" ~ ", secrets));
-            List<string> skills = (profile.SkillSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(6).Select(x => Truncate(x, 210)).ToList();
+            List<string> skills = (profile.SkillSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
             if (skills.Count > 0) sb.AppendLine("Skills=" + string.Join(" ~ ", skills));
 
             // Keep Star-specific voice/behavior facts, but omit generic story-length rules already
-            // present in the stable system contract.
+            // present in the stable system contract. Do not clip or count-limit the remaining rules.
             List<string> behavior = (profile.SpokenResponseRules ?? new List<string>())
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Where(x => x.IndexOf("asked for any kind of story", StringComparison.OrdinalIgnoreCase) < 0)
                 .Where(x => x.IndexOf("story must have a real beginning", StringComparison.OrdinalIgnoreCase) < 0)
-                .Take(8)
-                .Select(x => Truncate(x, 220))
+                .Select(x => x.Trim())
                 .ToList();
             if (behavior.Count > 0) sb.AppendLine("StarVoiceRules=" + string.Join(" ~ ", behavior));
         }
@@ -2261,6 +2267,32 @@ namespace Wds.SixStars.Api.Ai
             return entry == null ? "none yet" : QuoteInline(Truncate(entry.StarResponse, 360));
         }
 
+        private static Dictionary<ConversationLogEntry, int> BuildRetainedConversationTurnNumberMap(StarState state)
+        {
+            Dictionary<ConversationLogEntry, int> result = new Dictionary<ConversationLogEntry, int>();
+            if (state == null || state.InteractionCount <= 0) return result;
+
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives
+                    .Where(x => x != null)
+                    .SelectMany(x => x.Entries ?? new List<ConversationLogEntry>())
+                    .Where(x => x != null));
+            }
+
+            List<ConversationLogEntry> newestFirst = retained
+                .Distinct()
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
+            for (int index = 0; index < newestFirst.Count; index++)
+            {
+                result[newestFirst[index]] = Math.Max(1, state.InteractionCount - index);
+            }
+            return result;
+        }
+
         private static List<ConversationLogEntry> GetUsableRecentConversationHistory(StarState state, int maxItems)
         {
             List<ConversationLogEntry> history = new List<ConversationLogEntry>();
@@ -2269,7 +2301,11 @@ namespace Wds.SixStars.Api.Ai
                 history.AddRange(state.MemoryLog.Where(IsUsableConversationTurn));
             }
 
-            if (history.Count == 0 && state?.OldConversationArchives != null)
+            // Fill the recent-turn window from archived source entries too. Previously the archive
+            // was consulted only when MemoryLog was completely empty, which meant a short active
+            // session could hide the immediately preceding conversation even though those turns
+            // were still retained locally.
+            if (state?.OldConversationArchives != null)
             {
                 history.AddRange(state.OldConversationArchives
                     .Where(x => x != null)
@@ -2279,6 +2315,7 @@ namespace Wds.SixStars.Api.Ai
             }
 
             return history
+                .Distinct()
                 .OrderByDescending(x => x.CreatedAt)
                 .Take(Math.Max(1, maxItems))
                 .ToList();

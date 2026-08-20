@@ -74,6 +74,8 @@ namespace Wds.SixStars.Api.Engine
                 stateAfter = SnapshotState(stateAfter),
                 emotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
                 negativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+                emotionAnimation = response.EmotionAnimationName ?? string.Empty,
+                informationNeeds = (response.InformationNeeds ?? new List<InformationNeedVectorItem>()).Select(x => new { source = x.DataType, subject = x.Query, score = x.Score, confidence = x.Confidence }).ToList(),
                 requestToShowBoobs = response.RequestToShowBoobs,
                 topAffectedEmotions = response.TopAffectedEmotions ?? new List<TopAffectedEmotion>(),
                 acceptedPositiveSignals = response.AcceptedPositiveEmotionSignals ?? new List<string>(),
