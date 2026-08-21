@@ -2172,7 +2172,6 @@ namespace Wds.SixStars.Api.Engine
                 foreach (ConversationLogEntry entry in state.MemoryLog.Where(x => x != null).Take(24))
                 {
                     sb.AppendLine("- " + entry.CreatedAt.ToString("u") + ": player=" + QuoteForInfo(TruncateForInfo(entry.PlayerText, 260)) + " star=" + QuoteForInfo(TruncateForInfo(entry.StarResponse, 260)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.AppendLine("  summary: " + TruncateForInfo(entry.Summary, 320));
                 }
             }
 

@@ -139,10 +139,6 @@ namespace Wds.SixStars.Api.Forge.Context
                 string line = "Turn " + index + ": requestType=" + entry.RequestType
                     + "; player=\"" + EscapeInline(Truncate(entry.PlayerText, 220)) + "\"; "
                     + profile.DisplayName + "=\"" + EscapeInline(Truncate(entry.StarResponse, 240)) + "\"";
-                if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary))
-                {
-                    line += " | summary=" + Truncate(entry.Summary, 240);
-                }
                 AddList(card, "Turns", new[] { line });
                 index++;
             }

@@ -372,7 +372,6 @@ public sealed partial class MainViewModel
             requestType = entry.RequestType ?? string.Empty,
             playerText = entry.PlayerText ?? string.Empty,
             starResponse = entry.StarResponse ?? string.Empty,
-            summary = entry.Summary ?? string.Empty,
             emotionalEffectVector = entry.EmotionalEffectVector ?? string.Empty,
             negativeEmotionVector = entry.NegativeEmotionVector ?? string.Empty,
             deterministicEmotionSummary = entry.DeterministicEmotionSummary ?? string.Empty,

@@ -387,7 +387,6 @@ function renderTurn(turn) {
     ${deltas ? `<div class="delta-row">${deltas}</div>` : ''}
     ${combos ? `<div class="combo-row">${combos}</div>` : ''}
     ${signals ? `<div class="emotion-row">${signals}</div>` : ''}
-    ${turn.summary ? `<div class="summary">${escapeHtml(turn.summary)}</div>` : ''}
   </article>`;
 }
 

@@ -339,7 +339,7 @@ namespace Wds.SixStars.Api.Ai
                 int i = 1;
                 foreach (ConversationLogEntry entry in recentTurns)
                 {
-                    recent.AppendLine("- Turn " + i + " at " + entry.CreatedAt.ToString("u") + ": player=" + QuoteInline(Truncate(entry.PlayerText, 180)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 220)) + "; summary=" + Truncate(entry.Summary, 220));
+                    recent.AppendLine("- Turn " + i + " at " + entry.CreatedAt.ToString("u") + ": player=" + QuoteInline(Truncate(entry.PlayerText, 180)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 220)));
                     i++;
                 }
             }
@@ -458,8 +458,7 @@ namespace Wds.SixStars.Api.Ai
                 {
                     index = index + 1,
                     player = QuoteInline(Truncate(entry.PlayerText, 180)),
-                    star = QuoteInline(Truncate(entry.StarResponse, 220)),
-                    summary = Truncate(entry.Summary, 220)
+                    star = QuoteInline(Truncate(entry.StarResponse, 220))
                 })
                 .ToList();
 
@@ -1053,14 +1052,12 @@ namespace Wds.SixStars.Api.Ai
                 if (compact)
                 {
                     sb.AppendLine("- Turn " + actualTurnNumber + (i == 1 ? " (most recent)" : string.Empty) + ": requestType=" + entry.RequestType + "; player=" + QuoteInline(Truncate(entry.PlayerText, 320)) + "; " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 320)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 320));
                 }
                 else
                 {
                     sb.AppendLine("- Turn " + actualTurnNumber + " (" + (i == 1 ? "most recent" : "older") + ") at " + entry.CreatedAt.ToString("o") + "; requestType=" + entry.RequestType);
                     sb.AppendLine("  player=" + QuoteInline(Truncate(entry.PlayerText, 420)));
                     sb.AppendLine("  " + profile.DisplayName + "=" + QuoteInline(Truncate(entry.StarResponse, 520)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary) && !IsTechnicalMemoryNote(entry.Summary)) sb.AppendLine("  summary=" + Truncate(entry.Summary, 300));
                     if (entry.ImportantQuotes.Count > 0) sb.AppendLine("  impactfulQuotes=" + string.Join(" | ", entry.ImportantQuotes.Take(4)));
                     if (entry.RelationshipEvents.Count > 0) sb.AppendLine("  relationshipEvents=" + string.Join(" | ", entry.RelationshipEvents.Take(4)));
                     if (entry.Tags.Count > 0) sb.AppendLine("  tags=" + string.Join(", ", entry.Tags.Take(6)));
