@@ -385,6 +385,9 @@ public final class MainActivity extends ComponentActivity {
             }
 
             @Override public void onPlaybackStarted(PhoneVoicePlaybackService.PhoneVoiceClip clip, long durationMs, long playbackElapsedMs) {
+                if (clip != null && clip.fromDesktop && clip.audioSequence == 0 && clip.streamId != null && !clip.streamId.isEmpty()) {
+                    notifyDesktopVoicePlaybackStarted(clip);
+                }
                 runOnUiThread(() -> {
                     starVoicePlaybackActive = true;
                     activeAnimatedVoiceClip = clip;
@@ -1749,6 +1752,25 @@ public final class MainActivity extends ComponentActivity {
         // A phone-audio reconnect clears transport state and could cut a playing sentence short.
         if (viewModel != null) viewModel.ensureConnected();
         else bridgeConnectionService.ensureConnected();
+    }
+
+    private void notifyDesktopVoicePlaybackStarted(PhoneVoicePlaybackService.PhoneVoiceClip clip) {
+        if (destroyed || clip == null || !clip.fromDesktop || clip.audioSequence != 0
+                || clip.streamId == null || clip.streamId.trim().isEmpty()) return;
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-playback-start-" + System.currentTimeMillis());
+            json.put("commandType", "VoicePlaybackStarted");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("voiceStreamId", clip.streamId);
+            json.put("voiceAudioSequence", clip.audioSequence);
+            json.put("reason", "Android AudioTrack playback head advanced for the first desktop voice sentence.");
+            sendSocketRequest("dispatch", json, 10000L, response -> { }, error -> { });
+        } catch (Exception ignored) {
+            // Best-effort timing acknowledgement only. Voice playback must never depend on it.
+        }
     }
 
     private void notifyDesktopPlayerActivity(String reason) {

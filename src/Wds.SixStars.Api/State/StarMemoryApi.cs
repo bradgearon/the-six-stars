@@ -36,7 +36,7 @@ namespace Wds.SixStars.Api.State
         public async Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow) || PruneExpiredShortTermMemory(state, DateTimeOffset.UtcNow))
             {
                 await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
             }
@@ -46,7 +46,7 @@ namespace Wds.SixStars.Api.State
         public async Task<StarMemorySnapshot> GetStarMemorySnapshotAsync(string sessionId, string starId, int recentHistoryCount, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow) || PruneExpiredShortTermMemory(state, DateTimeOffset.UtcNow))
             {
                 await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
             }
@@ -99,6 +99,7 @@ namespace Wds.SixStars.Api.State
             DateTimeOffset now = DateTimeOffset.UtcNow;
             NormalizeWorldDefaults(state);
             PruneExpiredEffectors(state, now);
+            PruneExpiredShortTermMemory(state, now);
 
             bool isInternalBackgroundUpdate = request.IsInternalBackgroundUpdate;
             bool suppressConversationSummaryUpdate = request.SuppressConversationSummaryUpdate || isInternalBackgroundUpdate;
@@ -137,6 +138,7 @@ namespace Wds.SixStars.Api.State
             // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
             // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
+            AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, now, request.RequestType);
             List<string> newlyLearnedOrSuggested = AddUniqueWithResult(state.ThingsLearnedOrSuggestedByPlayer, request.ThingsLearnedOrSuggestedByPlayer, _options.MaxThingsLearnedOrSuggestedByPlayer);
             UpdateUnresolvedThreadState(state, request);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
@@ -144,7 +146,10 @@ namespace Wds.SixStars.Api.State
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
             AddUnique(state.SecretsUnlocked, request.SecretsUnlocked, _options.MaxSecrets);
             AddUnique(state.RelationshipEvents, request.RelationshipEvents, _options.MaxRelationshipEvents);
-            AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
+            if (state.IsGirlfriend)
+            {
+                AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
+            }
             AddUnique(state.PetNamesPlayerUsesForStar, request.PetNamesPlayerUsesForStar, 20);
             AddUnique(state.PetNamesStarUsesForPlayer, request.PetNamesStarUsesForPlayer, 20);
             UpdateGirlfriendNeedsMetHistory(state, request, now);
@@ -205,6 +210,7 @@ namespace Wds.SixStars.Api.State
             entry.SecretsUnlocked.AddRange(request.SecretsUnlocked);
 
             state.MemoryLog.Insert(0, entry);
+            StoreConversationRollups(state, request, now);
             ArchiveOldConversationTurns(state, now);
             Trim(state.MemoryLog, _options.MaxMemoryLogEntries);
             }
@@ -1011,6 +1017,21 @@ namespace Wds.SixStars.Api.State
                 state.MemoryLog = new List<ConversationLogEntry>();
                 changed = true;
             }
+            if (state.TenTurnConversationSummaries == null)
+            {
+                state.TenTurnConversationSummaries = new List<StarConversationSummaryBlock>();
+                changed = true;
+            }
+            if (state.HundredTurnConversationSummaries == null)
+            {
+                state.HundredTurnConversationSummaries = new List<StarConversationSummaryBlock>();
+                changed = true;
+            }
+            if (state.OldConversationArchives == null)
+            {
+                state.OldConversationArchives = new List<StarConversationArchiveEntry>();
+                changed = true;
+            }
             if (state.OtherStars == null)
             {
                 state.OtherStars = new List<InterstarRelationshipState>();
@@ -1032,6 +1053,11 @@ namespace Wds.SixStars.Api.State
             if (state.MemoryNotes == null)
             {
                 state.MemoryNotes = new List<string>();
+                changed = true;
+            }
+            if (state.ShortTermMemory == null)
+            {
+                state.ShortTermMemory = new List<StarShortTermMemoryEntry>();
                 changed = true;
             }
             if (state.ThingsLearnedOrSuggestedByPlayer == null)
@@ -1138,6 +1164,7 @@ namespace Wds.SixStars.Api.State
                 if (!state.IsMet && !explicitlyRemovedMet) { state.IsMet = true; changed = true; }
                 if (!state.IsAlly && !explicitlyRemovedAlly) { state.IsAlly = true; changed = true; }
             }
+            if (BackfillConversationRollups(state)) changed = true;
             return changed;
         }
 
@@ -1419,6 +1446,50 @@ namespace Wds.SixStars.Api.State
             while (cleaned.Contains("  ", StringComparison.Ordinal)) cleaned = cleaned.Replace("  ", " ");
             if (cleaned.Length <= maxLength) return cleaned;
             return cleaned.Substring(0, maxLength).Trim();
+        }
+
+        private bool PruneExpiredShortTermMemory(StarState state, DateTimeOffset now)
+        {
+            if (state == null) return false;
+            state.ShortTermMemory ??= new List<StarShortTermMemoryEntry>();
+            int windowMs = Math.Max(1000, _options.ShortTermMemoryWindowMs);
+            DateTimeOffset cutoff = now.AddMilliseconds(-windowMs);
+            int before = state.ShortTermMemory.Count;
+            state.ShortTermMemory = state.ShortTermMemory
+                .Where(x => x != null && x.CreatedAt >= cutoff && !string.IsNullOrWhiteSpace(x.Text))
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, _options.MaxShortTermMemoryEntries))
+                .ToList();
+            return state.ShortTermMemory.Count != before;
+        }
+
+        private void AddShortTermMemoryEntries(StarState state, IEnumerable<string>? items, DateTimeOffset now, string? source)
+        {
+            if (state == null || items == null) return;
+            state.ShortTermMemory ??= new List<StarShortTermMemoryEntry>();
+            foreach (string raw in items)
+            {
+                string text = CompactDurableText(raw, 700).Trim();
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                StarShortTermMemoryEntry? existing = state.ShortTermMemory
+                    .FirstOrDefault(x => x != null && string.Equals(x.Text, text, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
+                {
+                    // Preserve the deterministic time this short-term fact was originally added.
+                    // Once it ages out of the configured window, the same fact may be added again
+                    // as a new short-term memory if it is genuinely current again.
+                    continue;
+                }
+                state.ShortTermMemory.Insert(0, new StarShortTermMemoryEntry
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    CreatedAt = now,
+                    Text = text,
+                    Source = string.IsNullOrWhiteSpace(source) ? "background-review" : source.Trim()
+                });
+            }
+            PruneExpiredShortTermMemory(state, now);
+            Trim(state.ShortTermMemory, Math.Max(1, _options.MaxShortTermMemoryEntries));
         }
 
         private static IEnumerable<string> BuildInternalUpdateMemoryNotes(StarStateUpdateRequest request, RelationshipDelta applied)
@@ -1755,6 +1826,144 @@ namespace Wds.SixStars.Api.State
                 state.AllImportantPlayerQuotes.Insert(0, record);
             }
             Trim(state.AllImportantPlayerQuotes, _options.MaxAllImportantQuoteRecords);
+        }
+
+        private static bool BackfillConversationRollups(StarState state)
+        {
+            if (state == null || state.InteractionCount < 10) return false;
+            state.TenTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+            state.HundredTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives.Where(x => x != null).SelectMany(x => x.Entries ?? new List<ConversationLogEntry>()).Where(x => x != null));
+            }
+            List<ConversationLogEntry> newestFirst = retained.Distinct().OrderByDescending(x => x.CreatedAt).ToList();
+            Dictionary<int, ConversationLogEntry> byTurn = new Dictionary<int, ConversationLogEntry>();
+            for (int i = 0; i < newestFirst.Count; i++)
+            {
+                int turn = state.InteractionCount - i;
+                if (turn > 0) byTurn[turn] = newestFirst[i];
+            }
+
+            bool changed = false;
+            int lastCompletedTen = (state.InteractionCount / 10) * 10;
+            for (int endTurn = 10; endTurn <= lastCompletedTen; endTurn += 10)
+            {
+                int startTurn = endTurn - 9;
+                if (state.TenTurnConversationSummaries.Any(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn)) continue;
+                List<ConversationLogEntry> block = Enumerable.Range(startTurn, 10).Where(byTurn.ContainsKey).Select(x => byTurn[x]).ToList();
+                if (block.Count != 10) continue;
+                string summary = string.Join(" ", block.Select(x => string.IsNullOrWhiteSpace(x.Summary)
+                    ? ("The player said " + TruncateLocal(x.PlayerText, 100) + ", and the Star replied " + TruncateLocal(x.StarResponse, 100) + ".")
+                    : TruncateLocal(x.Summary, 180)));
+                summary = CompactDurableText(summary, 1400);
+                if (string.IsNullOrWhiteSpace(summary)) continue;
+                state.TenTurnConversationSummaries.Add(new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = block.Last().CreatedAt,
+                    Summary = summary
+                });
+                changed = true;
+            }
+            state.TenTurnConversationSummaries = state.TenTurnConversationSummaries.OrderByDescending(x => x.EndTurn).ToList();
+
+            int lastCompletedHundred = (state.InteractionCount / 100) * 100;
+            for (int endTurn = 100; endTurn <= lastCompletedHundred; endTurn += 100)
+            {
+                int startTurn = endTurn - 99;
+                if (state.HundredTurnConversationSummaries.Any(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn)) continue;
+                List<StarConversationSummaryBlock> blocks = state.TenTurnConversationSummaries
+                    .Where(x => x != null && x.StartTurn >= startTurn && x.EndTurn <= endTurn && !string.IsNullOrWhiteSpace(x.Summary))
+                    .OrderBy(x => x.StartTurn)
+                    .ToList();
+                if (blocks.Count != 10) continue;
+                string summary = CompactDurableText(string.Join(" ", blocks.Select(x => x.Summary)), 1800);
+                if (string.IsNullOrWhiteSpace(summary)) continue;
+                state.HundredTurnConversationSummaries.Add(new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = blocks.Last().CreatedAt,
+                    Summary = summary
+                });
+                changed = true;
+            }
+            state.HundredTurnConversationSummaries = state.HundredTurnConversationSummaries.OrderByDescending(x => x.EndTurn).ToList();
+            return changed;
+        }
+
+        private static void StoreConversationRollups(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state == null || request == null || state.InteractionCount <= 0) return;
+            state.TenTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+            state.HundredTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+
+            int endTurn = state.InteractionCount;
+            if (endTurn % 10 == 0)
+            {
+                int startTurn = endTurn - 9;
+                string summary = CompactDurableText(request.TenTurnConversationSummary, 1400);
+                if (string.IsNullOrWhiteSpace(summary)) summary = BuildTenTurnRollupFallback(state, startTurn, endTurn);
+                UpsertConversationRollup(state.TenTurnConversationSummaries, startTurn, endTurn, summary, now);
+            }
+
+            if (endTurn % 100 == 0)
+            {
+                int startTurn = endTurn - 99;
+                string summary = CompactDurableText(request.HundredTurnConversationSummary, 1800);
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    List<StarConversationSummaryBlock> blocks = state.TenTurnConversationSummaries
+                        .Where(x => x != null && x.StartTurn >= startTurn && x.EndTurn <= endTurn && !string.IsNullOrWhiteSpace(x.Summary))
+                        .OrderBy(x => x.StartTurn)
+                        .Take(10)
+                        .ToList();
+                    summary = CompactDurableText(string.Join(" ", blocks.Select(x => x.Summary)), 1800);
+                }
+                UpsertConversationRollup(state.HundredTurnConversationSummaries, startTurn, endTurn, summary, now);
+            }
+        }
+
+        private static void UpsertConversationRollup(List<StarConversationSummaryBlock> blocks, int startTurn, int endTurn, string summary, DateTimeOffset now)
+        {
+            if (blocks == null || string.IsNullOrWhiteSpace(summary)) return;
+            StarConversationSummaryBlock? existing = blocks.FirstOrDefault(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn);
+            if (existing == null)
+            {
+                blocks.Insert(0, new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = now,
+                    Summary = summary
+                });
+            }
+            else
+            {
+                existing.CreatedAt = now;
+                existing.Summary = summary;
+            }
+        }
+
+        private static string BuildTenTurnRollupFallback(StarState state, int startTurn, int endTurn)
+        {
+            if (state == null) return string.Empty;
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives.Where(x => x != null).SelectMany(x => x.Entries ?? new List<ConversationLogEntry>()).Where(x => x != null));
+            }
+            List<ConversationLogEntry> newest = retained.Distinct().OrderByDescending(x => x.CreatedAt).Take(Math.Max(1, endTurn - startTurn + 1)).OrderBy(x => x.CreatedAt).ToList();
+            string combined = string.Join(" ", newest.Select(x => string.IsNullOrWhiteSpace(x.Summary)
+                ? ("The player said " + TruncateLocal(x.PlayerText, 120) + ", and the Star replied " + TruncateLocal(x.StarResponse, 120) + ".")
+                : TruncateLocal(x.Summary, 220)));
+            return CompactDurableText(combined, 1400);
         }
 
         private void ArchiveOldConversationTurns(StarState state, DateTimeOffset now)

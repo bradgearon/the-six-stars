@@ -4,7 +4,7 @@ RequestType: {{ data.requestType }}
 {{ data.currentTimeContext }}
 Player latest message:
 {{ data.playerTextBlock }}
-Foreground spokenText already sent to voice generation. Use it for conversationSummary, question matching/resolution, girlfriend/couple-activity detection, and the other review fields; do not copy it into your response:
+Foreground spokenText already sent to voice generation. Use it for conversationSummary, question matching/resolution, and the other review fields; do not copy it into your response:
 {{ data.foregroundSpokenPartsJson }}
 Relationship before this review:
 {{ data.relationshipContext }}
@@ -12,12 +12,17 @@ Relationship before this review:
 Recent history for continuity:
 {{ data.recentConversationHistory }}
 
-Durable memory / quote / marker context:
+Active short-term memory before this turn:
+{{ data.shortTermMemoryContext }}
+
+Durable long-term memory / quote / marker context:
 {{ data.durableMemoryContext }}
 
 QUESTION STATE BEFORE THIS TURN:
 {{ data.unresolvedStateContext }}
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to []. Do not include emotionScores. Keep updates selective. emotionAnimation must be empty unless this is clearly a high-emotion turn. Question vectors must be empty unless the Last Cat really raised an unresolved question/topic or the foreground reply really left one for him.
+{{ if data.conversationSummaryCheckpointContext != "" }}{{ data.conversationSummaryCheckpointContext }}
+
+{{ end }}Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, tenTurnConversationSummary, hundredTurnConversationSummary, shortTermMemoryItems, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to []. Do not include emotionScores. Keep updates selective. Set tenTurnConversationSummary="" except on a ten-turn checkpoint and hundredTurnConversationSummary="" except on a hundred-turn checkpoint. emotionAnimation must be empty unless this is clearly a high-emotion turn. Question vectors must be empty unless the Last Cat really raised an unresolved question/topic or the foreground reply really left one for him.
 If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, referencedMemoryMarkerIds should list the marker ids used.

@@ -13,6 +13,9 @@ namespace Wds.SixStars.Api.Ai
 
         public int ImportantQuoteCount { get; set; } = 24;
         public int MemoryNoteCount { get; set; } = 40;
+
+        /// <summary>Only short-term memory newer than this many milliseconds is injected into prompts.</summary>
+        public int ShortTermMemoryWindowMs { get; set; } = 1800000;
         public int RelationshipEventCount { get; set; } = 30;
         public int GirlfriendHistoryCount { get; set; } = 20;
         public int LearnedFunctionCount { get; set; } = 25;

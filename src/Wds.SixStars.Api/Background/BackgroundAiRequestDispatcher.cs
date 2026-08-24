@@ -53,6 +53,15 @@ namespace Wds.SixStars.Api.Background
                 ThrowIfDisposedLocked();
                 _foregroundDepth++;
                 activeRequestId = _activeRequestId;
+
+                // Once the actual foreground request begins, any quiet pulse that came from the
+                // touch/type/send action which launched this same request is stale. The foreground
+                // lease itself now protects the model. A NEW PlayerActivity ping received while the
+                // Star is answering will extend suppression again and is still respected afterward.
+                if (_backgroundSuppressedUntilUtc > DateTimeOffset.UtcNow)
+                {
+                    _backgroundSuppressedUntilUtc = DateTimeOffset.UtcNow;
+                }
             }
 
             // The bundled llama.cpp server used by Six Stars honors HTTP cancellation by cancelling
@@ -98,13 +107,24 @@ namespace Wds.SixStars.Api.Background
             CancellationTokenSource? activeToCancel;
             string activeRequestId;
             DateTimeOffset suppressedUntil;
+            bool foregroundAlreadyActive;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
-                DateTimeOffset requestedUntil = DateTimeOffset.UtcNow.Add(duration);
-                if (requestedUntil > _backgroundSuppressedUntilUtc)
+                foregroundAlreadyActive = _foregroundDepth > 0;
+
+                // A live foreground lease already prevents every queued background request from
+                // starting. Do not turn touch/type pings that arrive DURING that request into an
+                // extra 30-second tail after it. This also makes an asynchronously delivered
+                // "Android text message" activity ping harmless if the real request won the race.
+                // Once the foreground lease ends, fresh player activity again extends suppression.
+                if (!foregroundAlreadyActive)
                 {
-                    _backgroundSuppressedUntilUtc = requestedUntil;
+                    DateTimeOffset requestedUntil = DateTimeOffset.UtcNow.Add(duration);
+                    if (requestedUntil > _backgroundSuppressedUntilUtc)
+                    {
+                        _backgroundSuppressedUntilUtc = requestedUntil;
+                    }
                 }
 
                 suppressedUntil = _backgroundSuppressedUntilUtc;
@@ -129,8 +149,10 @@ namespace Wds.SixStars.Api.Background
                 "ForegroundActivitySuppressed",
                 "foreground-activity",
                 activeRequestId,
-                (cancelledActive ? "Cancelled the active background model call once and " : string.Empty)
-                    + "held queued background AI until " + suppressedUntil.ToString("O") + ". " + (reason ?? string.Empty),
+                foregroundAlreadyActive
+                    ? "Foreground request is already active, so this activity ping does not add a post-reply suppression tail. " + (reason ?? string.Empty)
+                    : (cancelledActive ? "Cancelled the active background model call once and " : string.Empty)
+                        + "held queued background AI until " + suppressedUntil.ToString("O") + ". " + (reason ?? string.Empty),
                 QueuedCount);
             SafeReleaseSignal();
         }
@@ -141,7 +163,8 @@ namespace Wds.SixStars.Api.Background
             BackgroundAiRequestPriority priority,
             Func<CancellationToken, Task> executeAsync,
             CancellationToken cancellationToken = default(CancellationToken),
-            TimeSpan? delay = null)
+            TimeSpan? delay = null,
+            bool bypassPostForegroundQuiet = false)
         {
             if (executeAsync == null) throw new ArgumentNullException(nameof(executeAsync));
             string id = Guid.NewGuid().ToString("N");
@@ -160,7 +183,8 @@ namespace Wds.SixStars.Api.Background
                     EnqueuedAt = DateTimeOffset.UtcNow,
                     NotBefore = DateTimeOffset.UtcNow.Add(delay.GetValueOrDefault(TimeSpan.Zero)),
                     ExecuteAsync = executeAsync,
-                    CancellationToken = cancellationToken
+                    CancellationToken = cancellationToken,
+                    BypassPostForegroundQuiet = bypassPostForegroundQuiet
                 });
                 EnsureWorkerLocked();
             }
@@ -296,7 +320,7 @@ namespace Wds.SixStars.Api.Background
 
         private DateTimeOffset GetEffectiveNotBeforeLocked(QueuedBackgroundAiRequest request)
         {
-            DateTimeOffset foregroundQuietUntil = _lastForegroundFinishedAtUtc == DateTimeOffset.MinValue
+            DateTimeOffset foregroundQuietUntil = request.BypassPostForegroundQuiet || _lastForegroundFinishedAtUtc == DateTimeOffset.MinValue
                 ? DateTimeOffset.MinValue
                 : _lastForegroundFinishedAtUtc.AddSeconds(GetForegroundQuietSeconds(request.Priority));
             DateTimeOffset effective = request.NotBefore >= foregroundQuietUntil ? request.NotBefore : foregroundQuietUntil;
@@ -427,6 +451,7 @@ namespace Wds.SixStars.Api.Background
             public DateTimeOffset NotBefore { get; set; }
             public Func<CancellationToken, Task> ExecuteAsync { get; set; } = default!;
             public CancellationToken CancellationToken { get; set; }
+            public bool BypassPostForegroundQuiet { get; set; }
         }
     }
 

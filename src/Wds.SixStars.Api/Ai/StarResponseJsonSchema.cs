@@ -629,8 +629,8 @@ namespace Wds.SixStars.Api.Ai
                 { "required", new[]
                     {
                         "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
-                        "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "thingsLearnedOrSuggestedByPlayer", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
+                        "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
@@ -651,7 +651,10 @@ namespace Wds.SixStars.Api.Ai
                         { "suggestedStateDeltas", DeltaObject() },
                         { "conversationSummary", StringProperty(900) },
                         { "changesSummary", StringProperty(450) },
+                        { "tenTurnConversationSummary", StringProperty(1400) },
+                        { "hundredTurnConversationSummary", StringProperty(1800) },
                         { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
+                        { "shortTermMemoryItems", StringArray(8) },
                         { "questionsFromLastCatVector", StringProperty(4800) },
                         { "questionsToLastCatVector", StringProperty(6000) },
                         { "questionResolutionVector", StringProperty(4200) },

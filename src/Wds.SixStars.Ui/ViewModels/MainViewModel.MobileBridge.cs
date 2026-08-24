@@ -31,6 +31,8 @@ namespace Wds.SixStars.Ui.ViewModels;
 public sealed partial class MainViewModel
 {
     private readonly object _mobileVoiceStreamGate = new object();
+    private readonly object _mobileLiveVoiceRunGate = new object();
+    private readonly Dictionary<string, MobileLiveVoiceRun> _mobileLiveVoiceRuns = new Dictionary<string, MobileLiveVoiceRun>(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _mobileVoiceStreamCts;
     private CancellationTokenSource? _backgroundPreparedSpeechCts;
     private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
@@ -457,13 +459,63 @@ public sealed partial class MainViewModel
         // immediately cancel the current writing iteration.
         if (!commandType.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)
             && !commandType.Equals("MaybeStarInitiative", StringComparison.OrdinalIgnoreCase)
-            && !commandType.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase))
+            && !commandType.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("VoicePlaybackStarted", StringComparison.OrdinalIgnoreCase))
         {
             NotifyBackgroundWritingLoopForegroundActivity("Android command " + commandType);
         }
 
         switch (commandType)
         {
+            case "VoicePlaybackStarted":
+            {
+                string streamId = command.VoiceStreamId?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(streamId) || command.VoiceAudioSequence != 0)
+                {
+                    return new MobileBridgeDispatchResult
+                    {
+                        Ok = true,
+                        CommandId = command.CommandId,
+                        CommandType = commandType,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        Message = "Ignored a non-first or uncorrelated phone playback-start signal.",
+                        SuppressEventPublication = true
+                    };
+                }
+
+                MobileLiveVoiceRun? playbackRun = null;
+                lock (_mobileLiveVoiceRunGate)
+                {
+                    _mobileLiveVoiceRuns.TryGetValue(streamId, out playbackRun);
+                }
+
+                string readyAnalysisId = playbackRun?.MarkFirstSentencePlaybackStartedAndTakeBackgroundAnalysisId() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(readyAnalysisId))
+                {
+                    ReleasePendingBackgroundAnalysis(
+                        readyAnalysisId,
+                        "Android confirmed that the first streamed sentence began actual AudioTrack playback; background emotion/memory review may run while later speech continues.");
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "Background review released at phone playback start",
+                        "analysis=" + readyAnalysisId + ", stream=" + streamId + "; Android reported first-sentence AudioTrack playback has begun."));
+                }
+
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    Message = playbackRun == null
+                        ? "Playback-start signal arrived after the live run was no longer tracked."
+                        : (string.IsNullOrWhiteSpace(readyAnalysisId)
+                            ? "First-sentence playback start recorded; the background review will release as soon as its foreground analysis id is available."
+                            : "Background review released at first-sentence phone playback start."),
+                    SuppressEventPublication = true
+                };
+            }
             case "PlayerActivity":
             {
                 string activityReason = string.IsNullOrWhiteSpace(command.Reason)
@@ -2230,6 +2282,23 @@ public sealed partial class MainViewModel
                     linkedCts.Token).ConfigureAwait(false)
                 : await _services.MobileConversation.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
 
+            // The background review needs the complete foreground response, so the runtime creates
+            // its id at Gemma EOS. Pair that id with Android's first-sentence AudioTrack playback
+            // acknowledgement. If the phone already began sentence one while Gemma was streaming,
+            // release now; otherwise the playback-start command will release it a moment later.
+            backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
+            if (livePhoneVoice != null && !string.IsNullOrWhiteSpace(backgroundAnalysisId))
+            {
+                string readyAnalysisId = livePhoneVoice.SetBackgroundAnalysisIdAndTakeIfFirstSentencePlaybackStarted(backgroundAnalysisId);
+                if (!string.IsNullOrWhiteSpace(readyAnalysisId))
+                {
+                    ReleasePendingBackgroundAnalysis(readyAnalysisId, "Foreground response completed after Android had already confirmed first-sentence AudioTrack playback started.");
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "Background review released at foreground EOS",
+                        "analysis=" + readyAnalysisId + "; Android had already begun playing sentence one, so the private update starts without waiting for later speech."));
+                }
+            }
+
             if (livePhoneVoice != null)
             {
                 // The first punctuation-complete sentence is already synthesizing (and may already be
@@ -2255,7 +2324,6 @@ public sealed partial class MainViewModel
             }
 
             StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
-            backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
 
             if (photoResult.Attached)
@@ -2853,6 +2921,7 @@ public sealed partial class MainViewModel
             {
                 HadTargets = true
             };
+            RegisterMobileLiveVoiceRun(run);
 
             pipeline.GenerationError += (_, args) =>
             {
@@ -2863,6 +2932,10 @@ public sealed partial class MainViewModel
                 try
                 {
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
+
+                    // Background review release is driven by Android's actual first-sentence
+                    // AudioTrack playback-start acknowledgement, not merely by Qwen finishing the WAV.
+                    // This callback only delivers the generated audio to the phone.
 
                     // The first streamed sentence is published to the Android text bridge before
                     // Qwen is queued. Once that first text event has been published, the transport
@@ -2935,6 +3008,7 @@ public sealed partial class MainViewModel
                 try { generator?.Dispose(); } catch { }
             }
             voiceCts.Dispose();
+            UnregisterMobileLiveVoiceRun(stream.StreamId);
             EndMobileVoiceStream(stream, "live foreground voice could not start");
             throw;
         }
@@ -3138,7 +3212,7 @@ public sealed partial class MainViewModel
                     "Live Android voice stream completed after " + run.ChunksSent + " chunk(s).",
                     CancellationToken.None).ConfigureAwait(false);
             }
-            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Live Android sentence-streamed voice generation/sending completed.");
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback release: live Android reply finished before a first-sentence background checkpoint could release it.");
         }
         catch (OperationCanceledException)
         {
@@ -3157,6 +3231,7 @@ public sealed partial class MainViewModel
             run.Pipeline.Dispose();
             try { run.TransportReady.Dispose(); } catch { }
             run.VoiceCts.Dispose();
+            UnregisterMobileLiveVoiceRun(run.Stream.StreamId);
             EndMobileVoiceStream(run.Stream, "live foreground voice completed or was replaced");
             run.Finished = true;
         }
@@ -3170,6 +3245,7 @@ public sealed partial class MainViewModel
         try { run.Pipeline.Dispose(); } catch { }
         try { run.TransportReady.Dispose(); } catch { }
         try { run.VoiceCts.Dispose(); } catch { }
+        try { UnregisterMobileLiveVoiceRun(run.Stream.StreamId); } catch { }
         try { EndMobileVoiceStream(run.Stream, reason); } catch { }
         run.Finished = true;
     }
@@ -3188,9 +3264,13 @@ public sealed partial class MainViewModel
         public CancellationTokenSource VoiceCts { get; }
         private readonly object _textChunkGate = new object();
         private readonly object _transportGate = new object();
+        private readonly object _backgroundAnalysisGate = new object();
         private readonly List<string> _deferredTextChunks = new List<string>();
         private bool _firstSpeechChunkAccepted;
         private bool _transportReleaseStarted;
+        private bool _firstSentencePlaybackStarted;
+        private bool _backgroundAnalysisReleased;
+        private string _backgroundAnalysisId = string.Empty;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
@@ -3250,6 +3330,37 @@ public sealed partial class MainViewModel
             return startNow;
         }
 
+
+        public string MarkFirstSentencePlaybackStartedAndTakeBackgroundAnalysisId()
+        {
+            lock (_backgroundAnalysisGate)
+            {
+                _firstSentencePlaybackStarted = true;
+                return TakeBackgroundAnalysisIdIfPlaybackStartedLocked();
+            }
+        }
+
+        public string SetBackgroundAnalysisIdAndTakeIfFirstSentencePlaybackStarted(string analysisId)
+        {
+            if (string.IsNullOrWhiteSpace(analysisId)) return string.Empty;
+            lock (_backgroundAnalysisGate)
+            {
+                _backgroundAnalysisId = analysisId.Trim();
+                return TakeBackgroundAnalysisIdIfPlaybackStartedLocked();
+            }
+        }
+
+        private string TakeBackgroundAnalysisIdIfPlaybackStartedLocked()
+        {
+            if (_backgroundAnalysisReleased || !_firstSentencePlaybackStarted || string.IsNullOrWhiteSpace(_backgroundAnalysisId))
+            {
+                return string.Empty;
+            }
+
+            _backgroundAnalysisReleased = true;
+            return _backgroundAnalysisId;
+        }
+
         public List<string> DrainDeferredTextChunks()
         {
             lock (_textChunkGate)
@@ -3258,6 +3369,24 @@ public sealed partial class MainViewModel
                 _deferredTextChunks.Clear();
                 return copy;
             }
+        }
+    }
+
+    private void RegisterMobileLiveVoiceRun(MobileLiveVoiceRun run)
+    {
+        if (run == null || string.IsNullOrWhiteSpace(run.Stream.StreamId)) return;
+        lock (_mobileLiveVoiceRunGate)
+        {
+            _mobileLiveVoiceRuns[run.Stream.StreamId] = run;
+        }
+    }
+
+    private void UnregisterMobileLiveVoiceRun(string streamId)
+    {
+        if (string.IsNullOrWhiteSpace(streamId)) return;
+        lock (_mobileLiveVoiceRunGate)
+        {
+            _mobileLiveVoiceRuns.Remove(streamId);
         }
     }
 
@@ -3735,6 +3864,7 @@ public sealed partial class MainViewModel
 
                 int chunksSent = 0;
                 int bytesSent = 0;
+                bool backgroundReleasedAfterFirstChunk = false;
                 mobilePipeline.ChunkReadyForConsumer += (sender, args) =>
                 {
                     try
@@ -3752,6 +3882,11 @@ public sealed partial class MainViewModel
                         MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(args.Result, chunkIndex, totalChunks, voiceToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
                         chunksSent++;
                         bytesSent += args.Result.WavAudio.Length;
+                        if (!backgroundReleasedAfterFirstChunk && sent.SentClients > 0)
+                        {
+                            backgroundReleasedAfterFirstChunk = true;
+                            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback Android path delivered the first speech WAV to the connected phone; background review may continue while later speech plays.");
+                        }
                         _services.MobileVoice.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", voiceToken).GetAwaiter().GetResult();
                         OnUiThread(() =>
                         {
@@ -3800,7 +3935,7 @@ public sealed partial class MainViewModel
 
             if (!voiceToken.IsCancellationRequested)
             {
-                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android phone voice chunks were generated/sent.");
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback release after Android phone voice chunks were generated/sent.");
             }
         }
         catch (OperationCanceledException)

@@ -78,6 +78,9 @@ namespace Wds.SixStars.Api.Models
 
         public List<string> MemoryNotes { get; set; } = new List<string>();
 
+        /// <summary>Temporary current-context memory. Entries are host-timestamped and automatically expire after the configured short-term memory window.</summary>
+        public List<StarShortTermMemoryEntry> ShortTermMemory { get; set; } = new List<StarShortTermMemoryEntry>();
+
         /// <summary>Durable facts, reported events, preferences, plans, and game-world suggestions the Star has explicitly learned from the Last Cat.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
@@ -151,6 +154,12 @@ namespace Wds.SixStars.Api.Models
 
         /// <summary>Recent active conversation turns only. Older turns are moved to OldConversationArchives after the configured age window.</summary>
         public List<ConversationLogEntry> MemoryLog { get; set; } = new List<ConversationLogEntry>();
+
+        /// <summary>Durable model-generated summaries for each completed ten-turn conversation block.</summary>
+        public List<StarConversationSummaryBlock> TenTurnConversationSummaries { get; set; } = new List<StarConversationSummaryBlock>();
+
+        /// <summary>Durable model-generated summaries for each completed one-hundred-turn conversation block.</summary>
+        public List<StarConversationSummaryBlock> HundredTurnConversationSummaries { get; set; } = new List<StarConversationSummaryBlock>();
 
         /// <summary>Summarized archived conversation blocks with source entries retained for explicit old-memory retrieval.</summary>
         public List<StarConversationArchiveEntry> OldConversationArchives { get; set; } = new List<StarConversationArchiveEntry>();

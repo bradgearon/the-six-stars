@@ -148,6 +148,7 @@ public sealed class MobileBridgeDispatcher
         if (string.IsNullOrWhiteSpace(value)) return "RefreshState";
         string compact = value.Trim().Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty);
         if (compact.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("UserActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("ForegroundPlayerActivity", StringComparison.OrdinalIgnoreCase)) return "PlayerActivity";
+        if (compact.Equals("VoicePlaybackStarted", StringComparison.OrdinalIgnoreCase) || compact.Equals("PlaybackStarted", StringComparison.OrdinalIgnoreCase) || compact.Equals("PhoneVoicePlaybackStarted", StringComparison.OrdinalIgnoreCase)) return "VoicePlaybackStarted";
         if (compact.Equals("SelectStar", StringComparison.OrdinalIgnoreCase) || compact.Equals("SelectedStar", StringComparison.OrdinalIgnoreCase)) return "SelectStar";
         if (compact.Equals("SetMet", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleMet", StringComparison.OrdinalIgnoreCase)) return "SetMet";
         if (compact.Equals("SetAlly", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAlly", StringComparison.OrdinalIgnoreCase)) return "SetAlly";
@@ -183,6 +184,8 @@ public sealed class MobileBridgeDispatchCommand
     public bool? BackgroundWritingLoopEnabled { get; set; }
     public bool? XPostingEnabled { get; set; }
     public bool? PlaybackPaused { get; set; }
+    public string VoiceStreamId { get; set; } = string.Empty;
+    public int VoiceAudioSequence { get; set; } = -1;
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public string WritingOutputType { get; set; } = "spark";

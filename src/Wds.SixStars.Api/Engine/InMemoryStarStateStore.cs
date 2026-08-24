@@ -84,6 +84,7 @@ namespace Wds.SixStars.Api.Engine
         private static void NormalizeState(StarState state)
         {
             if (state.RelationshipEvents == null) state.RelationshipEvents = new List<string>();
+            if (state.ShortTermMemory == null) state.ShortTermMemory = new List<StarShortTermMemoryEntry>();
             if (state.OtherStars == null) state.OtherStars = new List<InterstarRelationshipState>();
             foreach (InterstarRelationshipState relation in state.OtherStars.Where(x => x != null))
             {

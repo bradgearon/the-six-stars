@@ -238,6 +238,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             maxMemoryLogEntries: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_LOG_ENTRIES"), _appConfig.Memory.MaxMemoryLogEntries),
             maxImportantQuotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_IMPORTANT_QUOTES"), _appConfig.Memory.MaxImportantQuotes),
             maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes),
+            shortTermMemoryWindowMs: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SHORT_TERM_MEMORY_WINDOW_MS"), _appConfig.Memory.ShortTermMemoryWindowMs),
             dailyStateOptions: CreateDailyStarStateOptions(),
             worldEventOptions: CreateWorldEventOptions(),
             speechIntentOptions: CreateStarSpeechIntentOptions(),
@@ -1157,6 +1158,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             RecentHistoryCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RECENT_HISTORY_FOR_PROMPT"), _appConfig.Memory.RecentHistoryForPrompt),
             ImportantQuoteCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_IMPORTANT_QUOTES_FOR_PROMPT"), _appConfig.Memory.ImportantQuotesForPrompt),
             MemoryNoteCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MEMORY_NOTES_FOR_PROMPT"), _appConfig.Memory.MemoryNotesForPrompt),
+            ShortTermMemoryWindowMs = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SHORT_TERM_MEMORY_WINDOW_MS"), _appConfig.Memory.ShortTermMemoryWindowMs),
             RelationshipEventCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RELATIONSHIP_EVENTS_FOR_PROMPT"), _appConfig.Memory.RelationshipEventsForPrompt),
             GirlfriendHistoryCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_GIRLFRIEND_HISTORY_FOR_PROMPT"), _appConfig.Memory.GirlfriendHistoryForPrompt),
             LearnedFunctionCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_LEARNED_FUNCTIONS_FOR_PROMPT"), _appConfig.Memory.LearnedFunctionsForPrompt),
@@ -1500,10 +1502,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Chunk {args.ChunkIndex + 1}/{args.TotalChunks}: '{args.Text.Substring(0, System.Math.Min(40, args.Text.Length))}...'");
             });
 
-            _streamingVoiceResponsePipeline.ChunkReadyForConsumer += (_, args) => OnUiThread(() =>
+            _streamingVoiceResponsePipeline.ChunkReadyForConsumer += (_, args) =>
             {
-                System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Ordered chunk ready for host: {args.Result.WavAudio.Length} bytes from {args.Result.Source}");
-            });
+                // The pending analysis id is cleared on the first successful release, so invoking
+                // this for every ordered chunk is a cheap way to make the FIRST ready WAV the gate
+                // without adding sequence state to the generic streaming event args.
+                ReleasePendingBackgroundAnalysis("First streaming voice sentence TTS is ready; background emotion/memory review may process while later speech continues.");
+                OnUiThread(() =>
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Ordered chunk ready for host: {args.Result.WavAudio.Length} bytes from {args.Result.Source}");
+                });
+            };
 
             _streamingVoiceResponsePipeline.ChunkPlaybackStarted += (_, args) => OnUiThread(() => 
             {
@@ -1517,8 +1526,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             _streamingVoiceResponsePipeline.AllChunksComplete += (_, args) => OnUiThread(() => 
             {
-                ReleasePendingBackgroundAnalysis("Streaming voice generation completed: " + args.TotalChunks + " chunks.");
-                Status = $"✓ All {args.TotalChunks} chunks generated ({args.TotalDurationMs:0}ms). Background emotion/memory review can settle while playback/listening continues.";
+                ReleasePendingBackgroundAnalysis("Fallback release after all streaming voice generation completed: " + args.TotalChunks + " chunks.");
+                Status = $"✓ All {args.TotalChunks} chunks generated ({args.TotalDurationMs:0}ms). Background emotion/memory review was eligible from the first voice-ready sentence.";
             });
 
             _streamingVoiceResponsePipeline.VoiceInterrupted += (_, args) => OnUiThread(() => 
@@ -1587,7 +1596,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 _pendingBackgroundAnalysisId = string.Empty;
             }
-            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released " + analysisId + " after voice ready: " + reason);
+            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released " + analysisId + " after first-sentence readiness: " + reason);
         }
     }
 
@@ -2985,6 +2994,32 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             IsProcessingRuntime = true;
             CancellationToken runtimeToken = _operationController.BeginNewOperation("typed message to " + request.StarId);
             LiveStarVoiceResponsePipeline? liveSpeech = null;
+            object liveBackgroundCheckpointGate = new object();
+            bool liveFirstSentenceAudioReady = false;
+            bool liveBackgroundAnalysisReleased = false;
+            string liveBackgroundAnalysisId = string.Empty;
+
+            void TryReleaseLiveBackgroundAnalysis(string reason)
+            {
+                string analysisIdToRelease = string.Empty;
+                lock (liveBackgroundCheckpointGate)
+                {
+                    if (!liveBackgroundAnalysisReleased
+                        && liveFirstSentenceAudioReady
+                        && !string.IsNullOrWhiteSpace(liveBackgroundAnalysisId))
+                    {
+                        liveBackgroundAnalysisReleased = true;
+                        analysisIdToRelease = liveBackgroundAnalysisId;
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(analysisIdToRelease))
+                {
+                    ReleasePendingBackgroundAnalysis(analysisIdToRelease, reason);
+                    System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] First-sentence checkpoint released " + analysisIdToRelease + ": " + reason);
+                }
+            }
+
             if (ShouldUseLiveForegroundSpeech(request.RequestType))
             {
                 StarInteractionResponse liveVoiceTemplate = CreateLiveVoiceTemplateResponse(request.StarId);
@@ -2997,11 +3032,21 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     AutoPlayChunks = true
                 };
                 liveSpeech.GenerationError += (_, args) => OnUiThread(() => Status = "Live voice generation error: " + args.ErrorMessage);
-                liveSpeech.ChunkReadyForConsumer += (_, args) => OnUiThread(() =>
-                    Status = "Live voice chunk " + (args.Sequence + 1) + " ready while the Star is still replying...");
+                liveSpeech.ChunkReadyForConsumer += (_, args) =>
+                {
+                    if (args.Sequence == 0)
+                    {
+                        lock (liveBackgroundCheckpointGate)
+                        {
+                            liveFirstSentenceAudioReady = true;
+                        }
+                        TryReleaseLiveBackgroundAnalysis("First desktop streamed sentence TTS is ready; remaining speech may continue while the background update processes.");
+                    }
+                    OnUiThread(() => Status = "Live voice chunk " + (args.Sequence + 1) + " ready while the Star is still replying...");
+                };
                 liveSpeech.Start(DefaultSessionId, liveVoiceTemplate, runtimeToken);
                 request.SpokenChunkReady = liveSpeech.EnqueueTextChunk;
-                Status = "⏳ Streaming the Star reply; speech will start at the first § chunk...";
+                Status = "⏳ Streaming the Star reply; speech will start at the first complete sentence...";
             }
 
             StarInteractionResponse response;
@@ -3014,6 +3059,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 liveSpeech?.CancelCurrentSpeech();
                 liveSpeech?.Dispose();
                 throw;
+            }
+
+            if (liveSpeech != null && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+            {
+                _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
+                lock (liveBackgroundCheckpointGate)
+                {
+                    liveBackgroundAnalysisId = response.BackgroundAnalysisId;
+                }
+                TryReleaseLiveBackgroundAnalysis("Foreground response completed after the first desktop sentence TTS was already ready.");
             }
 
             // Check if response came from real LLM or mock
@@ -3070,25 +3125,20 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     }
                 }
 
-                if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
-                {
-                    _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
-                }
-
                 try
                 {
                     await liveSpeech.CompleteInputAsync().ConfigureAwait(false);
-                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice generation/playback completed normally.");
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop reply completed before the first-sentence checkpoint could release background analysis.");
                     OnUiThread(() => Status = "Live streaming voice playback complete.");
                 }
                 catch (OperationCanceledException)
                 {
-                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice was cancelled after the foreground response completed.");
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop reply was cancelled after the foreground response completed.");
                     OnUiThread(() => Status = "Live voice generation/playback cancelled.");
                 }
                 catch (Exception ex)
                 {
-                    ReleasePendingBackgroundAnalysis("Live delimiter-streamed voice failed after the foreground response completed: " + ex.Message);
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop voice failed after the foreground response completed: " + ex.Message);
                     OnUiThread(() => Status = "Live voice generation/playback error: " + ex.Message);
                     System.Diagnostics.Debug.WriteLine("[Live TTS Error] " + ex);
                 }
@@ -4021,7 +4071,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         string text = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector);
         if (text == "Last emotional vectors: none yet." && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
         {
-            return "Last emotional vectors: waiting for background emotion/memory update to settle after voice playback. The panel will fill when the deterministic review finishes.";
+            return "Last emotional vectors: waiting for the background emotion/memory update. It becomes eligible as soon as the first spoken sentence is voice-ready.";
         }
         return text;
     }

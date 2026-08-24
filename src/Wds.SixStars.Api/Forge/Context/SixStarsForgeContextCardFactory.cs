@@ -65,7 +65,7 @@ namespace Wds.SixStars.Api.Forge.Context
             Add(card, "Girlfriend readiness", (state.IsGirlfriendReady ? "ready" : "not ready") + "; " + (state.GirlfriendReadinessSummary ?? string.Empty));
 
             StarGirlfriendHourlyStateContext hourly = state.GirlfriendHourlyState ?? new StarGirlfriendHourlyStateContext();
-            if (hourly.IsAvailable)
+            if (state.IsGirlfriend && hourly.IsAvailable)
             {
                 Add(card, "Girlfriend hourly state guidance", "This is her current girlfriend emotional and behavioral state. needVector and wantVector may describe what she wants from him, what she wants to say, or what she wants/needs to do herself or together. Use strong fitting items to score this turn; never read scores or vector syntax aloud.");
                 Add(card, "Girlfriend hourly state", "GeneratedAt=" + (hourly.GeneratedAt.HasValue ? hourly.GeneratedAt.Value.ToString("o") : "unknown")
@@ -119,6 +119,7 @@ namespace Wds.SixStars.Api.Forge.Context
         {
             ForgeContextCard card = NewCard("memory", string.Empty, actor);
             Add(card, "Existing conversation summary", string.IsNullOrWhiteSpace(snapshot.Memory.ConversationSummary) ? "none yet" : Truncate(snapshot.Memory.ConversationSummary, 900));
+            AddList(card, "Things learned or suggested by the Last Cat", snapshot.Memory.LearnedItems.Take(12).Select(x => Truncate(x, 500)));
             AddList(card, "Important remembered player quotes", snapshot.Quotes.ImportantPlayerQuotes.Take(6));
             AddList(card, "Memory notes", snapshot.Memory.MemoryNotes.Take(6).Select(x => Truncate(x, 500)));
             AddList(card, "Remembered markers", snapshot.Memory.RememberedMarkers.Take(8));

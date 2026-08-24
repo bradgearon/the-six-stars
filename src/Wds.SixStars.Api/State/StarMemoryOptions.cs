@@ -11,6 +11,8 @@ namespace Wds.SixStars.Api.State
         public int MaxMemoryLogEntries { get; set; } = 80;
         public int MaxImportantQuotes { get; set; } = 128;
         public int MaxMemoryNotes { get; set; } = 160;
+        public int MaxShortTermMemoryEntries { get; set; } = 64;
+        public int ShortTermMemoryWindowMs { get; set; } = 1800000;
         public int MaxThingsLearnedOrSuggestedByPlayer { get; set; } = 256;
         public int MaxRelationshipEvents { get; set; } = 100;
         public int MaxGirlfriendHistoryEntries { get; set; } = 80;

@@ -110,6 +110,7 @@ namespace Wds.SixStars.Api.Engine
             int maxMemoryLogEntries = 160,
             int maxImportantQuotes = 80,
             int maxMemoryNotes = 160,
+            int shortTermMemoryWindowMs = 1800000,
             DailyStarStateOptions? dailyStateOptions = null,
             WorldEventOptions? worldEventOptions = null,
             StarSpeechIntentOptions? speechIntentOptions = null,
@@ -126,6 +127,7 @@ namespace Wds.SixStars.Api.Engine
                     MaxMemoryLogEntries = maxMemoryLogEntries,
                     MaxImportantQuotes = maxImportantQuotes,
                     MaxMemoryNotes = maxMemoryNotes,
+                    ShortTermMemoryWindowMs = Math.Max(1000, shortTermMemoryWindowMs),
                     MaxThingsLearnedOrSuggestedByPlayer = 256,
                     MaxRecentHistoryForPrompt = recentHistoryCount
                 }),
@@ -899,10 +901,10 @@ namespace Wds.SixStars.Api.Engine
                     { "starId", request.StarId ?? string.Empty },
                     { "requestType", request.RequestType.ToString() },
                     { "spokenParts", response.SpokenParts.Count.ToString() },
-                    { "note", "Foreground conversation reply finished; background emotion/memory review will settle after voice is ready." }
+                    { "note", "Foreground conversation reply finished; background emotion/memory review may start once the first spoken sentence is voice-ready." }
                 }
             });
-            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; waiting for voice-ready background review before interstar updates can queue.", 0, 0);
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; waiting only for the first voice-ready sentence checkpoint before the background review can queue.", 0, 0);
 
             if (request.RequestType == RequestType.StarInitiative)
             {
@@ -926,22 +928,22 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "speechParts", response.SpokenParts.Count.ToString() },
-                        { "note", "Fast spoken response returned immediately; emotion/memory update will wait until voice generation reports ready." }
+                        { "note", "Fast spoken response returned immediately; emotion/memory update will start after the first spoken sentence is voice-ready." }
                     }
                 });
                 string backgroundAnalysisId = Guid.NewGuid().ToString("N");
                 response.BackgroundAnalysisId = backgroundAnalysisId;
                 response.UnityEvents.Add(new UnityEventEnvelope
                 {
-                    Type = "BackgroundStarAnalysisWaitingForVoice",
+                    Type = "BackgroundStarAnalysisWaitingForFirstSentence",
                     Target = request.StarId,
                     Data =
                     {
                         { "backgroundAnalysisId", backgroundAnalysisId },
-                        { "note", "Call StartBackgroundAnalysisAfterVoiceReady after foreground voice generation completes." }
+                        { "note", "Call StartBackgroundAnalysisAfterVoiceReady as soon as the first spoken sentence is voice-ready; do not wait for the entire reply." }
                     }
                 });
-                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. Background review is waiting for voice generation to finish.");
+                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. Background review is waiting only for the first spoken sentence to become voice-ready.");
                 StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, request, state, response);
                 return response;
             }
@@ -1157,17 +1159,20 @@ namespace Wds.SixStars.Api.Engine
                 }
             }
 
-            string girlfriendJson = FirstNonEmpty(GetContextFlag(request, "girlfriendHourlyStateJson"), state.GirlfriendHourlyState?.Json);
-            if (!string.IsNullOrWhiteSpace(girlfriendJson))
+            if (state.IsGirlfriend)
             {
-                AddGirlfriendHourlyTopicsFromJson(girlfriendJson, topics);
-            }
-            if (state.GirlfriendHourlyState != null && state.GirlfriendHourlyState.IsAvailable)
-            {
-                topics.AddRange((state.GirlfriendHourlyState.ThingsSheWantsToSay ?? new List<string>()).Take(8));
-                topics.AddRange((state.GirlfriendHourlyState.CuteThingsSheWantsToSay ?? new List<string>()).Take(8));
-                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.NeedVector, topics, "girlfriend need");
-                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.WantVector, topics, "girlfriend want");
+                string girlfriendJson = FirstNonEmpty(GetContextFlag(request, "girlfriendHourlyStateJson"), state.GirlfriendHourlyState?.Json);
+                if (!string.IsNullOrWhiteSpace(girlfriendJson))
+                {
+                    AddGirlfriendHourlyTopicsFromJson(girlfriendJson, topics);
+                }
+                if (state.GirlfriendHourlyState != null && state.GirlfriendHourlyState.IsAvailable)
+                {
+                    topics.AddRange((state.GirlfriendHourlyState.ThingsSheWantsToSay ?? new List<string>()).Take(8));
+                    topics.AddRange((state.GirlfriendHourlyState.CuteThingsSheWantsToSay ?? new List<string>()).Take(8));
+                    AddGirlfriendVectorTopics(state.GirlfriendHourlyState.NeedVector, topics, "girlfriend need");
+                    AddGirlfriendVectorTopics(state.GirlfriendHourlyState.WantVector, topics, "girlfriend want");
+                }
             }
 
             return topics;
@@ -1412,7 +1417,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static void AttachGirlfriendHourlyStateContextForRequest(StarInteractionRequest request, StarState state)
         {
-            if (request == null || request.GameContext == null || state == null) return;
+            if (request == null || request.GameContext == null || state == null || !state.IsGirlfriend) return;
             StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
             if (context == null || !context.IsAvailable) return;
 
@@ -2693,12 +2698,12 @@ namespace Wds.SixStars.Api.Engine
                         proposalResponse.BackgroundAnalysisId = backgroundAnalysisId;
                         proposalResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
-                            Type = "BackgroundStarAnalysisWaitingForVoice",
+                            Type = "BackgroundStarAnalysisWaitingForFirstSentence",
                             Target = workerRequest.StarId,
                             Data =
                             {
                                 { "backgroundAnalysisId", backgroundAnalysisId },
-                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated girlfriend proposal voice playback completes." }
+                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady as soon as the first generated girlfriend-proposal sentence is voice-ready." }
                             }
                         });
                         StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, latestState, proposalResponse);
@@ -2892,7 +2897,7 @@ namespace Wds.SixStars.Api.Engine
                             Data =
                             {
                                 { "speechParts", storyResponse.SpokenParts.Count.ToString() },
-                                { "note", "Full story foreground response generated. Background memory review will wait until story voice generation reports ready." }
+                                { "note", "Full story foreground response generated. Background memory review may start after the first story sentence is voice-ready." }
                             }
                         });
 
@@ -2900,15 +2905,15 @@ namespace Wds.SixStars.Api.Engine
                         storyResponse.BackgroundAnalysisId = backgroundAnalysisId;
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
-                            Type = "BackgroundStarAnalysisWaitingForVoice",
+                            Type = "BackgroundStarAnalysisWaitingForFirstSentence",
                             Target = workerRequest.StarId,
                             Data =
                             {
                                 { "backgroundAnalysisId", backgroundAnalysisId },
-                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated story voice playback completes." }
+                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady as soon as the first generated story sentence is voice-ready." }
                             }
                         });
-                        storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting for story voice completion.");
+                        storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting only for the first story sentence to become voice-ready.");
                         storyResponse.Debug.Notes.Add(BuildStoryLengthDebugNote(workerRequest.StoryOptions));
                         StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, state, storyResponse);
                     }
@@ -3087,11 +3092,11 @@ namespace Wds.SixStars.Api.Engine
                     ForegroundResponse = foregroundResponse
                 };
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis " + analysisId + " is waiting for foreground voice generation to complete.");
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis " + analysisId + " is waiting for the first foreground speech checkpoint (Android playback-start when available).");
 
-            // A transport disconnect or replaced Android voice stream must never leave this update
-            // waiting forever. Normal voice completion removes it first, so this fallback is a no-op
-            // in the healthy path. Keep the delay long enough that a one-page story can finish TTS.
+            // A transport disconnect or replaced voice stream must never leave this update waiting
+            // forever. The healthy Android fast-speech path releases after the FIRST sentence actually begins device playback;
+            // this long timeout is only a last-resort fallback for paths that never report one.
             _ = Task.Run(async () =>
             {
                 try
@@ -3100,7 +3105,7 @@ namespace Wds.SixStars.Api.Engine
                     string? configured = Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_FALLBACK_SECONDS");
                     if (int.TryParse(configured, out int parsed)) fallbackSeconds = Math.Max(30, Math.Min(900, parsed));
                     await Task.Delay(TimeSpan.FromSeconds(fallbackSeconds)).ConfigureAwait(false);
-                    StartBackgroundAnalysisAfterVoiceReady(analysisId, "Voice-ready callback fallback after " + fallbackSeconds + " seconds.");
+                    StartBackgroundAnalysisAfterVoiceReady(analysisId, "First-speech checkpoint fallback after " + fallbackSeconds + " seconds.");
                 }
                 catch
                 {
@@ -3108,7 +3113,7 @@ namespace Wds.SixStars.Api.Engine
             });
         }
 
-        public bool StartBackgroundAnalysisAfterVoiceReady(string analysisId, string reason = "Foreground voice generation completed")
+        public bool StartBackgroundAnalysisAfterVoiceReady(string analysisId, string reason = "First foreground speech checkpoint reached")
         {
             if (string.IsNullOrWhiteSpace(analysisId))
             {
@@ -3126,7 +3131,7 @@ namespace Wds.SixStars.Api.Engine
                 _pendingBackgroundAnalysis.Remove(analysisId);
             }
 
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after voice ready: " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after the first-speech checkpoint: " + reason);
             QueueBackgroundAnalysis(analysisId, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }
@@ -3246,10 +3251,13 @@ namespace Wds.SixStars.Api.Engine
                         BackgroundAnalysisFailed?.Invoke(this, ex);
                     }
                 },
-                // Give the player a natural beat to answer after voice generation. The Forge
-                // review is durable background work and should not seize the single local LLM or
-                // evict the foreground prompt cache while the player is still hearing/responding.
-                delay: TimeSpan.FromSeconds(20));
+                // Build 15AA: the private review is the continuation of the turn, so once the
+                // foreground model has returned AND the first sentence has reached its speech checkpoint it may start
+                // immediately. Android uses actual AudioTrack playback-start; non-phone paths keep their existing fallback checkpoint. Other background stacks still keep their normal 30/45/90 second
+                // post-foreground quiet windows. Fresh PlayerActivity received while the Star is
+                // answering is still respected and can defer/preempt this review.
+                delay: TimeSpan.Zero,
+                bypassPostForegroundQuiet: true);
         }
 
         private static UnityEventEnvelope CreateBackgroundReviewMetadataEvent(StarInteractionRequest request)
@@ -3294,6 +3302,8 @@ namespace Wds.SixStars.Api.Engine
                 StarResponse = response.SpokenText,
                 ConversationSummary = response.ConversationSummary,
                 ChangesSummary = response.ChangesSummary,
+                TenTurnConversationSummary = response.TenTurnConversationSummary,
+                HundredTurnConversationSummary = response.HundredTurnConversationSummary,
                 ActualDelta = delta,
                 SuggestedDelta = response.SuggestedStateDeltas,
                 EmotionalEffectVector = response.EmotionalEffectVector,
@@ -3305,6 +3315,7 @@ namespace Wds.SixStars.Api.Engine
                 EmotionScores = response.EmotionScores,
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
+                ShortTermMemoryItems = response.ShortTermMemoryItems,
                 ThingsLearnedOrSuggestedByPlayer = response.ThingsLearnedOrSuggestedByPlayer,
                 IncomingUnresolvedVector = response.IncomingUnresolvedVector,
                 OutgoingUnresolvedVector = response.OutgoingUnresolvedVector,

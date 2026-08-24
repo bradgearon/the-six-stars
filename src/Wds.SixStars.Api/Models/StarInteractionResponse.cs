@@ -98,6 +98,9 @@ namespace Wds.SixStars.Api.Models
         public bool InformationFollowupSucceeded { get; set; }
         public string InformationFollowupContextSummary { get; set; } = string.Empty;
 
+        /// <summary>Temporary current-context items produced by the background review. The deterministic memory layer timestamps and expires them.</summary>
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
@@ -153,6 +156,8 @@ namespace Wds.SixStars.Api.Models
 
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         /// <summary>Interstar target reaction only: how this Star feels toward the source Star who told her the relay.</summary>
         public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
         public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
@@ -188,7 +193,8 @@ namespace Wds.SixStars.Api.Models
         /// <summary>
         /// Runtime coordination id for the deferred background emotion/memory review.
         /// Voice systems should call SixStarsRuntime.StartBackgroundAnalysisAfterVoiceReady
-        /// with this id after TTS generation has completed so speech generation gets priority.
+        /// with this id as soon as the first spoken sentence is voice-ready. The background review
+        /// receives the complete foreground response but does not wait for the rest of TTS.
         /// </summary>
         public string BackgroundAnalysisId { get; set; } = string.Empty;
 

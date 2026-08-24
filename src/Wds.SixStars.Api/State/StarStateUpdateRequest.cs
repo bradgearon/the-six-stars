@@ -12,6 +12,8 @@ namespace Wds.SixStars.Api.State
         public string StarResponse { get; set; } = string.Empty;
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         public RelationshipDelta ActualDelta { get; set; } = RelationshipDelta.Zero();
         public RelationshipDelta SuggestedDelta { get; set; } = RelationshipDelta.Zero();
         public string EmotionalEffectVector { get; set; } = string.Empty;
@@ -23,6 +25,7 @@ namespace Wds.SixStars.Api.State
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
         public string IncomingUnresolvedVector { get; set; } = string.Empty;
         public string OutgoingUnresolvedVector { get; set; } = string.Empty;

@@ -396,6 +396,7 @@ namespace Wds.SixStars.Ui.Configuration
         public int MaxMemoryNotes { get; set; } = 160;
         public int ImportantQuotesForPrompt { get; set; } = 24;
         public int MemoryNotesForPrompt { get; set; } = 40;
+        public int ShortTermMemoryWindowMs { get; set; } = 1800000;
         public int RelationshipEventsForPrompt { get; set; } = 30;
         public int GirlfriendHistoryForPrompt { get; set; } = 20;
         public int LearnedFunctionsForPrompt { get; set; } = 25;

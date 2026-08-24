@@ -30,6 +30,7 @@ namespace Wds.SixStars.Api.Ai
         private readonly int _initiativeMaxTokens;
         private readonly int _storyPlanMaxTokens;
         private readonly int _reviewMaxTokens;
+        private readonly bool _fastSpeechControlsEnabled;
 
         public StructuredStarAgent(ILocalChatModelClient client, MainInstructionSet mainInstructions)
             : this(client, mainInstructions, new StarPromptOptions())
@@ -51,6 +52,7 @@ namespace Wds.SixStars.Api.Ai
             _initiativeMaxTokens = ResolveInitiativeMaxTokens();
             _storyPlanMaxTokens = ResolveStoryPlanMaxTokens();
             _reviewMaxTokens = ResolveReviewMaxTokens(reviewMaxTokens);
+            _fastSpeechControlsEnabled = mainInstructions?.FastSpeech?.IncludeControlItems == true;
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
@@ -2576,7 +2578,7 @@ namespace Wds.SixStars.Api.Ai
 
             if (!isStructuredForeground)
             {
-                StreamingStarResponseMediator mediator = new StreamingStarResponseMediator(request.SpokenChunkReady, null);
+                StreamingStarResponseMediator mediator = new StreamingStarResponseMediator(request.SpokenChunkReady, _fastSpeechControlsEnabled ? request.StreamActionReady : null);
                 string streamedText;
                 try
                 {
@@ -2611,19 +2613,24 @@ namespace Wds.SixStars.Api.Ai
                 List<string> spokenParts = mediator.SpokenParts.ToList();
                 List<string> mediationTrace = mediator.TraceEntries.ToList();
                 string rawStreamForTrace = string.IsNullOrWhiteSpace(mediator.RawReceivedText) ? streamedText : mediator.RawReceivedText;
-                string foregroundOutgoingUnresolved = string.Empty;
-                List<InformationNeedVectorItem> foregroundInformationNeeds = new List<InformationNeedVectorItem>();
+                string foregroundOutgoingUnresolved = _fastSpeechControlsEnabled ? mediator.OutgoingUnresolvedVector : string.Empty;
+                List<InformationNeedVectorItem> foregroundInformationNeeds = _fastSpeechControlsEnabled
+                    ? mediator.InformationNeeds.ToList()
+                    : new List<InformationNeedVectorItem>();
                 if (spokenParts.Count == 0 && !string.IsNullOrWhiteSpace(streamedText))
                 {
                     // Some compatible clients only return the final body and never forward deltas.
                     // Run that complete body through the same mediator so control vectors are still
                     // kept out of visible/TTS speech and are only acted on once complete.
-                    StreamingStarResponseMediator fallbackMediator = new StreamingStarResponseMediator(request.SpokenChunkReady, null);
+                    StreamingStarResponseMediator fallbackMediator = new StreamingStarResponseMediator(request.SpokenChunkReady, _fastSpeechControlsEnabled ? request.StreamActionReady : null);
                     fallbackMediator.Append(streamedText);
                     fallbackMediator.Complete();
                     spokenParts = fallbackMediator.SpokenParts.ToList();
-                    // Foreground controls are intentionally ignored. Questions, emotion animation, and
-                    // information needs are produced by the private background review instead.
+                    if (_fastSpeechControlsEnabled)
+                    {
+                        foregroundOutgoingUnresolved = fallbackMediator.OutgoingUnresolvedVector;
+                        foregroundInformationNeeds = fallbackMediator.InformationNeeds.ToList();
+                    }
                     mediationTrace.Add("fallback mediator used because the primary streaming callback produced no speech chunks");
                     mediationTrace.AddRange(fallbackMediator.TraceEntries);
                     if (string.IsNullOrWhiteSpace(rawStreamForTrace)) rawStreamForTrace = fallbackMediator.RawReceivedText;
@@ -2670,7 +2677,7 @@ namespace Wds.SixStars.Api.Ai
                 streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
                     ? "StructuredStarAgent used the manual Thought/Listen plain-text streaming speech contract."
                     : "StructuredStarAgent used REAL LLM plain-text streaming foreground speech pass.");
-                streamedResponse.Debug.Notes.Add((isManualStreamingInitiative ? "Manual Thought" : "Normal foreground speech") + " streams punctuation-complete sentences to Android immediately; foreground control vectors are disabled.");
+                streamedResponse.Debug.Notes.Add((isManualStreamingInitiative ? "Manual Thought" : "Normal foreground speech") + " streams punctuation-complete sentences to Android immediately; foreground control items are " + (_fastSpeechControlsEnabled ? "enabled from main-instructions.json" : "disabled in main-instructions.json") + ".");
                 streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
                     ? "Manual Thought/Listen does not run player emotion/memory review or relationship deltas."
                     : "Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
@@ -2678,7 +2685,9 @@ namespace Wds.SixStars.Api.Ai
                     ? $"Per-pass max_tokens cap used: {maxTokens}."
                     : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
                 streamedResponse.Debug.Notes.Add($"Streamed speech parts: {streamedResponse.SpokenParts.Count}; joined length: {streamedResponse.SpokenText.Length} characters.");
-                streamedResponse.Debug.Notes.Add("Foreground stream returns speech only. Emotion animation, questions, and information needs are deferred to the private background review.");
+                streamedResponse.Debug.Notes.Add(_fastSpeechControlsEnabled
+                    ? "Foreground stream may return configured e/q/i controls; background review still refines durable cognition."
+                    : "Foreground stream returns speech only. Emotion animation, questions, and information needs are deferred to the private background review.");
                 if (!string.IsNullOrWhiteSpace(streamTracePath))
                 {
                     streamedResponse.Debug.Notes.Add("Outgoing stream mediation trace: " + streamTracePath);
@@ -2794,6 +2803,11 @@ namespace Wds.SixStars.Api.Ai
             response.RequestToShowBoobs = model.RequestToShowBoobs || IsRequestToShowBoobs(request.PlayerText);
             response.EmotionalEffectVector = string.IsNullOrWhiteSpace(model.EmotionalEffectVector) ? (foregroundResponse.EmotionalEffectVector ?? string.Empty) : model.EmotionalEffectVector;
             response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
+            if (_fastSpeechControlsEnabled)
+            {
+                response.InformationNeeds = MergeInformationNeeds(foregroundResponse.InformationNeeds, response.InformationNeeds);
+                response.OutgoingUnresolvedVector = MergeOutgoingUnresolvedVectors(foregroundResponse.OutgoingUnresolvedVector, response.OutgoingUnresolvedVector);
+            }
             response.NeedsMoreInformation = response.InformationNeeds.Count > 0;
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
@@ -2949,6 +2963,8 @@ namespace Wds.SixStars.Api.Ai
                 ChangesSummary = string.IsNullOrWhiteSpace(model.ChangesSummary)
                     ? BuildFallbackChangesSummary(request, model.SpokenText)
                     : model.ChangesSummary,
+                TenTurnConversationSummary = CleanOneLine(model.TenTurnConversationSummary, 1400),
+                HundredTurnConversationSummary = CleanOneLine(model.HundredTurnConversationSummary, 1800),
                 SourceStarEmotionalEffectVector = model.SourceStarEmotionalEffectVector ?? string.Empty,
                 SourceStarNegativeEmotionVector = model.SourceStarNegativeEmotionVector ?? string.Empty,
                 InterstarReplyToSourceStar = CleanOneLine(model.ReplyToSourceStar, 500),
@@ -2964,6 +2980,7 @@ namespace Wds.SixStars.Api.Ai
             response.DetectedCombos.AddRange(model.DetectedCombos);
             // Important quote capture is deterministic now. Ignore model-provided quote choices.
             response.MemoryNotes.AddRange(model.MemoryNotes);
+            response.ShortTermMemoryItems.AddRange(CleanShortTermMemoryItems(model.ShortTermMemoryItems, 8));
             response.ThingsLearnedOrSuggestedByPlayer.AddRange(CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8));
             response.RememberedMarkers.AddRange(model.RememberedMarkers);
             response.ReferencedMemoryMarkerIds.AddRange(model.ReferencedMemoryMarkerIds);
@@ -2979,6 +2996,19 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendCoupleActivitySummary = CleanOneLine(model.GirlfriendCoupleActivitySummary, 520);
             response.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
             response.GirlfriendCoupleActivityItems.AddRange(ParseGirlfriendCoupleActivityVector(response.GirlfriendCoupleActivityVector, 16));
+            if (state == null || !state.IsGirlfriend)
+            {
+                // Girlfriend-only state is deterministically sealed off when this Star is not the
+                // Last Cat's committed girlfriend. General flirting, attraction, pet names, and
+                // pursuit remain available through the ordinary relationship system.
+                response.GirlfriendHistoryUpdates.Clear();
+                response.GirlfriendNeedsMetSummary = string.Empty;
+                response.GirlfriendNeedsMetVector.Clear();
+                response.GirlfriendWantsMetVector.Clear();
+                response.GirlfriendCoupleActivitySummary = string.Empty;
+                response.GirlfriendCoupleActivityVector = string.Empty;
+                response.GirlfriendCoupleActivityItems.Clear();
+            }
             response.InterstarEmotionVectors.AddRange(NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors));
             response.Debug.LoreUsed.AddRange(model.LoreUsed);
             response.Debug.RiskFlags.AddRange(model.RiskFlags);
@@ -2990,6 +3020,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
             response.Debug.Notes.Add("Question vectors: fromLastCat=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", toLastCat=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
             response.Debug.Notes.Add("Background emotion animation: " + (string.IsNullOrWhiteSpace(response.EmotionAnimationName) ? "none" : response.EmotionAnimationName) + ".");
+            response.Debug.Notes.Add("Background short-term memory items: " + response.ShortTermMemoryItems.Count + ".");
             response.Debug.Notes.Add("Background information needs: " + (response.InformationNeeds.Count == 0 ? "none" : string.Join(", ", response.InformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0")))) + ".");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
@@ -3148,6 +3179,16 @@ namespace Wds.SixStars.Api.Ai
                     analysis.ThingsLearnedOrSuggestedByPlayer.Add(item);
                 }
             }
+        }
+
+        private static List<string> CleanShortTermMemoryItems(IEnumerable<string>? values, int maxItems)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Select(x => CleanOneLine(x, 700))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, maxItems))
+                .ToList();
         }
 
         private static List<string> CleanDurableLearnedItems(IEnumerable<string>? values, int maxItems)
@@ -3683,6 +3724,7 @@ namespace Wds.SixStars.Api.Ai
             model.SuggestedStateDeltas ??= RelationshipDelta.Zero();
             model.ImportantPlayerQuotes ??= new List<string>();
             model.MemoryNotes ??= new List<string>();
+            model.ShortTermMemoryItems ??= new List<string>();
             model.ThingsLearnedOrSuggestedByPlayer ??= new List<string>();
             model.RememberedMarkers ??= new List<StarRememberedMarker>();
             model.ReferencedMemoryMarkerIds ??= new List<string>();
@@ -4286,6 +4328,10 @@ namespace Wds.SixStars.Api.Ai
                 if (string.IsNullOrWhiteSpace(model.NegativeEmotionVector))
                 {
                     model.NegativeEmotionVector = GetCompactVectorString(root, "lastCatNegativeEmotionVector", "last_cat_negative_emotion_vector", "negativeEmotionVector", "negative_emotion_vector", "boundaryEmotionVector", "boundary_emotion_vector") ?? string.Empty;
+                }
+                if (model.ShortTermMemoryItems == null || model.ShortTermMemoryItems.Count == 0)
+                {
+                    model.ShortTermMemoryItems = GetStringOrArray(root, "shortTermMemoryItems").Concat(GetStringOrArray(root, "short_term_memory_items")).ToList();
                 }
                 if (string.IsNullOrWhiteSpace(model.QuestionsFromLastCatVector))
                 {

@@ -37,6 +37,9 @@ namespace Wds.SixStars.Api.Ai
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
+        /// <summary>Temporary current-context items such as what the Last Cat is doing now, the shared task, or an immediate plan. Host timestamps and expires these.</summary>
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+
         /// <summary>Compact questions/topics raised by the Last Cat that remain open for the Star.</summary>
         [JsonPropertyName("questionsFromLastCatVector")]
         public string QuestionsFromLastCatVector { get; set; } = string.Empty;
@@ -64,6 +67,8 @@ namespace Wds.SixStars.Api.Ai
         public RelationshipDelta SuggestedStateDeltas { get; set; } = RelationshipDelta.Zero();
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         /// <summary>Interstar target reaction only: how this Star feels toward the source Star after hearing the relay from her.</summary>
         public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
         public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;

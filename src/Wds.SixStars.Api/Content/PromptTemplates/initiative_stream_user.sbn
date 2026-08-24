@@ -8,8 +8,10 @@ IsMet={{ data.isMet }}; IsAlly={{ data.isAlly }}; IsGirlfriend={{ data.isGirlfri
 STAR STATE AT REST
 {{ data.dailyStateContext }}
 
+{{ if data.isGirlfriend }}
 CURRENT GIRLFRIEND NEED/WANT IMPULSES
 {{ data.girlfriendStateContext }}
+{{ end }}
 {{ if data.recentEmotions != "" }}Recent emotions={{ data.recentEmotions }}
 {{ end }}{{ if data.ongoingSummary != "" }}Ongoing summary={{ data.ongoingSummary }}
 {{ end }}{{ if data.continuityMemory != "" }}Memory={{ data.continuityMemory }}

@@ -17,6 +17,7 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class StarPromptBuilder
     {
+        private readonly MainInstructionSet _mainInstructions;
         private readonly StarPromptOptions _options;
         private readonly PromptTemplateRenderer _templates;
         private readonly IForgeContextCardFactory _forgeContextCards;
@@ -38,6 +39,8 @@ namespace Wds.SixStars.Api.Ai
             IForgeContextCardFactory forgeContextCards,
             IForgeContextCardRenderer forgeContextRenderer)
         {
+            _mainInstructions = mainInstructions ?? new MainInstructionSet();
+            _mainInstructions.FastSpeech ??= new FastSpeechInstructionSet();
             _options = options ?? new StarPromptOptions();
             _templates = PromptTemplateRenderer.CreateDefault();
             _forgeContextCards = forgeContextCards ?? throw new ArgumentNullException(nameof(forgeContextCards));
@@ -60,8 +63,8 @@ namespace Wds.SixStars.Api.Ai
                 return new List<ChatMessage>
                 {
                     new ChatMessage("system", manualStreamingThought
-                        ? BuildStarInitiativeStreamingSystemMessage(profile)
-                        : BuildStarInitiativeSystemMessage(profile)),
+                        ? BuildStarInitiativeStreamingSystemMessage(profile, state)
+                        : BuildStarInitiativeSystemMessage(profile, state)),
                     new ChatMessage("user", manualStreamingThought
                         ? BuildStarInitiativeStreamingUserMessage(profile, request, state)
                         : BuildStarInitiativeUserMessage(profile, request, state))
@@ -70,14 +73,14 @@ namespace Wds.SixStars.Api.Ai
 
             return new List<ChatMessage>
             {
-                new ChatMessage("system", BuildSpeechSystemMessage(profile, request)),
+                new ChatMessage("system", BuildSpeechSystemMessage(profile, request, state)),
                 new ChatMessage("user", BuildSpeechUserMessage(profile, request, state))
             };
         }
 
         public IReadOnlyList<ChatMessage> BuildReviewMessages(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
         {
-            string system = BuildCompactReviewSystemMessage(profile);
+            string system = BuildCompactReviewSystemMessage(profile, state);
 
             string user = BuildCompactReviewUserMessage(profile, request, state, foregroundResponse);
 
@@ -469,6 +472,7 @@ namespace Wds.SixStars.Api.Ai
             StarGirlfriendHourlyStateContext? previous = request.PreviousState;
             object data = new
             {
+                isGirlfriend = state != null && state.IsGirlfriend,
                 star = new
                 {
                     displayName = profile.DisplayName,
@@ -561,7 +565,7 @@ namespace Wds.SixStars.Api.Ai
             };
         }
 
-        private string BuildCompactReviewSystemMessage(StarProfile profile)
+        private string BuildCompactReviewSystemMessage(StarProfile profile, StarState state)
         {
             StringBuilder vectorInstructions = new StringBuilder();
             vectorInstructions.AppendLine(BuildEmotionalEffectVectorInstruction());
@@ -570,6 +574,7 @@ namespace Wds.SixStars.Api.Ai
             object data = new
             {
                 starDisplayName = profile.DisplayName,
+                isGirlfriend = state != null && state.IsGirlfriend,
                 currentTimeContext = BuildCurrentTimeContext(),
                 emotionVectorInstructions = vectorInstructions.ToString().TrimEnd()
             };
@@ -596,17 +601,20 @@ namespace Wds.SixStars.Api.Ai
                 relationshipContext = _forgeContextRenderer.Render(forgeContext.Relationship),
                 recentConversationHistory = _forgeContextRenderer.Render(forgeContext.Conversation),
                 durableMemoryContext = _forgeContextRenderer.Render(forgeContext.Memory),
+                shortTermMemoryContext = BuildShortTermMemoryContext(state, 12),
                 unresolvedStateContext = BuildCompactUnresolvedReviewContext(state),
+                conversationSummaryCheckpointContext = BuildConversationSummaryCheckpointContext(request, state, foregroundResponse),
                 storyFieldsContext = _forgeContextRenderer.Render(forgeContext.Setting)
             };
 
             return _templates.Render("review_user.sbn", data);
         }
 
-        private string BuildStarInitiativeSystemMessage(StarProfile profile)
+        private string BuildStarInitiativeSystemMessage(StarProfile profile, StarState state)
         {
             object data = new
             {
+                isGirlfriend = state != null && state.IsGirlfriend,
                 star = new
                 {
                     displayName = profile.DisplayName,
@@ -623,10 +631,11 @@ namespace Wds.SixStars.Api.Ai
             return _templates.Render("initiative_system.sbn", data).TrimEnd();
         }
 
-        private string BuildStarInitiativeStreamingSystemMessage(StarProfile profile)
+        private string BuildStarInitiativeStreamingSystemMessage(StarProfile profile, StarState state)
         {
             object data = new
             {
+                isGirlfriend = state != null && state.IsGirlfriend,
                 star = new
                 {
                     displayName = profile.DisplayName,
@@ -638,8 +647,7 @@ namespace Wds.SixStars.Api.Ai
                     voiceRules = profile.SpokenResponseRules == null || profile.SpokenResponseRules.Count == 0
                         ? string.Empty
                         : string.Join("; ", profile.SpokenResponseRules.Take(4).Select(x => Truncate(x, 180)))
-                },
-                emotionAnimationNames = "happy, confused, sad, angry, love"
+                }
             };
             return _templates.Render("initiative_stream_system.sbn", data).TrimEnd();
         }
@@ -679,12 +687,14 @@ namespace Wds.SixStars.Api.Ai
 
             StringBuilder unresolved = new StringBuilder();
             AppendForegroundUnresolvedContext(unresolved, state);
+            List<string> shortTermContinuity = GetActiveShortTermMemory(state, 6).Select(x => "NOW: " + Truncate(x.Text, 170)).ToList();
             string continuityMemory = string.Join(" ~ ",
-                (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>())
-                    .Concat(state.MemoryNotes ?? new List<string>())
-                    .Where(x => !string.IsNullOrWhiteSpace(x) && !IsTechnicalMemoryNote(x))
-                    .Take(8)
-                    .Select(x => Truncate(x, 170)));
+                shortTermContinuity.Concat(
+                    (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>())
+                        .Concat(state.MemoryNotes ?? new List<string>())
+                        .Where(x => !string.IsNullOrWhiteSpace(x) && !IsTechnicalMemoryNote(x))
+                        .Take(8)
+                        .Select(x => Truncate(x, 170))));
 
             return new
             {
@@ -744,7 +754,7 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
-        private string BuildSpeechSystemMessage(StarProfile profile, StarInteractionRequest request)
+        private string BuildSpeechSystemMessage(StarProfile profile, StarInteractionRequest request, StarState state)
         {
             StringBuilder globalCanon = new StringBuilder();
             AppendGlobalCanonLore(globalCanon);
@@ -767,7 +777,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                AppendFastConversationProfile(fastProfile, profile);
+                AppendFastConversationProfile(fastProfile, profile, state);
             }
 
             StringBuilder storyModeSystem = new StringBuilder();
@@ -786,7 +796,9 @@ namespace Wds.SixStars.Api.Ai
             object data = new
             {
                 starDisplayName = profile.DisplayName,
+                isGirlfriend = state != null && state.IsGirlfriend,
                 plainStreamingSpeech,
+                fastSpeechControlsEnabled = _mainInstructions.FastSpeech?.IncludeControlItems == true,
                 foregroundModeInstructions,
                 globalCanonLore = globalCanon.ToString().TrimEnd(),
                 privateRomanceProfile = privateRomance.ToString().TrimEnd(),
@@ -820,8 +832,7 @@ namespace Wds.SixStars.Api.Ai
             }
 
             int currentTurnNumber = Math.Max(1, state.InteractionCount + 1);
-            StringBuilder recentTurns = new StringBuilder();
-            AppendRecentConversationHistory(recentTurns, profile, state, storyRequest ? 3 : Math.Min(10, Clamp(_options.RecentHistoryCount, 1, 20)), compact: true, currentTurnNumber: currentTurnNumber);
+            ConversationPromptData conversation = BuildConversationPromptData(state, request, currentTurnNumber);
 
             StringBuilder importantMemory = new StringBuilder();
             if (storyRequest)
@@ -873,19 +884,23 @@ namespace Wds.SixStars.Api.Ai
                 task.AppendLine("This is not a player statement. Do not treat PlayerText as something the Last Cat said. Do not thank him for asking. Do not score emotions or create memory from this.");
                 if (IsTruthyFlag(request, "starInitiativeForce"))
                 {
-                    task.AppendLine("Manual Listen/A-button mode is active: treat this like the Last Cat pressed interact beside an NPC. Prefer to always produce a short fresh line unless it would violate canon or repeat something just said. Pick a state-backed observation, feeling, desire, compliment, cute girlfriend note, warning, or question and set hasSomethingToSay=true.");
+                    task.AppendLine("Manual Listen/A-button mode is active: treat this like the Last Cat pressed interact beside an NPC. Prefer to always produce a short fresh line unless it would violate canon or repeat something just said. Pick a state-backed observation, feeling, desire, compliment, warning, or question and set hasSomethingToSay=true.");
+                    if (state.IsGirlfriend) task.AppendLine("Because she is his girlfriend, a current cute or affectionate girlfriend thought may also be used when it fits.");
                 }
                 else if (IsTruthyFlag(request, "starInitiativePrepareForListen"))
                 {
                     task.AppendLine("Prepared Listen mode is active: quietly prepare one fresh state-backed line for the next time the Last Cat chooses to Listen. Prefer to speak and create a complete little moment, but this remains background work and must not displace a live player conversation.");
                 }
                 task.AppendLine("Use the AT-REST STAR STATE first, especially wantsToTalkAbout and conversationHooks, plus the recent emotional state and interstar status if present.");
-                task.AppendLine("If she is girlfriend, also use GIRLFRIEND HOURLY STATE: needVector, wantVector, thingsSheWantsToSay, and cuteThingsSheWantsToSay are explicit candidate sources for spontaneous girlfriend speech while exploring.");
-                task.AppendLine("She may use thingsSheWantsToSay/cuteThingsSheWantsToSay, but should check the recent conversation first and avoid repeating a thing she already said recently.");
+                if (state.IsGirlfriend)
+                {
+                    task.AppendLine("Use the supplied GIRLFRIEND HOURLY STATE as an additional source for spontaneous girlfriend speech while exploring.");
+                    task.AppendLine("She may use thingsSheWantsToSay/cuteThingsSheWantsToSay from that girlfriend state, but should check the recent conversation first and avoid repeating a thing she already said recently.");
+                }
                 task.AppendLine("Think of this as two outputs: first decide hasSomethingToSay/shouldSpeak and fill speechDecisionVector with one item for itemId=saySomethingNow; then if yes put exactly what she wants to say in spokenText.");
                 task.AppendLine("If the state gives her a real reason to speak now, set hasSomethingToSay=true and give one or two natural spokenText chunks she chooses to say on her own.");
                 task.AppendLine("If nothing in the state feels worth interrupting him for, set hasSomethingToSay=false, priority=0, selectedTopic='', reason='no state-backed reason to speak now', and spokenText=[] exactly.");
-                task.AppendLine("Only speak about things she would naturally volunteer at her current closeness. A low-connection Star should make a light observation; a close/girlfriend Star may be more tender.");
+                task.AppendLine("Only speak about things she would naturally volunteer at her current closeness. A low-connection Star should make a light observation; greater earned connection may make her warmer, more vulnerable, or more openly flirty.");
                 task.AppendLine("Never mention systems, JSON, vectors, mobile, reconnects, initiative checks, background services, or that the app asked.");
             }
             else
@@ -925,7 +940,9 @@ namespace Wds.SixStars.Api.Ai
             {
                 contract.AppendLine("Return star initiative JSON only: starId, hasSomethingToSay, priority, speechDecisionVector, selectedTopic, reason, spokenText.");
                 contract.AppendLine("speechDecisionVector must contain exactly one item: itemId='saySomethingNow', displayName='Say something now', confidence 0-1, score 0-100, reason. Confidence is zero-based: any confidence can help the runtime accept the line, but score still describes urgency/desire.");
-                contract.AppendLine("hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, GIRLFRIEND HOURLY STATE, recent emotion state, or interstar feedback gives her a real reason to speak now.");
+                contract.AppendLine(state.IsGirlfriend
+                    ? "hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, current girlfriend state, recent emotion state, or interstar feedback gives her a real reason to speak now."
+                    : "hasSomethingToSay/shouldSpeak is the first output: true only when the AT-REST STAR STATE, recent emotion state, or interstar feedback gives her a real reason to speak now.");
                 contract.AppendLine("spokenText is the second output: if hasSomethingToSay=true, it is exactly what she chooses to say as herself while the Last Cat is at rest; if false, it must be [].");
                 contract.AppendLine("If hasSomethingToSay=false, spokenText must be [] and priority must be 0.");
                 if (IsTruthyFlag(request, "preparedSpeechIntent")) contract.AppendLine("A durable wants-to-say intention was explicitly supplied for this preparation pass: hasSomethingToSay must be true, selectedTopic should match it, and spokenText must fulfill its communication goal.");
@@ -934,7 +951,22 @@ namespace Wds.SixStars.Api.Ai
             }
             else
             {
-                contract.AppendLine("Return only the spoken reply and answer the Last Cat directly. Act any actions out in first person.");
+                FastSpeechInstructionSet fastSpeech = _mainInstructions.FastSpeech ?? new FastSpeechInstructionSet();
+                string responseInstructions = string.IsNullOrWhiteSpace(fastSpeech.ResponseInstructions)
+                    ? "Return only the spoken reply and answer the Last Cat directly. Act any actions out in first person."
+                    : fastSpeech.ResponseInstructions.Trim();
+                contract.AppendLine(responseInstructions);
+                if (fastSpeech.IncludeControlItems)
+                {
+                    string includeInstruction = string.IsNullOrWhiteSpace(fastSpeech.IncludeControlItemsInstruction)
+                        ? "Also include any applicable control items defined below."
+                        : fastSpeech.IncludeControlItemsInstruction.Trim();
+                    contract.AppendLine(includeInstruction);
+                    foreach (string controlInstruction in fastSpeech.ControlInstructions ?? new List<string>())
+                    {
+                        if (!string.IsNullOrWhiteSpace(controlInstruction)) contract.AppendLine("- " + controlInstruction.Trim());
+                    }
+                }
                 if (IsTruthyFlag(request, "informationFollowup"))
                 {
                     contract.AppendLine("MATCHED INFORMATION: use the attached reference to answer the original question now. Do not ask for another lookup in this pass.");
@@ -968,19 +1000,19 @@ namespace Wds.SixStars.Api.Ai
             object data = new
             {
                 starDisplayName = profile.DisplayName,
-                playerTextBlock = request.RequestType == RequestType.StarInitiative ? "> [No player message. This is a system at-rest state check.]" : QuoteBlock(request.PlayerText),
                 requestType = request.RequestType.ToString(),
-                currentTimeContext = BuildCurrentTimeContext(),
                 currentTurnNumber,
+                currentTurnTimestamp = conversation.CurrentTurnTimestamp,
+                currentPlayerText = conversation.CurrentPlayerText,
+                conversationHundredSummaries = conversation.HundredSummaries,
+                conversationTenSummaries = conversation.TenSummaries,
+                conversationRecentTurns = conversation.RecentTurns,
                 romanceMode = request.GameContext.RomanceMode.ToString(),
                 area = request.GameContext.Area ?? string.Empty,
                 quest = request.GameContext.Quest ?? string.Empty,
                 relationshipContext = relationship.ToString().TrimEnd(),
                 dialogueAndMarkerContext = dialogueAndMarkers.ToString().TrimEnd(),
-                ongoingSummary = string.IsNullOrWhiteSpace(state.ConversationSummary) ? "none yet" : Truncate(state.ConversationSummary, 600),
-                lastRememberedReplyContext = recentTurns.Length > 0 ? string.Empty : "Last remembered reply from " + profile.DisplayName + ": " + BuildLastUsableStarReply(state),
                 storyHistoryContext = storyHistory.ToString().TrimEnd(),
-                recentConversationTurns = recentTurns.ToString().TrimEnd(),
                 importantMemoryContext = importantMemory.ToString().TrimEnd(),
                 unresolvedContinuityContext = unresolvedContinuity.ToString().TrimEnd(),
                 latestScreenOneLine = BuildLatestScreenOneLine(request.RecentScreenCaptures),
@@ -1027,6 +1059,170 @@ namespace Wds.SixStars.Api.Ai
                 || string.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private sealed class ConversationPromptSummary
+        {
+            public int StartTurn { get; set; }
+            public int EndTurn { get; set; }
+            public string Summary { get; set; } = string.Empty;
+        }
+
+        private sealed class ConversationPromptTurn
+        {
+            public int TurnNumber { get; set; }
+            public string Timestamp { get; set; } = string.Empty;
+            public string Player { get; set; } = string.Empty;
+            public string You { get; set; } = string.Empty;
+        }
+
+        private sealed class ConversationPromptData
+        {
+            public List<ConversationPromptSummary> HundredSummaries { get; set; } = new List<ConversationPromptSummary>();
+            public List<ConversationPromptSummary> TenSummaries { get; set; } = new List<ConversationPromptSummary>();
+            public List<ConversationPromptTurn> RecentTurns { get; set; } = new List<ConversationPromptTurn>();
+            public string CurrentTurnTimestamp { get; set; } = string.Empty;
+            public string CurrentPlayerText { get; set; } = string.Empty;
+        }
+
+        private static ConversationPromptData BuildConversationPromptData(StarState state, StarInteractionRequest request, int currentTurnNumber)
+        {
+            ConversationPromptData result = new ConversationPromptData
+            {
+                CurrentTurnTimestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                CurrentPlayerText = FormatHumanConversationQuotedText(request?.PlayerText)
+            };
+            if (state == null) return result;
+
+            int lastCompletedTurn = Math.Max(0, currentTurnNumber - 1);
+            int recentWindowStart = Math.Max(1, lastCompletedTurn - 9);
+            Dictionary<ConversationLogEntry, int> turnNumbers = BuildRetainedConversationTurnNumberMap(state);
+
+            // Keep the latest ten completed turn numbers as verbatim human dialogue. Summaries only
+            // cover older ranges, so the model never receives the same turn both raw and summarized.
+            result.RecentTurns = GetAllRetainedConversationEntries(state)
+                .Where(x => turnNumbers.TryGetValue(x, out int n) && n >= recentWindowStart && n <= lastCompletedTurn)
+                .OrderBy(x => turnNumbers[x])
+                .Select(x => new ConversationPromptTurn
+                {
+                    TurnNumber = turnNumbers[x],
+                    Timestamp = x.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                    Player = FormatHumanConversationQuotedText(x.PlayerText),
+                    You = FormatHumanConversationQuotedText(x.StarResponse)
+                })
+                .ToList();
+
+            // A hundred-turn rollup is eligible only after the raw ten-turn window has moved past it.
+            // Keep at most ten of the newest completed hundred-turn blocks.
+            result.HundredSummaries = (state.HundredTurnConversationSummaries ?? new List<StarConversationSummaryBlock>())
+                .Where(x => x != null && x.EndTurn < recentWindowStart && x.StartTurn > 0 && x.EndTurn >= x.StartTurn && !string.IsNullOrWhiteSpace(x.Summary))
+                .OrderByDescending(x => x.EndTurn)
+                .Take(10)
+                .OrderBy(x => x.StartTurn)
+                .Select(x => new ConversationPromptSummary
+                {
+                    StartTurn = x.StartTurn,
+                    EndTurn = x.EndTurn,
+                    Summary = FormatHumanConversationText(x.Summary)
+                })
+                .ToList();
+
+            int hundredCoveredThrough = result.HundredSummaries.Count == 0 ? 0 : result.HundredSummaries.Max(x => x.EndTurn);
+
+            // Ten-turn rollups fill only the gap between the selected hundred-turn rollups and the
+            // raw recent window. This is the middle-resolution layer and is also capped at ten.
+            result.TenSummaries = (state.TenTurnConversationSummaries ?? new List<StarConversationSummaryBlock>())
+                .Where(x => x != null
+                    && x.EndTurn < recentWindowStart
+                    && x.StartTurn > hundredCoveredThrough
+                    && x.StartTurn > 0
+                    && x.EndTurn >= x.StartTurn
+                    && !string.IsNullOrWhiteSpace(x.Summary))
+                .OrderByDescending(x => x.EndTurn)
+                .Take(10)
+                .OrderBy(x => x.StartTurn)
+                .Select(x => new ConversationPromptSummary
+                {
+                    StartTurn = x.StartTurn,
+                    EndTurn = x.EndTurn,
+                    Summary = FormatHumanConversationText(x.Summary)
+                })
+                .ToList();
+
+            return result;
+        }
+
+        private static List<ConversationLogEntry> GetAllRetainedConversationEntries(StarState state)
+        {
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state?.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state?.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives
+                    .Where(x => x != null)
+                    .SelectMany(x => x.Entries ?? new List<ConversationLogEntry>())
+                    .Where(x => x != null));
+            }
+            return retained.Distinct().Where(IsUsableConversationTurn).OrderByDescending(x => x.CreatedAt).ToList();
+        }
+
+        private static string FormatHumanConversationText(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+            string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            while (cleaned.Contains("  ")) cleaned = cleaned.Replace("  ", " ");
+            return cleaned;
+        }
+
+        private static string FormatHumanConversationQuotedText(string? value)
+        {
+            return FormatHumanConversationText(value).Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string BuildConversationSummaryCheckpointContext(StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        {
+            if (state == null) return string.Empty;
+            int currentTurnNumber = Math.Max(1, state.InteractionCount + 1);
+            if (currentTurnNumber % 10 != 0) return string.Empty;
+
+            int startTurn = currentTurnNumber - 9;
+            Dictionary<ConversationLogEntry, int> turnNumbers = BuildRetainedConversationTurnNumberMap(state);
+            List<ConversationLogEntry> prior = GetAllRetainedConversationEntries(state)
+                .Where(x => turnNumbers.TryGetValue(x, out int n) && n >= startTurn && n < currentTurnNumber)
+                .OrderBy(x => turnNumbers[x])
+                .ToList();
+
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("CONVERSATION SUMMARY CHECKPOINT");
+            sb.AppendLine("Generate tenTurnConversationSummary for Turns " + startTurn + "-" + currentTurnNumber + ". Write a compact human continuity summary in 1-3 sentences, using direct language such as “The player and you discussed...”. Preserve concrete topics, decisions, relationship developments, unresolved plans, and important facts; omit scores, vectors, storage language, and technical metadata.");
+            foreach (ConversationLogEntry entry in prior)
+            {
+                int turn = turnNumbers[entry];
+                sb.AppendLine("Turn " + turn);
+                sb.AppendLine(entry.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"));
+                sb.AppendLine("Player: \"" + FormatHumanConversationQuotedText(entry.PlayerText) + "\"");
+                sb.AppendLine("You: \"" + FormatHumanConversationQuotedText(entry.StarResponse) + "\"");
+            }
+            sb.AppendLine("Turn " + currentTurnNumber);
+            sb.AppendLine(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            sb.AppendLine("Player: \"" + FormatHumanConversationQuotedText(request?.PlayerText) + "\"");
+            sb.AppendLine("You: \"" + FormatHumanConversationQuotedText(foregroundResponse?.SpokenText) + "\"");
+
+            if (currentTurnNumber % 100 == 0)
+            {
+                int hundredStart = currentTurnNumber - 99;
+                sb.AppendLine();
+                sb.AppendLine("Also generate hundredTurnConversationSummary for Turns " + hundredStart + "-" + currentTurnNumber + ". Summarize the ten ten-turn blocks into a compact 2-4 sentence long-range continuity summary. Use the nine completed ten-turn summaries below plus the tenTurnConversationSummary you are generating for the current block.");
+                foreach (StarConversationSummaryBlock block in (state.TenTurnConversationSummaries ?? new List<StarConversationSummaryBlock>())
+                    .Where(x => x != null && x.StartTurn >= hundredStart && x.EndTurn < currentTurnNumber && !string.IsNullOrWhiteSpace(x.Summary))
+                    .OrderBy(x => x.StartTurn)
+                    .Take(9))
+                {
+                    sb.AppendLine("Turns " + block.StartTurn + "-" + block.EndTurn);
+                    sb.AppendLine(FormatHumanConversationText(block.Summary));
+                }
+            }
+            return sb.ToString().TrimEnd();
         }
 
         private static void AppendRecentConversationHistory(StringBuilder sb, StarProfile profile, StarState state, int maxItems, bool compact, int currentTurnNumber)
@@ -1120,10 +1316,42 @@ namespace Wds.SixStars.Api.Ai
                 + "RecentQuestionResolutionVector=" + resolved;
         }
 
-        private static void AppendForegroundImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
+        private List<StarShortTermMemoryEntry> GetActiveShortTermMemory(StarState state, int maxItems)
         {
-            sb.AppendLine("IMPORTANT MEMORY AVAILABLE TO THIS FOREGROUND REPLY");
-            sb.AppendLine("This is a compact continuity slice in addition to the recent conversation history above.");
+            if (state == null || state.ShortTermMemory == null || state.ShortTermMemory.Count == 0) return new List<StarShortTermMemoryEntry>();
+            int windowMs = Math.Max(1000, _options.ShortTermMemoryWindowMs);
+            DateTimeOffset cutoff = DateTimeOffset.UtcNow.AddMilliseconds(-windowMs);
+            return state.ShortTermMemory
+                .Where(x => x != null && x.CreatedAt >= cutoff && !string.IsNullOrWhiteSpace(x.Text))
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, maxItems))
+                .ToList();
+        }
+
+        private string BuildShortTermMemoryContext(StarState state, int maxItems)
+        {
+            List<StarShortTermMemoryEntry> active = GetActiveShortTermMemory(state, maxItems);
+            if (active.Count == 0) return "none active";
+            return string.Join(Environment.NewLine, active.Select(x => "- " + x.CreatedAt.ToString("O") + " | " + Truncate(x.Text, 420)));
+        }
+
+        private void AppendShortTermMemoryContext(StringBuilder sb, StarState state, int maxItems)
+        {
+            List<StarShortTermMemoryEntry> active = GetActiveShortTermMemory(state, maxItems);
+            if (active.Count == 0) return;
+            sb.AppendLine("SHORT-TERM MEMORY — CURRENT/RECENT CONTEXT ONLY");
+            sb.AppendLine("These temporary items describe what is happening now or what you and the Last Cat are currently doing. Treat them as immediate continuity; they expire automatically and should not be promoted into permanent facts unless separately stored as long-term memory.");
+            foreach (StarShortTermMemoryEntry item in active)
+            {
+                sb.AppendLine("- " + item.CreatedAt.ToString("O") + " | " + Truncate(item.Text, 420));
+            }
+        }
+
+        private void AppendForegroundImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            sb.AppendLine("MEMORY AVAILABLE TO THIS FOREGROUND REPLY");
+            AppendShortTermMemoryContext(sb, state, 12);
+            sb.AppendLine("LONG-TERM MEMORY — durable continuity that does not expire with the short-term window.");
             AppendList(sb, "Important exact player quotes", state.ImportantPlayerQuotes.Take(10).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(8).ToList());
             AppendList(sb, "Things learned or suggested by the Last Cat (durable; do not duplicate in the new foreground array)", (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(20).ToList());
@@ -1138,10 +1366,11 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
-        private static void AppendStoryImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
+        private void AppendStoryImportantMemoryContext(StringBuilder sb, StarProfile profile, StarState state)
         {
-            sb.AppendLine("IMPORTANT MEMORY AVAILABLE TO THIS STORY REQUEST");
-            sb.AppendLine("Use these only as optional seasoning. The story must still develop a fresh plot.");
+            sb.AppendLine("MEMORY AVAILABLE TO THIS STORY REQUEST");
+            AppendShortTermMemoryContext(sb, state, 6);
+            sb.AppendLine("LONG-TERM MEMORY — use these only as optional seasoning. The story must still develop a fresh plot.");
             AppendList(sb, "Best exact Last Cat quotes to optionally echo", state.ImportantPlayerQuotes.Take(4).ToList());
             AppendList(sb, "Memory notes", state.MemoryNotes.Where(x => !IsTechnicalMemoryNote(x)).Take(3).ToList());
             AppendList(sb, "Things learned or suggested by the Last Cat (durable; optional story continuity)", (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Take(10).ToList());
@@ -1176,6 +1405,7 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendStoryGirlfriendStateSummary(StringBuilder sb, StarState state)
         {
+            if (state == null || !state.IsGirlfriend) return;
             StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
             if (context == null || !context.IsAvailable) return;
             sb.AppendLine();
@@ -1190,6 +1420,7 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendStoryCoupleActivitySummary(StringBuilder sb, StarState state)
         {
+            if (state == null || !state.IsGirlfriend) return;
             List<GirlfriendCoupleActivityScore> scores = (state.GirlfriendCoupleActivityScores ?? new List<GirlfriendCoupleActivityScore>())
                 .Where(x => x != null && !string.IsNullOrWhiteSpace(x.ActivityId) && x.TotalScore > 0)
                 .OrderByDescending(x => x.TotalScore)
@@ -1557,7 +1788,7 @@ namespace Wds.SixStars.Api.Ai
 
             sb.AppendLine();
             sb.AppendLine("PRIVATE ROMANCE / ATTRACTION PROFILE — INTERNAL ONLY");
-            sb.AppendLine("This is inner-character knowledge, not something to dump directly. Let it guide subtext, blushes, teasing, active flirting, magical special effects, and connection growth. Do not confess hidden attraction cheaply; let it surface gradually as the relationship state earns it.");
+            sb.AppendLine("This is inner-character knowledge, not something to dump directly. Let it guide subtext, blushes, teasing, active flirting, pursuit, magical special effects, and connection growth. It can make her work to attract or win the Last Cat over, but it is not girlfriend mode and never implies commitment unless IsGirlfriend=true. Do not confess hidden attraction cheaply; let it surface gradually as the relationship state earns it.");
             if (!string.IsNullOrWhiteSpace(profile.SecretAttractionHook)) sb.AppendLine("Secret attraction hook: " + profile.SecretAttractionHook);
             if (!string.IsNullOrWhiteSpace(profile.RomanticSensualDepth)) sb.AppendLine("Romantic/sensual depth: " + profile.RomanticSensualDepth);
             AppendList(sb, "Flirt style", profile.FlirtStyle);
@@ -1969,7 +2200,7 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendGirlfriendHourlyStateContext(StringBuilder sb, StarState state)
         {
-            if (sb == null || state == null) return;
+            if (sb == null || state == null || !state.IsGirlfriend) return;
             StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
             if (context == null || !context.IsAvailable) return;
 
@@ -2075,14 +2306,14 @@ namespace Wds.SixStars.Api.Ai
             return StarCharacterAttributeSchema.NormalizeCompactScores(profile.CharacterAttributes, StarCharacterAttributeSchema.AttributeOrder.Length);
         }
 
-        private static void AppendFastConversationProfile(StringBuilder sb, StarProfile profile)
+        private static void AppendFastConversationProfile(StringBuilder sb, StarProfile profile, StarState state)
         {
             sb.AppendLine();
             sb.AppendLine("FAST CHAT IDENTITY / LORE CARD");
             sb.AppendLine("Identity=" + profile.DisplayName + "|element=" + profile.Element + "|domain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "|quote=" + profile.CoreQuote.Trim()));
             if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("ActionBattlePreference=" + profile.ActionBattlePreference.Trim());
             AppendCharacterAttributeRequestContext(sb, profile);
-            if (profile.CuteModeInstructions != null && profile.CuteModeInstructions.Count > 0)
+            if (state != null && state.IsGirlfriend && profile.CuteModeInstructions != null && profile.CuteModeInstructions.Count > 0)
             {
                 List<string> cutePalette = profile.CuteModeInstructions
                     .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -2207,7 +2438,7 @@ namespace Wds.SixStars.Api.Ai
             }
             else if (state != null && state.IsGirlfriendReady)
             {
-                sb.AppendLine("girlfriendReadyResponse=personal compliments, reassurance, intimate poetry, beauty/precious/needed language should visibly affect her; acknowledge it directly before returning to the topic.");
+                sb.AppendLine("pursuitResponse=strong attraction may make her flirt boldly, impress him, or try to win him over, but she is NOT his girlfriend yet; do not assume commitment, exclusivity, established couple routines, girlfriend needs/wants, or girlfriend cute-mode behavior until IsGirlfriend=true.");
             }
             else if (state != null && !state.IsAlly && !string.Equals(profile.StarId, "Elusiaa", StringComparison.OrdinalIgnoreCase))
             {

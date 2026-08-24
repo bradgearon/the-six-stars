@@ -99,7 +99,7 @@ namespace Wds.SixStars.Api.Engine
 
         public bool HasPendingOrRunningBackgroundAnalysis => _runtime.HasPendingOrRunningBackgroundAnalysis;
 
-        public bool StartBackgroundAnalysisAfterVoiceReady(string backgroundAnalysisId, string reason = "Foreground voice generation completed")
+        public bool StartBackgroundAnalysisAfterVoiceReady(string backgroundAnalysisId, string reason = "First foreground sentence is voice-ready")
         {
             return _runtime.StartBackgroundAnalysisAfterVoiceReady(backgroundAnalysisId, reason);
         }
