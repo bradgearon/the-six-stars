@@ -1340,7 +1340,7 @@ namespace Wds.SixStars.Api.Ai
             List<StarShortTermMemoryEntry> active = GetActiveShortTermMemory(state, maxItems);
             if (active.Count == 0) return;
             sb.AppendLine("SHORT-TERM MEMORY — CURRENT/RECENT CONTEXT ONLY");
-            sb.AppendLine("These temporary items describe what is happening now or what you and the Last Cat are currently doing. Treat them as immediate continuity; they expire automatically and should not be promoted into permanent facts unless separately stored as long-term memory.");
+            sb.AppendLine("These temporary items describe what is happening now or what you and the Last Cat are currently doing.");
             foreach (StarShortTermMemoryEntry item in active)
             {
                 sb.AppendLine("- " + item.CreatedAt.ToString("O") + " | " + Truncate(item.Text, 420));
@@ -2290,9 +2290,20 @@ namespace Wds.SixStars.Api.Ai
             if (sb == null || profile == null) return;
             string scores = BuildCharacterAttributeScores(profile);
             if (string.IsNullOrWhiteSpace(scores)) return;
-            sb.AppendLine("CharacterAttributesVersion=" + (profile.CharacterAttributesVersion <= 0 ? StarCharacterAttributeSchema.Version : profile.CharacterAttributesVersion));
-            sb.AppendLine("CharacterAttributesOrder=" + StarCharacterAttributeSchema.AttributeOrderText);
-            sb.AppendLine(profile.DisplayName + "CharacterAttributes=" + scores);
+
+            var parsedScores = StarCharacterAttributeSchema.ParseCompactScores(profile.CharacterAttributes, StarCharacterAttributeSchema.AttributeOrder.Length);
+
+            var compactScores = new List<string>();
+            for (var i = 0; i < StarCharacterAttributeSchema.AttributeOrder.Length; i++)
+            {
+                var attribute = StarCharacterAttributeSchema.AttributeOrder[i];
+                var parsedScore = parsedScores[i];
+
+                compactScores.Add(attribute + "=" + parsedScore.ToString("0.0"));
+            }
+
+            sb.AppendLine("CharacterAttributes=" + string.Join("; ", compactScores));
+
             sb.AppendLine("CharacterAttributesRule=Use these broad 0-100 trait pressures silently to flavor voice, flaws, instincts, restraint, and judgment. Do not recite them unless the Last Cat asks about mechanics.");
             if (profile.CharacterAttributeNotes != null && profile.CharacterAttributeNotes.Count > 0)
             {
@@ -2310,7 +2321,7 @@ namespace Wds.SixStars.Api.Ai
         {
             sb.AppendLine();
             sb.AppendLine("FAST CHAT IDENTITY / LORE CARD");
-            sb.AppendLine("Identity=" + profile.DisplayName + "|element=" + profile.Element + "|domain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "|quote=" + profile.CoreQuote.Trim()));
+            sb.AppendLine("Identity=" + profile.DisplayName + "\nelement=" + profile.Element + "\ndomain=" + profile.Domain + (string.IsNullOrWhiteSpace(profile.CoreQuote) ? string.Empty : "\nquote=" + profile.CoreQuote.Trim()));
             if (!string.IsNullOrWhiteSpace(profile.ActionBattlePreference)) sb.AppendLine("ActionBattlePreference=" + profile.ActionBattlePreference.Trim());
             AppendCharacterAttributeRequestContext(sb, profile);
             if (state != null && state.IsGirlfriend && profile.CuteModeInstructions != null && profile.CuteModeInstructions.Count > 0)
@@ -2319,7 +2330,7 @@ namespace Wds.SixStars.Api.Ai
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(x => x.Trim())
                     .ToList();
-                if (cutePalette.Count > 0) sb.AppendLine("CutePalette=" + string.Join(" ~ ", cutePalette));
+                if (cutePalette.Count > 0) sb.AppendLine("CutePalette=" + string.Join("\n - ", cutePalette));
             }
             string domainMagicFlirt = BuildDomainMagicFlirtInstruction(profile);
             if (!string.IsNullOrWhiteSpace(domainMagicFlirt)) sb.AppendLine("DomainMagicFlirtAccent=" + domainMagicFlirt.Trim());
@@ -2340,7 +2351,7 @@ namespace Wds.SixStars.Api.Ai
                 .Select(x => x.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (contacts.Count > 0) sb.AppendLine("Contacts=" + string.Join(" ~ ", contacts));
+            if (contacts.Count > 0) sb.AppendLine("Contacts=" + string.Join("\n - ", contacts));
 
             if (profile.PeopleKnown != null && profile.PeopleKnown.Count > 0)
             {
@@ -2348,13 +2359,13 @@ namespace Wds.SixStars.Api.Ai
                     .Where(x => x != null && !string.IsNullOrWhiteSpace(x.DisplayName))
                     .Select(person => (person.DisplayName ?? string.Empty).Trim() + "^" + (person.Relationship ?? string.Empty).Trim() + "^" + (person.Summary ?? string.Empty).Trim())
                     .ToList();
-                if (people.Count > 0) sb.AppendLine("KnownPeople=name^relation^meaning :: " + string.Join(" ~ ", people));
+                if (people.Count > 0) sb.AppendLine("KnownPeople=name^relation^meaning :: " + string.Join("\n - ", people));
             }
 
             List<string> secrets = (profile.StarSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
-            if (secrets.Count > 0) sb.AppendLine("Secrets=" + string.Join(" ~ ", secrets));
+            if (secrets.Count > 0) sb.AppendLine("Secrets=" + string.Join("\n - ", secrets));
             List<string> skills = (profile.SkillSecrets ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
-            if (skills.Count > 0) sb.AppendLine("Skills=" + string.Join(" ~ ", skills));
+            if (skills.Count > 0) sb.AppendLine("Skills=" + string.Join("\n - ", skills));
 
             // Keep Star-specific voice/behavior facts, but omit generic story-length rules already
             // present in the stable system contract. Do not clip or count-limit the remaining rules.
