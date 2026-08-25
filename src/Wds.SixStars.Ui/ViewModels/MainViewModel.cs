@@ -15,6 +15,7 @@ using System.Windows;
 using System.Windows.Input;
 using Wds.SixStars.Api.Agents;
 using Wds.SixStars.Api.Ai;
+using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Engine;
@@ -245,7 +246,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             preparedSpeechOptions: CreatePreparedSpeechOptions(),
             foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions(),
             forgeInteractionReviewService: starAgent is IStarTurnAnalyzer ? _forgeService : null,
-            forgeContextCardFactory: new SixStarsForgeContextCardFactory());
+            forgeContextCardFactory: new SixStarsForgeContextCardFactory(),
+            backgroundAnalysisTraceOptions: new BackgroundAnalysisTraceOptions
+            {
+                Enabled = GetBooleanSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_TRACE"),
+                    _appConfig.BackgroundAnalysisTracing.Enabled),
+                LogFilePath = Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_TRACE_FILE")
+                    ?? _appConfig.BackgroundAnalysisTracing.LogFilePath
+            });
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
@@ -1714,7 +1723,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task SpeakStarResponseAsync(StarInteractionResponse response, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+        bool primaryReviewAlreadyQueuedAtForegroundCompletion = response.UnityEvents.Any(x =>
+            string.Equals(x.Type, "BackgroundStarAnalysisQueuedAtForegroundCompletion", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId) && !primaryReviewAlreadyQueuedAtForegroundCompletion)
         {
             _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
         }
@@ -3061,7 +3072,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 throw;
             }
 
-            if (liveSpeech != null && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+            bool primaryReviewAlreadyQueuedAtForegroundCompletion = response.UnityEvents.Any(x =>
+                string.Equals(x.Type, "BackgroundStarAnalysisQueuedAtForegroundCompletion", StringComparison.OrdinalIgnoreCase));
+            if (liveSpeech != null && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId) && !primaryReviewAlreadyQueuedAtForegroundCompletion)
             {
                 _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
                 lock (liveBackgroundCheckpointGate)

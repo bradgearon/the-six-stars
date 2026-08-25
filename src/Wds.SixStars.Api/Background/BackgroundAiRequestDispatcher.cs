@@ -22,6 +22,8 @@ namespace Wds.SixStars.Api.Background
         private int _foregroundDepth;
         private CancellationTokenSource? _activeRequestCts;
         private string _activeRequestId = string.Empty;
+        private string _activeRequestStackName = string.Empty;
+        private bool _activeRequestAllowsForegroundPreemption = true;
         private DateTimeOffset _lastForegroundFinishedAtUtc = DateTimeOffset.MinValue;
         private DateTimeOffset _backgroundSuppressedUntilUtc = DateTimeOffset.MinValue;
         private bool _disposed;
@@ -48,11 +50,13 @@ namespace Wds.SixStars.Api.Background
         public IDisposable EnterForegroundRequest(string reason)
         {
             string activeRequestId;
+            string activeStackName;
             lock (_gate)
             {
                 ThrowIfDisposedLocked();
                 _foregroundDepth++;
                 activeRequestId = _activeRequestId;
+                activeStackName = _activeRequestStackName;
 
                 // Once the actual foreground request begins, any quiet pulse that came from the
                 // touch/type/send action which launched this same request is stale. The foreground
@@ -64,14 +68,20 @@ namespace Wds.SixStars.Api.Background
                 }
             }
 
-            // The bundled llama.cpp server used by Six Stars honors HTTP cancellation by cancelling
-            // its active task. Preempt the already-running background generation so foreground can
-            // acquire the single model gate instead of waiting behind stale background inference.
-            // Durable primary reviews requeue themselves when cancelled.
+            // Normal background work remains foreground-preemptible. Primary durable memory reviews
+            // explicitly opt out: once one starts, the next foreground waits for it instead of
+            // cancelling a sub-second state commit and forcing a retry/reorder cycle.
             if (!string.IsNullOrWhiteSpace(activeRequestId))
             {
-                CancelActiveRequest("Foreground request preempted active background generation: " + (reason ?? string.Empty));
-                Publish("ForegroundPreempting", "foreground", activeRequestId, "Foreground work cancelled the active background model call and is taking priority.", QueuedCount);
+                bool cancelled = CancelActiveRequest("Foreground request preempted active background generation: " + (reason ?? string.Empty));
+                Publish(
+                    cancelled ? "ForegroundPreempting" : "ForegroundPreemptionSkipped",
+                    "foreground",
+                    activeRequestId,
+                    cancelled
+                        ? "Foreground work cancelled the active background model call and is taking priority."
+                        : "Foreground work did not cancel protected background stack '" + activeStackName + "'.",
+                    QueuedCount);
             }
 
             Publish("ForegroundStarted", "foreground", reason ?? string.Empty, "A foreground reply request is active; queued background AI stacks will wait.", 0);
@@ -79,19 +89,35 @@ namespace Wds.SixStars.Api.Background
             return new ForegroundLease(this, reason ?? string.Empty);
         }
 
-        public void CancelActiveRequest(string reason)
+        public bool CancelActiveRequest(string reason)
         {
             CancellationTokenSource? activeToCancel;
             string activeRequestId;
+            string activeStackName;
+            bool allowsForegroundPreemption;
             lock (_gate)
             {
                 activeToCancel = _activeRequestCts;
                 activeRequestId = _activeRequestId;
+                activeStackName = _activeRequestStackName;
+                allowsForegroundPreemption = _activeRequestAllowsForegroundPreemption;
             }
 
-            if (activeToCancel == null || activeToCancel.IsCancellationRequested) return;
-            try { activeToCancel.Cancel(); } catch { }
-            Publish("Preempted", "background", activeRequestId, reason ?? "Background request cancelled.", QueuedCount);
+            if (activeToCancel == null || activeToCancel.IsCancellationRequested) return false;
+            if (!allowsForegroundPreemption)
+            {
+                Publish(
+                    "PreemptionSkippedProtected",
+                    activeStackName,
+                    activeRequestId,
+                    "Cancellation request was ignored because this background request is protected until its durable update settles. " + (reason ?? string.Empty),
+                    QueuedCount);
+                return false;
+            }
+
+            try { activeToCancel.Cancel(); } catch { return false; }
+            Publish("Preempted", activeStackName, activeRequestId, reason ?? "Background request cancelled.", QueuedCount);
+            return true;
         }
 
         /// <summary>
@@ -106,6 +132,8 @@ namespace Wds.SixStars.Api.Background
 
             CancellationTokenSource? activeToCancel;
             string activeRequestId;
+            string activeStackName;
+            bool activeAllowsForegroundPreemption;
             DateTimeOffset suppressedUntil;
             bool foregroundAlreadyActive;
             lock (_gate)
@@ -130,10 +158,13 @@ namespace Wds.SixStars.Api.Background
                 suppressedUntil = _backgroundSuppressedUntilUtc;
                 activeToCancel = _activeRequestCts;
                 activeRequestId = _activeRequestId;
+                activeStackName = _activeRequestStackName;
+                activeAllowsForegroundPreemption = _activeRequestAllowsForegroundPreemption;
             }
 
             bool cancelledActive = false;
-            if (activeToCancel != null && !activeToCancel.IsCancellationRequested)
+            bool protectedActive = activeToCancel != null && !activeAllowsForegroundPreemption;
+            if (activeToCancel != null && !activeToCancel.IsCancellationRequested && activeAllowsForegroundPreemption)
             {
                 try
                 {
@@ -149,10 +180,12 @@ namespace Wds.SixStars.Api.Background
                 "ForegroundActivitySuppressed",
                 "foreground-activity",
                 activeRequestId,
-                foregroundAlreadyActive
-                    ? "Foreground request is already active, so this activity ping does not add a post-reply suppression tail. " + (reason ?? string.Empty)
-                    : (cancelledActive ? "Cancelled the active background model call once and " : string.Empty)
-                        + "held queued background AI until " + suppressedUntil.ToString("O") + ". " + (reason ?? string.Empty),
+                protectedActive
+                    ? "PlayerActivity left protected background stack '" + activeStackName + "' running; suppression applies only to cancellable/queued background work. " + (reason ?? string.Empty)
+                    : foregroundAlreadyActive
+                        ? "Foreground request is already active, so this activity ping does not add a post-reply suppression tail. " + (reason ?? string.Empty)
+                        : (cancelledActive ? "Cancelled the active cancellable background model call once and " : string.Empty)
+                            + "held ordinary queued background AI until " + suppressedUntil.ToString("O") + ". " + (reason ?? string.Empty),
                 QueuedCount);
             SafeReleaseSignal();
         }
@@ -164,7 +197,9 @@ namespace Wds.SixStars.Api.Background
             Func<CancellationToken, Task> executeAsync,
             CancellationToken cancellationToken = default(CancellationToken),
             TimeSpan? delay = null,
-            bool bypassPostForegroundQuiet = false)
+            bool bypassPostForegroundQuiet = false,
+            bool allowForegroundPreemption = true,
+            bool bypassPlayerActivitySuppression = false)
         {
             if (executeAsync == null) throw new ArgumentNullException(nameof(executeAsync));
             string id = Guid.NewGuid().ToString("N");
@@ -184,7 +219,9 @@ namespace Wds.SixStars.Api.Background
                     NotBefore = DateTimeOffset.UtcNow.Add(delay.GetValueOrDefault(TimeSpan.Zero)),
                     ExecuteAsync = executeAsync,
                     CancellationToken = cancellationToken,
-                    BypassPostForegroundQuiet = bypassPostForegroundQuiet
+                    BypassPostForegroundQuiet = bypassPostForegroundQuiet,
+                    AllowForegroundPreemption = allowForegroundPreemption,
+                    BypassPlayerActivitySuppression = bypassPlayerActivitySuppression
                 });
                 EnsureWorkerLocked();
             }
@@ -273,7 +310,7 @@ namespace Wds.SixStars.Api.Background
                         // A foreground lease can begin in the tiny gap after WaitForForegroundIdleAsync
                         // returns but before this background request publishes itself as active. Never
                         // let that race sneak background inference onto the model after player activity.
-                        if (_foregroundDepth > 0 || _backgroundSuppressedUntilUtc > DateTimeOffset.UtcNow)
+                        if (_foregroundDepth > 0 || (!request.BypassPlayerActivitySuppression && _backgroundSuppressedUntilUtc > DateTimeOffset.UtcNow))
                         {
                             _queue.Add(request);
                             foregroundWonRace = true;
@@ -282,6 +319,8 @@ namespace Wds.SixStars.Api.Background
                         {
                             _activeRequestCts = linked;
                             _activeRequestId = request.Id;
+                            _activeRequestStackName = request.StackName;
+                            _activeRequestAllowsForegroundPreemption = request.AllowForegroundPreemption;
                         }
                     }
                     if (foregroundWonRace)
@@ -310,6 +349,8 @@ namespace Wds.SixStars.Api.Background
                         {
                             _activeRequestCts = null;
                             _activeRequestId = string.Empty;
+                            _activeRequestStackName = string.Empty;
+                            _activeRequestAllowsForegroundPreemption = true;
                         }
                     }
                     linked?.Dispose();
@@ -324,13 +365,13 @@ namespace Wds.SixStars.Api.Background
                 ? DateTimeOffset.MinValue
                 : _lastForegroundFinishedAtUtc.AddSeconds(GetForegroundQuietSeconds(request.Priority));
             DateTimeOffset effective = request.NotBefore >= foregroundQuietUntil ? request.NotBefore : foregroundQuietUntil;
-            if (_backgroundSuppressedUntilUtc > effective) effective = _backgroundSuppressedUntilUtc;
+            if (!request.BypassPlayerActivitySuppression && _backgroundSuppressedUntilUtc > effective) effective = _backgroundSuppressedUntilUtc;
             return effective;
         }
 
         private static int GetForegroundQuietSeconds(BackgroundAiRequestPriority priority)
         {
-            if (priority == BackgroundAiRequestPriority.High) return HighPriorityForegroundQuietSeconds;
+            if (priority == BackgroundAiRequestPriority.Critical || priority == BackgroundAiRequestPriority.High) return HighPriorityForegroundQuietSeconds;
             if (priority == BackgroundAiRequestPriority.Normal) return NormalPriorityForegroundQuietSeconds;
             return LowPriorityForegroundQuietSeconds;
         }
@@ -452,11 +493,14 @@ namespace Wds.SixStars.Api.Background
             public Func<CancellationToken, Task> ExecuteAsync { get; set; } = default!;
             public CancellationToken CancellationToken { get; set; }
             public bool BypassPostForegroundQuiet { get; set; }
+            public bool AllowForegroundPreemption { get; set; } = true;
+            public bool BypassPlayerActivitySuppression { get; set; }
         }
     }
 
     public enum BackgroundAiRequestPriority
     {
+        Critical = 0,
         High = 10,
         Normal = 50,
         Low = 100

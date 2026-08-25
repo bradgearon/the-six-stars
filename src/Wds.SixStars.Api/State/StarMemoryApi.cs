@@ -97,11 +97,21 @@ namespace Wds.SixStars.Api.State
         {
             StarState state = await _stateStore.GetAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset turnStartedAt = request.TurnStartedAt == default
+                ? now
+                : request.TurnStartedAt.ToUniversalTime();
+            // Defensive clamp for malformed external callers. A logical turn may be old because its
+            // review was retried, but it should never be materially in the future.
+            if (turnStartedAt > now.AddMinutes(5)) turnStartedAt = now;
+
             NormalizeWorldDefaults(state);
             PruneExpiredEffectors(state, now);
             PruneExpiredShortTermMemory(state, now);
 
             bool isInternalBackgroundUpdate = request.IsInternalBackgroundUpdate;
+            bool isLatestDirectTurn = isInternalBackgroundUpdate
+                || !state.LastInteractionAt.HasValue
+                || turnStartedAt >= state.LastInteractionAt.Value;
             bool suppressConversationSummaryUpdate = request.SuppressConversationSummaryUpdate || isInternalBackgroundUpdate;
             bool suppressConversationLog = request.SuppressConversationLog || isInternalBackgroundUpdate;
 
@@ -109,7 +119,10 @@ namespace Wds.SixStars.Api.State
             if (!isInternalBackgroundUpdate)
             {
                 state.InteractionCount += 1;
-                state.LastInteractionAt = now;
+                if (!state.LastInteractionAt.HasValue || turnStartedAt > state.LastInteractionAt.Value)
+                {
+                    state.LastInteractionAt = turnStartedAt;
+                }
             }
             state.LastDailyStateSourceUpdateAt = now;
 
@@ -128,8 +141,10 @@ namespace Wds.SixStars.Api.State
             AutoPromoteAllyIfReady(state, now);
             UpdateGirlfriendReadiness(state, now);
 
-            if (!suppressConversationSummaryUpdate && !string.IsNullOrWhiteSpace(request.ConversationSummary))
+            if (!suppressConversationSummaryUpdate && isLatestDirectTurn && !string.IsNullOrWhiteSpace(request.ConversationSummary))
             {
+                // A retry of an older turn may settle after a newer turn. Do not let that stale
+                // background completion roll the prompt-facing current summary backward.
                 state.ConversationSummary = request.ConversationSummary.Trim();
             }
 
@@ -138,7 +153,7 @@ namespace Wds.SixStars.Api.State
             // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
             // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
-            AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, now, request.RequestType);
+            AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, turnStartedAt, now, request.RequestType);
             if (state.IsGirlfriend && request.SextingDetected)
             {
                 // One-way relationship latch: once this girlfriend and the Last Cat have actually sexted,
@@ -166,7 +181,7 @@ namespace Wds.SixStars.Api.State
             if (!isInternalBackgroundUpdate)
             {
                 UpdateSuccessionCounters(state, applied, request, now);
-                UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
+                UpdateEmotionStateHistory(state, request, applied, turnStartedAt, emotionalConnectionBefore, state.EmotionalConnectionPercent, isLatestDirectTurn);
             }
             else
             {
@@ -188,7 +203,7 @@ namespace Wds.SixStars.Api.State
             {
             entry = new ConversationLogEntry
             {
-                CreatedAt = now,
+                CreatedAt = turnStartedAt,
                 RequestType = request.RequestType,
                 PlayerText = CompactDurableText(request.PlayerText, 8000),
                 StarResponse = CompactDurableText(request.StarResponse, 24000),
@@ -215,7 +230,11 @@ namespace Wds.SixStars.Api.State
             entry.LearnedFunctionIds.AddRange(request.LearnedFunctions.Select(x => x.Id).Where(x => !string.IsNullOrWhiteSpace(x)));
             entry.SecretsUnlocked.AddRange(request.SecretsUnlocked);
 
-            state.MemoryLog.Insert(0, entry);
+            state.MemoryLog.Add(entry);
+            state.MemoryLog = state.MemoryLog
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
             StoreConversationRollups(state, request, now);
             ArchiveOldConversationTurns(state, now);
             Trim(state.MemoryLog, _options.MaxMemoryLogEntries);
@@ -1469,7 +1488,7 @@ namespace Wds.SixStars.Api.State
             return state.ShortTermMemory.Count != before;
         }
 
-        private void AddShortTermMemoryEntries(StarState state, IEnumerable<string>? items, DateTimeOffset now, string? source)
+        private void AddShortTermMemoryEntries(StarState state, IEnumerable<string>? items, DateTimeOffset createdAt, DateTimeOffset pruneAt, string? source)
         {
             if (state == null || items == null) return;
             state.ShortTermMemory ??= new List<StarShortTermMemoryEntry>();
@@ -1489,13 +1508,17 @@ namespace Wds.SixStars.Api.State
                 state.ShortTermMemory.Insert(0, new StarShortTermMemoryEntry
                 {
                     Id = Guid.NewGuid().ToString("N"),
-                    CreatedAt = now,
+                    CreatedAt = createdAt,
                     Text = text,
                     Source = string.IsNullOrWhiteSpace(source) ? "background-review" : source.Trim()
                 });
             }
-            PruneExpiredShortTermMemory(state, now);
-            Trim(state.ShortTermMemory, Math.Max(1, _options.MaxShortTermMemoryEntries));
+            PruneExpiredShortTermMemory(state, pruneAt);
+            state.ShortTermMemory = state.ShortTermMemory
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, _options.MaxShortTermMemoryEntries))
+                .ToList();
         }
 
         private static IEnumerable<string> BuildInternalUpdateMemoryNotes(StarStateUpdateRequest request, RelationshipDelta applied)
@@ -1508,12 +1531,16 @@ namespace Wds.SixStars.Api.State
             yield return "Internal background update: " + TruncateLocal(summary, 360);
         }
 
-        private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter)
+        private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter, bool updateLatestFields)
         {
-            state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
-            state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
-            state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
-            state.LastTopAffectedEmotions = RelationshipDeltaCalculator.BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector);
+            List<TopAffectedEmotion> turnTopAffectedEmotions = RelationshipDeltaCalculator.BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector);
+            if (updateLatestFields)
+            {
+                state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
+                state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
+                state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
+                state.LastTopAffectedEmotions = turnTopAffectedEmotions.ToList();
+            }
             if (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel))
             {
                 state.EmotionalConnectionSkillLevel = "interested_private_potential_partner";
@@ -1531,7 +1558,7 @@ namespace Wds.SixStars.Api.State
                 AcceptedPositiveSignals = request.AcceptedPositiveSignals.ToList(),
                 AcceptedNegativeSignals = request.AcceptedNegativeSignals.ToList(),
                 AcceptedCombos = request.AcceptedCombos.ToList(),
-                TopAffectedEmotions = state.LastTopAffectedEmotions.ToList(),
+                TopAffectedEmotions = turnTopAffectedEmotions.ToList(),
                 SuggestedDelta = request.SuggestedDelta,
                 ActualDelta = applied,
                 EmotionalConnectionPercentBefore = emotionalConnectionBefore,
@@ -1539,7 +1566,11 @@ namespace Wds.SixStars.Api.State
                 IsGirlfriendReadyAfter = state.IsGirlfriendReady,
                 Summary = request.DeterministicEmotionSummary ?? string.Empty
             });
-            Trim(state.EmotionUpdateHistory, 80);
+            state.EmotionUpdateHistory = state.EmotionUpdateHistory
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(80)
+                .ToList();
         }
 
         private static void AccumulateDeterministicEmotionTotals(StarState state, StarStateUpdateRequest request, DateTimeOffset now)

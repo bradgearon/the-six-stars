@@ -1,3 +1,15 @@
+# Android IPv6 bridge (disabled)
+
+IPv6 bridge promotion is no longer used by the Android companion. The app now clears previously saved IPv6 preferences and always uses the configured IPv4/hostname LAN bridge.
+
+The earlier IPv6-first implementation could switch the control WebSocket and phone-audio socket after a health check, including immediately after Android resumed from sleep. That route change could supersede an in-flight request or leave a Java socket looking connected while the underlying Wi-Fi path was stale.
+
+See `Android-IPv4-Resume-Bridge.md` for the current behavior.
+
+---
+
+Historical design notes follow for reference only. They are not active behavior in the current Android client.
+
 # Android local IPv6 bridge preference
 
 The Android companion now learns a stable, routable IPv6 address from a known-good local desktop connection and stores it as its preferred bridge address.

@@ -99,7 +99,9 @@ namespace Wds.SixStars.Api.Engine
 
         public bool HasPendingOrRunningBackgroundAnalysis => _runtime.HasPendingOrRunningBackgroundAnalysis;
 
-        public bool StartBackgroundAnalysisAfterVoiceReady(string backgroundAnalysisId, string reason = "First foreground sentence is voice-ready")
+        // Compatibility hook for generated story/proposal narration. Normal foreground turns
+        // auto-queue their protected primary review at complete Gemma response.
+        public bool StartBackgroundAnalysisAfterVoiceReady(string backgroundAnalysisId, string reason = "Generated speech path is ready")
         {
             return _runtime.StartBackgroundAnalysisAfterVoiceReady(backgroundAnalysisId, reason);
         }

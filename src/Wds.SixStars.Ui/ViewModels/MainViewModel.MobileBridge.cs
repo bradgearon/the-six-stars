@@ -490,15 +490,11 @@ public sealed partial class MainViewModel
                     _mobileLiveVoiceRuns.TryGetValue(streamId, out playbackRun);
                 }
 
-                string readyAnalysisId = playbackRun?.MarkFirstSentencePlaybackStartedAndTakeBackgroundAnalysisId() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(readyAnalysisId))
+                if (playbackRun != null)
                 {
-                    ReleasePendingBackgroundAnalysis(
-                        readyAnalysisId,
-                        "Android confirmed that the first streamed sentence began actual AudioTrack playback; background emotion/memory review may run while later speech continues.");
                     OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                        "Background review released at phone playback start",
-                        "analysis=" + readyAnalysisId + ", stream=" + streamId + "; Android reported first-sentence AudioTrack playback has begun."));
+                        "First-sentence phone playback confirmed",
+                        "stream=" + streamId + "; playback acknowledgement is diagnostic only because the primary memory review is already queued at Gemma EOS."));
                 }
 
                 return new MobileBridgeDispatchResult
@@ -510,9 +506,7 @@ public sealed partial class MainViewModel
                     SelectedStarId = SelectedStarId,
                     Message = playbackRun == null
                         ? "Playback-start signal arrived after the live run was no longer tracked."
-                        : (string.IsNullOrWhiteSpace(readyAnalysisId)
-                            ? "First-sentence playback start recorded; the background review will release as soon as its foreground analysis id is available."
-                            : "Background review released at first-sentence phone playback start."),
+                        : "First-sentence playback start recorded for diagnostics; primary memory review scheduling is independent of phone playback.",
                     SuppressEventPublication = true
                 };
             }
@@ -522,10 +516,9 @@ public sealed partial class MainViewModel
                     ? "Android app activity"
                     : command.Reason.Trim();
                 NotifyBackgroundWritingLoopForegroundActivity(activityReason);
-                // Build 15O: PlayerActivity is a 30-second foreground pulse, not merely a cancel.
-                // The first ping cancels any active background model call; every later touch/typing
-                // ping only extends the quiet deadline. Queued reviews cannot immediately restart and
-                // get cancelled again while the player is still composing the next turn.
+                // PlayerActivity suppresses/cancels ordinary background work while the player is
+                // composing. Protected primary memory reviews explicitly bypass this pulse so a
+                // sub-second durable update cannot be repeatedly cancelled by Talk/touch events.
                 try
                 {
                     _services.MobileConversation.SuppressBackgroundAnalysisForPlayerActivity(
@@ -542,7 +535,7 @@ public sealed partial class MainViewModel
                     SelectedStarId = SelectedStarId,
                     BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
                     BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
-                    Message = "Background writing and queued background AI were preempted for player activity and will wait for 30 idle seconds before resuming.",
+                    Message = "Ordinary background writing/AI was preempted for player activity and will wait for 30 idle seconds; an active/queued primary memory review is protected and continues.",
                     SuppressEventPublication = true
                 };
             }
@@ -2104,6 +2097,9 @@ public sealed partial class MainViewModel
 
     private async Task<MobileBridgeResponse> ProcessMobileConversationAsync(MobileBridgeRequest mobileRequest, string transcript, CancellationToken cancellationToken)
     {
+        // Capture the logical player-turn time immediately. The protected primary background review
+        // commits later, so its completion time must never become the conversation timestamp.
+        DateTimeOffset turnStartedAt = DateTimeOffset.UtcNow;
         System.Diagnostics.Stopwatch totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
         long gateWaitMs = 0;
         long runtimeElapsedMs = 0;
@@ -2167,14 +2163,33 @@ public sealed partial class MainViewModel
         }
         else
         {
-            // Real text/voice/photo and the user-pressed Listen button preempt automatic at-rest or
-            // background work. Android uses separate client queues, so this request reaches the
-            // desktop immediately instead of waiting behind the older initiative HTTP call.
+            // A new player request may arrive while the PREVIOUS foreground is still streaming Gemma
+            // after sentence one has already begun speaking. Do not call CancelAllRuntimeOperations
+            // before this gate: that used to cancel the still-running foreground token before it could
+            // reach EOS and create/commit its primary memory review. Ordinary background work can be
+            // cancelled now, but the protected primary review ignores that cancellation by design.
             string priorityLabel = isManualInitiative ? "Android manual Listen request" : "Android foreground request";
-            try { _operationController.CancelAllRuntimeOperations(priorityLabel + " preempted mobile background/at-rest work for " + starId + "."); } catch { }
-            try { _services.MobileConversation.CancelBackgroundAnalysis(priorityLabel + " preempted background analysis for " + starId + "."); } catch { }
+            string traceSessionId = string.IsNullOrWhiteSpace(mobileRequest.SessionId) ? "android-phone-dev" : mobileRequest.SessionId;
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.foreground-gate-wait-start",
+                string.Empty,
+                traceSessionId,
+                starId,
+                priorityLabel + " arrived. Waiting for the previous mobile foreground lane without cancelling its Gemma request; cancellable background work may still be preempted.");
+            try { _services.MobileConversation.CancelBackgroundAnalysis(priorityLabel + " preempted cancellable background analysis for " + starId + "."); } catch { }
             mobileLease = await _services.MobileConversation.AcquireAsync(cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.foreground-gate-acquired",
+                string.Empty,
+                traceSessionId,
+                starId,
+                priorityLabel + " acquired the mobile foreground lane after " + gateWaitMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms. The previous foreground has returned; protected primary review settlement is enforced again inside SixStarsRuntime.ProcessAsync.");
+
+            // Only now is it safe to stop stale live/TTS/input work from the previous operation. At
+            // this point the previous ProcessMobileConversationAsync no longer owns the mobile lane,
+            // so this cannot abort its Gemma generation before the primary review was created.
+            try { _operationController.CancelAllRuntimeOperations(priorityLabel + " acquired the mobile foreground lane; cancelling stale cancellable runtime work for " + starId + "."); } catch { }
         }
 
         try
@@ -2199,6 +2214,7 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 Speaker = "LastCat",
                 RequestType = requestType,
+                TurnStartedAt = turnStartedAt,
                 PlayerText = mobileRequest.PlayerText ?? string.Empty,
                 AttachedPhoto = new StarPhotoAttachment(),
                 GameContext = CreateMobileGameContext(mobileRequest, starId),
@@ -2282,21 +2298,21 @@ public sealed partial class MainViewModel
                     linkedCts.Token).ConfigureAwait(false)
                 : await _services.MobileConversation.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
 
-            // The background review needs the complete foreground response, so the runtime creates
-            // its id at Gemma EOS. Pair that id with Android's first-sentence AudioTrack playback
-            // acknowledgement. If the phone already began sentence one while Gemma was streaming,
-            // release now; otherwise the playback-start command will release it a moment later.
+            // The complete foreground response exists at Gemma EOS. The runtime now queues the
+            // protected primary memory review immediately at that point; Android playback-start is
+            // diagnostic only and no longer controls/cancels the durable update lifecycle.
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.gemma-eos",
+                backgroundAnalysisId,
+                request.SessionId ?? string.Empty,
+                request.StarId ?? string.Empty,
+                "Foreground Gemma response returned to the Android host after " + runtimeStopwatch.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms; primary review should already be registered/queued by SixStarsRuntime.");
             if (livePhoneVoice != null && !string.IsNullOrWhiteSpace(backgroundAnalysisId))
             {
-                string readyAnalysisId = livePhoneVoice.SetBackgroundAnalysisIdAndTakeIfFirstSentencePlaybackStarted(backgroundAnalysisId);
-                if (!string.IsNullOrWhiteSpace(readyAnalysisId))
-                {
-                    ReleasePendingBackgroundAnalysis(readyAnalysisId, "Foreground response completed after Android had already confirmed first-sentence AudioTrack playback started.");
-                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
-                        "Background review released at foreground EOS",
-                        "analysis=" + readyAnalysisId + "; Android had already begun playing sentence one, so the private update starts without waiting for later speech."));
-                }
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Protected background review queued at Gemma EOS",
+                    "analysis=" + backgroundAnalysisId + "; review is independent of phone playback acknowledgement and must settle before the next foreground turn."));
             }
 
             if (livePhoneVoice != null)
@@ -2473,7 +2489,7 @@ public sealed partial class MainViewModel
                 };
                 OnUiThread(() => AppendMobileBridgeVoiceDebug(
                     "Live phone voice waiting for text transport",
-                    "Qwen started only after Gemma EOS and may be synthesizing while final text transport completes; chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
+                    "The first Qwen sentence may already be synthesizing/playing before Gemma EOS; later sentences batch after EOS while final text transport completes. chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
             }
             else if (wantsPhoneAudio)
             {
@@ -2933,9 +2949,9 @@ public sealed partial class MainViewModel
                 {
                     if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
 
-                    // Background review release is driven by Android's actual first-sentence
-                    // AudioTrack playback-start acknowledgement, not merely by Qwen finishing the WAV.
-                    // This callback only delivers the generated audio to the phone.
+                    // Primary background review timing is independent of Android playback now.
+                    // This callback only delivers the generated audio to the phone; playback-start
+                    // acknowledgements remain diagnostic and cannot release/cancel the durable review.
 
                     // The first streamed sentence is published to the Android text bridge before
                     // Qwen is queued. Once that first text event has been published, the transport
@@ -2992,6 +3008,12 @@ public sealed partial class MainViewModel
 
                 if (run.AcceptForegroundTextChunk(text))
                 {
+                    _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                        "mobile.first-speech-request-queued",
+                        string.Empty,
+                        request.SessionId ?? string.Empty,
+                        request.StarId ?? string.Empty,
+                        "First complete foreground sentence was handed to Qwen while Gemma is still streaming. From this point a new Android foreground waits for this turn instead of cancelling its Gemma token.");
                     BeginMobileLiveVoiceTransportAfterFirstSentence(run);
                     OnUiThread(() => AppendMobileBridgeVoiceDebug(
                         "First streamed sentence queued to Qwen",
@@ -3264,13 +3286,9 @@ public sealed partial class MainViewModel
         public CancellationTokenSource VoiceCts { get; }
         private readonly object _textChunkGate = new object();
         private readonly object _transportGate = new object();
-        private readonly object _backgroundAnalysisGate = new object();
         private readonly List<string> _deferredTextChunks = new List<string>();
         private bool _firstSpeechChunkAccepted;
         private bool _transportReleaseStarted;
-        private bool _firstSentencePlaybackStarted;
-        private bool _backgroundAnalysisReleased;
-        private string _backgroundAnalysisId = string.Empty;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
@@ -3330,36 +3348,6 @@ public sealed partial class MainViewModel
             return startNow;
         }
 
-
-        public string MarkFirstSentencePlaybackStartedAndTakeBackgroundAnalysisId()
-        {
-            lock (_backgroundAnalysisGate)
-            {
-                _firstSentencePlaybackStarted = true;
-                return TakeBackgroundAnalysisIdIfPlaybackStartedLocked();
-            }
-        }
-
-        public string SetBackgroundAnalysisIdAndTakeIfFirstSentencePlaybackStarted(string analysisId)
-        {
-            if (string.IsNullOrWhiteSpace(analysisId)) return string.Empty;
-            lock (_backgroundAnalysisGate)
-            {
-                _backgroundAnalysisId = analysisId.Trim();
-                return TakeBackgroundAnalysisIdIfPlaybackStartedLocked();
-            }
-        }
-
-        private string TakeBackgroundAnalysisIdIfPlaybackStartedLocked()
-        {
-            if (_backgroundAnalysisReleased || !_firstSentencePlaybackStarted || string.IsNullOrWhiteSpace(_backgroundAnalysisId))
-            {
-                return string.Empty;
-            }
-
-            _backgroundAnalysisReleased = true;
-            return _backgroundAnalysisId;
-        }
 
         public List<string> DrainDeferredTextChunks()
         {

@@ -59,5 +59,8 @@ internal sealed class MobileConversationService : IDisposable
 
     public void CancelBackgroundAnalysis(string reason) => _runtime.CancelBackgroundAnalysis(reason);
 
+    public void TraceBackgroundAnalysisHostEvent(string phase, string analysisId, string sessionId, string starId, string message)
+        => _runtime.TraceBackgroundAnalysisHostEvent(phase, analysisId, sessionId, starId, message);
+
     public void Dispose() => _gate.Dispose();
 }

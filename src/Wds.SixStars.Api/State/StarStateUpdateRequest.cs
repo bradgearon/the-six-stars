@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Wds.SixStars.Api.Models;
 
@@ -8,6 +9,7 @@ namespace Wds.SixStars.Api.State
         public string SessionId { get; set; } = "local-dev";
         public string StarId { get; set; } = string.Empty;
         public string RequestType { get; set; } = string.Empty;
+        public DateTimeOffset TurnStartedAt { get; set; }
         public string PlayerText { get; set; } = string.Empty;
         public string StarResponse { get; set; } = string.Empty;
         public string ConversationSummary { get; set; } = string.Empty;

@@ -194,10 +194,10 @@ namespace Wds.SixStars.Api.Models
         public bool RequestToShowBoobs { get; set; }
 
         /// <summary>
-        /// Runtime coordination id for the deferred background emotion/memory review.
-        /// Voice systems should call SixStarsRuntime.StartBackgroundAnalysisAfterVoiceReady
-        /// with this id as soon as the first spoken sentence is voice-ready. The background review
-        /// receives the complete foreground response but does not wait for the rest of TTS.
+        /// Runtime coordination id for the background emotion/memory review. Normal foreground
+        /// Chat/Photo turns queue the protected review automatically as soon as the complete Gemma
+        /// response is available; generated story/proposal speech paths may still use the explicit
+        /// StartBackgroundAnalysisAfterVoiceReady compatibility hook when narration begins.
         /// </summary>
         public string BackgroundAnalysisId { get; set; } = string.Empty;
 

@@ -454,7 +454,8 @@ public final class MainActivity extends ComponentActivity {
         super.onResume();
         activityResumed = true;
         registerStarInitiativeServiceReceiver();
-        ensureBridgeWebSocket();
+        if (viewModel != null) viewModel.onAppResumed();
+        else ensureBridgeWebSocket();
         notifyDesktopPlayerActivity("Android app resumed");
         loadPrefetchedInitiativeIntoMemory("Android activity resumed");
         selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
@@ -1012,22 +1013,6 @@ public final class MainActivity extends ComponentActivity {
         bridgeUrl.setText(serverUrlEdit == null ? "" : serverUrlEdit.getText().toString());
         controls.addView(bridgeUrl, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
 
-        TextView ipv6Label = prodText("Preferred local IPv6 address", 12, 0xFF9EE8F0, true);
-        controls.addView(ipv6Label);
-        EditText preferredIpv6 = input(settingsService == null ? "" : settingsService.preferredIpv6Address(), false);
-        preferredIpv6.setSingleLine(true);
-        preferredIpv6.setHint("Auto-detected from the desktop socket adapter");
-        controls.addView(preferredIpv6, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
-
-        CheckBox preferIpv6 = new CheckBox(this);
-        preferIpv6.setText("Use saved IPv6 first for local connections");
-        preferIpv6.setTextColor(0xFFEAF7FF);
-        preferIpv6.setChecked(settingsService == null || settingsService.useIpv6Primary());
-        controls.addView(preferIpv6);
-
-        TextView ipv6Hint = prodText("The desktop reports the routable IPv6 address on the same adapter carrying the working socket. Link-local addresses are not saved because their interface scope cannot be reused safely on Android.", 11, 0xFF9CB8C5, false);
-        controls.addView(ipv6Hint);
-
         CheckBox playPhone = new CheckBox(this);
         playPhone.setText("Play Star voice on this phone");
         playPhone.setTextColor(0xFFEAF7FF);
@@ -1052,9 +1037,6 @@ public final class MainActivity extends ComponentActivity {
         buttons.addView(save, weightParams(1));
         buttons.addView(test, weightParams(1));
         controls.addView(buttons);
-
-        Button updateIpv6 = prodButton("Update IPv6 from Desktop");
-        controls.addView(updateIpv6, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         LinearLayout buttons2 = row();
         Button audio = prodButton("Test Audio");
@@ -1136,12 +1118,8 @@ public final class MainActivity extends ComponentActivity {
             fetchMobileState(false);
             save.setOnClickListener(v -> {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
-                baseUrl(); // Persist the manually editable IPv4/hostname fallback before reconnecting.
-                if (viewModel != null && !viewModel.updatePreferredIpv6Settings(
-                        preferredIpv6.getText().toString(), preferIpv6.isChecked())) {
-                    setDebug("Invalid IPv6 address", "Enter a routable IPv6 address, clear the field, or use Update IPv6 from Desktop.");
-                    return;
-                }
+                baseUrl(); // Persist the manually editable IPv4/hostname bridge before reconnecting.
+                if (viewModel != null) viewModel.updatePreferredIpv6Settings("", false);
                 if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
                 if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
                 starInitiativeEnabled = initiative.isChecked();
@@ -1158,26 +1136,6 @@ public final class MainActivity extends ComponentActivity {
                 baseUrl();
                 testConnection(true);
                 mainHandler.postDelayed(() -> status.setText(buildProdMenuStatusText()), 900);
-            });
-            updateIpv6.setOnClickListener(v -> {
-                if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
-                baseUrl();
-                updateIpv6.setEnabled(false);
-                updateIpv6.setText("Checking Desktop…");
-                viewModel.refreshPreferredIpv6(false).whenComplete((address, error) -> runOnUiThread(() -> {
-                    updateIpv6.setEnabled(true);
-                    updateIpv6.setText("Update IPv6 from Desktop");
-                    if (error != null) {
-                        setDebug("IPv6 discovery failed", error.toString());
-                    } else {
-                        preferredIpv6.setText(address);
-                        preferIpv6.setChecked(true);
-                        viewModel.updatePreferredIpv6Settings(address, true);
-                        setDebug("IPv6 saved", "The app will use http://[" + address + "]:"
-                                + BridgeAddressService.bridgePort(baseUrl()) + " first and fall back to " + baseUrl() + ".");
-                    }
-                    status.setText(buildProdMenuStatusText());
-                }));
             });
             audio.setOnClickListener(v -> testPhoneAudio());
             prodGenerateWritingButton.setOnClickListener(v -> dispatchStarWritingCommand("GenerateStarWriting", false));
@@ -1196,10 +1154,8 @@ public final class MainActivity extends ComponentActivity {
         sb.append("Star: ").append(selectedStarName()).append('\n');
         sb.append(prodRelationshipText == null ? "Relationship: unknown" : prodRelationshipText.getText()).append("\n\n");
         sb.append(nonEmptyText(connectionStatusText, "Connection: not checked yet.")).append('\n');
-        sb.append("Configured fallback: ").append(settingsService == null ? baseUrl() : settingsService.bridgeUrl()).append('\n');
-        sb.append("Saved IPv6: ").append(settingsService == null || settingsService.preferredIpv6Address().isEmpty()
-                ? "none discovered" : settingsService.preferredIpv6Address()).append('\n');
-        sb.append("IPv6 primary: ").append(settingsService == null || settingsService.useIpv6Primary() ? "enabled" : "disabled").append('\n');
+        sb.append("Network mode: IPv4 LAN only\n");
+        sb.append("Configured bridge: ").append(settingsService == null ? baseUrl() : settingsService.bridgeUrl()).append('\n');
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
         sb.append("Desktop auto writing: ").append(desktopBackgroundWritingLoopEnabled ? "enabled" : "disabled").append('\n');
@@ -1841,26 +1797,26 @@ public final class MainActivity extends ComponentActivity {
         }
         sendSocketRequest("health", new JSONObject(), 10000L, json -> {
             try {
-                boolean promoted = viewModel != null && viewModel.acceptHealthNetworkInfo(json, true);
+                if (viewModel != null) viewModel.acceptHealthNetworkInfo(json, false);
                 String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
                 String host = BridgeAddressService.hostFromBaseUrl(activeUrl);
                 int audioPort = json.optInt("audioPort", BridgeAddressService.audioPort(activeUrl));
                 runOnUiThread(() -> {
                     if (connectionStatusText != null) {
                         connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop")
-                                + " at " + activeUrl + (BridgeAddressService.isIpv6Url(activeUrl) ? " (IPv6 WebSocket)" : " (WebSocket)"));
+                                + " at " + activeUrl + " (IPv4 LAN WebSocket)");
                     }
                     if (manual) {
                         setDebug("Health OK", "Active=" + activeUrl
                                 + ", adapter=" + json.optString("localAdapterName", "unknown")
-                                + ", discoveredIPv6=" + json.optString("preferredIpv6Address", "none")
+                                + ", networkMode=IPv4-only"
                                 + ", HTTP port " + json.optInt("port")
                                 + ", WebSocket clients " + json.optInt("webSocketClientCount")
                                 + ", audio port " + audioPort
                                 + ", audio clients " + json.optInt("audioClientCount"));
                     }
                 });
-                if (!promoted && (playOnPhoneCheck == null || playOnPhoneCheck.isChecked())) ensureAudioSocket(host, audioPort);
+                if (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) ensureAudioSocket(host, audioPort);
                 refreshActiveStarRoster();
                 // MainViewModel hydrates Star state once on bridge connect and all later changes
                 // arrive over the subscribed WebSocket event stream. A routine health check must
@@ -2400,8 +2356,8 @@ public final class MainActivity extends ComponentActivity {
                 if (returnAudio) {
                     // The control WebSocket and phone-audio TCP socket are independent. A stale
                     // audio socket used to make Story/Spark return text but play nothing. Start a
-                    // connection immediately on the active route, then refresh /health so a custom
-                    // desktop audio port or newly promoted IPv6 route can replace it before TTS.
+                    // connection immediately on the active IPv4 route, then refresh /health so a custom
+                    // desktop audio port can replace it before TTS.
                     String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
                     ensureAudioSocket(BridgeAddressService.hostFromBaseUrl(activeUrl), BridgeAddressService.audioPort(activeUrl));
                     if (viewModel != null) viewModel.refreshPhoneVoiceConnection();
@@ -3883,6 +3839,7 @@ public final class MainActivity extends ComponentActivity {
                         if (recordButton != null) recordButton.setText("Stop / Send");
                         updateProdRecordingUi();
                         setDebug("Recording", "Speak now. Press Send Voice when finished, or Cancel to discard.");
+                        appendVoiceDebug("Voice recording started", selectedStarName() + " is listening on the Android microphone.");
                     });
                 }
 
@@ -3959,7 +3916,7 @@ public final class MainActivity extends ComponentActivity {
             requestJson.put("bitsPerSample", 16);
         } catch (Exception ex) {
             setDebug("Voice request could not start", ex.toString());
-            appendVoiceDebug("Khavia could not prepare your recorded voice", ex.toString());
+            appendVoiceDebug(selectedStarName() + " could not prepare your recorded voice", ex.toString());
             return;
         }
 
@@ -3974,7 +3931,7 @@ public final class MainActivity extends ComponentActivity {
                 String checksum = sha256Hex(wav);
                 runOnUiThread(() -> {
                     setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket. recordedSha256=" + shortHash(checksum));
-                    appendVoiceDebug("Khavia carried your recorded voice", "WebSocket audio request queued at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug(selectedStarName() + " received your recorded voice request", "WebSocket audio request queued at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
                 });
                 sendSocketRequest("audio", requestJson, 240000L,
                         response -> handleConversationResponse("Voice request complete", response.toString()),

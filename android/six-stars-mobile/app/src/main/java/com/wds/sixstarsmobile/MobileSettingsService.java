@@ -34,6 +34,19 @@ final class MobileSettingsService {
 
     MobileSettingsService(Context context) {
         prefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // IPv6 bridge promotion caused route churn after Android sleep/resume and could replace a
+        // healthy IPv4 control/audio socket while a foreground request was starting. The mobile
+        // companion now intentionally uses the configured IPv4/hostname bridge only. Clear any
+        // previously learned IPv6 route so an older preference can never silently reactivate it.
+        if (prefs.getBoolean(PREF_USE_IPV6_PRIMARY, false)
+                || prefs.contains(PREF_PREFERRED_IPV6_ADDRESS)
+                || prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L) != 0L) {
+            prefs.edit()
+                    .putBoolean(PREF_USE_IPV6_PRIMARY, false)
+                    .remove(PREF_PREFERRED_IPV6_ADDRESS)
+                    .putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L)
+                    .apply();
+        }
     }
 
     SharedPreferences raw() { return prefs; }
@@ -48,7 +61,8 @@ final class MobileSettingsService {
     }
     String bridgeUrl() {
         String value = prefs.getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
-        if (value == null || value.trim().isEmpty() || LEGACY_BRIDGE_URL.equalsIgnoreCase(value.trim())) {
+        if (value == null || value.trim().isEmpty() || LEGACY_BRIDGE_URL.equalsIgnoreCase(value.trim())
+                || BridgeAddressService.isIpv6Url(value.trim())) {
             value = DEFAULT_BRIDGE_URL;
             prefs.edit().putString(PREF_BRIDGE_URL, value).apply();
         }
@@ -56,33 +70,26 @@ final class MobileSettingsService {
     }
     void setBridgeUrl(String value) {
         String normalized = value == null ? "" : value.trim();
-        prefs.edit().putString(PREF_BRIDGE_URL, normalized.isEmpty() ? DEFAULT_BRIDGE_URL : normalized).apply();
+        if (normalized.isEmpty() || BridgeAddressService.isIpv6Url(normalized)) normalized = DEFAULT_BRIDGE_URL;
+        prefs.edit().putString(PREF_BRIDGE_URL, normalized).apply();
     }
-    String preferredIpv6Address() {
-        return BridgeAddressService.normalizeIpv6Address(prefs.getString(PREF_PREFERRED_IPV6_ADDRESS, ""));
-    }
+    String preferredIpv6Address() { return ""; }
     boolean setPreferredIpv6Address(String value) {
-        String normalized = BridgeAddressService.normalizeIpv6Address(value);
-        String before = preferredIpv6Address();
-        SharedPreferences.Editor editor = prefs.edit().putString(PREF_PREFERRED_IPV6_ADDRESS, normalized);
-        if (!normalized.isEmpty()) editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, System.currentTimeMillis());
-        else editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L);
-        editor.apply();
-        return !before.equalsIgnoreCase(normalized);
+        boolean hadValue = prefs.contains(PREF_PREFERRED_IPV6_ADDRESS)
+                || prefs.getBoolean(PREF_USE_IPV6_PRIMARY, false)
+                || prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L) != 0L;
+        prefs.edit()
+                .putBoolean(PREF_USE_IPV6_PRIMARY, false)
+                .remove(PREF_PREFERRED_IPV6_ADDRESS)
+                .putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L)
+                .apply();
+        return hadValue;
     }
-    boolean rememberDiscoveredIpv6(String value) {
-        String normalized = BridgeAddressService.normalizeIpv6Address(value);
-        if (normalized.isEmpty()) return false;
-        return setPreferredIpv6Address(normalized);
-    }
-    boolean useIpv6Primary() { return prefs.getBoolean(PREF_USE_IPV6_PRIMARY, true); }
-    void setUseIpv6Primary(boolean value) { prefs.edit().putBoolean(PREF_USE_IPV6_PRIMARY, value).apply(); }
-    long ipv6DiscoveredAtMs() { return prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L); }
-    String preferredBridgeUrl() {
-        if (!useIpv6Primary()) return bridgeUrl();
-        String value = BridgeAddressService.ipv6BridgeUrl(preferredIpv6Address(), BridgeAddressService.bridgePort(bridgeUrl()));
-        return value.isEmpty() ? bridgeUrl() : value;
-    }
+    boolean rememberDiscoveredIpv6(String value) { return false; }
+    boolean useIpv6Primary() { return false; }
+    void setUseIpv6Primary(boolean value) { prefs.edit().putBoolean(PREF_USE_IPV6_PRIMARY, false).apply(); }
+    long ipv6DiscoveredAtMs() { return 0L; }
+    String preferredBridgeUrl() { return bridgeUrl(); }
     String selectedStarId() { return nonEmpty(prefs.getString(PREF_SELECTED_STAR_ID, "Elusiaa"), "Elusiaa"); }
     void setSelectedStarId(String value) { prefs.edit().putString(PREF_SELECTED_STAR_ID, nonEmpty(value, "Elusiaa")).apply(); }
     boolean romanceMode() { return prefs.getBoolean(PREF_ROMANCE_MODE, true); }

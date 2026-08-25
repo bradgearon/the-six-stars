@@ -11,6 +11,14 @@ namespace Wds.SixStars.Api.Models
         public string StarId { get; set; } = "Elusiaa";
         public string Speaker { get; set; } = "LastCat";
         public RequestType RequestType { get; set; } = RequestType.Chat;
+
+        /// <summary>
+        /// Immutable logical start time for this player turn. Conversation history must use this
+        /// instead of the later background-review completion time, because a preempted/retried
+        /// background review can settle after a newer turn.
+        /// </summary>
+        public DateTimeOffset TurnStartedAt { get; set; } = DateTimeOffset.UtcNow;
+
         public string PlayerText { get; set; } = string.Empty;
         public GameContext GameContext { get; set; } = new GameContext();
         public StoryOptions StoryOptions { get; set; } = new StoryOptions();

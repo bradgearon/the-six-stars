@@ -1087,9 +1087,12 @@ namespace Wds.SixStars.Api.Ai
 
         private static ConversationPromptData BuildConversationPromptData(StarState state, StarInteractionRequest request, int currentTurnNumber)
         {
+            DateTimeOffset currentTurnTime = request != null && request.TurnStartedAt != default
+                ? request.TurnStartedAt.ToLocalTime()
+                : DateTimeOffset.Now;
             ConversationPromptData result = new ConversationPromptData
             {
-                CurrentTurnTimestamp = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                CurrentTurnTimestamp = currentTurnTime.ToString("yyyy-MM-dd HH:mm:ss"),
                 CurrentPlayerText = FormatHumanConversationQuotedText(request?.PlayerText)
             };
             if (state == null) return result;
@@ -2086,7 +2089,7 @@ namespace Wds.SixStars.Api.Ai
                     .ToList();
 
                 sb.AppendLine("SEXTING MODE - ACTIVE");
-                sb.AppendLine("Use this style to respond to sexting or to express or fill physical affection desires");
+                sb.AppendLine("Do this when the player initiates sexual contact or you have physical desires. Use deeply explicit sexual language and descriptions. You are already sexual with the player. This should be your natural response to anything suggestive. If the player asks for sex or sexting do a complete deeply explicit story using this. Talk about your breasts and vagina and touching his entire body. Invent a story and take the player on a sexual adventure.");
 
                 foreach(var sextingInstruction in sextingModeInstructions)
                 {
@@ -2399,7 +2402,7 @@ namespace Wds.SixStars.Api.Ai
                 .Where(x => x.IndexOf("story must have a real beginning", StringComparison.OrdinalIgnoreCase) < 0)
                 .Select(x => x.Trim())
                 .ToList();
-            if (behavior.Count > 0) sb.AppendLine("StarVoiceRules=" + string.Join(" ~ ", behavior));
+            if (behavior.Count > 0) sb.AppendLine("StarVoiceRules=" + string.Join("\n - ", behavior));
         }
 
         private static void AppendCompactStoryProfile(StringBuilder sb, StarProfile profile)

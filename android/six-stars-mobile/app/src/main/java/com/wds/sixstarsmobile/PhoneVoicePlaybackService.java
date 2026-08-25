@@ -155,6 +155,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private String desiredHost = "";
     private int desiredPort = -1;
     private boolean reconnectScheduled;
+    private boolean refreshWhenIdle;
     private int reconnectAttempt;
     private String activeStreamId = "";
     private long activeStreamOrdinal;
@@ -192,11 +193,38 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             desiredHost = "";
             desiredPort = -1;
             reconnectScheduled = false;
+            refreshWhenIdle = false;
             reconnectAttempt = 0;
             closeSocketLocked();
         }
         resetTransportState(true);
         post(() -> listener.onSocketStatus("Phone voice socket disconnected."));
+    }
+
+    /**
+     * Re-open an idle voice socket after Android resumes. A TCP Socket can remain isConnected()==true
+     * even though Wi-Fi sleep invalidated the path, so connect() alone cannot reliably detect this.
+     * Never interrupt active/queued speech; in that case only remember the desired route.
+     */
+    void refreshConnection(String host, int port) {
+        if (host == null || host.trim().isEmpty() || port <= 0) return;
+        final String normalizedHost = host.trim();
+        synchronized (socketLock) {
+            desiredHost = normalizedHost;
+            desiredPort = port;
+            if (desktopStreamActive || !playbackQueue.isIdle()) {
+                refreshWhenIdle = true;
+                post(() -> listener.onDebug("Phone voice resume refresh deferred",
+                        "Existing Star speech is active; the voice socket will refresh after the queue becomes idle."));
+                return;
+            }
+            refreshWhenIdle = false;
+            reconnectScheduled = false;
+            reconnectAttempt = 0;
+            post(() -> listener.onDebug("Phone voice socket",
+                    "Refreshing idle voice socket after Android resume: " + normalizedHost + ":" + port + "."));
+            startSocketLocked(normalizedHost, port);
+        }
     }
 
     void connect(String host, int port) {
@@ -210,9 +238,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 if (normalizedHost.equals(connectedHost) && port == connectedPort) return;
 
                 // A healthy audio route does not need to follow every control-WebSocket route
-                // promotion immediately. Switching between IPv4 and IPv6 while a sentence is
-                // playing used to close the socket and flush AudioTrack. Keep the working route
-                // until the current stream and playback queue are truly idle.
+                // refresh immediately. Replacing a TCP socket while a sentence is playing can
+                // cut the stream or flush AudioTrack, so keep the working route until truly idle.
                 if (desktopStreamActive || !playbackQueue.isIdle()) {
                     String currentRoute = connectedHost + ":" + connectedPort;
                     String requestedRoute = normalizedHost + ":" + port;
@@ -246,6 +273,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     ? new Socket(host, port)
                     : localNetwork.connectSocket(host, port, 6000);
             socket.setTcpNoDelay(true);
+            socket.setKeepAlive(true);
             synchronized (socketLock) {
                 if (closed || !host.equals(connectedHost) || port != connectedPort) {
                     try { socket.close(); } catch (Exception ignored) { }
@@ -503,15 +531,19 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private void maybeConnectDesiredRoute() {
         final String host;
         final int port;
+        final boolean forceRefresh;
         synchronized (socketLock) {
             if (closed || desiredHost.isEmpty() || desiredPort <= 0) return;
             if (desktopStreamActive || !playbackQueue.isIdle()) return;
-            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
-                    && desiredHost.equals(connectedHost) && desiredPort == connectedPort) return;
             host = desiredHost;
             port = desiredPort;
+            forceRefresh = refreshWhenIdle;
+            refreshWhenIdle = false;
+            if (!forceRefresh && audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
+                    && desiredHost.equals(connectedHost) && desiredPort == connectedPort) return;
         }
-        connect(host, port);
+        if (forceRefresh) refreshConnection(host, port);
+        else connect(host, port);
     }
 
     void playSavedVoice() {
@@ -809,6 +841,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             desiredHost = "";
             desiredPort = -1;
             reconnectScheduled = false;
+            refreshWhenIdle = false;
             closeSocketLocked();
         }
         playbackQueue.stop();

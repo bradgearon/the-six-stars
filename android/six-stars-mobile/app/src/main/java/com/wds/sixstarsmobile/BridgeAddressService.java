@@ -9,7 +9,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
-/** IPv4/IPv6 bridge address normalization and connection-candidate selection. */
+/** Bridge address normalization. Android transport is intentionally IPv4/hostname-first only. */
 final class BridgeAddressService {
     private BridgeAddressService() { }
 
@@ -109,12 +109,7 @@ final class BridgeAddressService {
 
     static List<String> connectionCandidates(MobileSettingsService settings) {
         ArrayList<String> result = new ArrayList<>();
-        String fallback = normalizeBaseUrl(settings.bridgeUrl());
-        if (settings.useIpv6Primary()) {
-            String ipv6Url = ipv6BridgeUrl(settings.preferredIpv6Address(), bridgePort(fallback));
-            if (!ipv6Url.isEmpty()) result.add(ipv6Url);
-        }
-        if (!result.contains(fallback)) result.add(fallback);
+        result.add(normalizeBaseUrl(settings.bridgeUrl()));
         return result;
     }
 

@@ -22,6 +22,7 @@ namespace Wds.SixStars.Ui.Configuration
         public StarSpeechIntentConfig StarSpeechIntents { get; set; } = new StarSpeechIntentConfig();
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
+        public BackgroundAnalysisTracingConfig BackgroundAnalysisTracing { get; set; } = new BackgroundAnalysisTracingConfig();
         public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
         public WritingMethodsConfig WritingMethods { get; set; } = new WritingMethodsConfig();
         public XPostingConfig XPosting { get; set; } = new XPostingConfig();
@@ -105,6 +106,15 @@ namespace Wds.SixStars.Ui.Configuration
         public string StateRoot { get; set; } = "state/prepared-star-speech";
         public int MaximumArtifactsPerStar { get; set; } = 3;
         public int MaximumArtifactAgeHours { get; set; } = 72;
+    }
+
+    public sealed class BackgroundAnalysisTracingConfig
+    {
+        /// <summary>When true, writes scheduler/cancellation/barrier timing for primary memory reviews to disk.</summary>
+        public bool Enabled { get; set; } = false;
+
+        /// <summary>Absolute path or path relative to the desktop executable directory.</summary>
+        public string LogFilePath { get; set; } = "logs/background-analysis-trace.log";
     }
 
     public sealed class ForegroundSpeechStyleConfig
