@@ -26,6 +26,7 @@ namespace Wds.SixStars.Api.State
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
         public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+        public bool SextingDetected { get; set; }
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
         public string IncomingUnresolvedVector { get; set; } = string.Empty;
         public string OutgoingUnresolvedVector { get; set; } = string.Empty;

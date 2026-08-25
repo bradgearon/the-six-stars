@@ -101,6 +101,9 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Temporary current-context items produced by the background review. The deterministic memory layer timestamps and expires them.</summary>
         public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
 
+        /// <summary>True when the compact background review detected active sexting in this girlfriend turn. The state layer treats this as a one-way enable latch.</summary>
+        public bool SextingDetected { get; set; }
+
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 

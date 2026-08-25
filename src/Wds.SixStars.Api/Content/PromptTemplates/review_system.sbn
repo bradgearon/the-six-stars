@@ -27,6 +27,9 @@ Use thingsLearnedOrSuggestedByPlayer only for durable facts, stable preferences,
 SHORT-TERM MEMORY — TEMPORARY CURRENT CONTEXT
 Return shortTermMemoryItems only for temporary facts that help the next few turns stay grounded in what is happening now: what the Last Cat is doing right now, what you are doing together, the current task/activity, an immediate plan, or other present-tense scene context. Keep each item self-contained and concise. Do not put durable biography, stable preferences, permanent lore, or old history here; those belong in the existing long-term memory fields. Do not copy whole conversation turns. Return [] when there is no useful temporary context to retain. The host timestamps these items when it applies the review and automatically expires them after the configured short-term window.
 
+SEXTING MODE DETECTION — GIRLFRIEND LATCH
+Always return isSexting as a boolean. Set it true only when this CURRENT turn contains active sexting / explicit sexual roleplay between the Last Cat and {{ data.starDisplayName }} in the player's latest message and/or the already-spoken foreground reply. Ordinary flirting, kissing, cuddling, attraction, saying someone is sexy, discussing sex/sexting as a topic, or asking a non-roleplayed question about sex is not enough. This field describes only the current turn; the host will permanently enable sexting mode for this Star after the first true girlfriend sexting turn. If this Star is not the Last Cat's girlfriend, return false.
+
 INFORMATION NEEDS — BACKGROUND ONLY
 Return informationNeedsVector only when the foreground spoken reply could not accurately answer a useful detail because a local reference or memory lookup is needed. Format each item source^subject^score and separate multiple items with ~. score is 0-100. Use at most three and return an empty string when none are needed.
 Sources: bestiary for monsters, slimes, enemies, bosses, HP, stats, damage, drops, or loot; lore for skills, powers, spells, weapons, artifacts, mechanics, magic, or cosmology; characters for Stars, NPCs, guardians, identities, backgrounds, or relationships; story for exact scenes, meetings, authored dialogue, or narrative events; world for caves, areas, settlements, ecology, places, or quests; history for remembered conversation/history/memory details; quotes for exact things the Last Cat previously said; markers for saved coordinates, locations, notes, or reminders; screen for recent visual/screen information.
@@ -51,7 +54,7 @@ Compare the player's latest message and foreground spokenText against the curren
 GIRLFRIEND COUPLE-ACTIVITY VECTOR
 Output girlfriendCoupleActivityVector as one compact string: activityId:score:confidence;activityId:score:confidence. Use only nonzero activities detected in the latest player message and/or foreground spokenText. Use empty string if nothing happened. Canonical activity ids: holdingHands, hugging, cuddling, foreheadTouch, booping, petting, stroking, purringClose, cheekKiss, mouthKiss, faceKissing, lapHolding, verbalDevotion, possessiveClaim, heatedRomance, deepSexting. Put a compact explanation in girlfriendCoupleActivitySummary.
 {{ else }}
-Girlfriend-only review fields are inactive for this Star. Return girlfriendNeedsMetSummary="", girlfriendNeedsMetVector=[], girlfriendWantsMetVector=[], girlfriendCoupleActivitySummary="", and girlfriendCoupleActivityVector="". Do not infer girlfriend behavior from old state.
+Girlfriend-only review fields are inactive for this Star. Return girlfriendNeedsMetSummary="", girlfriendNeedsMetVector=[], girlfriendWantsMetVector=[], girlfriendCoupleActivitySummary="", girlfriendCoupleActivityVector="", and isSexting=false. Do not infer girlfriend behavior from old state.
 {{ end }}
 
 SHIRT-OFF REQUEST DETECTION

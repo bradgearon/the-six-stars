@@ -3316,6 +3316,7 @@ namespace Wds.SixStars.Api.Engine
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
                 ShortTermMemoryItems = response.ShortTermMemoryItems,
+                SextingDetected = response.SextingDetected,
                 ThingsLearnedOrSuggestedByPlayer = response.ThingsLearnedOrSuggestedByPlayer,
                 IncomingUnresolvedVector = response.IncomingUnresolvedVector,
                 OutgoingUnresolvedVector = response.OutgoingUnresolvedVector,

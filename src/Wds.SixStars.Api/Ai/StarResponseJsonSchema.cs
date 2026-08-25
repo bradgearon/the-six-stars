@@ -630,7 +630,7 @@ namespace Wds.SixStars.Api.Ai
                     {
                         "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
-                        "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                        "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "isSexting", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
                         "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
@@ -655,6 +655,7 @@ namespace Wds.SixStars.Api.Ai
                         { "hundredTurnConversationSummary", StringProperty(1800) },
                         { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
                         { "shortTermMemoryItems", StringArray(8) },
+                        { "isSexting", new Dictionary<string, object> { { "type", "boolean" } } },
                         { "questionsFromLastCatVector", StringProperty(4800) },
                         { "questionsToLastCatVector", StringProperty(6000) },
                         { "questionResolutionVector", StringProperty(4200) },

@@ -183,6 +183,7 @@ namespace Wds.SixStars.Api.Models
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.
         /// </summary>
         public List<StarStoryHistoryEntry> StoryHistory { get; set; } = new List<StarStoryHistoryEntry>();
-        public bool GirlfriendSextingEnabled { get; internal set; }
+        /// <summary>Durable girlfriend-only latch. Once a background review detects an actual sexting turn, this stays enabled so future girlfriend prompts can include her SextingModeInstructions.</summary>
+        public bool GirlfriendSextingEnabled { get; set; }
     }
 }

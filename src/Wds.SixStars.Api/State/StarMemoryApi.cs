@@ -139,6 +139,12 @@ namespace Wds.SixStars.Api.State
             // are ignored for durable storage so ordinary turns do not bloat the quote list.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
             AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, now, request.RequestType);
+            if (state.IsGirlfriend && request.SextingDetected)
+            {
+                // One-way relationship latch: once this girlfriend and the Last Cat have actually sexted,
+                // keep her Star-specific sexting palette available on future relevant turns.
+                state.GirlfriendSextingEnabled = true;
+            }
             List<string> newlyLearnedOrSuggested = AddUniqueWithResult(state.ThingsLearnedOrSuggestedByPlayer, request.ThingsLearnedOrSuggestedByPlayer, _options.MaxThingsLearnedOrSuggestedByPlayer);
             UpdateUnresolvedThreadState(state, request);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);

@@ -40,6 +40,10 @@ namespace Wds.SixStars.Api.Ai
         /// <summary>Temporary current-context items such as what the Last Cat is doing now, the shared task, or an immediate plan. Host timestamps and expires these.</summary>
         public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
 
+        /// <summary>Background review only: true when the current girlfriend turn is active sexting, not merely flirting or discussing sex.</summary>
+        [JsonPropertyName("isSexting")]
+        public bool IsSexting { get; set; }
+
         /// <summary>Compact questions/topics raised by the Last Cat that remain open for the Star.</summary>
         [JsonPropertyName("questionsFromLastCatVector")]
         public string QuestionsFromLastCatVector { get; set; } = string.Empty;

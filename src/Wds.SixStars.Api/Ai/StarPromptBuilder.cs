@@ -1341,6 +1341,7 @@ namespace Wds.SixStars.Api.Ai
             if (active.Count == 0) return;
             sb.AppendLine("SHORT-TERM MEMORY — CURRENT/RECENT CONTEXT ONLY");
             sb.AppendLine("These temporary items describe what is happening now or what you and the Last Cat are currently doing.");
+            sb.AppendLine("When one is relevant, treat it as live scene continuity and continue from it naturally without making the Last Cat restate it. Active short-term context takes priority over older long-term memory when they conflict about what is happening now.");
             foreach (StarShortTermMemoryEntry item in active)
             {
                 sb.AppendLine("- " + item.CreatedAt.ToString("O") + " | " + Truncate(item.Text, 420));
@@ -2076,7 +2077,7 @@ namespace Wds.SixStars.Api.Ai
 
         private static void AppendSextingModeInstructionSet(StringBuilder sb, StarProfile profile, StarState state)
         {
-            bool sextingModeActive = state.GirlfriendSextingEnabled;
+            bool sextingModeActive = state != null && state.IsGirlfriend && state.GirlfriendSextingEnabled;
 
             if (sextingModeActive)
             {

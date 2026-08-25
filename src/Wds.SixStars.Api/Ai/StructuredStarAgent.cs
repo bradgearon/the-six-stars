@@ -2996,6 +2996,8 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendCoupleActivitySummary = CleanOneLine(model.GirlfriendCoupleActivitySummary, 520);
             response.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
             response.GirlfriendCoupleActivityItems.AddRange(ParseGirlfriendCoupleActivityVector(response.GirlfriendCoupleActivityVector, 16));
+            response.SextingDetected = state != null && state.IsGirlfriend &&
+                (model.IsSexting || response.GirlfriendCoupleActivityItems.Any(x => string.Equals(x.ItemId, "deepSexting", StringComparison.OrdinalIgnoreCase) && x.Score > 0));
             if (state == null || !state.IsGirlfriend)
             {
                 // Girlfriend-only state is deterministically sealed off when this Star is not the
@@ -3021,6 +3023,7 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add("Question vectors: fromLastCat=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", toLastCat=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
             response.Debug.Notes.Add("Background emotion animation: " + (string.IsNullOrWhiteSpace(response.EmotionAnimationName) ? "none" : response.EmotionAnimationName) + ".");
             response.Debug.Notes.Add("Background short-term memory items: " + response.ShortTermMemoryItems.Count + ".");
+            response.Debug.Notes.Add("Background sexting detected: " + response.SextingDetected + ".");
             response.Debug.Notes.Add("Background information needs: " + (response.InformationNeeds.Count == 0 ? "none" : string.Join(", ", response.InformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0")))) + ".");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
