@@ -2074,6 +2074,26 @@ namespace Wds.SixStars.Api.Ai
             }
         }
 
+        private static void AppendSextingModeInstructionSet(StringBuilder sb, StarProfile profile, StarState state)
+        {
+            bool sextingModeActive = state.GirlfriendSextingEnabled;
+
+            if (sextingModeActive)
+            {
+                var sextingModeInstructions = (profile.SextingModeInstructions ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .ToList();
+
+                sb.AppendLine("SEXTING MODE - ACTIVE");
+                sb.AppendLine("Use this style to respond to sexting or to express or fill physical affection desires");
+
+                foreach(var sextingInstruction in sextingModeInstructions)
+                {
+                    sb.AppendLine(" - " + sextingInstruction.Trim());
+                }
+            }
+        }
+
         private static string BuildCompactGirlfriendNeedWantHistory(
             StarState state,
             StarGirlfriendHourlyStateContext? previousState,
@@ -2333,6 +2353,9 @@ namespace Wds.SixStars.Api.Ai
                 if (cutePalette.Count > 0) sb.AppendLine("CutePalette=" + string.Join("\n - ", cutePalette));
             }
             string domainMagicFlirt = BuildDomainMagicFlirtInstruction(profile);
+
+            AppendSextingModeInstructionSet(sb, profile, state);
+
             if (!string.IsNullOrWhiteSpace(domainMagicFlirt)) sb.AppendLine("DomainMagicFlirtAccent=" + domainMagicFlirt.Trim());
 
             // This card is the Star's stable foreground identity reference. Keep each configured

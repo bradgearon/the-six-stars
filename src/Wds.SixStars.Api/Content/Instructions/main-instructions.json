@@ -51,10 +51,10 @@
     "includeControlItems": false,
     "includeControlItemsInstruction": "Also include any applicable control items defined below.",
     "controlInstructions": [
-      "Emotion animation, only for a strong beat: ~e^name§ where name is exactly happy, confused, sad, angry, or love.",
-      "Question/open thought worth carrying forward: ~q^score^question^resolution^effect§ where score is 0-100.",
-      "Local information lookup needed for an exact answer: ~i^source^subject^score§ where source is bestiary, lore, characters, story, world, history, quotes, markers, or screen and score is 0-100.",
-      "Controls are non-speech. Put each control after the spoken words it belongs to and terminate every control with §."
+      "Emotion animation, only for a strong beat: ~e^nameÂ§ where name is exactly happy, confused, sad, angry, or love.",
+      "Question/open thought worth carrying forward: ~q^score^question^resolution^effectÂ§ where score is 0-100.",
+      "Local information lookup needed for an exact answer: ~i^source^subject^scoreÂ§ where source is bestiary, lore, characters, story, world, history, quotes, markers, or screen and score is 0-100.",
+      "Controls are non-speech. Put each control after the spoken words it belongs to and terminate every control with Â§."
     ]
   }
 }

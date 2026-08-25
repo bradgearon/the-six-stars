@@ -104,5 +104,6 @@ namespace Wds.SixStars.Api.Stars
         public List<StarWritingPersistenceRule> ConstellationPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
 
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
+        public List<string> SextingModeInstructions { get; set; }
     }
 }

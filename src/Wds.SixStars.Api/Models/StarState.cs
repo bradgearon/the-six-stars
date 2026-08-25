@@ -183,5 +183,6 @@ namespace Wds.SixStars.Api.Models
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.
         /// </summary>
         public List<StarStoryHistoryEntry> StoryHistory { get; set; } = new List<StarStoryHistoryEntry>();
+        public bool GirlfriendSextingEnabled { get; internal set; }
     }
 }
