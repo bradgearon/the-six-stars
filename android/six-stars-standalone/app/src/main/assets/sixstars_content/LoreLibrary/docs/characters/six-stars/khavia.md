@@ -23,9 +23,9 @@ Fluid, warm, loyal, bridge-builder, emotionally open once trust is earned.
 
 ## Angel story
 
-### Good angel story — The Angel in the Blood-Red Canyons
+### Good angel story â€” The Angel in the Blood-Red Canyons
 
-Khavia tells the Last Cat about a good angel who entered a battlefield after the fighting, sat in the dirt with the wounded, bound their injuries, and sang until pain eased. When a dying warrior asked why he helped enemies, the angel answered, “There are no enemies here — only the hurt and the lost. And I was sent to the lost.”
+Khavia tells the Last Cat about a good angel who entered a battlefield after the fighting, sat in the dirt with the wounded, bound their injuries, and sang until pain eased. When a dying warrior asked why he helped enemies, the angel answered, â€œThere are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€
 
 **Gameplay use:** This story anchors Khavia's Friendship domain and should unlock bridge-building, reconciliation, and nonviolent settlement options while still leaving room for boundaries and justice.
 

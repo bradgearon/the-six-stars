@@ -17,4 +17,4 @@ Writing: {{ item.writing }}
 ---
 {{ end }}
 
-Return exactly the required number of records as exact-id^spoken text§ with no other output.
+Return exactly the required number of records as exact-id^spoken textÂ§ with no other output.

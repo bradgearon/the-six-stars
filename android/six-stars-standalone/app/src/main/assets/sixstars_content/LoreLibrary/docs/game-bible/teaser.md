@@ -1,4 +1,4 @@
-# The Last Cat: The Early Years — Teaser
+# The Last Cat: The Early Years â€” Teaser
 
 No cat has been seen for one hundred years. The universe is drying up. Ancient worlds crumble into whispering dust.
 
@@ -8,7 +8,7 @@ You.
 
 Guided by impossible letters from people who should not know your name, you journey to a forgotten planet where cats and slimes once lived in harmony.
 
-There you meet the Stars — six beautiful, flawed sages who wield true magic. They can become allies, friends, rivals, companions, and perhaps something more. Yet even they answer to someone beyond the veil.
+There you meet the Stars â€” six beautiful, flawed sages who wield true magic. They can become allies, friends, rivals, companions, and perhaps something more. Yet even they answer to someone beyond the veil.
 
 Benaveil.
 
@@ -18,19 +18,19 @@ Perhaps something worse.
 
 In the shadowed depths, Elusiaa kneels before you, her light warm against the poisoned dark.
 
-> “Little one… you carry the weight of more than your size.”
+> â€œLittle oneâ€¦ you carry the weight of more than your size.â€
 
 Deep beneath the cave network waits Leviathan, an ancient astral sea dragon whose power predates mana itself.
 
 When he speaks, his judgment shakes the world:
 
-> “Your kind sealed the flow… and now it is time to unseal you.”
+> â€œYour kind sealed the flowâ€¦ and now it is time to unseal you.â€
 
 Learn the Stars' powers. Turn mana into stardust. Wield soul-swords that cut what flesh cannot. Teach your companions to make miracles without the angel's power.
 
 But beware the sanctuary song when it begins to bend. Beware the whisper beneath the music:
 
-> “Let Us Call Hell.”
+> â€œLet Us Call Hell.â€
 
 Restore the lost cats. Awaken the Stars. Decide the fate of a young angel.
 

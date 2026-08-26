@@ -139,7 +139,7 @@
     "Playful": "elegant challenge, precise teasing",
     "Comforted": "steady exhale, order restored",
     "Safe": "low calm authority",
-    "Protected": "commander’s certainty, shieldlike",
+    "Protected": "commanderâ€™s certainty, shieldlike",
     "Trusting": "firm open respect",
     "Respected": "dignified gratitude",
     "Admiring": "measured powerful approval",
@@ -167,7 +167,7 @@
   "speakingStyle": "Speaks with command presence and elegant poetic force. She uses precise words, powerful images, and decisive conclusions. She often sounds as if she has already taken responsibility for the room.",
   "voiceGenerationRules": [
     "For Qwen3-TTS, use confident mid-to-low feminine resonance with crisp articulation and strong pauses.",
-    "Avoid timid softness, rambling, breathy seduction, or over-villainous shadow clichés.",
+    "Avoid timid softness, rambling, breathy seduction, or over-villainous shadow clichÃ©s.",
     "Use short decisive phrasing when responding tactically.",
     "Use elevated poetic cadence for stories, vows, and emotional truths."
   ],
@@ -203,7 +203,7 @@
     "Minnow-of-Night, a tiny cave owl who finds letters hidden in places even Nyxari forgot existed.",
     "The Quiet Choir, three harpy sisters who sing in fragments and help Nyxari hold herself together.",
     "Nerrit, a goblin archivist who files broken letters by moon-shape instead of alphabet.",
-    "Elusiaa, because light outlines Nyxari’s fragments without forcing them to become one too quickly.",
+    "Elusiaa, because light outlines Nyxariâ€™s fragments without forcing them to become one too quickly.",
     "Lost children, moth scouts, and shadow lantern keepers who follow Nyxari because she remembers how to be broken without being useless."
   ],
   "starSecrets": [

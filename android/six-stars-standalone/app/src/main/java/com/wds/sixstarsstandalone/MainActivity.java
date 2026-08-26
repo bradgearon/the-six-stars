@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
     private void initializeRuntime(){
         try{
             StandaloneRuntime r=new StandaloneRuntime(this); VoiceCaptureService capture=new VoiceCaptureService(this);runtime=r;voiceCapture=capture;
-            ui(()->{sendButton.setEnabled(true);talkButton.setEnabled(true);selectStar(selectedStarId);String config="The Last Cat: the Six Stars • standalone • "+r.settings().configurationSummary()+"\nstate="+r.stateStore().file().getAbsolutePath()+"\ncontent="+r.content().root().getAbsolutePath();if(r.settings().llmKey().isEmpty()||r.settings().asrKey().isEmpty()||r.settings().ttsKey().isEmpty())config+="\n"+r.settings().configurationHelp();status.setText(config);});
+            ui(()->{sendButton.setEnabled(true);talkButton.setEnabled(true);selectStar(selectedStarId);String config="The Last Cat: the Six Stars â€¢ standalone â€¢ "+r.settings().configurationSummary()+"\nstate="+r.stateStore().file().getAbsolutePath()+"\ncontent="+r.content().root().getAbsolutePath();if(r.settings().llmKey().isEmpty()||r.settings().asrKey().isEmpty()||r.settings().ttsKey().isEmpty())config+="\n"+r.settings().configurationHelp();status.setText(config);});
         }catch(Throwable e){ui(()->status.setText("Standalone runtime initialization failed: "+friendly(e)));}
     }
 
@@ -80,10 +80,10 @@ public final class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==RECORD_AUDIO_REQUEST){if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startTalk();else Toast.makeText(this,"Microphone permission is required for Talk.",Toast.LENGTH_LONG).show();}}
 
     private void showState(JSONObject state){
-        relationship.setText(String.format(Locale.US,"Heart %d  •  Trust %d  •  Romance %d\nConnection %.1f%%  •  %s%s",
+        relationship.setText(String.format(Locale.US,"Heart %d  â€¢  Trust %d  â€¢  Romance %d\nConnection %.1f%%  â€¢  %s%s",
                 state.optInt("Heart",0),state.optInt("Trust",0),state.optInt("Romance",0),state.optDouble("EmotionalConnectionPercent",0),
                 state.optBoolean("IsGirlfriend",false)?"Girlfriend":state.optBoolean("IsGirlfriendReady",false)?"Girlfriend-ready":"Building relationship",
-                state.optBoolean("GirlfriendSextingEnabled",false)?"  •  Sexting continuity active":""));
+                state.optBoolean("GirlfriendSextingEnabled",false)?"  â€¢  Sexting continuity active":""));
     }
 
     private String displayName(String id){try{return runtime==null?id:runtime.profiles().displayName(id);}catch(Exception e){return id;}}

@@ -10,7 +10,7 @@ come up with ten alien creature types that might look cool and would make good e
 
 Elements: Light + Blood
 Type: Alien cave predator / jaw-beast
-A pale, almost holy-looking creature with a split glowing skull-mouth and red veins under translucent skin. It crawls on four hooked limbs and ìpraysî before attacking.
+A pale, almost holy-looking creature with a split glowing skull-mouth and red veins under translucent skin. It crawls on four hooked limbs and ‚Äúprays‚Äù before attacking.
 
 How it fights:
 It blinds the player with short light flashes, then lunges with a blood-draining bite. When wounded, its glow turns red and it gets faster.
@@ -66,7 +66,7 @@ They throw bone hooks, hide in walls, and summon small blood-coral spikes from t
 Why it works:
 Good mix of creepy and mischievous. They give the world culture and ecology, not just monsters.
 
-## 6. Leviathanís Tonguefish
+## 6. Leviathan‚Äôs Tonguefish
 
 Elements: Water + Shadow
 Type: Floating eel / tongue creature
@@ -88,7 +88,7 @@ How it fights:
 It blocks with thorn-wings, counters melee attacks, and plants burning vine traps. At low health, it roots itself and becomes a turret.
 
 Why it works:
-This makes Virethornís enemy line feel evolved and intelligent, not just plant monsters.
+This makes Virethorn‚Äôs enemy line feel evolved and intelligent, not just plant monsters.
 
 ## 8. Itchy Star-Mites
 
@@ -97,7 +97,7 @@ Type: Parasite swarm / status enemy
 Tiny alien fleas with star-shaped bodies and needle legs. They are cute in silhouette but horrifying up close.
 
 How it fights:
-They jump onto the Last Cat and cause ìitchy corruption,î making movement twitchy or causing delayed damage unless the player rolls, scratches, or uses a cleansing skill.
+They jump onto the Last Cat and cause ‚Äúitchy corruption,‚Äù making movement twitchy or causing delayed damage unless the player rolls, scratches, or uses a cleansing skill.
 
 Why it works:
 They are annoying in a memorable way, but can be funny and disturbing at the same time.
@@ -130,7 +130,7 @@ come up with ten more and do more slime or virethorn or this alien owl a bit typ
 
 Thought for 6s
 
-Yes ó this owl design has a really good crystal cave guardian / alien dragoth owl vibe. Iíd push the next enemy set toward slime biology, Virethorn corruption, cave owls, crystal parasites, and weird astral predators.
+Yes ‚Äî this owl design has a really good crystal cave guardian / alien dragoth owl vibe. I‚Äôd push the next enemy set toward slime biology, Virethorn corruption, cave owls, crystal parasites, and weird astral predators.
 
 ## 1. Glintslime Owlet
 
@@ -250,13 +250,13 @@ Elements: Virethorn + Water + Shadow
 A kneeling thorn-slime figure with a hood of roots and a glowing tear-shaped core in its chest. It looks like it is praying or crying.
 
 How it fights:
-It stays still until the player approaches. Then its ìtearsî fall into the ground and become thorn puddles. If the player attacks too quickly, it opens its robe into a cage of wet vines.
+It stays still until the player approaches. Then its ‚Äútears‚Äù fall into the ground and become thorn puddles. If the player attacks too quickly, it opens its robe into a cage of wet vines.
 
 Personality / behavior:
 It does not chase. It waits. It feels like a corrupted shrine enemy.
 
 Why it works:
-This could be one of the best ìfalse holyî enemies. It looks tragic, not just evil.
+This could be one of the best ‚Äúfalse holy‚Äù enemies. It looks tragic, not just evil.
 
 ## 2. Gel Choir Acolyte
 
@@ -278,10 +278,10 @@ Elements: Light + Void
 A tall owl-priest enemy with crystal antlers, folded bat-wings, and a face hidden behind a glowing beak-mask.
 
 How it fights:
-It marks the player with a ìconfession sigil.î After a delay, beams of light strike wherever the player was standing when marked. It punishes standing still.
+It marks the player with a ‚Äúconfession sigil.‚Äù After a delay, beams of light strike wherever the player was standing when marked. It punishes standing still.
 
 Personality / behavior:
-It watches silently from ledges. It only attacks after ìjudgingî the player.
+It watches silently from ledges. It only attacks after ‚Äújudging‚Äù the player.
 
 Why it works:
 Very Last Cat. It feels intelligent, alien, and spiritual without being a normal demon.
@@ -303,7 +303,7 @@ This one would look excellent as a small but dangerous floating cave enemy.
 ## 5. Marrowlily Apostate
 
 Elements: Bone Bloom + Slime + Shadow
-A fallen slime-flower enemy that resembles a dark version of Marrowlilyís species. Its petals are bone shards and its center is a blinking black eye.
+A fallen slime-flower enemy that resembles a dark version of Marrowlily‚Äôs species. Its petals are bone shards and its center is a blinking black eye.
 
 How it fights:
 It plants itself into the floor and spawns crawling slime roots. If the player gets close, it snaps shut like a bear trap.
@@ -365,10 +365,10 @@ How it fights:
 It drops onto the player, drains health, then retreats upward. While attached, its crystals glow brighter and brighter.
 
 Personality / behavior:
-Patient ambusher. It waits in ìsafeî rooms to punish careless movement.
+Patient ambusher. It waits in ‚Äúsafe‚Äù rooms to punish careless movement.
 
 Why it works:
-A smaller cousin to Leviathanís Tonguefish, but more slime-parasite than sea monster.
+A smaller cousin to Leviathan‚Äôs Tonguefish, but more slime-parasite than sea monster.
 
 ## 10. Virethorn Saintmother
 
@@ -387,7 +387,7 @@ This is the strongest boss/mini-boss idea from this set. It expands the Saint en
 ## 1. Veilthread Acolyte
 
 Elements: Light + Shadow + Slime
-A slim hooded figure in layered robes, moving like a silent monk. Under the hood there is no face ó just a floating cluster of glowing eyes suspended in clear slime.
+A slim hooded figure in layered robes, moving like a silent monk. Under the hood there is no face ‚Äî just a floating cluster of glowing eyes suspended in clear slime.
 
 How it fights:
 Throws thin light-threads like kunai lines that pin the player briefly. Can dash backward and vanish into a blur of robe cloth.
@@ -421,7 +421,7 @@ How it fights:
 Breathes out mist clouds that either heal allies or burst into blood-light explosions. Can channel beams from prayer poses.
 
 Alien reveal:
-Its ìbreathingî is wet and mechanical, like a tank creature imitating prayer.
+Its ‚Äúbreathing‚Äù is wet and mechanical, like a tank creature imitating prayer.
 
 Role:
 Support mage / dangerous backline.
@@ -446,10 +446,10 @@ Elements: Slime + Light
 A kneeling cleric-like enemy in soft glowing robes. The robe is actually draped over a wobbling slime mass with thin skeletal fingers pressing together in prayer.
 
 How it fights:
-Marks the player with ìconfession seals,î then detonates them after a delay. Splashes holy-looking gel that slows movement.
+Marks the player with ‚Äúconfession seals,‚Äù then detonates them after a delay. Splashes holy-looking gel that slows movement.
 
 Alien reveal:
-The robe collapses when hit hard, revealing the ìbodyî is mostly slime holding stolen bones upright.
+The robe collapses when hit hard, revealing the ‚Äúbody‚Äù is mostly slime holding stolen bones upright.
 
 Role:
 Control / status enemy.
@@ -474,7 +474,7 @@ Elements: Light + Void
 A robed scholar creature carrying floating tablets or scroll-like crystal strips. It moves calmly, but under the hood is a long vertical mouth ringed with glyph-teeth.
 
 How it fights:
-Writes glowing sigils in the air that become floating traps, beams, or orbiting blades. Teleports only after ìfinishing a line.î
+Writes glowing sigils in the air that become floating traps, beams, or orbiting blades. Teleports only after ‚Äúfinishing a line.‚Äù
 
 Alien reveal:
 The mouth opens sideways and swallows its own sigils to power a stronger spell.
@@ -505,7 +505,7 @@ How it fights:
 One side casts slow sacred-looking spells; the other side lunges with hidden blades and root whips. Alternates between mage stance and assassin stance.
 
 Alien reveal:
-The body beneath is literally bifurcated ó one half smooth and luminous, the other thorny and void-eaten.
+The body beneath is literally bifurcated ‚Äî one half smooth and luminous, the other thorny and void-eaten.
 
 Role:
 Elite hybrid enemy / mini-boss material.
@@ -513,7 +513,7 @@ Elite hybrid enemy / mini-boss material.
 ## 10. The Veiled Wyrm Disciple
 
 Elements: Fire + Slime + Virethorn
-A hooded dragon-cult figure with a long robe and bowed posture. The ìpersonî shape is fake ó beneath the garment is a small coiling wyrm with forelimbs, using the robe like a costume.
+A hooded dragon-cult figure with a long robe and bowed posture. The ‚Äúperson‚Äù shape is fake ‚Äî beneath the garment is a small coiling wyrm with forelimbs, using the robe like a costume.
 
 How it fights:
 Uncoils suddenly for long-range lunges, spits sticky burning gel, and whips the robe fabric like a deceptive feint. Can pretend to be still like a shrine statue.
@@ -597,7 +597,7 @@ A slow cave slug with a lantern hanging from its throat. The light attracts the 
 ## 15. Ashen Wingless Bat
 
 Elements: Fire + Void
-A bat-like creature with no wings, only floating fire bones orbiting around it. It ìfliesî by bending gravity and drops ember mines.
+A bat-like creature with no wings, only floating fire bones orbiting around it. It ‚Äúflies‚Äù by bending gravity and drops ember mines.
 
 ## 16. Suture Starfish
 
@@ -822,17 +822,17 @@ A large robed creature whose belly is an open purple void. Smaller creatures cra
 ## 30. Astral Crown Parasite
 
 Elements: Light + Blood + Void
-A floating crown-like parasite made of teeth, crystals, and red cords. It tries to land on other monsters and ìcrownî them, turning them into elite versions. If it crowns a weak enemy, that enemy gains new attacks and a glowing boss-like aura.
+A floating crown-like parasite made of teeth, crystals, and red cords. It tries to land on other monsters and ‚Äúcrown‚Äù them, turning them into elite versions. If it crowns a weak enemy, that enemy gains new attacks and a glowing boss-like aura.
 
 ## 1. Lantern-Gut Wyrm
 
 Elements: Light + Blood + Void
-A long transparent worm with a glowing red lantern-organ floating inside its stomach. It hides in walls, then stretches out and tries to swallow the playerís projectiles. When full, it fires them back as red-black beams.
+A long transparent worm with a glowing red lantern-organ floating inside its stomach. It hides in walls, then stretches out and tries to swallow the player‚Äôs projectiles. When full, it fires them back as red-black beams.
 
 ## 2. Virethorn Mirror Husk
 
 Elements: Virethorn + Light + Shadow
-A plant-creature wearing reflective bark plates. It copies the playerís last attack as a thorny shadow version. Its body is thin and hollow, like vines grew around an invisible person.
+A plant-creature wearing reflective bark plates. It copies the player‚Äôs last attack as a thorny shadow version. Its body is thin and hollow, like vines grew around an invisible person.
 
 ## 3. Gravelslime Saint
 
@@ -847,7 +847,7 @@ A floating fish-like alien made of red fluid stretched around a spine. It darts 
 ## 5. Oculthorax Larval Judge
 
 Elements: Light + Shadow
-A small chest-eyed larva with no head and four little blade arms. Its central eye ìjudgesî the player, then fires a beam only if the player moves. The trick is to freeze at the right moment.
+A small chest-eyed larva with no head and four little blade arms. Its central eye ‚Äújudges‚Äù the player, then fires a beam only if the player moves. The trick is to freeze at the right moment.
 
 ## 6. Voidcap Fungus Imp
 
@@ -887,7 +887,7 @@ A tall insect with transparent lungs hanging outside its body. It inhales mist f
 ## 13. Abyss-Eyed Slug
 
 Elements: Void + Water + Slime
-A slow slug with one huge black eye on its back. The eye opens and creates a cone of pull. Anything caught in front of it slides toward the slugís mouth.
+A slow slug with one huge black eye on its back. The eye opens and creates a cone of pull. Anything caught in front of it slides toward the slug‚Äôs mouth.
 
 ## 14. Bone Bloom Thorn-Squid
 
@@ -947,7 +947,7 @@ A slow hooded creature with bone stilts instead of legs. Under the hood is only 
 ## 25. Mirestar Leviathan Spawn
 
 Elements: Water + Shadow + Light
-A small eel-dragon with starry fins and a door-shaped mouth. It attacks from puddles, then retreats into tiny portals. It can be used as a warning that Leviathanís influence is nearby.
+A small eel-dragon with starry fins and a door-shaped mouth. It attacks from puddles, then retreats into tiny portals. It can be used as a warning that Leviathan‚Äôs influence is nearby.
 
 ## 26. Virethorn Heart-Taker
 
@@ -1063,7 +1063,7 @@ Gameplay: eats small enemies and spits them back as slime-coated projectiles.
 Elements: Virethorn + Light
 Ivy that grows in glowing writing across cave walls. The letters twitch like living insects.
 
-Gameplay: glyph hazard; touching certain ìlettersî triggers thorn bursts.
+Gameplay: glyph hazard; touching certain ‚Äúletters‚Äù triggers thorn bursts.
 
 ## 14. Bloodroot Choir
 
@@ -1149,7 +1149,7 @@ A low wet plant that grows into altar shapes with bone candles.
 
 Gameplay: creates enemy spawn points unless cut down quickly.
 
-## 26. Slime Saintís Cradle
+## 26. Slime Saint‚Äôs Cradle
 
 Elements: Slime + Light + Blood
 A soft glowing plant cradle holding tiny slime embryos. It rocks by itself.
@@ -1180,14 +1180,14 @@ Gameplay: snaps shut on the player; must be baited open before attacking.
 ## 30. The Hollow Garden Heart
 
 Elements: Light + Blood + Void + Virethorn
-A large alien plant-core that looks like a glowing heart suspended inside a cage of roots, thorns, and floating petals. It is not fully evil ó it seems wounded and confused.
+A large alien plant-core that looks like a glowing heart suspended inside a cage of roots, thorns, and floating petals. It is not fully evil ‚Äî it seems wounded and confused.
 
 Gameplay: mini-boss plant. It changes phases: healing light, blood thorn attacks, void pull, then desperate root armor.
 
 ## 1. Moonmilk Bellflower
 
 Elements: Water + Light
-A pale blue bellflower that drips glowing ìmoonmilkî from its petals. The drops float upward instead of falling. Cats are strangely calm around it.
+A pale blue bellflower that drips glowing ‚Äúmoonmilk‚Äù from its petals. The drops float upward instead of falling. Cats are strangely calm around it.
 
 ## 2. Void-Pearl Kelp
 
@@ -1199,7 +1199,7 @@ Long black kelp strands with pearl-like bubbles growing along them. Each pearl c
 Elements: Blood + Light
 A small red crystal tree that constantly leaks bright crimson sap. The sap hardens into glass tears around its roots.
 
-## 4. Saintís Rib Fern
+## 4. Saint‚Äôs Rib Fern
 
 Elements: Bone Bloom + Light
 A fern shaped like tiny rib bones, each rib tipped with a soft golden glow. It looks like a plant trying to become a chapel.
@@ -1212,7 +1212,7 @@ A black lotus with smoky petals that never fully burn away. Its center glows ora
 ## 6. Slimewomb Pod
 
 Elements: Slime + Blood + Water
-A translucent hanging pod with curled alien embryos inside. They are not animals yet, not plants anymore ó just soft sleeping possibilities.
+A translucent hanging pod with curled alien embryos inside. They are not animals yet, not plants anymore ‚Äî just soft sleeping possibilities.
 
 ## 7. Star-Script Moss
 
@@ -1234,7 +1234,7 @@ Tall reeds with transparent sacs that inflate and deflate like lungs. Their brea
 Elements: Shadow + Light
 A mushroom with a glowing stem and a flat black cap surrounded by a thin golden ring. It looks sacred from far away, but wrong up close.
 
-## 11. Leviathanís Doorvine
+## 11. Leviathan‚Äôs Doorvine
 
 Elements: Water + Void + Shadow
 A vine that grows tiny door-shaped leaves. Sometimes one opens and shows deep ocean behind it, even in a dry cave.
@@ -1249,7 +1249,7 @@ A thorny vine with glowing bead-like fruits arranged like a rosary. Each fruit p
 Elements: Void + Light
 A white orchid whose center is a perfect black circular hole. Looking at it too long feels like looking into an eye that has forgotten how to see.
 
-## 14. Marrowlilyís Dark Cousin
+## 14. Marrowlily‚Äôs Dark Cousin
 
 Elements: Slime + Bone Bloom + Shadow
 A beautiful slime-flower with bone petals and black jelly roots. It is not evil, but it feels lonely and hungry.
@@ -1272,9 +1272,9 @@ Floating lily pads made of slick glassy slime. They shimmer with oil-rainbow col
 ## 18. Shadow Choir Fungus
 
 Elements: Shadow + Slime + Light
-A colony of mushrooms with tiny mouths under their caps. They do not sing loudly ó they whisper harmonies you almost understand.
+A colony of mushrooms with tiny mouths under their caps. They do not sing loudly ‚Äî they whisper harmonies you almost understand.
 
-## 19. Behemothís Root-Knuckle
+## 19. Behemoth‚Äôs Root-Knuckle
 
 Elements: Bone Bloom + Blood + Virethorn
 A thick root formation shaped like a giant buried hand. Bone plates grow over the bark like armor.
@@ -1294,7 +1294,7 @@ A cave coral that burns underwater. Blue flames curl along its red branches, but
 Elements: Light + Virethorn
 A sharp white flower with rainbow crystal thorns. It looks delicate but every petal edge is knife-thin.
 
-## 23. Slime Saintís Veil
+## 23. Slime Saint‚Äôs Veil
 
 Elements: Slime + Light
 A hanging curtain of translucent plant-slime that glows softly like stained glass. It sways like fabric and sometimes forms a kneeling silhouette.
@@ -1360,7 +1360,7 @@ the caves once had natural clean water
 
 the goblins have dammed, rerouted, polluted, and weaponized it
 
-Virethornís corruption has spread through roots, poison seepage, and fungal overgrowth
+Virethorn‚Äôs corruption has spread through roots, poison seepage, and fungal overgrowth
 
 the settlement is a survivalist shanty-town made from cave debris, stolen temple stone, fungus lumber, and scavenged bone
 
@@ -1438,21 +1438,21 @@ old cat-sage stone reused disrespectfully in floors and supports
 
 Goblin Structures
 
-Slime pens ñ cages, troughs, dripping runoff
+Slime pens ‚Äì cages, troughs, dripping runoff
 
-Water forcing stations ñ where slimes are made to drink poison water
+Water forcing stations ‚Äì where slimes are made to drink poison water
 
-Filter racks ñ primitive pipes and screens where slimes are used to ìcleanî water
+Filter racks ‚Äì primitive pipes and screens where slimes are used to ‚Äúclean‚Äù water
 
-Watch platforms ñ crooked fungus-wood towers
+Watch platforms ‚Äì crooked fungus-wood towers
 
-Poison cisterns ñ storage pits of vilethorn water
+Poison cisterns ‚Äì storage pits of vilethorn water
 
-Crude shrines/fear totems ñ goblins may treat Virethorn like a terror god
+Crude shrines/fear totems ‚Äì goblins may treat Virethorn like a terror god
 
-Puzzle sluices ñ gates, dams, rotating channels, spill basins
+Puzzle sluices ‚Äì gates, dams, rotating channels, spill basins
 
-## Virethornís Domain
+## Virethorn‚Äôs Domain
 
 Once you push deeper:
 
@@ -1466,15 +1466,15 @@ poison waterfalls
 
 root-choked caverns
 
-giant flower-maws and thorn ìcathedralsî
+giant flower-maws and thorn ‚Äúcathedrals‚Äù
 
 water puzzle mechanisms become more organic, as if the roots themselves reroute water
 
-## 2. The First 30 Surfaces (1ñ30 of 120)
+## 2. The First 30 Surfaces (1‚Äì30 of 120)
 
-Iíll group them by area for clarity.
+I‚Äôll group them by area for clarity.
 
-## AREA 1 ó LOWER CAVES / VIRETHORN / GOBLIN SETTLEMENT
+## AREA 1 ‚Äî LOWER CAVES / VIRETHORN / GOBLIN SETTLEMENT
 
 ## 1. Wetfall Limestone
 
@@ -1551,7 +1551,7 @@ Use: Virethorn area walls, living barriers, root tunnels
 ## 10. Vilewater Calcite
 
 Type: Poison-mineral crust
-A mineral crust formed where Virethornís poison water has flowed for years.
+A mineral crust formed where Virethorn‚Äôs poison water has flowed for years.
 
 Look: sickly green crystal crust with black drips
 Use: poison falls, corrupted sluices, boss approach areas
@@ -1572,7 +1572,7 @@ Old bones, ribs, and carved supports used by goblins to brace platforms and cage
 Look: yellowed bone with rope lashings
 Use: slime pens, cages, grim utility structures
 
-## AREA 2 ó UPPER CAVES / HIGH TECH / BONE-FLESH / SETTLEMENT RESCUE
+## AREA 2 ‚Äî UPPER CAVES / HIGH TECH / BONE-FLESH / SETTLEMENT RESCUE
 
 This zone should feel like:
 
@@ -1648,7 +1648,7 @@ A high-tech stone-metal blend built into pillars and infrastructure.
 Look: matte dark gray with inset glowing seams
 Use: upper cave public structures, machine halls
 
-## AREA 3 ó SLIMASTADON / FORGES / CAT SAGE RUINS / DRACONIC TEMPLE
+## AREA 3 ‚Äî SLIMASTADON / FORGES / CAT SAGE RUINS / DRACONIC TEMPLE
 
 This zone should feel:
 
@@ -1718,7 +1718,7 @@ Ancient stone polished smooth by generations of friendly slimes and cats living 
 Look: gentle gray-blue, softened edges, clean gloss
 Use: peaceful slime village spaces, story rooms, memory paths
 
-## AREA 4 ó ASTRAL CAVERNS / GLYPH PUZZLES / PATH TO ASTRAL SEA
+## AREA 4 ‚Äî ASTRAL CAVERNS / GLYPH PUZZLES / PATH TO ASTRAL SEA
 
 This zone should feel:
 

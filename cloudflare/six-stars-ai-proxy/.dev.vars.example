@@ -1,0 +1,4 @@
+GEMINI_API_KEY=replace-me
+GROQ_API_KEY=replace-me
+DASHSCOPE_API_KEY=replace-me
+APP_PROXY_TOKEN=replace-with-a-long-random-token

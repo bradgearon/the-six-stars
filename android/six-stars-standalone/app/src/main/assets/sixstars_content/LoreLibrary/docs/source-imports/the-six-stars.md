@@ -15,7 +15,7 @@ Brings Strangers together
 
 Believes no one is beyond friendship
 
-“Somebody helped me once.”
+â€œSomebody helped me once.â€
 
 Auerlis
 Fire
@@ -28,7 +28,7 @@ Heals through music
 
 Finds light in darkest places
 
-“Then at least they are laughing.”
+â€œThen at least they are laughing.â€
 
 Elusiaa
 Light 
@@ -41,7 +41,7 @@ Heals the corrupted
 
 Wrestles with justice and compassion
 
-“Mercy is how we remember we’re not gods.”
+â€œMercy is how we remember weâ€™re not gods.â€
 
 Maera
 Blood  
@@ -54,7 +54,7 @@ Collects people
 
 Confuses love with ownership
 
-“If I can’t have you, no one can.”
+â€œIf I canâ€™t have you, no one can.â€
 
 Kaelia 
 Void 
@@ -65,7 +65,7 @@ Believes change is impossible
 
 Spreads apathy freezes futures
 
-“The Void is not empty. It is listening.”
+â€œThe Void is not empty. It is listening.â€
 
 Nyxari 
 Shadow 
@@ -78,4 +78,4 @@ Erases meaning
 
 Believes nothing truly matters
 
-“If nothing matters, nothing can break.”
+â€œIf nothing matters, nothing can break.â€

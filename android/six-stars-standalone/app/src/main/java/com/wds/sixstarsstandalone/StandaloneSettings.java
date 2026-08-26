@@ -102,14 +102,20 @@ final class StandaloneSettings {
     }
 
     String sessionId() { return root.optString("SessionId", "android-standalone"); }
+    JSONObject proxy() { return JsonUtil.object(root, "Proxy"); }
     JSONObject llm() { return JsonUtil.object(root, "LLM"); }
     JSONObject asr() { return JsonUtil.object(root, "ASR"); }
     JSONObject tts() { return JsonUtil.object(root, "TTS"); }
     JSONObject runtime() { return JsonUtil.object(root, "Runtime"); }
 
+    boolean proxyEnabled() { return proxy().optBoolean("Enabled", false); }
+    String proxyBaseUrl() { return proxy().optString("BaseUrl", "").trim().replaceAll("/+$", ""); }
+    String proxyAccessToken() { return proxy().optString("AccessToken", "").trim(); }
+    boolean proxyConfigured() { return proxyEnabled() && !proxyBaseUrl().isEmpty() && !proxyAccessToken().isEmpty(); }
+
     boolean llmEnabled() { return llm().optBoolean("Enabled", true); }
     String llmKey() { return llm().optString("ApiKey", "").trim(); }
-    String llmEndpoint() { return llm().optString("EndpointBaseUrl", "https://generativelanguage.googleapis.com/v1beta"); }
+    String llmEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/google/v1beta" : llm().optString("EndpointBaseUrl", "https://generativelanguage.googleapis.com/v1beta"); }
     String llmModel() { return llm().optString("Model", "gemma-4-26b-a4b-it"); }
     String thinkingLevel() { return llm().optString("ThinkingLevel", "high"); }
     boolean googleSearch() { return llm().optBoolean("EnableGoogleSearch", false); }
@@ -119,15 +125,15 @@ final class StandaloneSettings {
 
     boolean asrEnabled() { return asr().optBoolean("Enabled", true); }
     String asrKey() { return asr().optString("ApiKey", "").trim(); }
-    String asrEndpoint() { return asr().optString("EndpointUrl", "https://api.groq.com/openai/v1/audio/transcriptions"); }
+    String asrEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/groq/openai/v1/audio/transcriptions" : asr().optString("EndpointUrl", "https://api.groq.com/openai/v1/audio/transcriptions"); }
     String asrModel() { return asr().optString("Model", "whisper-large-v3-turbo"); }
     String asrLanguage() { return asr().optString("Language", "en"); }
     int asrTimeoutSeconds() { return asr().optInt("TimeoutSeconds", 60); }
 
     boolean ttsEnabled() { return tts().optBoolean("Enabled", true); }
     String ttsKey() { return tts().optString("ApiKey", "").trim(); }
-    String ttsEndpoint() { return tts().optString("EndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"); }
-    String enrollmentEndpoint() { return tts().optString("VoiceEnrollmentEndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization"); }
+    String ttsEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/alibaba/tts" : tts().optString("EndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"); }
+    String enrollmentEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/alibaba/voice-enrollment" : tts().optString("VoiceEnrollmentEndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization"); }
     String ttsModel() { return tts().optString("Model", "qwen3-tts-vc-2026-01-22"); }
     String enrollmentModel() { return tts().optString("VoiceEnrollmentModel", "qwen-voice-enrollment"); }
     String defaultLanguage() { return tts().optString("DefaultLanguage", "English"); }
@@ -144,11 +150,12 @@ final class StandaloneSettings {
     boolean traceEnabled() { return runtime().optBoolean("TraceEnabled", true); }
 
     String configurationSummary() {
-        return "LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty()) + " TTS key=" + (!ttsKey().isEmpty())
+        return "proxy=" + (proxyEnabled() ? (proxyConfigured() ? "configured" : "incomplete") : "off")
+                + " LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty()) + " TTS key=" + (!ttsKey().isEmpty())
                 + " | buildLocal=" + buildTimeLocalAssetLoaded + " runtimeLocal=" + runtimeOverrideLoaded;
     }
 
     String configurationHelp() {
-        return "For developer builds copy app/src/main/assets/standalone-services.local.json.example to standalone-services.local.json and add the three API keys. Runtime override path: " + file.getAbsolutePath();
+        return "For direct developer builds add the three provider API keys. For production set Proxy.Enabled=true, BaseUrl, and AccessToken; provider keys can remain empty on-device. Runtime override path: " + file.getAbsolutePath();
     }
 }

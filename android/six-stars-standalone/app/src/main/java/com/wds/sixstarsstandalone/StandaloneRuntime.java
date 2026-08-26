@@ -90,12 +90,12 @@ final class StandaloneRuntime implements AutoCloseable {
     }
 
     private void submitTextInternalUserAlreadyShown(String starId,String text,Callbacks cb){
-        foregroundExecutor.submit(()->processForegroundInternal(starId,text,cb,false));
+        foregroundExecutor.submit(()->processForegroundInternal(starId,text,cb,false,"foreground-chat-voice"));
     }
 
-    private void processForeground(String starId,String text,Callbacks cb){processForegroundInternal(starId,text,cb,true);}
+    private void processForeground(String starId,String text,Callbacks cb){processForegroundInternal(starId,text,cb,true,"foreground-chat-text");}
 
-    private void processForegroundInternal(String starId,String playerText,Callbacks cb,boolean showUser){
+    private void processForegroundInternal(String starId,String playerText,Callbacks cb,boolean showUser,String foregroundOperation){
         try{
             if(showUser&&cb!=null)cb.onUserText(starId,playerText);
             waitForPrimaryReview(cb);
@@ -111,7 +111,7 @@ final class StandaloneRuntime implements AutoCloseable {
             SentenceChunker chunker=new SentenceChunker();
             final boolean[] firstSentence={false};
             List<ChatMessage> request=prompts.buildSpeech(profile,stateBefore,playerText);
-            String spoken=llm.completeStreaming(request,delta->{
+            String spoken=llm.completeStreaming(request,foregroundOperation,delta->{
                 try{
                     if(cb!=null)cb.onAssistantDelta(starId,delta);
                     for(String sentence:chunker.accept(delta)){
@@ -152,7 +152,7 @@ final class StandaloneRuntime implements AutoCloseable {
                 try{
                     trace.log("primary-review.llm-start","star="+starId+" attempt="+attempt);
                     List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-                    String json=llm.completeJson(messages);
+                    String json=llm.completeJson(messages,"background-review");
                     review=JsonUtil.parseObject(json); trace.log("primary-review.llm-complete","star="+starId+" attempt="+attempt+" chars="+json.length()); break;
                 }catch(Throwable e){last=e;trace.log("primary-review.llm-attempt-failed","star="+starId+" attempt="+attempt+" "+e);if(attempt<3)Thread.sleep(attempt*400L);}
             }
@@ -228,7 +228,7 @@ final class StandaloneRuntime implements AutoCloseable {
     private void runRecoveryReview(JSONObject profile,JSONObject stateBefore,JSONObject pending)throws Exception{
         String starId=profile.optString("starId");trace.log("primary-review.recovery-start","star="+starId);
         List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-        JSONObject review=JsonUtil.parseObject(llm.completeJson(messages));
+        JSONObject review=JsonUtil.parseObject(llm.completeJson(messages,"background-review-recovery"));
         synchronized(stateStore){JSONObject live=stateStore.star(starId);memory.apply(profile,live,review,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));live.remove("StandalonePendingPrimaryReview");stateStore.persist();}
         trace.log("primary-review.recovery-commit","star="+starId);
     }

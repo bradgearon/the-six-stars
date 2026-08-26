@@ -28,12 +28,13 @@ final class AlibabaQwenTtsClient {
 
     AudioResult synthesize(JSONObject profile,String text) throws Exception {
         if(!settings.ttsEnabled())throw new IllegalStateException("Hosted TTS is disabled.");
-        if(settings.ttsKey().isEmpty())throw new IllegalStateException("Alibaba/DashScope API key is empty. Configure "+settings.file.getAbsolutePath());
+        if(settings.proxyEnabled()) { if(!settings.proxyConfigured())throw new IllegalStateException("Cloudflare proxy is enabled but BaseUrl/AccessToken is incomplete. Configure "+settings.file.getAbsolutePath()); }
+        else if(settings.ttsKey().isEmpty())throw new IllegalStateException("Alibaba/DashScope API key is empty. Configure "+settings.file.getAbsolutePath());
         String starId=profile.optString("starId",profile.optString("displayName","star"));
         String voice=resolveVoice(profile,starId);
         JSONObject input=new JSONObject().put("text",text).put("voice",voice).put("language_type",settings.defaultLanguage());
         JSONObject payload=new JSONObject().put("model",settings.ttsModel()).put("input",input);
-        String body=post(settings.ttsEndpoint(),payload);
+        String body=post(settings.ttsEndpoint(),payload,"tts-synthesis");
         JSONObject audio=new JSONObject(body).optJSONObject("output"); if(audio!=null)audio=audio.optJSONObject("audio");
         if(audio==null)throw new IllegalStateException("Alibaba Qwen TTS response missing output.audio: "+body);
         String data=audio.optString("data","");
@@ -58,11 +59,13 @@ final class AlibabaQwenTtsClient {
         String preferred=starId.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]",""); if(preferred.length()>16)preferred=preferred.substring(0,16); if(preferred.length()<3)preferred="star_"+preferred;
         JSONObject input=new JSONObject().put("action","create").put("target_model",settings.ttsModel()).put("preferred_name",preferred).put("audio",new JSONObject().put("data",dataUri));
         JSONObject payload=new JSONObject().put("model",settings.enrollmentModel()).put("input",input);
-        String body=post(settings.enrollmentEndpoint(),payload); JSONObject output=new JSONObject(body).optJSONObject("output"); String voice=output==null?"":output.optString("voice",""); if(voice.isEmpty())throw new IllegalStateException("Voice enrollment response missing output.voice: "+body); return voice;
+        String body=post(settings.enrollmentEndpoint(),payload,"tts-voice-enrollment"); JSONObject output=new JSONObject(body).optJSONObject("output"); String voice=output==null?"":output.optString("voice",""); if(voice.isEmpty())throw new IllegalStateException("Voice enrollment response missing output.voice: "+body); return voice;
     }
 
-    private String post(String url,JSONObject json)throws Exception{
-        Request req=new Request.Builder().url(url).header("Authorization","Bearer "+settings.ttsKey()).post(RequestBody.create(json.toString(),MediaType.get("application/json; charset=utf-8"))).build();
+    private String post(String url,JSONObject json,String operation)throws Exception{
+        Request.Builder rb=new Request.Builder().url(url).header("x-sixstars-operation",operation).post(RequestBody.create(json.toString(),MediaType.get("application/json; charset=utf-8")));
+        if(settings.proxyEnabled()) rb.header("Authorization","Bearer "+settings.proxyAccessToken()); else rb.header("Authorization","Bearer "+settings.ttsKey());
+        Request req=rb.build();
         try(Response res=client.newCall(req).execute()){String body=res.body()==null?"":res.body().string(); if(!res.isSuccessful())throw new IllegalStateException("Alibaba request failed "+res.code()+": "+body); return body;}
     }
 

@@ -1,10 +1,10 @@
-# The Last Cat: The Early Years — Game Developer Bible
+# The Last Cat: The Early Years â€” Game Developer Bible
 
 _Subtitle: A Holy Symphony_
 
 ## One-Line Identity
 
-**The Last Cat: The Early Years** is a 35–45 hour dark-fantasy 2D Metroidvania action RPG about the last known cat, a young flawed angel, six powerful Stars, lost sage-warrior cats, and the ancient Astral Stream that can make miracles happen without mana.
+**The Last Cat: The Early Years** is a 35â€“45 hour dark-fantasy 2D Metroidvania action RPG about the last known cat, a young flawed angel, six powerful Stars, lost sage-warrior cats, and the ancient Astral Stream that can make miracles happen without mana.
 
 ## Core Teaser
 
@@ -12,25 +12,25 @@ No cat has been seen for one hundred years. The universe is drying up. Ancient w
 
 Twenty years ago, a strange orphan fell from the stars. You.
 
-Drawn by letters written in hands that should not know your name — warm, loving, impossible — you journey to a half-forgotten planet where cats and slimes once danced in fragile harmony.
+Drawn by letters written in hands that should not know your name â€” warm, loving, impossible â€” you journey to a half-forgotten planet where cats and slimes once danced in fragile harmony.
 
-There, in the shadowed hollows, the Stars awaken. Six flawed sages — bearers of light and shadow, fire and void, water and blood — wield true magic through mana and friendship. Yet every spell they cast echoes back to another.
+There, in the shadowed hollows, the Stars awaken. Six flawed sages â€” bearers of light and shadow, fire and void, water and blood â€” wield true magic through mana and friendship. Yet every spell they cast echoes back to another.
 
-**Benaveil.** A young angel, lonely and vast, watching from beyond the veil. He appears in radiant forms, guiding with fierce, imperfect love. A brother. A mentor. Sometimes… something hungrier.
+**Benaveil.** A young angel, lonely and vast, watching from beyond the veil. He appears in radiant forms, guiding with fierce, imperfect love. A brother. A mentor. Sometimesâ€¦ something hungrier.
 
 In the warm glow of the first sanctuary, where goblin laughter mingles with harpy wings and cave music drifts like mist, Elusiaa finds you.
 
-> “Little one… you carry the weight of more than your size. Shall we walk this path together?”
+> â€œLittle oneâ€¦ you carry the weight of more than your size. Shall we walk this path together?â€
 
-Deep in those same caves, the astral dragon Leviathan stirs. His power flows not from mana, but from the living will of the ancients — the Astral Stream itself.
+Deep in those same caves, the astral dragon Leviathan stirs. His power flows not from mana, but from the living will of the ancients â€” the Astral Stream itself.
 
 When his thunderous judgment rolls forth, it becomes the challenge that defines the game:
 
-> “Your kind sealed the flow… and now it is time to unseal you.”
+> â€œYour kind sealed the flowâ€¦ and now it is time to unseal you.â€
 
-As the Last Cat, you are the conduit. Claw and soul-sword, attuned spells and no-mana miracles, parries forged in stardust and desperate dodges. Through laughter and misunderstanding — slime gels shared in mischief, holy pranks beneath moonlit bridges, hidden truths coaxed from angry hearts — you bind the Stars to your cause. You teach them independence. You wrestle the shadows that wear Benaveil's face.
+As the Last Cat, you are the conduit. Claw and soul-sword, attuned spells and no-mana miracles, parries forged in stardust and desperate dodges. Through laughter and misunderstanding â€” slime gels shared in mischief, holy pranks beneath moonlit bridges, hidden truths coaxed from angry hearts â€” you bind the Stars to your cause. You teach them independence. You wrestle the shadows that wear Benaveil's face.
 
-For sometimes the sanctuary music distorts. Sometimes **“Let Us Call Hell”** curls through the dark like smoke. Sometimes greater evils beyond even the angel watch, hungry for every soul.
+For sometimes the sanctuary music distorts. Sometimes **â€œLet Us Call Hellâ€** curls through the dark like smoke. Sometimes greater evils beyond even the angel watch, hungry for every soul.
 
 Restore the lost cats. Awaken the Stars. Decide the fate of a young angel.
 
@@ -81,39 +81,39 @@ Benaveil's dark form and the greater evils can invade the game through audio dis
 
 A small white cat, the first new astral conduit in a long time. He begins fragile, curious, and armored in simple high-tech cloth. He grows into a sage warrior capable of becoming the **Astral Dragoth** and wielding soul swords such as **Feroxunguis**.
 
-### Elusiaa — Light Star / Main Guide
+### Elusiaa â€” Light Star / Main Guide
 
 Elusiaa is the first true warmth in the dark. She kneels when she meets the Last Cat and recognizes his burden. She is mercy, light, gentle firmness, and ancient sadness.
 
 Core quote:
 
-> “Mercy is how we remember we’re not gods.”
+> â€œMercy is how we remember weâ€™re not gods.â€
 
 Guide quote:
 
-> “Little one… you carry the weight of more than your size.”
+> â€œLittle oneâ€¦ you carry the weight of more than your size.â€
 
 Astral Book quote:
 
-> “The astral book remembers your journey. Write, and it will call you back.”
+> â€œThe astral book remembers your journey. Write, and it will call you back.â€
 
-### Kaelia — Void Star
+### Kaelia â€” Void Star
 
 A guarded early ally and romance candidate. She is tied to mystery, void, tar-like drowning imagery, and the idea that the dark attacks hope itself. She requires letters, trust, and wisdom to fully open.
 
-### Khavia — Water Star
+### Khavia â€” Water Star
 
 Water, friendship, reunion, and bridge-building. Her domain is reconnecting communities and proving no one is beyond friendship.
 
-### Auerlis — Fire Star
+### Auerlis â€” Fire Star
 
 Joy, laughter, music, passion, and the terrifying difference between warming fire and consuming fire.
 
-### Maera — Blood Star
+### Maera â€” Blood Star
 
 Possession, blood, life force, ownership, rage, and the need to turn pain into protection instead of domination.
 
-### Nyxari — Shadow Star
+### Nyxari â€” Shadow Star
 
 Fragmentation, secrets, contempt, hidden guardians, and shadow wisdom. She can reveal clues about the four crystal guardians and the six deeper hidden guardians if the player earns trust.
 
@@ -141,7 +141,7 @@ A secret/late meta-lore figure who can function as a decoy villain, a terrifying
 
 ## The Four Cave Areas
 
-This is not one “Virethorn Caves” zone. It is a large cave network divided into four major regions.
+This is not one â€œVirethorn Cavesâ€ zone. It is a large cave network divided into four major regions.
 
 ### 1. Virethorn Section / First Sanctuary
 
@@ -170,13 +170,13 @@ Ethereal, sandy, crystalline, closer to the Astral Sea. The player searches for 
 
 ## Core Controls
 
-- **X** — Jump.
-- **Square** — Claw / light melee starter.
-- **Triangle** — Sword once unlocked.
-- **Circle** — Roll/dodge.
-- **L1** — Timed parry with the claw.
-- **Hold R1** — Augmented/strong attack with claw or sword.
-- **L2/R2 + face button** — Use assigned Star/astral abilities.
+- **X** â€” Jump.
+- **Square** â€” Claw / light melee starter.
+- **Triangle** â€” Sword once unlocked.
+- **Circle** â€” Roll/dodge.
+- **L1** â€” Timed parry with the claw.
+- **Hold R1** â€” Augmented/strong attack with claw or sword.
+- **L2/R2 + face button** â€” Use assigned Star/astral abilities.
 
 The player can eventually assign up to eight abilities, but the game starts restricted.
 
@@ -212,7 +212,7 @@ The player can eventually assign up to eight abilities, but the game starts rest
 
 ## AI Companion System
 
-The player can talk to any met and equipped Star at any time using hotword detection. Example: say **“Elusiaa”** or **“Kaelia”** to open a live voice conversation while exploring.
+The player can talk to any met and equipped Star at any time using hotword detection. Example: say **â€œElusiaaâ€** or **â€œKaeliaâ€** to open a live voice conversation while exploring.
 
 The local AI should receive:
 
@@ -261,7 +261,7 @@ Recommended 18 categories:
 
 Chains create combos. Example:
 
-> Funny ? Vulnerable ? Awestruck ? Funny
+> Funny â†’ Vulnerable â†’ Awestruck â†’ Funny
 
 Positive chains can trigger:
 
@@ -275,7 +275,7 @@ Positive chains can trigger:
 
 Example Elusiaa battle-data flirt:
 
-> “Sixteen slimes in two minutes… wow, handsome.”
+> â€œSixteen slimes in two minutesâ€¦ wow, handsome.â€
 
 ## AI Interaction Examples
 
@@ -325,9 +325,9 @@ The final direction is non-melee mage foci, not conventional weapons.
 
 | Star | Element | Weapon | Type | Description |
 |---|---|---|---|---|
-| Elusiaa | Light | Lumen’s Grace | Staff | White-gold staff with glowing teal crystal and floating golden rings. |
+| Elusiaa | Light | Lumenâ€™s Grace | Staff | White-gold staff with glowing teal crystal and floating golden rings. |
 | Kaelia | Void | Nullheart Orb | Floating Orb | Black-purple orb with shifting stars inside; can open like an eye. |
-| Khavia | Water | Tideweaver’s Codex | Grimoire | Floating book with water pages, blue runes, and dripping edges. |
+| Khavia | Water | Tideweaverâ€™s Codex | Grimoire | Floating book with water pages, blue runes, and dripping edges. |
 | Auerlis | Fire | Ember Eternal | Flaming Lantern | Golden lantern with living flame that forms phoenixes or dragons. |
 | Maera | Blood | Sanguine Heart | Blood Crystal | Floating crimson crystal pulsing like a heartbeat. |
 | Nyxari | Shadow | Eclipse Mirror | Shadow Mirror | Cracked dark mirror that reflects distorted realities and summons shadow copies. |
@@ -354,8 +354,8 @@ The first settlement track should feel eerie, cavernous, and almost safe. It can
 
 The music system can distort at key moral moments:
 
-- Negative/cruel choices: **“Let Us Call Hell”** whispers or screams through the track.
-- Wise/kind/redemptive choices: **“O Sent, Let Us Go”** or a purified motif resolves through the track.
+- Negative/cruel choices: **â€œLet Us Call Hellâ€** whispers or screams through the track.
+- Wise/kind/redemptive choices: **â€œO Sent, Let Us Goâ€** or a purified motif resolves through the track.
 
 ### Major Dark Force Event
 
@@ -383,8 +383,8 @@ They can be returned to Bone Bloom or Leviathan to:
 
 Important letter authors/types:
 
-- Ashveil — “For Science” and “For War” letters.
-- Saberthorn / Sablethorn — fierce ancient sage material.
+- Ashveil â€” â€œFor Scienceâ€ and â€œFor Warâ€ letters.
+- Saberthorn / Sablethorn â€” fierce ancient sage material.
 - Dying mother letters.
 - Cat sanctuary letters.
 - Guardian letters to Leviathan and Bahamut.
@@ -423,7 +423,7 @@ The player can return to the first Virethorn settlement for a questline tied to 
 - Ten Draconian Robot Guardians: optional elite bosses tied to outfit drops and letters.
 - Two-headed astral beasts: door/teeth rooms in the Astral Caverns, dragon/lion heads with raptor-like bodies.
 
-## Hell Detour — The Six Stars Arcade
+## Hell Detour â€” The Six Stars Arcade
 
 Hell is not only punishment; it is also an optional place where fragments can still be reached. One of its most important side systems is an old battered black-and-white arcade cabinet titled **The Six Stars**, with **616** glowing on the title screen.
 
@@ -435,7 +435,7 @@ Possible rewards include Jwls, Hell-only cosmetics, a black-and-white shader, ca
 
 See: [`docs/systems/hell-arcade-the-six-stars.md`](../systems/hell-arcade-the-six-stars.md).
 
-## Endgame — The Rewrite
+## Endgame â€” The Rewrite
 
 When the Last Cat talks with Leviathan, Benaveil feels threatened because Leviathan knows the Astral Stream and even Benaveil's judgment. Benaveil rewrites the game.
 
@@ -465,7 +465,7 @@ The cats are saved, and the Last Cat becomes godlike/independent, possibly takin
 
 Everyone is saved. This is the highest path and the strongest expression of the game's wisdom thesis.
 
-## Multiplayer Bridge — Rescue the Stars
+## Multiplayer Bridge â€” Rescue the Stars
 
 The Early Years is the origin story. Rescue the Stars becomes a persistent, up-to-16-player world where multiple cat sage warriors, Stars, dragons, angels, and other beings explore many planets.
 
@@ -494,10 +494,10 @@ Some internal docs speak openly about Benaveil, spiritual inspiration, and deepe
 
 Public framing can be:
 
-- “A dark angelic force.”
-- “Something worse behind the Stars.”
-- “A guide who may betray you.”
-- “A Satan-like terror.”
+- â€œA dark angelic force.â€
+- â€œSomething worse behind the Stars.â€
+- â€œA guide who may betray you.â€
+- â€œA Satan-like terror.â€
 
 Do not reveal too early:
 
@@ -520,7 +520,7 @@ Do not reveal too early:
 
 <!-- LETTERS_PROMOTION_V2 -->
 
-## Letter Library Promotion — Current Count
+## Letter Library Promotion â€” Current Count
 
 The organized letter library now contains **21 promoted letter entries** drawn from the Grok input archive and earlier Last Cat materials. The intended core count is **18 primary letters/fragments**, plus **3 recovered draft/candidate variants** that are preserved for later canon decisions.
 

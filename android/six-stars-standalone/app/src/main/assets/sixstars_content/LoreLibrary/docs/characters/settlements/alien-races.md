@@ -36,7 +36,7 @@ Behavior:
 
 ## Veilshades
 
-Shadow/void people tied to hidden rooms, unseen guardians, and Nyxari’s secrets.
+Shadow/void people tied to hidden rooms, unseen guardians, and Nyxariâ€™s secrets.
 
 Visual direction:
 

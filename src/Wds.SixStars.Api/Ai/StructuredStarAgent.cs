@@ -1035,6 +1035,8 @@ namespace Wds.SixStars.Api.Ai
                 characters = NormalizeStoryTermsUnbounded(outline.Characters),
                 storySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects),
                 currentStory = PromptText(currentStory, 0),
+                isViewpointInitialDraft = string.IsNullOrWhiteSpace(currentStory)
+                    && string.Equals(contributorProfile.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
                 storyWishes = FormatStoryWishes(storyWishes),
@@ -2978,7 +2980,7 @@ namespace Wds.SixStars.Api.Ai
             response.CanonSourcesUsed.AddRange(model.CanonSourcesUsed);
             response.EmotionScores = model.EmotionScores;
             response.DetectedCombos.AddRange(model.DetectedCombos);
-            // Important quote capture is deterministic now. Ignore model-provided quote choices.
+            response.ImportantPlayerQuotes.AddRange(CleanImportantPlayerQuotes(model.ImportantPlayerQuotes, request.PlayerText, 3));
             response.MemoryNotes.AddRange(model.MemoryNotes);
             response.ShortTermMemoryItems.AddRange(CleanShortTermMemoryItems(model.ShortTermMemoryItems, 8));
             response.ThingsLearnedOrSuggestedByPlayer.AddRange(CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8));
@@ -3777,6 +3779,26 @@ namespace Wds.SixStars.Api.Ai
             return string.Join(";", parts);
         }
 
+        private static List<string> CleanImportantPlayerQuotes(IEnumerable<string>? quotes, string? currentPlayerText, int maxItems)
+        {
+            string player = (currentPlayerText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(player) || maxItems <= 0) return new List<string>();
+
+            List<string> cleaned = new List<string>();
+            foreach (string? raw in quotes ?? Enumerable.Empty<string>())
+            {
+                string quote = CleanOneLine(raw, 700);
+                if (string.IsNullOrWhiteSpace(quote)) continue;
+                // The review is allowed to decide significance, but not to manufacture a quote.
+                // Require the selected text to occur verbatim in the current player's message.
+                if (player.IndexOf(quote, StringComparison.Ordinal) < 0) continue;
+                if (cleaned.Any(x => string.Equals(x, quote, StringComparison.Ordinal))) continue;
+                cleaned.Add(quote);
+                if (cleaned.Count >= maxItems) break;
+            }
+            return cleaned;
+        }
+
         private static List<string> CleanSpeechParts(IEnumerable<string>? parts)
         {
             // Never discard foreground speech. Long Chat answers are intentionally represented as
@@ -4148,7 +4170,8 @@ namespace Wds.SixStars.Api.Ai
                 WisdomScore = 0
             };
             model.SpokenParts.AddRange(CleanSpeechParts(spokenParts));
-            // Do not salvage player text into importantPlayerQuotes; deterministic high-impact emotion scoring owns quote capture.
+            // Do not guess an important quote during salvage. Quote significance is an explicit
+            // background-review LLM decision, and malformed output cannot safely make that decision.
             model.RiskFlags.Add("llm_structured_json_parse_failed_salvaged");
             model.RiskFlags.Add("llm_raw_response_used_not_mock");
             model.LoreUsed.Add("local-llm-raw-content");

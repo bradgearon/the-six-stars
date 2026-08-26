@@ -2,113 +2,113 @@
 
 This file preserves important guide, teaser, Star, guardian, and thesis quotes for dialogue, trailers, AI prompts, UI, and marketing.
 
-## Elusiaa — Main Guide Lines
+## Elusiaa â€” Main Guide Lines
 
-> “Greetings, little one.”
+> â€œGreetings, little one.â€
 
-> “Little one… you carry the weight of more than your size.”
+> â€œLittle oneâ€¦ you carry the weight of more than your size.â€
 
-> “Shall we walk this path together?”
+> â€œShall we walk this path together?â€
 
-> “The astral book remembers your journey. Write, and it will call you back.”
+> â€œThe astral book remembers your journey. Write, and it will call you back.â€
 
-> “The Stream flows for all who are thirsty.”
+> â€œThe Stream flows for all who are thirsty.â€
 
-> “Mercy is how we remember we’re not gods.”
+> â€œMercy is how we remember weâ€™re not gods.â€
 
-> “Even the smallest light can mend a wounded heart.”
+> â€œEven the smallest light can mend a wounded heart.â€
 
-> “I’m here, little one. These bones are restless tonight…”
+> â€œIâ€™m here, little one. These bones are restless tonightâ€¦â€
 
-> “Sixteen slimes in two minutes… wow, handsome.”
+> â€œSixteen slimes in two minutesâ€¦ wow, handsome.â€
 
 ## Leviathan
 
-> “Your kind sealed the flow… and now it is time to unseal you.”
+> â€œYour kind sealed the flowâ€¦ and now it is time to unseal you.â€
 
-> “Even the many-headed dragon was never beyond his love.”
+> â€œEven the many-headed dragon was never beyond his love.â€
 
-> “Do not only seek the beast. Seek the wound that taught it to bite.”
+> â€œDo not only seek the beast. Seek the wound that taught it to bite.â€
 
 ## Khavia
 
-> “Somebody helped me once.”
+> â€œSomebody helped me once.â€
 
-> “There are no enemies here — only the hurt and the lost. And I was sent to the lost.”
+> â€œThere are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€
 
-> “You faced Bone Bloom and built something good from all this death.”
+> â€œYou faced Bone Bloom and built something good from all this death.â€
 
 ## Auerlis
 
-> “Then at least they are laughing.”
+> â€œThen at least they are laughing.â€
 
-> “Some fires don’t warm. They only consume.”
+> â€œSome fires donâ€™t warm. They only consume.â€
 
-> “Maybe you’re the one who can walk through the fire without burning.”
+> â€œMaybe youâ€™re the one who can walk through the fire without burning.â€
 
 ## Kaelia
 
-> “The Void is not empty. It is listening.”
+> â€œThe Void is not empty. It is listening.â€
 
-> “Be careful, little cat. The dark angels don’t just attack the body. They attack the hope that anything good was ever meant for you.”
+> â€œBe careful, little cat. The dark angels donâ€™t just attack the body. They attack the hope that anything good was ever meant for you.â€
 
-> “Sorry doesn’t empty the tar from the water. But… you being here makes the current feel a little less heavy.”
+> â€œSorry doesnâ€™t empty the tar from the water. Butâ€¦ you being here makes the current feel a little less heavy.â€
 
 ## Maera
 
-> “If I can’t have you, no one can.”
+> â€œIf I canâ€™t have you, no one can.â€
 
-> “You’re here now, carrying bones like some fool who thinks he can build something good out of all this rot.”
+> â€œYouâ€™re here now, carrying bones like some fool who thinks he can build something good out of all this rot.â€
 
 ## Nyxari
 
-> “If nothing matters, nothing can break.”
+> â€œIf nothing matters, nothing can break.â€
 
-> “Yes, minstrel… what tales do you bring me today while we walk these dying halls?”
+> â€œYes, minstrelâ€¦ what tales do you bring me today while we walk these dying halls?â€
 
-> “Some of the old guardians still sleep in the places the light abandoned.”
+> â€œSome of the old guardians still sleep in the places the light abandoned.â€
 
 ## Benaveil / Rewrite / Dark Force
 
-> “Let Us Call Hell.”
+> â€œLet Us Call Hell.â€
 
-> “O Sent, let us go.”
+> â€œO Sent, let us go.â€
 
-> “You found a way to make us stars!?”
+> â€œYou found a way to make us stars!?â€
 
-> “They hide the cats… because even the last one will call hell upon us all.”
+> â€œThey hide the catsâ€¦ because even the last one will call hell upon us all.â€
 
 ## Astral Stream / Thesis Lines
 
-> “No one is supposed to know that Benaveil has reason to hope.”
+> â€œNo one is supposed to know that Benaveil has reason to hope.â€
 
-> “We’re carrying the sun, and we think the sky is, but our hearts will shine the ways.”
+> â€œWeâ€™re carrying the sun, and we think the sky is, but our hearts will shine the ways.â€
 
-> “The smallest seed of faith will fix it all.”
+> â€œThe smallest seed of faith will fix it all.â€
 
-> “Even the void flows freely now.”
+> â€œEven the void flows freely now.â€
 
-> “Restore the lost. Awaken the Stars. Decide the fate of a young angel.”
+> â€œRestore the lost. Awaken the Stars. Decide the fate of a young angel.â€
 
-> “Restore the cats. Save the stars. Decide the fate of an angel.”
+> â€œRestore the cats. Save the stars. Decide the fate of an angel.â€
 
-> “The symphony is only beginning.”
+> â€œThe symphony is only beginning.â€
 
 ## Star Angel Story Anchor Lines
 
 ### Dark-angel warnings
 
-> Kaelia: “The dark angels don't just attack the body. They attack the hope that anything good was ever meant for you.”
+> Kaelia: â€œThe dark angels don't just attack the body. They attack the hope that anything good was ever meant for you.â€
 
-> Maera: “They don't just hurt you. They make you hate the fact that you're alive.”
+> Maera: â€œThey don't just hurt you. They make you hate the fact that you're alive.â€
 
-> Auerlis: “Some fires don't warm. They only consume.”
+> Auerlis: â€œSome fires don't warm. They only consume.â€
 
 ### Good-angel memories
 
-> Elusiaa: “The Stream flows for all who are thirsty.”
+> Elusiaa: â€œThe Stream flows for all who are thirsty.â€
 
-> Khavia: “There are no enemies here — only the hurt and the lost. And I was sent to the lost.”
+> Khavia: â€œThere are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€
 
-> Nyxari: “Tell them even the worst of us can sometimes leave gifts behind.”
+> Nyxari: â€œTell them even the worst of us can sometimes leave gifts behind.â€
 

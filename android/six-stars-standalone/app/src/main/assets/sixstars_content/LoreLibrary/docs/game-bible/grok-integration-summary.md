@@ -5,9 +5,9 @@ This document summarizes what was promoted from `grok.zip` into the curated libr
 ## Promoted Core Decisions
 
 - The subtitle **A Holy Symphony** is canon for the internal design vision.
-- The game is 35ñ45 hours, not a short 8ñ15 hour proof-of-concept.
+- The game is 35‚Äì45 hours, not a short 8‚Äì15 hour proof-of-concept.
 - The cave network has four major areas; Virethorn is only the first section.
-- Elusiaa is the primary guide and her ìlittle one / burdenî quote is essential.
+- Elusiaa is the primary guide and her ‚Äúlittle one / burden‚Äù quote is essential.
 - The Astral Book Room is a major save/journal/letter space.
 - Letters are central to Star ally recruitment, romance, and wisdom progression.
 - AI-driven local Star conversation is a key feature, not optional flavor.

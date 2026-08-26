@@ -8,7 +8,7 @@
 | Recipient | The Guardians |
 | Tone | Severe, apocalyptic, warning |
 | Suggested Location | Hell, final recap, or tragedy route |
-| Guardian / Attribute Mapping | All guardians — restraint against final lawlessness |
+| Guardian / Attribute Mapping | All guardians â€” restraint against final lawlessness |
 | Best Star Reactions | Maera, Auerlis, Elusiaa |
 | Gameplay Use | Warns that the greatest evil will be answered by something even more terrible in the heart of cats. |
 

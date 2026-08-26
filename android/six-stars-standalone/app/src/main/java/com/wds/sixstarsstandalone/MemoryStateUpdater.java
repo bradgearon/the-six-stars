@@ -78,8 +78,9 @@ final class MemoryStateUpdater {
         updateEmotionHistory(state, review, calculated, delta, logical, connectionBefore, connectionAfter);
         updateStory(state, review, now);
 
-        String autoQuote = autoQuote(playerText, calculated);
-        if (!autoQuote.isEmpty()) addUniqueString(array(state,"ImportantPlayerQuotes"), autoQuote, 80);
+        JSONArray selectedQuotes = selectImportantPlayerQuotes(review.optJSONArray("importantPlayerQuotes"), playerText, 3);
+        addUniqueStrings(array(state,"ImportantPlayerQuotes"), selectedQuotes, 80);
+        addImportantQuoteRecords(state, selectedQuotes, profile.optString("starId", ""), review, delta, calculated.combos, markersStored, logical);
 
         JSONObject entry = new JSONObject();
         entry.put("CreatedAt", logical.toString());
@@ -96,7 +97,7 @@ final class MemoryStateUpdater {
         entry.put("NegativeEmotionVector", review.optString("negativeEmotionVector",""));
         entry.put("DeterministicEmotionSummary", calculated.summary);
         entry.put("WisdomScore", review.optDouble("wisdomScore",0));
-        entry.put("ImportantQuotes", autoQuote.isEmpty()?new JSONArray():new JSONArray().put(autoQuote));
+        entry.put("ImportantQuotes", copyArray(selectedQuotes));
         entry.put("ThingsLearnedOrSuggestedByPlayer", newlyLearned);
         entry.put("RememberedMarkers", markersStored);
         entry.put("ReferencedMemoryMarkerIds", copyArray(review.optJSONArray("referencedMemoryMarkerIds")));
@@ -213,7 +214,56 @@ final class MemoryStateUpdater {
 
     private static void updateStory(JSONObject state,JSONObject review,OffsetDateTime now)throws Exception{String id=review.optString("storyId","").trim(),title=review.optString("storyTitle","").trim(),summary=review.optString("storySummary","").trim();if(id.isEmpty()&&title.isEmpty()&&summary.isEmpty())return;if(id.isEmpty())id=slug(firstNonEmpty(title,summary));JSONObject s=findBy(array(state,"StoryHistory"),"StoryId",id);if(s==null){s=new JSONObject().put("StoryId",id);array(state,"StoryHistory").put(s);}s.put("Title",title).put("Summary",summary).put("IsFinished",review.optBoolean("storyIsFinished",true)).put("PartIndex",review.optInt("storyPartIndex",0)).put("UpdatedAt",now.toString());}
 
-    private static String autoQuote(String player,DeterministicRelationshipEngine.Result r){if(player==null||player.trim().isEmpty())return"";double max=0;for(int i=0;i<r.topEmotions.length();i++){JSONObject x=r.topEmotions.optJSONObject(i);if(x!=null&&x.optBoolean("Accepted",false))max=Math.max(max,x.optDouble("WeightedScore",0));}return max>=38?truncate(player.trim(),600):"";}
+    private static JSONArray selectImportantPlayerQuotes(JSONArray proposed, String playerText, int maxItems) {
+        JSONArray out = new JSONArray();
+        String player = playerText == null ? "" : playerText.trim();
+        if (proposed == null || player.isEmpty() || maxItems <= 0) return out;
+        for (int i = 0; i < proposed.length() && out.length() < maxItems; i++) {
+            String quote = proposed.optString(i, "").replace('\r',' ').replace('\n',' ').trim();
+            if (quote.isEmpty() || quote.length() > 700) continue;
+            // The background LLM decides significance; Android only verifies that an exact quote
+            // was actually spoken in this turn before making it durable.
+            if (!player.contains(quote)) continue;
+            boolean duplicate = false;
+            for (int j = 0; j < out.length(); j++) if (quote.equals(out.optString(j))) { duplicate = true; break; }
+            if (!duplicate) out.put(quote);
+        }
+        return out;
+    }
+
+    private static void addImportantQuoteRecords(JSONObject state, JSONArray quotes, String starId, JSONObject review, JSONObject delta, JSONArray combos, JSONArray markers, OffsetDateTime createdAt) throws Exception {
+        if (quotes == null || quotes.length() == 0) return;
+        JSONArray archive = array(state, "AllImportantPlayerQuotes");
+        for (int i = 0; i < quotes.length(); i++) {
+            String quote = quotes.optString(i, "").trim();
+            if (quote.isEmpty()) continue;
+            boolean exists = false;
+            for (int j = 0; j < archive.length(); j++) {
+                JSONObject old = archive.optJSONObject(j);
+                if (old != null && quote.equalsIgnoreCase(old.optString("Quote", ""))) { exists = true; break; }
+            }
+            if (exists) continue;
+            JSONArray markerIds = new JSONArray();
+            if (markers != null) for (int j = 0; j < markers.length(); j++) {
+                JSONObject marker = markers.optJSONObject(j);
+                if (marker != null && !marker.optString("Id", "").isEmpty()) markerIds.put(marker.optString("Id"));
+            }
+            JSONObject rec = new JSONObject()
+                    .put("Id", (starId + "_quote_" + createdAt.toInstant().toEpochMilli() + "_" + i).toLowerCase(Locale.ROOT))
+                    .put("CreatedAt", createdAt.toString())
+                    .put("StarId", starId)
+                    .put("Quote", quote)
+                    .put("Reason", "background-review-significant-player-quote")
+                    .put("RequestType", "Chat")
+                    .put("EmotionalEffectVector", review.optString("emotionalEffectVector", ""))
+                    .put("NegativeEmotionVector", review.optString("negativeEmotionVector", ""))
+                    .put("WisdomScore", review.optDouble("wisdomScore", 0))
+                    .put("ActualDelta", new JSONObject(delta.toString()))
+                    .put("Tags", copyArray(combos))
+                    .put("MarkerIds", markerIds);
+            prependObject(archive, rec, 240);
+        }
+    }
 
     private static void storeRollups(JSONObject state,JSONObject review,OffsetDateTime now)throws Exception{int count=state.optInt("InteractionCount",0);String ten=review.optString("tenTurnConversationSummary","").trim();if(count%10==0&&!ten.isEmpty())prependObject(array(state,"TenTurnConversationSummaries"),new JSONObject().put("StartTurn",Math.max(1,count-9)).put("EndTurn",count).put("Summary",ten).put("CreatedAt",now.toString()),20);String hundred=review.optString("hundredTurnConversationSummary","").trim();if(count%100==0&&!hundred.isEmpty())prependObject(array(state,"HundredTurnConversationSummaries"),new JSONObject().put("StartTurn",Math.max(1,count-99)).put("EndTurn",count).put("Summary",hundred).put("CreatedAt",now.toString()),10);}
 

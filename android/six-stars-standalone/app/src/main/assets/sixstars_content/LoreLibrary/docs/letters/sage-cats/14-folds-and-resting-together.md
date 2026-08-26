@@ -8,7 +8,7 @@
 | Recipient | Bahamut |
 | Tone | Tender, metaphysical, curious |
 | Suggested Location | High-tech third cave / fold-space or hidden-cat clue |
-| Guardian / Attribute Mapping | Bahamut — resting in different folds; shared memory while asleep |
+| Guardian / Attribute Mapping | Bahamut â€” resting in different folds; shared memory while asleep |
 | Best Star Reactions | Kaelia, Nyxari |
 | Gameplay Use | Hints that cats may be hiding in folds, not simply underground or dead. |
 

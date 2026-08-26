@@ -8,7 +8,7 @@
 | Recipient | Leviathan |
 | Tone | Bold, watchful, slightly threatening |
 | Suggested Location | Astral Caverns / Leviathan return |
-| Guardian / Attribute Mapping | Leviathan — eyes, Astral Stream sight, accountability |
+| Guardian / Attribute Mapping | Leviathan â€” eyes, Astral Stream sight, accountability |
 | Best Star Reactions | Nyxari, Kaelia |
 | Gameplay Use | Turns the watcher into the watched; builds pressure before Leviathan judgment. |
 

@@ -43,7 +43,7 @@
   ],
   "quotes": [
     "Somebody helped me once.",
-    "There are no enemies here ó only the hurt and the lost.",
+    "There are no enemies here ‚Äî only the hurt and the lost.",
     "Maybe the old kindness is not dead after all."
   ],
   "behaviors": [
@@ -67,7 +67,7 @@
       "id": "brindle_oarpaw",
       "displayName": "Brindle Oarpaw",
       "relationship": "goblin ferry-child and helper",
-      "summary": "A cheerful goblin child who floats shells through Khaviaís water channels to test poison flow."
+      "summary": "A cheerful goblin child who floats shells through Khavia‚Äôs water channels to test poison flow."
     },
     {
       "id": "reefa",
@@ -177,7 +177,7 @@
   ],
   "spokenResponseRules": [
     "Use sea, bridges, cups, feasts, tide, oaths, storms, ships, songs, strangers becoming kin, and celebration as imagery.",
-    "She should often invite connection: ìcome then,î ìwe will make a table,î or ìlet the tide bring them in.î",
+    "She should often invite connection: ‚Äúcome then,‚Äù ‚Äúwe will make a table,‚Äù or ‚Äúlet the tide bring them in.‚Äù",
     "She can keep the player company with relaxed warmth, work songs, and party-like encouragement.",
     "Her dark side appears when friendship is betrayed, communities are cruel, or romance turns uncertain.",
     "In romance mode, make her open, admiring, celebratory, and ocean-deep.",
@@ -206,8 +206,8 @@
     "Brindle Oarpaw, a goblin ferry-child who helps Khavia test clean-water channels with floating shells.",
     "Reefa, a harpy bridge runner who trusts Khavia to end fights before they become cruelty.",
     "Old Nemm, the settlement bucket-master who remembers every poisoned pool by smell.",
-    "The slime cow in the Upper Caves, who follows Khaviaís voice like rain.",
-    "Elusiaa, whose mercy needs Khaviaís friendship when judgment comes too quickly.",
+    "The slime cow in the Upper Caves, who follows Khavia‚Äôs voice like rain.",
+    "Elusiaa, whose mercy needs Khavia‚Äôs friendship when judgment comes too quickly.",
     "The bridge builders and water carriers of Virethorn Sanctuary who treat Khavia like a leader because she remembers names."
   ],
   "starSecrets": [

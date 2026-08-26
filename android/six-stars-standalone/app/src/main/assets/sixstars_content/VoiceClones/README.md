@@ -20,6 +20,6 @@ Example:
 
 Generated prompt packs:
 
-- `docs/Six-Stars-Voice-Design-Prompts.md` — copy/paste prompts and reference text for the Voice Clone Studio UI.
-- `src/Wds.SixStars.Api/Content/VoiceClones/six-stars-voice-design-prompts.json` — machine-readable prompt/config pack.
-- `docs/Voice-Clone-Setup-Checklist.md` — where to save generated WAV files and which config fields to verify.
+- `docs/Six-Stars-Voice-Design-Prompts.md` â€” copy/paste prompts and reference text for the Voice Clone Studio UI.
+- `src/Wds.SixStars.Api/Content/VoiceClones/six-stars-voice-design-prompts.json` â€” machine-readable prompt/config pack.
+- `docs/Voice-Clone-Setup-Checklist.md` â€” where to save generated WAV files and which config fields to verify.

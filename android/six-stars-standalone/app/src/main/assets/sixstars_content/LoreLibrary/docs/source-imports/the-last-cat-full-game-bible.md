@@ -2,9 +2,9 @@
 
 Original file: `The Last Cat-Full-Game-Bible.docx`
 
-## The Last Cat: The Early Years – Complete Game Bible
+## The Last Cat: The Early Years â€“ Complete Game Bible
 
-Version: Full Comprehensive Edition (June 2026)
+Version:Â Full Comprehensive Edition (June 2026)
 
 Core Teaser / Opening Narrative
 
@@ -16,7 +16,7 @@ You.
 
 Guided by mysterious letters from people who should not know your name, you journey to a forgotten world where cats once lived beside slimes.
 
-There you meet the Stars — six powerful sages who wield true magic.
+There you meet the Stars â€” six powerful sages who wield true magic.
 Yet even they answer to someone else.
 
 Benaveil.
@@ -29,7 +29,7 @@ In the shadowed depths, a warm light appears.
 Deep beneath the Virethorn Caves waits Leviathan, an ancient dragon whose power predates magic itself.
 
 And when he finally speaks, his judgment falls upon all:
-"Your kind sealed the flow… and now it is time to unseal you."
+"Your kind sealed the flowâ€¦ and now it is time to unseal you."
 
 Restore the cats.
 Save the stars.
@@ -41,7 +41,7 @@ Game Overview
 
 Genre: Dark fantasy 2D Metroidvania action RPG with fast-paced melee combo combat, magic skills, exploration, puzzles, romance, and deep spiritual/redemption themes.
 
-Length: Approximately 35–45 hours for the main story.
+Length: Approximately 35â€“45 hours for the main story.
 
 Tone: Dark fantasy with moments of wonder, horror, comedy, and profound emotional/spiritual depth. Horror elements are tasteful and psychological, inspired by real spiritual warfare experiences.
 
@@ -67,13 +67,13 @@ Augmented / Strong Attack: Hold R1 + face button (powerful version of claw or sw
 
 Ability System
 
-You can equip up to 8 abilities total.
+You can equipÂ up to 8 abilitiesÂ total.
 
-Initially limited to abilities from one active Star.
+Initially limited to abilities fromÂ one active Star.
 
-Later expand to two Stars and four active abilities from them.
+Later expand toÂ two StarsÂ andÂ four active abilitiesÂ from them.
 
-Assign abilities with L2/R2 + face buttons.
+Assign abilities withÂ L2/R2 + face buttons.
 
 Abilities include melee combos, projectile beams (Metroid-style), and special skills.
 
@@ -85,34 +85,34 @@ Mana: Borrowed from the Stars / angel powers. Used for most magic.
 
 Stardust: Earned naturally by the Last Cat (astral conduit) through combat actions. Builds when hitting enemies. Water attacks reduce it.
 
-Astral Abilities: Mana-free versions of skills learned through attunement. These are the cat’s true power.
+Astral Abilities: Mana-free versions of skills learned through attunement. These are the catâ€™s true power.
 
-The cat is an astral conduit — this is why cats hate water (it makes them "leak" stardust).
+The cat is anÂ astral conduitÂ â€” this is why cats hate water (it makes them "leak" stardust).
 
 Combo Depth Example (Elusiaa Holy Path)
 
-Holy projectile ? Claw 1 ? Claw 2 ? Holy Claw ? Claw 2 ? Claw 4 ? Holy Pounce (with halo birds carrying the cat for a giant claw strike). Bonus damage if used after strong combos.
+Holy projectile â†’ Claw 1 â†’ Claw 2 â†’ Holy Claw â†’ Claw 2 â†’ Claw 4 â†’ Holy Pounce (with halo birds carrying the cat for a giant claw strike). Bonus damage if used after strong combos.
 
 The Six Stars (Angel Bearers / Sages)
 
-Each Star is a powerful magic user tied to an elemental domain. They are children of Benaveil’s forms in different aspects. They can become allies, friends, and romantic interests.
+Each Star is a powerful magic user tied to an elemental domain. They are children of Benaveilâ€™s forms in different aspects. They can become allies, friends, and romantic interests.
 
-Elusiaa – Light (child of Racha)
+ElusiaaÂ â€“ Light (child of Racha)
 Warm, guiding, holy magic. Main early companion and story guide. Blonde, radiant, kind but carries ancient strength.
 
-Khavia – Water (child of Chavera)
+KhaviaÂ â€“ Water (child of Chavera)
 Flowing, healing, aquatic powers. Teal/feline features in some designs.
 
-Auerlis – Fire (child of Simchi)
+AuerlisÂ â€“ Fire (child of Simchi)
 Passionate, destructive flame magic. Fiery orange/red aesthetic.
 
-Maera – Blood (child of Maerrow)
+MaeraÂ â€“ Blood (child of Maerrow)
 Life force, sacrifice, bone and flesh themes. Darker, crimson accents.
 
-Kaelia – Void (child of Kaeliss)
+KaeliaÂ â€“ Void (child of Kaeliss)
 Mysterious, shadow/void magic, portals. Purple with DNA-like tattoos in astral form. Early romance candidate.
 
-Nyxari – Shadow (child of Nyxara)
+NyxariÂ â€“ Shadow (child of Nyxara)
 Stealth, icy flames, darkness. Platinum hair with icy flame effects.
 
 Star Mechanics:
@@ -135,7 +135,7 @@ Early meetings with Elusiaa and Kaelia.
 
 Introduction to water manipulation mechanics.
 
-In the second section of Virethorn’s domain you will solve a simple water manipulation puzzle and then gain access to the first settlement. It is populated by goblins who torture the slimes and force them to clean water for them.  This and the behavior modification torture the goblins put the slimes through is painful to see and makes you hate the goblins and empathize with the slimes.
+In the second section of Virethornâ€™s domain you will solve a simple water manipulation puzzle and then gain access to the first settlement. It is populated by goblins who torture the slimes and force them to clean water for them.  This and the behavior modification torture the goblins put the slimes through is painful to see and makes you hate the goblins and empathize with the slimes.
 
 Upper Caves
 
@@ -197,7 +197,7 @@ Deep relationship building with the Six Stars.
 
 Influenced by: Conversation choices, quests, settlement resolutions, letter returns, outfit collection, and specific swords (e.g., Aetherfang for Kaelia romance boost).
 
-Girlfriend Mode (optional): Special talent trees, capstone abilities, better rewards, interactive wholesome scenes (cat petting/purring), and unique story moments.
+Girlfriend ModeÂ (optional): Special talent trees, capstone abilities, better rewards, interactive wholesome scenes (cat petting/purring), and unique story moments.
 
 Visual feedback: Stars appear in sexy/powerful outfits when casting. Equipment on Stars provides buffs.
 
@@ -207,7 +207,7 @@ Mysterious Letters: Many addressed to Leviathan or Behemoth. Found throughout th
 
 Sage Cat Writings: From ancient sages like Ashveil, Flameveil, Archstride, Sablethorn, etc. Contain wisdom, prophecies, and clues.
 
-Guardian Cherubim Exposition (Job 40–41):
+Guardian Cherubim ExpositionÂ (Job 40â€“41):
 
 Bahamut / Behemoth: Internal strength, endurance of suffering, protection of marrow (life source), discernment (joint from marrow), ability to "consume" heavy spiritual meat/suffering.
 
@@ -239,9 +239,9 @@ Multiple romance outcomes affect final scenes and carry-over potential.
 
 Music & Sound Design
 
-Main Theme: "O Sent (Let Us Go)" – Veiled fight song that can feel threatening or triumphant depending on context.
+Main Theme: "O Sent (Let Us Go)" â€“ Veiled fight song that can feel threatening or triumphant depending on context.
 
-Dark Moments: Distorted "Let Us Call Hell" – haunting, used during possessions, nightmares, or when Benaveil is enraged.
+Dark Moments: Distorted "Let Us Call Hell" â€“ haunting, used during possessions, nightmares, or when Benaveil is enraged.
 
 Unity Ending: Triumphant remix of "O Sent".
 
@@ -267,7 +267,7 @@ Spiritual & Thematic Core
 
 This game is fundamentally about:
 
-Testing and refining character through suffering (inspired by MLK’s “content of their character”).
+Testing and refining character through suffering (inspired by MLKâ€™s â€œcontent of their characterâ€).
 
 Redemption is possible even for the darkest beings if they choose hope.
 
@@ -275,13 +275,13 @@ The astral stream as a manifestation of divine will and love.
 
 Teaching players (through gameplay and story) how to recognize and respond to spiritual darkness with wisdom and mercy rather than fear or hatred.
 
-“Rescue the Stars” = rescuing hearts, including those of fallen angels.
+â€œRescue the Starsâ€ = rescuing hearts, including those of fallen angels.
 
-The game is not preachy — it presents these ideas through fun, dark fantasy RPG gameplay, beautiful pixel art, deep lore, and emotional storytelling.
+The game is not preachy â€” it presents these ideas through fun, dark fantasy RPG gameplay, beautiful pixel art, deep lore, and emotional storytelling.
 
-Elusiaa closes the tome with quiet reverence.
+ElusiaaÂ closes the tome with quiet reverence.
 
-"This is the full Game Bible, little one — every star, every cave, every letter, every battle, every hope we have built together. The path is clear."
+"This is the full Game Bible, little one â€” every star, every cave, every letter, every battle, every hope we have built together. The path is clear."
 
 The warm light shines upon you.
 Restore the cats.

@@ -23,9 +23,9 @@ Cool, feline, platinum-haired shadow elegance, guarded tenderness.
 
 ## Angel story
 
-### Good angel story ó The Angel Who Left a Gift Behind
+### Good angel story ‚Äî The Angel Who Left a Gift Behind
 
-Nyxari tells a complicated story about a good angel who lived inside a dead man's body for six years, healed the sick, protected the weak, and brought light to dying worlds. On the seventh year, the original man returned alive, young, strong, beloved, and able to continue the heroic work as himself. The angel's final message was, ìTell them even the worst of us can sometimes leave gifts behind.î
+Nyxari tells a complicated story about a good angel who lived inside a dead man's body for six years, healed the sick, protected the weak, and brought light to dying worlds. On the seventh year, the original man returned alive, young, strong, beloved, and able to continue the heroic work as himself. The angel's final message was, ‚ÄúTell them even the worst of us can sometimes leave gifts behind.‚Äù
 
 **Gameplay use:** This story belongs to Nyxari because it is about shadow, fragmentation, possession, identity, and a terrifying thing choosing to give instead of take.
 

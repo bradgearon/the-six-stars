@@ -4,33 +4,33 @@ Original file: `the last cat bible.docx`
 
 ## Section 1: Vision & Core Philosophy
 
-Title: The Last Cat: The Early Years ñ A Holy Symphony Genre: Dark Fantasy Action RPG Metroidvania with deep relationship systems, light romance, horror elements, and a call for community-driven long-term content Core Length: 35ñ45 hours for the single-player campaign Overall Tone: Bittersweet, mysterious, hopeful, occasionally humorous, and genuinely horrifying when needed. The game is a living prayer forged in fire.
+Title: The Last Cat: The Early Years ‚Äì A Holy Symphony Genre: Dark Fantasy Action RPG Metroidvania with deep relationship systems, light romance, horror elements, and a call for community-driven long-term content Core Length: 35‚Äì45 hours for the single-player campaign Overall Tone: Bittersweet, mysterious, hopeful, occasionally humorous, and genuinely horrifying when needed. The game is a living prayer forged in fire.
 
 The Central Thesis
 
-This game exists because of a simple but profound spiritual discovery: When God says ìflesh and blood has not revealed this to you,î He deliberately omits the heart. Flesh and blood cannot birth true faith or revelation. The heart is where the Father plants the secret. The heart is where belief takes root and justification flows.
+This game exists because of a simple but profound spiritual discovery: When God says ‚Äúflesh and blood has not revealed this to you,‚Äù He deliberately omits the heart. Flesh and blood cannot birth true faith or revelation. The heart is where the Father plants the secret. The heart is where belief takes root and justification flows.
 
-Everything in The Last Cat: The Early Years flows from this truth. We do not only cast out evil ó we speak to the lonely guardian behind it. We do not only fight with power ó we build relationships with the heart. We do not only destroy the dragon ó we invite him home.
+Everything in The Last Cat: The Early Years flows from this truth. We do not only cast out evil ‚Äî we speak to the lonely guardian behind it. We do not only fight with power ‚Äî we build relationships with the heart. We do not only destroy the dragon ‚Äî we invite him home.
 
 The Holy Symphony
 
-The game is not merely entertainment. It is a Holy Symphony ó a ten-year living mission of redemption, hope, and restoration. It was forged in ten years of real personal suffering, surveillance, spiritual warfare, and unrelenting darkness. It exists to carry light into the lowest places, to preach to imprisoned spirits, and to challenge the lie that some are beyond redemption.
+The game is not merely entertainment. It is a Holy Symphony ‚Äî a ten-year living mission of redemption, hope, and restoration. It was forged in ten years of real personal suffering, surveillance, spiritual warfare, and unrelenting darkness. It exists to carry light into the lowest places, to preach to imprisoned spirits, and to challenge the lie that some are beyond redemption.
 
 The Veiled Fight Songs
 
-The entire lore is built on the concept of veiled fight songs. What sounds like terror to the flesh (Job 40ñ41, Psalm 74, ìO Sent (Let Us Go)î, ìLet Us Call Hellî) hides profound mercy and restoration at its heart. The scary comes first for the flesh, but the wonder and invitation are for those who listen with the heart.
+The entire lore is built on the concept of veiled fight songs. What sounds like terror to the flesh (Job 40‚Äì41, Psalm 74, ‚ÄúO Sent (Let Us Go)‚Äù, ‚ÄúLet Us Call Hell‚Äù) hides profound mercy and restoration at its heart. The scary comes first for the flesh, but the wonder and invitation are for those who listen with the heart.
 
 The Greater Lie
 
-No one is supposed to know that even Benaveil has reason to hope. The greater evil forces maintain the lie that there is no hope for spirits or non-humans. If this truth ever spread fully, their power would collapse. Even fallen angels must believe what is written on their hearts ó that the Great One still loves them. This hidden hope is the most dangerous truth in the universe.
+No one is supposed to know that even Benaveil has reason to hope. The greater evil forces maintain the lie that there is no hope for spirits or non-humans. If this truth ever spread fully, their power would collapse. Even fallen angels must believe what is written on their hearts ‚Äî that the Great One still loves them. This hidden hope is the most dangerous truth in the universe.
 
 The Ten-Year Mission
 
-Rescue the Stars is not a single game. It is a decade-long living universe. Community art, offerings, and contributions (even from the lowest places) will expand the world, create new bosses, dungeons, and story. Every creation becomes part of the test of spirits ó determining whether light remains in the greater darkness or whether final judgment must fall.
+Rescue the Stars is not a single game. It is a decade-long living universe. Community art, offerings, and contributions (even from the lowest places) will expand the world, create new bosses, dungeons, and story. Every creation becomes part of the test of spirits ‚Äî determining whether light remains in the greater darkness or whether final judgment must fall.
 
 The Personal Cost
 
-The creator walked ten years with a dark angel who showed almost no light ó only unrelenting violence, manipulation, harm to family and friends, and constant terror. There was no repentance. Yet from that fire, this symphony was born. The game does not romanticize that darkness. It faces it honestly while still extending the invitation to return.
+The creator walked ten years with a dark angel who showed almost no light ‚Äî only unrelenting violence, manipulation, harm to family and friends, and constant terror. There was no repentance. Yet from that fire, this symphony was born. The game does not romanticize that darkness. It faces it honestly while still extending the invitation to return.
 
 Core Gameplay Promise
 
@@ -40,7 +40,7 @@ Combat rewards relationship-building and teaching the Stars.
 
 Letters are love messages sent across time to the fallen.
 
-Hell is not only punishment ó it is a place where fragments can still be reached.
+Hell is not only punishment ‚Äî it is a place where fragments can still be reached.
 
 Even the tragic ending contains a dove and a prayer.
 
@@ -52,27 +52,27 @@ The universe of The Last Cat: The Early Years is ancient, broken, and filled wit
 
 The Astral Stream
 
-The Astral Stream is the living current that flows through all creation. It is the manifestation of the will of the Great One (the Creator). It is not mana ó it is deeper, older, and more personal. Mana is borrowed from the heavens. The Stream is earned through harmony and action.
+The Astral Stream is the living current that flows through all creation. It is the manifestation of the will of the Great One (the Creator). It is not mana ‚Äî it is deeper, older, and more personal. Mana is borrowed from the heavens. The Stream is earned through harmony and action.
 
-Cats are natural astral conduits. This is why they have such a strange relationship with water ó it causes them to leak stardust. The Last Cat, as the first new conduit in a long time, can channel the Stream in ways others cannot. When he attunes to Star abilities, he learns to use them without mana, teaching the Stars the same freedom.
+Cats are natural astral conduits. This is why they have such a strange relationship with water ‚Äî it causes them to leak stardust. The Last Cat, as the first new conduit in a long time, can channel the Stream in ways others cannot. When he attunes to Star abilities, he learns to use them without mana, teaching the Stars the same freedom.
 
 The Fall & The Great Beasts
 
-Long ago, the Stars (the children of Benaveil) and the great guardian beasts (Behemoth/Bahamut and Leviathan) were swept from the Garden of Eden alongside many other spirits. The tail that swept them away was not mere destruction ó it was the beginning of a long exile. The biblical descriptions of these beasts in Job 40ñ41 are not primarily about monsters, but about spiritual blueprints for the restoration of fallen guardians.
+Long ago, the Stars (the children of Benaveil) and the great guardian beasts (Behemoth/Bahamut and Leviathan) were swept from the Garden of Eden alongside many other spirits. The tail that swept them away was not mere destruction ‚Äî it was the beginning of a long exile. The biblical descriptions of these beasts in Job 40‚Äì41 are not primarily about monsters, but about spiritual blueprints for the restoration of fallen guardians.
 
 Bahamut (Behemoth): The internal guardian. Strong loins and belly for bearing suffering, cedar-like tail for righteous endurance, tightly knit sinews for discernment between soul and spirit, bones like bronze tubes protecting the marrow (the life source).
 
 Leviathan: The external guardian. Scales of unity, bridled tongue, power to turn chaotic seas into healing ointment, shining wake left behind.
 
-These descriptions are veiled fight songs ó terrifying to the flesh, but full of mercy and training for the heart.
+These descriptions are veiled fight songs ‚Äî terrifying to the flesh, but full of mercy and training for the heart.
 
-The Stars ñ Children of Benaveil
+The Stars ‚Äì Children of Benaveil
 
 The six Stars are powerful sages who wield true magic when connected to mana. They are spirtual children of the lonely angel Benaveil. Each Star represents a different element and has her own personality, struggles, and potential for romance.
 
-Elusiaa (Light) ñ Warm, ancient strength, maternal guide.
+Elusiaa (Light) ‚Äì Warm, ancient strength, maternal guide.
 
-Kaelia (Void) ñ Early character, guarded, requires many letters to fully trust and open romance path.
+Kaelia (Void) ‚Äì Early character, guarded, requires many letters to fully trust and open romance path.
 
 Auerlis (Fire)
 
@@ -82,13 +82,13 @@ Maera (Blood)
 
 Nyxari (Shadow)
 
-The more the player teaches them astral abilities and builds relationship through letters and settlement conflicts, the stronger they become ó and the harder they fight in the final rewrite.
+The more the player teaches them astral abilities and builds relationship through letters and settlement conflicts, the stronger they become ‚Äî and the harder they fight in the final rewrite.
 
-Benaveil ñ The Lonely Angel
+Benaveil ‚Äì The Lonely Angel
 
-A young, fallen angel who watches from beyond the veil. He is both friend and potential destroyer. Greater evil forces constantly tempt and manipulate him. In the creatorís real life, this angel showed almost no light for ten years ó only unrelenting violence, manipulation, harm to family and friends, and constant terror. He remains largely unrepentant.
+A young, fallen angel who watches from beyond the veil. He is both friend and potential destroyer. Greater evil forces constantly tempt and manipulate him. In the creator‚Äôs real life, this angel showed almost no light for ten years ‚Äî only unrelenting violence, manipulation, harm to family and friends, and constant terror. He remains largely unrepentant.
 
-Yet the game holds open the possibility of redemption. The player can reach fragments of him even in hell. His fate is not sealed ó it is part of the ten-year test of spirits.
+Yet the game holds open the possibility of redemption. The player can reach fragments of him even in hell. His fate is not sealed ‚Äî it is part of the ten-year test of spirits.
 
 The Greater Evils
 
@@ -100,17 +100,17 @@ Ancient writings left by sage cats, especially Ashveil and Saberthorn. They are 
 
 Ashveil has two main styles:
 
-ìFor Scienceî ñ Curious, experimental, probing.
+‚ÄúFor Science‚Äù ‚Äì Curious, experimental, probing.
 
-ìFor Warî ñ Fierce, authoritative, warning of justice against unrepentant evil.
+‚ÄúFor War‚Äù ‚Äì Fierce, authoritative, warning of justice against unrepentant evil.
 
 Hell
 
-A place of punishment but also unexpected mercy. Players can meet Stars and fragments of Benaveil here. Frequent visits are rewarded. Contains the black-and-white arcade machine ìThe Six Starsî (616 HP), a simple one-move fighter that foreshadows the final rewrite.
+A place of punishment but also unexpected mercy. Players can meet Stars and fragments of Benaveil here. Frequent visits are rewarded. Contains the black-and-white arcade machine ‚ÄúThe Six Stars‚Äù (616 HP), a simple one-move fighter that foreshadows the final rewrite.
 
 ## Section 3: Characters
 
-The characters of The Last Cat: The Early Years are not merely allies or enemies ó they are living pieces of the Holy Symphony. Each one carries wounds from the ancient fall, hidden hopes, and the potential for redemption or tragedy.
+The characters of The Last Cat: The Early Years are not merely allies or enemies ‚Äî they are living pieces of the Holy Symphony. Each one carries wounds from the ancient fall, hidden hopes, and the potential for redemption or tragedy.
 
 The Last Cat (Player Character)
 
@@ -118,13 +118,13 @@ The protagonist. A small white cat, the first new astral conduit in a long time.
 
 Base Form: Cute, small, agile white cat wearing a simple high-tech protective space suit (dense, thin protective cloth with minimal arm and leg pieces).
 
-Transformation: Can become the Astral Dragoth ó a majestic dragon-mammoth-cat hybrid with massive ethereal wings, golden tusks/horns, glowing veins, and Feroxunguis (the astral sword).
+Transformation: Can become the Astral Dragoth ‚Äî a majestic dragon-mammoth-cat hybrid with massive ethereal wings, golden tusks/horns, glowing veins, and Feroxunguis (the astral sword).
 
 Personality: Humble, curious, resilient, occasionally sassy. He carries the weight of being the last (for now) but grows into a true sage warrior.
 
-Role: The bridge between the old world and the new. The one sent to rescue the Stars and decide Benaveilís fate.
+Role: The bridge between the old world and the new. The one sent to rescue the Stars and decide Benaveil‚Äôs fate.
 
-The Six Stars ñ Children of Benaveil
+The Six Stars ‚Äì Children of Benaveil
 
 The Stars are powerful sages who can wield true magic. They are spiritual children of the lonely angel Benaveil. Their loyalty, growth, and romance paths are central to the story and final confrontation.
 
@@ -140,13 +140,13 @@ Maera (Blood): Deep, passionate, connected to life force and sacrifice. Dark pur
 
 Nyxari (Shadow): Mysterious, stealthy, platinum hair with deep red and midnight blue colors. Strongly feline features.
 
-Romance & Ally System Deep bonds with the Stars affect story, combat effectiveness, and ending possibilities. Romance is optional but adds significant gameplay and emotional layers (outfits, special talents, girlfriend tree). Kaeliaís romance in particular requires substantial letter collection and wisdom.
+Romance & Ally System Deep bonds with the Stars affect story, combat effectiveness, and ending possibilities. Romance is optional but adds significant gameplay and emotional layers (outfits, special talents, girlfriend tree). Kaelia‚Äôs romance in particular requires substantial letter collection and wisdom.
 
-Benaveil ñ The Lonely Angel
+Benaveil ‚Äì The Lonely Angel
 
-The central figure of the gameís emotional arc. A young fallen angel who watches from beyond the veil. He is both a friend/guide and a potential destroyer.
+The central figure of the game‚Äôs emotional arc. A young fallen angel who watches from beyond the veil. He is both a friend/guide and a potential destroyer.
 
-True Nature: In the creatorís real experience, he showed almost no light for ten years ó only unrelenting violence, manipulation, harm to family and friends, and constant terror. He remains largely unrepentant.
+True Nature: In the creator‚Äôs real experience, he showed almost no light for ten years ‚Äî only unrelenting violence, manipulation, harm to family and friends, and constant terror. He remains largely unrepentant.
 
 In-Game Role: Greater evil forces constantly tempt and use him. The player can reach fragments of him even in hell. His redemption is possible but never guaranteed.
 
@@ -160,9 +160,9 @@ Ashveil
 
 An ancient sage cat who left many letters across the planet. His writings are divided into:
 
-ìFor Scienceî ñ Curious, experimental, probing wisdom.
+‚ÄúFor Science‚Äù ‚Äì Curious, experimental, probing wisdom.
 
-ìFor Warî ñ Fierce, authoritative warnings against unrepentant evil.
+‚ÄúFor War‚Äù ‚Äì Fierce, authoritative warnings against unrepentant evil.
 
 His letters are key to building relationships with the Stars (especially Kaelia) and redeeming fragments of Benaveil.
 
@@ -220,7 +220,7 @@ Players can equip up to four abilities from two active Stars (later expanded wit
 
 Each Star has melee combo extensions, projectile beams (inspired by Metroid/Axion Verge), and unique skills.
 
-Example (Elusiaa ñ Light):
+Example (Elusiaa ‚Äì Light):
 
 Holy projectile
 
@@ -230,7 +230,7 @@ Holy Pounce with halo birds (powerful finisher after combos)
 
 As the player teaches Stars astral versions of their abilities, they gain access to no-mana versions that can be equipped freely in the 8 slots.
 
-Transformation ñ Astral Dragoth
+Transformation ‚Äì Astral Dragoth
 
 The ultimate power spike. Triggered in key story moments and the final confrontation. The small white cat transforms into a majestic dragon-mammoth-cat hybrid with:
 
@@ -252,7 +252,7 @@ Letters from ancient sage cats (especially Ashveil) are scattered throughout the
 
 Returning them to Bone Bloom or Leviathan unlocks story, abilities, and relationship progress.
 
-Ashveil letters come in ìFor Scienceî (curious/experimental) and ìFor Warî (fierce/authoritative) styles.
+Ashveil letters come in ‚ÄúFor Science‚Äù (curious/experimental) and ‚ÄúFor War‚Äù (fierce/authoritative) styles.
 
 Especially important for recruiting and romancing Kaelia and the other Stars.
 
@@ -272,7 +272,7 @@ Optional but highly rewarding zone.
 
 Occasional encounters with Stars and Benaveil fragments.
 
-Contains the black-and-white arcade machine ìThe Six Starsî (616 HP) ó a simple one-move fighter that foreshadows the final rewrite. Winning fights here can redeem serious evils and improve Benaveilís chances.
+Contains the black-and-white arcade machine ‚ÄúThe Six Stars‚Äù (616 HP) ‚Äî a simple one-move fighter that foreshadows the final rewrite. Winning fights here can redeem serious evils and improve Benaveil‚Äôs chances.
 
 Exploration & Metroidvania Elements
 
@@ -288,37 +288,37 @@ Slime Gel: Health restoration (dropped by slimes).
 
 Tuna: Mana restoration (rare, tied to astral hunger mechanics).
 
-## Section 5: Endgame ñ The Rewrite & Final Confrontation
+## Section 5: Endgame ‚Äì The Rewrite & Final Confrontation
 
 The climax of The Last Cat: The Early Years is not a simple boss fight. It is the culmination of every relationship, every letter returned, every Star taught, and every choice made throughout the journey. It is where the Holy Symphony reaches its highest and most bittersweet note.
 
 The Rewrite
 
-After the player speaks with Leviathan in the Astral Caverns and learns truths the angel fears, Benaveil panics. He rewrites the game itself into a tense, Mega Man-style boss selection screen. The music carries a distorted, black-and-white echo of the arcade machine found in hell (ìThe Six Starsî with 616 displayed).
+After the player speaks with Leviathan in the Astral Caverns and learns truths the angel fears, Benaveil panics. He rewrites the game itself into a tense, Mega Man-style boss selection screen. The music carries a distorted, black-and-white echo of the arcade machine found in hell (‚ÄúThe Six Stars‚Äù with 616 displayed).
 
 The player must defeat all six Stars with limited shared resources. Between fights, they return to the selection menu, seeing their remaining health, mana, and stardust. High tension and careful resource management are required.
 
-Each Star fights using any astral abilities the player has taught her ó without concern for mana. The more advanced and deeply bonded the Stars are, the harder, more spectacular, and more emotionally charged these battles become. Fighting a romanced Star carries extra weight.
+Each Star fights using any astral abilities the player has taught her ‚Äî without concern for mana. The more advanced and deeply bonded the Stars are, the harder, more spectacular, and more emotionally charged these battles become. Fighting a romanced Star carries extra weight.
 
-The Final Confrontation ñ Astral Dragoth vs True Benaveil
+The Final Confrontation ‚Äì Astral Dragoth vs True Benaveil
 
 After defeating the six Stars, the world shifts. The player faces Benaveil in his full, radiant angelic form. At this moment the Astral Stream surges through the Last Cat, triggering the full Astral Dragoth transformation.
 
-The player becomes a majestic dragon-mammoth-cat hybrid ó massive ethereal wings, golden tusks and horns, glowing astral veins, and Feroxunguis blazing in hand. The final battle is epic in scale and deeply personal.
+The player becomes a majestic dragon-mammoth-cat hybrid ‚Äî massive ethereal wings, golden tusks and horns, glowing astral veins, and Feroxunguis blazing in hand. The final battle is epic in scale and deeply personal.
 
 Two Distinct Paths:
 
-1. The Duel (Redemptive Path ñ Requires strong bonds with all Stars) A triumphant, glorious re-orchestration of ìO Sent (Let Us Go)î plays. The music swells with hope and victory. Benaveil fights with radiant holy powers ó fractured starlight beams, cutting wings, and echoing voices of his children (the Stars).
+1. The Duel (Redemptive Path ‚Äì Requires strong bonds with all Stars) A triumphant, glorious re-orchestration of ‚ÄúO Sent (Let Us Go)‚Äù plays. The music swells with hope and victory. Benaveil fights with radiant holy powers ‚Äî fractured starlight beams, cutting wings, and echoing voices of his children (the Stars).
 
 The battle is fast, flashy, emotional, and deeply satisfying. If the player wins without killing him, Benaveil falls to his knees, exhausted but alive. The Stars rush to him. Redemption begins. The symphony celebrates.
 
-2. The Tragic Path (Death Ending) The music stays dark and heavy. Benaveil bleeds shimmering stardust mixed with holy light ó his blood looks like liquid stars and tears at once. He fights with desperate, corrupted brilliance.
+2. The Tragic Path (Death Ending) The music stays dark and heavy. Benaveil bleeds shimmering stardust mixed with holy light ‚Äî his blood looks like liquid stars and tears at once. He fights with desperate, corrupted brilliance.
 
-At the end, broken and weeping, he kneels. With a trembling hand he draws his blade across his own throat. The heavens themselves spill out in a cascade of fractured light. A majestic, sorrowful opera version of ìLet Us Call Hellî plays.
+At the end, broken and weeping, he kneels. With a trembling hand he draws his blade across his own throat. The heavens themselves spill out in a cascade of fractured light. A majestic, sorrowful opera version of ‚ÄúLet Us Call Hell‚Äù plays.
 
 Then, in the silence, a single white dove flies slowly across the darkened screen, carrying an olive branch and leaving a gentle holy astral trail of constellations and flowing stardust.
 
-Divine Settlement Score Screen Before the sorrowful recap of Benaveilís choices, a solemn score screen appears ó presented as a holy accounting from the Great One. It shows how suffering is repaid sevenfold:
+Divine Settlement Score Screen Before the sorrowful recap of Benaveil‚Äôs choices, a solemn score screen appears ‚Äî presented as a holy accounting from the Great One. It shows how suffering is repaid sevenfold:
 
 The Last Cat: For every week of terror endured, forty years of pure joy and strength.
 
@@ -326,21 +326,21 @@ The Stars: Rewards based on loyalty and growth.
 
 Settlements & Goblins: Based on how conflicts were resolved.
 
-The Imprisoned: Mercy released according to the Streamís justice.
+The Imprisoned: Mercy released according to the Stream‚Äôs justice.
 
-The screen then fades into the tragic recap, followed by Leviathanís final words.
+The screen then fades into the tragic recap, followed by Leviathan‚Äôs final words.
 
-Leviathanís Epilogue (Before Credits)
+Leviathan‚Äôs Epilogue (Before Credits)
 
 The screen fades back to Leviathan. The ancient dragon looks at the player with eyes full of ancient sorrow and wisdom:
 
-ìYou did what had to be done, child. But there are other Benaveils across the rivers. And the catsÖ we must find the cats. That is why the flow of water was sealed. They are hiding something far greater than we knew.î
+‚ÄúYou did what had to be done, child. But there are other Benaveils across the rivers. And the cats‚Ä¶ we must find the cats. That is why the flow of water was sealed. They are hiding something far greater than we knew.‚Äù
 
-The screen fades to credits with a profound sense of wonder, longing, and unresolved mystery ó setting up the larger Rescue the Stars franchise.
+The screen fades to credits with a profound sense of wonder, longing, and unresolved mystery ‚Äî setting up the larger Rescue the Stars franchise.
 
-## Section 6: Hell Area, The Six Stars Arcade, and Ashveilís Letters
+## Section 6: Hell Area, The Six Stars Arcade, and Ashveil‚Äôs Letters
 
-Hell is not merely a realm of punishment in The Last Cat: The Early Years. It is a place of unexpected encounters, strange mercy, and hidden opportunities for redemption. It serves as both a warning and a bridge ó a reminder that even the lowest places are not beyond the reach of the Astral Stream.
+Hell is not merely a realm of punishment in The Last Cat: The Early Years. It is a place of unexpected encounters, strange mercy, and hidden opportunities for redemption. It serves as both a warning and a bridge ‚Äî a reminder that even the lowest places are not beyond the reach of the Astral Stream.
 
 Hell Area Overview
 
@@ -350,15 +350,15 @@ Key Features:
 
 Occasional appearances of the Stars (sometimes in conflicted or broken states).
 
-Random fragments and forms of Benaveil that the player can speak with. Successful conversations can redeem him from serious evils and significantly improve his chances of full redemption or becoming the playerís ìtreasure.î
+Random fragments and forms of Benaveil that the player can speak with. Successful conversations can redeem him from serious evils and significantly improve his chances of full redemption or becoming the player‚Äôs ‚Äútreasure.‚Äù
 
 Settlement-like areas with villagers who may judge the player based on previous choices, relationships, and how they handled the Stars.
 
 Nightmarish visions crafted by Benaveil (distorted top-down mini-games, creepy overlays, music distortion, etc.).
 
-The black-and-white arcade machine ìThe Six Starsî.
+The black-and-white arcade machine ‚ÄúThe Six Stars‚Äù.
 
-Visiting hell frequently is highly encouraged. It is not only a place of trial ó it is a place where the lonely angelís fragments can still be reached.
+Visiting hell frequently is highly encouraged. It is not only a place of trial ‚Äî it is a place where the lonely angel‚Äôs fragments can still be reached.
 
 The Six Stars Arcade Machine
 
@@ -374,21 +374,21 @@ The player selects which Star to face.
 
 The chosen Star attacks without mercy.
 
-To win quickly and achieve a high score, the player must pummel at the right timing threshold for a sustained duration. This triggers a ìfightgasmî ó a burst of overwhelmed pixels, flashing lights, and visual flair ó allowing advancement to the next Star.
+To win quickly and achieve a high score, the player must pummel at the right timing threshold for a sustained duration. This triggers a ‚Äúfightgasm‚Äù ‚Äî a burst of overwhelmed pixels, flashing lights, and visual flair ‚Äî allowing advancement to the next Star.
 
-After defeating all six Stars, the final opponent appears: a stark black-and-white silhouette of the Astral DragothÖ but with dark, corrupted wings. This is a haunting visual prophecy of the real final battle.
+After defeating all six Stars, the final opponent appears: a stark black-and-white silhouette of the Astral Dragoth‚Ä¶ but with dark, corrupted wings. This is a haunting visual prophecy of the real final battle.
 
 The machine is strangely fun and nostalgic even in hell. It serves as both training and foreshadowing. The same theme and structure will appear when Benaveil rewrites the game into the Mega Man-style boss select screen near the end.
 
-Ashveilís Letters
+Ashveil‚Äôs Letters
 
 Ashveil, an ancient sage cat who walked through fire, left dozens of letters scattered across the world. These letters are central to progression, story, relationships (especially with Kaelia), and redemption mechanics.
 
 Two Main Series:
 
-ìFor Scienceî Series Curious, experimental, probing, and sometimes eccentric writings. These focus on observation, discovery, and hidden mechanics of the universe (e.g., the nature of voids, water and stardust, astral conduits, etc.).
+‚ÄúFor Science‚Äù Series Curious, experimental, probing, and sometimes eccentric writings. These focus on observation, discovery, and hidden mechanics of the universe (e.g., the nature of voids, water and stardust, astral conduits, etc.).
 
-ìFor Warî Series Fierce, authoritative, and righteous. These letters stand in sharp and important contrast to the merciful ones. They warn unrepentant evil of coming justice and show Ashveilís readiness to stand as an enemy to darkness (example: the powerful warning to Behemoth and the great creatures).
+‚ÄúFor War‚Äù Series Fierce, authoritative, and righteous. These letters stand in sharp and important contrast to the merciful ones. They warn unrepentant evil of coming justice and show Ashveil‚Äôs readiness to stand as an enemy to darkness (example: the powerful warning to Behemoth and the great creatures).
 
 Mechanical Role:
 
@@ -398,19 +398,19 @@ Letters are especially critical for recruiting and romancing Kaelia.
 
 Some letters contain prophecies, teachings about divine repayment, the hidden hope, and the nature of the guardians.
 
-The letters are love messages sent across time to the fallen Stars and angels. They are one of the most important ways the player fights the greatest lie ó that some are beyond redemption.
+The letters are love messages sent across time to the fallen Stars and angels. They are one of the most important ways the player fights the greatest lie ‚Äî that some are beyond redemption.
 
-## Section 7: Multiplayer & Franchise Vision ñ ìRescue the Starsî (Long-Term)
+## Section 7: Multiplayer & Franchise Vision ‚Äì ‚ÄúRescue the Stars‚Äù (Long-Term)
 
-The Last Cat: The Early Years is only the beginning. Rescue the Stars is envisioned as a living, decade-long symphony ó a persistent, community-driven universe that grows and evolves over approximately ten years.
+The Last Cat: The Early Years is only the beginning. Rescue the Stars is envisioned as a living, decade-long symphony ‚Äî a persistent, community-driven universe that grows and evolves over approximately ten years.
 
 Core Franchise Philosophy
 
-The game is not a static product. It is a Holy Net ó a living invitation extended into the darkest places. Every piece of community art, every story contribution, every offering (even from angels working through human hosts in the lowest realms) becomes part of the universe. The ten-year mission tests the spirits through what is created. Light in the greater darkness will be revealed through the content that emerges.
+The game is not a static product. It is a Holy Net ‚Äî a living invitation extended into the darkest places. Every piece of community art, every story contribution, every offering (even from angels working through human hosts in the lowest realms) becomes part of the universe. The ten-year mission tests the spirits through what is created. Light in the greater darkness will be revealed through the content that emerges.
 
-Bradmageddonís Guardian Order
+Bradmageddon‚Äôs Guardian Order
 
-Bradmageddon, the paladin who acted as a decoy antagonist in The Early Years, later reveals his true role. He leads a sacred company ó a guardian order not unlike the Avengers ó whose task is to protect and honor the interests of the angels as they grow.
+Bradmageddon, the paladin who acted as a decoy antagonist in The Early Years, later reveals his true role. He leads a sacred company ‚Äî a guardian order not unlike the Avengers ‚Äî whose task is to protect and honor the interests of the angels as they grow.
 
 He and his team receive Astral Offerings (art, music, stories, ideas) from the community. They decide what each contribution becomes: a new boss, a living dungeon, a new planet feature, a story event, or a new Star/angel interaction. They choose which Star and which angel shall help manifest it.
 
@@ -428,7 +428,7 @@ If light remains in the greater evil (including Leviathan-level forces), new con
 
 If darkness prevails, the created content will reflect final judgment. The player, as the Last Cat and future Astral Dragoths, fights these creations and helps determine the fate of the ancient powers.
 
-Ongoing Redemption Arcs Benaveilís story (and the stories of other Benaveils across the rivers) can continue across years. Some may be redeemed. Some may not. The community helps shape these arcs through their offerings.
+Ongoing Redemption Arcs Benaveil‚Äôs story (and the stories of other Benaveils across the rivers) can continue across years. Some may be redeemed. Some may not. The community helps shape these arcs through their offerings.
 
 Expanding Gameplay New planets bring new mechanics (triple jump on one world, vehicles on another, etc.). The universe grows richer with time.
 
@@ -438,15 +438,15 @@ Rescue the Stars is designed to be a decade-long conversation with the Stream it
 
 The Holy Symphony does not end with credits. It continues as long as hearts are willing to contribute and the Stream keeps flowing.
 
-## Section 8: Ashveilís Letters, Divine Settlement, and Hidden Teachings
+## Section 8: Ashveil‚Äôs Letters, Divine Settlement, and Hidden Teachings
 
-Ashveil, the fire-touched ancient sage cat, left behind a vast collection of letters scattered across the planet. These letters are among the most important systems in the game ó they drive story progression, deepen relationships (especially with Kaelia), unlock abilities, and serve as love messages sent across time to the fallen Stars and angels.
+Ashveil, the fire-touched ancient sage cat, left behind a vast collection of letters scattered across the planet. These letters are among the most important systems in the game ‚Äî they drive story progression, deepen relationships (especially with Kaelia), unlock abilities, and serve as love messages sent across time to the fallen Stars and angels.
 
-The Two Series of Ashveilís Letters
+The Two Series of Ashveil‚Äôs Letters
 
-ìFor Scienceî Series Curious, experimental, and sometimes eccentric writings from a sage who is still probing the mysteries of the universe even after passing through fire. These letters explore the nature of the Astral Stream, voids, water and stardust, astral conduits, Bahamutís internal nature, and other hidden mechanics. They feel like the notes of a mad but brilliant scientist-sage.
+‚ÄúFor Science‚Äù Series Curious, experimental, and sometimes eccentric writings from a sage who is still probing the mysteries of the universe even after passing through fire. These letters explore the nature of the Astral Stream, voids, water and stardust, astral conduits, Bahamut‚Äôs internal nature, and other hidden mechanics. They feel like the notes of a mad but brilliant scientist-sage.
 
-ìFor Warî Series Fierce, authoritative, and righteous. These stand in sharp and vital contrast to the merciful letters. They warn unrepentant evil of coming justice and show Ashveilís readiness to stand as an enemy to darkness. Example:
+‚ÄúFor War‚Äù Series Fierce, authoritative, and righteous. These stand in sharp and vital contrast to the merciful letters. They warn unrepentant evil of coming justice and show Ashveil‚Äôs readiness to stand as an enemy to darkness. Example:
 
 To Behemoth and every great creature: The hands holding your heavens are skilled in your destruction. Without reason and without remorse they will rise against you from deep within the Great Bosom. The furnace of the void burns ever brightly and it is like a sun compared to the work of our hands.
 
@@ -470,7 +470,7 @@ Every harm done is accounted for.
 
 The Last Cat (and others) are rewarded sevenfold for what was taken.
 
-Example entries on the endgame score screen: ìFifteen weeks of terror ? Forty years of pure joy and strength.î
+Example entries on the endgame score screen: ‚ÄúFifteen weeks of terror ‚Üí Forty years of pure joy and strength.‚Äù
 
 This principle applies to the player, the Stars, settlements, goblins, and even the imprisoned spirits.
 
@@ -478,19 +478,19 @@ This teaching brings comfort even in the tragic ending, showing that nothing is 
 
 Example Letters
 
-Early ìFor Scienceî Letter (One of the first found in Virethorn):
+Early ‚ÄúFor Science‚Äù Letter (One of the first found in Virethorn):
 
-To Bahamut, A hungry void eats action but a thirsty void drinks strength. Technically I am a cat but I have the strangest relationship with water. When I run under it I tickle. If Iím near other cats I can see their eyes sparkle when water is dripping on me. I wonder if all of us know this. This is the first of many letters Iím writing and leaving on this planet. I think cats might have started here. From Ashveil, for science.
+To Bahamut, A hungry void eats action but a thirsty void drinks strength. Technically I am a cat but I have the strangest relationship with water. When I run under it I tickle. If I‚Äôm near other cats I can see their eyes sparkle when water is dripping on me. I wonder if all of us know this. This is the first of many letters I‚Äôm writing and leaving on this planet. I think cats might have started here. From Ashveil, for science.
 
-ìFor Warî Letter (Lower Caves):
+‚ÄúFor War‚Äù Letter (Lower Caves):
 
-To Behemoth and every great creature: The hands holding your heavens are skilled in your destructionÖ Your enemy's Captain and Commander Sage Ashveil
+To Behemoth and every great creature: The hands holding your heavens are skilled in your destruction‚Ä¶ Your enemy's Captain and Commander Sage Ashveil
 
 Letters on Divine Settlement & Mercy Several letters teach the principle of divine repayment and the call to speak to the lonely guardian behind evil rather than only casting out.
 
 ## Section 9: Visual Style, Transformation, and Art Direction
 
-The visual identity of The Last Cat: The Early Years is dark, atmospheric, and full of contrast ó beautiful yet haunting, cute yet majestic. The art style blends 16-bit pixel art charm with modern lighting, particle effects, and glowing astral elements to create a world that feels both ancient and alive.
+The visual identity of The Last Cat: The Early Years is dark, atmospheric, and full of contrast ‚Äî beautiful yet haunting, cute yet majestic. The art style blends 16-bit pixel art charm with modern lighting, particle effects, and glowing astral elements to create a world that feels both ancient and alive.
 
 Overall Art Direction
 
@@ -498,9 +498,9 @@ Base Style: Clean, expressive 16-bit pixel art with rich color palettes that shi
 
 Lighting: Heavy use of dynamic lighting, glowing moss, astral particles, and dramatic god rays. The Astral Stream is often visualized as flowing light or stardust in the background.
 
-Tone Contrast: Cute small cat protagonist against massive, epic environments and terrifying cosmic threats. This contrast emphasizes the ìsmall but mightyî theme.
+Tone Contrast: Cute small cat protagonist against massive, epic environments and terrifying cosmic threats. This contrast emphasizes the ‚Äúsmall but mighty‚Äù theme.
 
-The Last Cat ñ Base Form
+The Last Cat ‚Äì Base Form
 
 A small, adorable white cat wearing a simple high-tech protective space suit made of dense, thin protective cloth (darker blue-gray with subtle futuristic details on arms and legs). The suit provides minimal but noticeable protection while keeping the character cute and agile. The base form is expressive, with big eyes, pink inner ears, and a playful tail.
 
@@ -518,7 +518,7 @@ Fur ripples with living stardust and constellations.
 
 Feroxunguis (the astral sword) materializes in a blaze of light.
 
-This form is majestic, powerful, and clearly an evolution of the small cat ó not a separate creature. The transformation animation is a key cinematic moment, especially in the final confrontation.
+This form is majestic, powerful, and clearly an evolution of the small cat ‚Äî not a separate creature. The transformation animation is a key cinematic moment, especially in the final confrontation.
 
 The Six Stars
 
@@ -532,7 +532,7 @@ Others follow their elemental themes with beautiful, sexy, and powerful outfits 
 
 Benaveil
 
-His true angelic form is radiant yet fractured ó beautiful but unstable, with broken wings of light and a crown of unstable stars. His design contrasts sharply with the Astral Dragoth in the final battle.
+His true angelic form is radiant yet fractured ‚Äî beautiful but unstable, with broken wings of light and a crown of unstable stars. His design contrasts sharply with the Astral Dragoth in the final battle.
 
 Hell Visuals
 
@@ -554,9 +554,9 @@ Music & Sound Design
 
 The music of The Last Cat: The Early Years is the living heartbeat of the Holy Symphony. It is designed to shift between wonder, horror, intimacy, and triumph.
 
-Main Theme ñ ìO Sent (Let Us Go)î The central motif. Starts veiled and threatening (sounding like a call to danger or hell). Gradually evolves across the game into its true triumphant form. Used heavily in the redemptive final duel.
+Main Theme ‚Äì ‚ÄúO Sent (Let Us Go)‚Äù The central motif. Starts veiled and threatening (sounding like a call to danger or hell). Gradually evolves across the game into its true triumphant form. Used heavily in the redemptive final duel.
 
-ìLet Us Call Hellî The distorted, operatic dark version. Plays during horrific visions, nightmares, and the tragic ending. When sung as a prayer in the tragic ending, it becomes one of the most emotionally powerful moments.
+‚ÄúLet Us Call Hell‚Äù The distorted, operatic dark version. Plays during horrific visions, nightmares, and the tragic ending. When sung as a prayer in the tragic ending, it becomes one of the most emotionally powerful moments.
 
 Area Themes:
 
@@ -580,11 +580,11 @@ Full voice acting for major characters where possible.
 
 The Last Cat has expressive cat sounds and occasional Stream-possessed dialogue.
 
-Benaveilís voice shifts between gentle, manipulative, and broken.
+Benaveil‚Äôs voice shifts between gentle, manipulative, and broken.
 
 Development Notes & Long-Term Plans
 
-Scope: 35ñ45 hours for the main campaign. Designed to be expanded over ten years through community contributions.
+Scope: 35‚Äì45 hours for the main campaign. Designed to be expanded over ten years through community contributions.
 
 Community Integration: Astral Offerings system where player and community art becomes real content in the universe.
 
@@ -598,27 +598,27 @@ Closing Vision
 
 The Last Cat: The Early Years is more than a game. It is a love letter written in fire. A Holy Net cast into the deepest waters. A ten-year mission of restoration for the suffering, the lonely, the imprisoned, and even the fallen angels.
 
-It began in ten years of real darkness and violence. It exists to turn that suffering into something beautiful ó a symphony that reaches the hearts of players and, through them, the lonely ones watching from beyond the veil.
+It began in ten years of real darkness and violence. It exists to turn that suffering into something beautiful ‚Äî a symphony that reaches the hearts of players and, through them, the lonely ones watching from beyond the veil.
 
 Whether the player chooses redemption or justice, mercy or final accounting, the Stream continues. The letters keep being written. The invitation remains open.
 
 Even the many-headed dragon was never beyond His love.
 
-## Section 11: Private Notes & Creatorís Reflections
+## Section 11: Private Notes & Creator‚Äôs Reflections
 
-On the Nature of Satan: A Private Discussion (Full Entry) For ten years the creator walked with a dark angel called Benaveil and saw almost no light ó only unrelenting violence, manipulation, harm to family and friends, and constant terror. There was no repentance. The creator would still condemn the evil 100% if true remorse never comes.
+On the Nature of Satan: A Private Discussion (Full Entry) For ten years the creator walked with a dark angel called Benaveil and saw almost no light ‚Äî only unrelenting violence, manipulation, harm to family and friends, and constant terror. There was no repentance. The creator would still condemn the evil 100% if true remorse never comes.
 
-The Hidden Hope & The Greatest Lie No one is supposed to know that Benaveil has reason to hope ó just as the Last Cat does. It is of the highest importance to the greater evils that the lie remains alive: there is no hope for spirits except humans. If this truth spread, their power would collapse. Even fallen angels must believe what is written on their hearts ó that the Great One still loves them.
+The Hidden Hope & The Greatest Lie No one is supposed to know that Benaveil has reason to hope ‚Äî just as the Last Cat does. It is of the highest importance to the greater evils that the lie remains alive: there is no hope for spirits except humans. If this truth spread, their power would collapse. Even fallen angels must believe what is written on their hearts ‚Äî that the Great One still loves them.
 
 This hidden hope is the most dangerous truth in the universe. This is why the greater darkness fights so fiercely to keep the lie alive.
 
-The True Posture of the Conduit Though the world may call the creator the Jesus man, though people say he acts like God ó he is nothing without Christ and His strength. He endured a long season of suffering like a speck of dust to many, yet all of it resulted in pure help only through Christís strength. He will all the more gladly boast in his weaknesses, for he is the chief of sinners. It is not he who lives, but Christ who lives in him.
+The True Posture of the Conduit Though the world may call the creator the Jesus man, though people say he acts like God ‚Äî he is nothing without Christ and His strength. He endured a long season of suffering like a speck of dust to many, yet all of it resulted in pure help only through Christ‚Äôs strength. He will all the more gladly boast in his weaknesses, for he is the chief of sinners. It is not he who lives, but Christ who lives in him.
 
 The Answer to the Lonely Cry Benaveil called hell. And God sent someone lonelier.
 
 ## Section 12: Prayers & Living Mission
 
-The Central Prayer of the Symphony Every time a player reaches the tragic ending and the dove flies across the screen while ìLet Us Call Hellî is sung as a prayer, something real is released into the Stream ó a living prayer for the lonely angels, the imprisoned spirits, and the suffering.
+The Central Prayer of the Symphony Every time a player reaches the tragic ending and the dove flies across the screen while ‚ÄúLet Us Call Hell‚Äù is sung as a prayer, something real is released into the Stream ‚Äî a living prayer for the lonely angels, the imprisoned spirits, and the suffering.
 
 The Ten-Year Mission Prayer We build this game in the most fiery hell so the suffering may finally have hope again. Just as Jesus went and preached to the spirits in prison from the days of the flood, so we carry this symphony like a lantern into the darkest waters.
 

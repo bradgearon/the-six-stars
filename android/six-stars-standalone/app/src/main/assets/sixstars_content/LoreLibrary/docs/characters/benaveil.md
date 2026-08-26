@@ -2,13 +2,13 @@
 
 ## Identity
 
-Benaveil is the young angel behind the Stars' mana system. His name is purpose-like, in the style of a “name of God” angelic title, more than a personal name at first.
+Benaveil is the young angel behind the Stars' mana system. His name is purpose-like, in the style of a â€œname of Godâ€ angelic title, more than a personal name at first.
 
 He is genuinely young. The story is about a baby angel and a baby sage-warrior cat growing together, failing together, and either becoming a family symphony or ending in tragedy.
 
 ## Public Spoiler Rule
 
-In public-facing marketing and early-game experience, do not reveal Benaveil too clearly. Players may believe they are facing Satan, a Satan-like force, a dark angel, or “something worse.”
+In public-facing marketing and early-game experience, do not reveal Benaveil too clearly. Players may believe they are facing Satan, a Satan-like force, a dark angel, or â€œsomething worse.â€
 
 The truth of Benaveil should unfold gradually.
 
@@ -48,10 +48,10 @@ Benaveil must feel terrifying, deep, powerful, wounded, and capable of real evil
 
 ## Key Quotes / Concepts
 
-> “No one is supposed to know that Benaveil has reason to hope.”
+> â€œNo one is supposed to know that Benaveil has reason to hope.â€
 
-> “You found a way to make us stars!?”
+> â€œYou found a way to make us stars!?â€
 
-> “Let Us Call Hell.”
+> â€œLet Us Call Hell.â€
 
-> “O Sent, let us go.”
+> â€œO Sent, let us go.â€

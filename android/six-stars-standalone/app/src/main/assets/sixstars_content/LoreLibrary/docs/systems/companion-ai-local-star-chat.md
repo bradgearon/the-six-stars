@@ -6,7 +6,7 @@ The Six Stars should feel like living companions, not scripted menus. After meet
 
 ## Core Flow
 
-1. Player says a hotword such as “Elusiaa,” “Kaelia,” or “Nyxari.”
+1. Player says a hotword such as â€œElusiaa,â€ â€œKaelia,â€ or â€œNyxari.â€
 2. Hotword detector opens the microphone.
 3. Speech-to-text captures the player line.
 4. Game builds a context packet.
@@ -49,13 +49,13 @@ A Star can react to battle data:
 
 Example:
 
-> “Sixteen slimes in two minutes… wow, handsome.”
+> â€œSixteen slimes in two minutesâ€¦ wow, handsome.â€
 
 ### Puzzle and Guardian Clues
 
 Nyxari may know one clue about a hidden guardian. She should not reveal everything. A good clue is poetic and directional:
 
-> “Some of the old guardians still sleep in the places the light abandoned. One of them rests where the bones remember the first song.”
+> â€œSome of the old guardians still sleep in the places the light abandoned. One of them rests where the bones remember the first song.â€
 
 ### Relationship and Romance
 

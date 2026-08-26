@@ -26,10 +26,10 @@ final class GoogleAiStudioClient {
                 .build();
     }
 
-    String completeStreaming(List<ChatMessage> messages, Consumer<String> onDelta) throws Exception {
+    String completeStreaming(List<ChatMessage> messages, String operation, Consumer<String> onDelta) throws Exception {
         requireConfigured();
         JSONObject payload = buildPayload(messages, false, settings.googleSearch());
-        Request request = request(endpoint("streamGenerateContent") + "?alt=sse", payload);
+        Request request = request(endpoint("streamGenerateContent") + "?alt=sse", payload, operation);
         StringBuilder all = new StringBuilder();
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) throw new IllegalStateException("Google AI Studio stream failed " + response.code() + ": " + safeBody(response));
@@ -47,20 +47,20 @@ final class GoogleAiStudioClient {
         return all.toString();
     }
 
-    String completeJson(List<ChatMessage> messages) throws Exception {
+    String completeJson(List<ChatMessage> messages, String operation) throws Exception {
         requireConfigured();
         JSONObject payload = buildPayload(messages, true, false);
         try {
-            return completeOnce(payload, "json");
+            return completeOnce(payload, "json", operation);
         } catch (Http400 e) {
             // Match desktop hosted adapter behavior: keep provider, retry without responseMimeType.
             payload = buildPayload(messages, false, false);
-            return completeOnce(payload, "prompt-json");
+            return completeOnce(payload, "prompt-json", operation);
         }
     }
 
-    private String completeOnce(JSONObject payload, String mode) throws Exception {
-        Request request = request(endpoint("generateContent"), payload);
+    private String completeOnce(JSONObject payload, String mode, String operation) throws Exception {
+        Request request = request(endpoint("generateContent"), payload, operation);
         try (Response response = client.newCall(request).execute()) {
             String body = safeBody(response);
             if (!response.isSuccessful()) {
@@ -99,11 +99,13 @@ final class GoogleAiStudioClient {
         return payload;
     }
 
-    private Request request(String url, JSONObject payload) {
-        return new Request.Builder().url(url)
-                .header("x-goog-api-key", settings.llmKey())
-                .post(RequestBody.create(payload.toString(), MediaType.get("application/json; charset=utf-8")))
-                .build();
+    private Request request(String url, JSONObject payload, String operation) {
+        Request.Builder builder = new Request.Builder().url(url)
+                .header("x-sixstars-operation", operation == null ? "llm" : operation)
+                .post(RequestBody.create(payload.toString(), MediaType.get("application/json; charset=utf-8")));
+        if (settings.proxyEnabled()) builder.header("Authorization", "Bearer " + settings.proxyAccessToken());
+        else builder.header("x-goog-api-key", settings.llmKey());
+        return builder.build();
     }
 
     private String endpoint(String method) {
@@ -127,6 +129,11 @@ final class GoogleAiStudioClient {
 
     private static String safeBody(Response response) throws Exception { return response.body() == null ? "" : response.body().string(); }
     private static String normalizeThinking(String v) { String x=v==null?"":v.trim().toLowerCase(Locale.ROOT); return (x.equals("minimal")||x.equals("off")||x.equals("none"))?"minimal":"high"; }
-    private void requireConfigured() { if (!settings.llmEnabled()) throw new IllegalStateException("Hosted LLM is disabled."); if (settings.llmKey().isEmpty()) throw new IllegalStateException("Google AI Studio key is empty. Configure " + settings.file.getAbsolutePath()); }
+    private void requireConfigured() {
+        if (!settings.llmEnabled()) throw new IllegalStateException("Hosted LLM is disabled.");
+        if (settings.proxyEnabled()) {
+            if (!settings.proxyConfigured()) throw new IllegalStateException("Cloudflare proxy is enabled but BaseUrl/AccessToken is incomplete. Configure " + settings.file.getAbsolutePath());
+        } else if (settings.llmKey().isEmpty()) throw new IllegalStateException("Google AI Studio key is empty. Configure " + settings.file.getAbsolutePath());
+    }
     private static final class Http400 extends Exception { Http400(String s){super(s);} }
 }

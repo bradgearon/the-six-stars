@@ -8,23 +8,23 @@ The game should not be preachy. The Bible-coded ideas should usually appear as f
 
 ## Heart / Stars Thesis
 
-“Rescue the Stars” ultimately means every heart. The Stars are not only companions in lore; they symbolize ordinary people, children of the Almighty, hearts that can become diamond-like or star-like under pressure.
+â€œRescue the Starsâ€ ultimately means every heart. The Stars are not only companions in lore; they symbolize ordinary people, children of the Almighty, hearts that can become diamond-like or star-like under pressure.
 
 Important line:
 
-> “We’re carrying the sun, and we think the sky is, but our hearts will shine the ways.”
+> â€œWeâ€™re carrying the sun, and we think the sky is, but our hearts will shine the ways.â€
 
 ## Smallest Seed Thesis
 
 The central redemption thesis can be expressed as:
 
-> “The smallest seed of faith will fix it all.”
+> â€œThe smallest seed of faith will fix it all.â€
 
 For the game version, this means teaching Benaveil that doing good for others can feel good regardless of what has happened before. Goodness becomes experiential, not merely commanded.
 
 ## Veiled Fight Songs
 
-Job 40–41, Psalm 74, “O Sent / Let Us Go,” and “Let Us Call Hell” are treated as veiled fight songs: terrifying to the flesh but hiding mercy, rebuke, restoration, and training.
+Job 40â€“41, Psalm 74, â€œO Sent / Let Us Go,â€ and â€œLet Us Call Hellâ€ are treated as veiled fight songs: terrifying to the flesh but hiding mercy, rebuke, restoration, and training.
 
 ## Guardian Cherubim Thesis
 
@@ -35,9 +35,9 @@ Private source theory:
 - Bahamut = internal strength/belly/loins/sinews/marrow/earth.
 - The game adapts this into guardian beasts, not doctrinal lectures.
 
-## “No One Is Supposed to Know” Thesis
+## â€œNo One Is Supposed to Knowâ€ Thesis
 
-> “No one is supposed to know that Benaveil has reason to hope.”
+> â€œNo one is supposed to know that Benaveil has reason to hope.â€
 
 The greater evils maintain power by convincing spirits and people that there is no path back.
 

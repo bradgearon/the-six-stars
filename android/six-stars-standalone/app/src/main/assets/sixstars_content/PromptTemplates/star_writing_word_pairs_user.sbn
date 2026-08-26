@@ -45,7 +45,7 @@ These are the newest complete five-pair selections. Prefer fresh words instead o
 (none yet)
 {{ else }}
 {{ for word_set in data.recentGeneratedWordSets }}
-Set {{ word_set.index }} — {{ word_set.generatedAt }}
+Set {{ word_set.index }} â€” {{ word_set.generatedAt }}
 {{ for pair in word_set.pairs }}
 - {{ pair.first }} + {{ pair.second }}
 {{ end }}

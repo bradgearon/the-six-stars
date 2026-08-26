@@ -1,4 +1,4 @@
-# Flameveil — Remember Me
+# Flameveil â€” Remember Me
 
 | Field | Value |
 |---|---|
@@ -8,7 +8,7 @@
 | Recipient | Leviathan |
 | Tone | Warning, remembered history, pre-war |
 | Suggested Location | Astral Caverns or guardian archive |
-| Guardian / Attribute Mapping | Leviathan — descent, fire, memory, accountability |
+| Guardian / Attribute Mapping | Leviathan â€” descent, fire, memory, accountability |
 | Best Star Reactions | Auerlis |
 | Gameplay Use | Introduces Flameveil and his relationship to Leviathan before the war letters intensify. |
 

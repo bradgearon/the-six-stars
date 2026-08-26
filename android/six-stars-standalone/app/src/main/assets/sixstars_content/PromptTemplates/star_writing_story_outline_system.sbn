@@ -30,7 +30,7 @@ LAST CAT / READER DISTINCTION
 
 Return only JSON with starId, title, premise, characters, storySubjects, and beats. Do not write the full story yet.
 
-OUTPUT SHAPE — formatting only, not a creative length restriction:
+OUTPUT SHAPE â€” formatting only, not a creative length restriction:
 - `characters`, `storySubjects`, and `beats` must each be JSON arrays of plain strings.
 - Each string may be as detailed or multi-sentence as the story needs.
 - Do not return objects inside these arrays, and do not create separate number/index fields; array order already provides sequence.

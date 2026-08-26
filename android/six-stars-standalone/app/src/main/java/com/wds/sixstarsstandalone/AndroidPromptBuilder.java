@@ -169,10 +169,10 @@ final class AndroidPromptBuilder {
         String summary = state.optString("ConversationSummary",""); if (!summary.isEmpty()) b.append("ConversationSummary: ").append(summary).append('\n');
         String last = state.optString("LastDeterministicEmotionSummary",""); if (!last.isEmpty()) b.append("Last deterministic update: ").append(last).append('\n');
         if (state.optBoolean("IsGirlfriend", false)) {
-            b.append("GIRLFRIEND MODE INSTRUCTIONS — ACTIVE\nAct like a committed girlfriend in this state: responsive, emotionally present, affectionate, and actively flirty when it fits her personality and current context.\n");
+            b.append("GIRLFRIEND MODE INSTRUCTIONS â€” ACTIVE\nAct like a committed girlfriend in this state: responsive, emotionally present, affectionate, and actively flirty when it fits her personality and current context.\n");
             if (state.optBoolean("GirlfriendSextingEnabled", false)) {
                 JSONArray sx = profile.optJSONArray("sextingModeInstructions");
-                if (sx != null && sx.length() > 0) { b.append("GIRLFRIEND SEXTING MODE LATCH — ACTIVE\n"); appendArray(b, sx, 8); }
+                if (sx != null && sx.length() > 0) { b.append("GIRLFRIEND SEXTING MODE LATCH â€” ACTIVE\n"); appendArray(b, sx, 8); }
             }
             JSONObject hourly = state.optJSONObject("GirlfriendHourlyState"); if (hourly != null && hourly.length() > 0) b.append("CURRENT GIRLFRIEND HOURLY STATE\n").append(hourly.toString()).append('\n');
         }
@@ -192,7 +192,7 @@ final class AndroidPromptBuilder {
     }
 
     private String privateRomanceProfile(JSONObject p) {
-        StringBuilder b = new StringBuilder("PRIVATE ROMANCE / ATTRACTION PROFILE — INTERNAL ONLY\nThis is inner-character knowledge, not something to dump directly. Let it guide subtext, teasing, affection, pursuit, and connection growth. It never implies commitment unless IsGirlfriend=true.\n");
+        StringBuilder b = new StringBuilder("PRIVATE ROMANCE / ATTRACTION PROFILE â€” INTERNAL ONLY\nThis is inner-character knowledge, not something to dump directly. Let it guide subtext, teasing, affection, pursuit, and connection growth. It never implies commitment unless IsGirlfriend=true.\n");
         appendNamedArray(b, "Flirt style", p.optJSONArray("flirtStyle"), 10);
         appendNamedArray(b, "Friends and contacts", p.optJSONArray("friendsAndContacts"), 16);
         return b.toString().trim();

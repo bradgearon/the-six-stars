@@ -18,14 +18,17 @@ final class GroqAsrClient {
 
     String transcribe(File wav) throws Exception {
         if(!settings.asrEnabled()) throw new IllegalStateException("Hosted ASR is disabled.");
-        if(settings.asrKey().isEmpty()) throw new IllegalStateException("Groq API key is empty. Configure " + settings.file.getAbsolutePath());
+        if(settings.proxyEnabled()) { if(!settings.proxyConfigured()) throw new IllegalStateException("Cloudflare proxy is enabled but BaseUrl/AccessToken is incomplete. Configure " + settings.file.getAbsolutePath()); }
+        else if(settings.asrKey().isEmpty()) throw new IllegalStateException("Groq API key is empty. Configure " + settings.file.getAbsolutePath());
         RequestBody form=new MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("model",settings.asrModel())
                 .addFormDataPart("language",settings.asrLanguage())
                 .addFormDataPart("response_format","json")
                 .addFormDataPart("file",wav.getName(),RequestBody.create(wav,MediaType.get("audio/wav")))
                 .build();
-        Request req=new Request.Builder().url(settings.asrEndpoint()).header("Authorization","Bearer "+settings.asrKey()).post(form).build();
+        Request.Builder rb=new Request.Builder().url(settings.asrEndpoint()).header("x-sixstars-operation","asr-transcription").post(form);
+        if(settings.proxyEnabled()) rb.header("Authorization","Bearer "+settings.proxyAccessToken()); else rb.header("Authorization","Bearer "+settings.asrKey());
+        Request req=rb.build();
         try(Response res=client.newCall(req).execute()){
             String body=res.body()==null?"":res.body().string();
             if(!res.isSuccessful())throw new IllegalStateException("Groq ASR failed "+res.code()+": "+body);

@@ -56,13 +56,13 @@ Bradmageddon may appear after the large slime/Bone Bloom arc and initially seem 
 
 Possible line:
 
-> ìYes, I sent the demons to possess the slimes here long ago, for this has been planned and is needed.î
+> ‚ÄúYes, I sent the demons to possess the slimes here long ago, for this has been planned and is needed.‚Äù
 
 He may not tell the Last Cat he is not the real enemy. The point is to give the player a manageable enemy-shaped idea before facing the more terrifying possibility of raising, judging, or fighting a young angel.
 
 ## Rescue the Stars Role
 
-In the long-term MMO vision, Bradmageddon and the team can function like an organization that protects and honors angelic interests by letting art, offerings, and community contributions become content if they pass the worldís tests.
+In the long-term MMO vision, Bradmageddon and the team can function like an organization that protects and honors angelic interests by letting art, offerings, and community contributions become content if they pass the world‚Äôs tests.
 
 ## Tone
 
@@ -70,7 +70,7 @@ He should sound villainous, fiery, strange, and provocative, even when serving a
 
 Possible line:
 
-> ìShall we wrestle, humans and angels, or do the forces of good require evil hands to rip them to pieces?î
+> ‚ÄúShall we wrestle, humans and angels, or do the forces of good require evil hands to rip them to pieces?‚Äù
 
 ## Public Use
 
@@ -163,7 +163,7 @@ Behavior:
 
 ## Veilshades
 
-Shadow/void people tied to hidden rooms, unseen guardians, and Nyxariís secrets.
+Shadow/void people tied to hidden rooms, unseen guardians, and Nyxari‚Äôs secrets.
 
 Visual direction:
 
@@ -181,7 +181,7 @@ Behavior:
 
 A later race can combine elements of the ten alien creature concepts: owl, slime, Virethorn, astral core, shadow veil, high-tech chest device, and colorful protective outfits.
 
-## Six Stars ó Astral Dragoth Forms
+## Six Stars ‚Äî Astral Dragoth Forms
 
 Astral Dragoth forms are advanced transformations unlocked after mastering astral abilities. They show what happens when Star mana, astral independence, and guardian-beast resonance fuse into a new body language.
 
@@ -193,7 +193,7 @@ Astral Dragoth forms are advanced transformations unlocked after mastering astra
 - Outfits can remain stylish and sensual, but should look like high-tech/mystic battle gear.
 - Forms should be usable for high-tier cutscenes, special attacks, final stages, or late-game romance visuals.
 
-## Kaelia ó Void Dragoth
+## Kaelia ‚Äî Void Dragoth
 
 - Element: Void.
 - Dragon coloration: lighter purple with black-violet cosmic shadows.
@@ -201,7 +201,7 @@ Astral Dragoth forms are advanced transformations unlocked after mastering astra
 - Details: DNA-like abdomen tattoo, slightly armored high-tech bra/top, human/dragoth skin ratio similar to the source concept.
 - Mood: beautiful, dangerous, mysterious, secretly needy.
 
-## Elusiaa ó Light Dragoth
+## Elusiaa ‚Äî Light Dragoth
 
 - Element: Light.
 - Hair: blonde.
@@ -209,32 +209,32 @@ Astral Dragoth forms are advanced transformations unlocked after mastering astra
 - Dragon features: white-gold scales, soft blue/teal holy glow, gentle halo motifs, luminous wings.
 - Mood: mercy becoming majestic.
 
-## Khavia ó Water Dragoth
+## Khavia ‚Äî Water Dragoth
 
 - Element: Water.
 - Dragon features: blue Leviathan-like scales, flowing fins, luminous water ribbons, aquatic claws.
 - Mood: friendship, currents, and bridge-making turned into a living sea-dragon form.
 
-## Nyxari ó Shadow Dragoth
+## Nyxari ‚Äî Shadow Dragoth
 
 - Element: Shadow.
 - Hair: platinum or icy flame.
 - Dragon features: midnight blue, deep red, platinum shadow-fire edges.
 - Mood: secretive, elegant, fragmented, dangerous.
 
-## Maera ó Blood Dragoth
+## Maera ‚Äî Blood Dragoth
 
 - Element: Blood.
 - Dragon features: dark skull and flesh accents, crimson veins, bone ornaments, blood-crystal glow.
 - Mood: possession purified into protection or twisted into obsession, depending on route.
 
-## Auerlis ó Fire Dragoth
+## Auerlis ‚Äî Fire Dragoth
 
 - Element: Fire.
 - Dragon features: flame hair, ember scales, phoenix/fire-dragon accents, hot orange-red aura.
-- Mood: joy, laughter, and fire that warms ó or consumes.
+- Mood: joy, laughter, and fire that warms ‚Äî or consumes.
 
-## Last Cat ó Astral Dragoth
+## Last Cat ‚Äî Astral Dragoth
 
 ## Auerlis - Fire Star
 
@@ -260,9 +260,9 @@ Passionate, playful, intense, musical, dangerous but hopeful.
 
 ## Angel story
 
-### Dark angel story ó The Kind Face that Burned
+### Dark angel story ‚Äî The Kind Face that Burned
 
-Auerlis tells the Last Cat a secondhand story about an old spirit who barely escaped a dark angel wearing a kind face. The angel tore the spirit's memories apart, made him relive shame and failure, called that ìlove,î and left him believing no one was listening when he screamed for mercy.
+Auerlis tells the Last Cat a secondhand story about an old spirit who barely escaped a dark angel wearing a kind face. The angel tore the spirit's memories apart, made him relive shame and failure, called that ‚Äúlove,‚Äù and left him believing no one was listening when he screamed for mercy.
 
 **Gameplay use:** This story explains why Auerlis insists that some fires do not warm; they consume. It should make the Astral Caverns feel dangerous while preserving her role as the Star of Joy.
 
@@ -314,9 +314,9 @@ Gentle, radiant, emotionally intimate, protective, flirty through warmth and won
 
 ## Angel story
 
-### Good angel story ó The Angel in the Dying Valley
+### Good angel story ‚Äî The Angel in the Dying Valley
 
-Elusiaa tells the Last Cat about a good angel who came to a drought-stricken valley as a quiet traveler with only a waterskin. He shared water, carried the weak, sang to children, and left after the rain came without seeking praise. His line, ìThe Stream flows for all who are thirsty,î defines Elusiaa's mercy ideal: angels were made to serve, not rule.
+Elusiaa tells the Last Cat about a good angel who came to a drought-stricken valley as a quiet traveler with only a waterskin. He shared water, carried the weak, sang to children, and left after the rain came without seeking praise. His line, ‚ÄúThe Stream flows for all who are thirsty,‚Äù defines Elusiaa's mercy ideal: angels were made to serve, not rule.
 
 **Gameplay use:** This story should be a callback when Elusiaa is tempted to punish goblins or destroy a settlement. A wise player can remind her that the good angel sought water, truth, and service before judgment.
 
@@ -348,12 +348,12 @@ When new material is added for Elusiaa, update this entry plus any affected file
 
 | Star | Element | Daughter/Form | Domain | Core Quote | Magical Focus |
 |---|---|---|---|---|---|
-| Elusiaa | Light | Daughter of Racha | Mercy | ìMercy is how we remember weíre not gods.î | Lumenís Grace staff |
-| Khavia | Water | Daughter of Chavera | Friendship | ìSomebody helped me once.î | Tideweaverís Codex |
-| Auerlis | Fire | Daughter of Simchi | Joy | ìThen at least they are laughing.î | Ember Eternal lantern |
-| Maera | Blood | Daughter of Maerrow | Possession | ìIf I canít have you, no one can.î | Sanguine Heart crystal |
-| Kaelia | Void | Daughter of Kaeliss | Mystery | ìThe Void is not empty. It is listening.î | Nullheart Orb |
-| Nyxari | Shadow | Daughter of Nyxara | Fragmentation | ìIf nothing matters, nothing can break.î | Eclipse Mirror |
+| Elusiaa | Light | Daughter of Racha | Mercy | ‚ÄúMercy is how we remember we‚Äôre not gods.‚Äù | Lumen‚Äôs Grace staff |
+| Khavia | Water | Daughter of Chavera | Friendship | ‚ÄúSomebody helped me once.‚Äù | Tideweaver‚Äôs Codex |
+| Auerlis | Fire | Daughter of Simchi | Joy | ‚ÄúThen at least they are laughing.‚Äù | Ember Eternal lantern |
+| Maera | Blood | Daughter of Maerrow | Possession | ‚ÄúIf I can‚Äôt have you, no one can.‚Äù | Sanguine Heart crystal |
+| Kaelia | Void | Daughter of Kaeliss | Mystery | ‚ÄúThe Void is not empty. It is listening.‚Äù | Nullheart Orb |
+| Nyxari | Shadow | Daughter of Nyxara | Fragmentation | ‚ÄúIf nothing matters, nothing can break.‚Äù | Eclipse Mirror |
 
 ## Angel story pairing
 
@@ -397,7 +397,7 @@ Mysterious, wounded, teasing, intimate, requires many letters and patient trust.
 
 ## Angel story
 
-### Dark angel story ó The Tar-Water Reflection
+### Dark angel story ‚Äî The Tar-Water Reflection
 
 Kaelia tells the Last Cat that an older, hungrier dark angel came to her in the deep dark and told her the Void was all there was. He made her watch her own reflection drown again and again; whenever she reached for the surface, the water turned to tar. He laughed that even her own light rejected her.
 
@@ -451,9 +451,9 @@ Fluid, warm, loyal, bridge-builder, emotionally open once trust is earned.
 
 ## Angel story
 
-### Good angel story ó The Angel in the Blood-Red Canyons
+### Good angel story ‚Äî The Angel in the Blood-Red Canyons
 
-Khavia tells the Last Cat about a good angel who entered a battlefield after the fighting, sat in the dirt with the wounded, bound their injuries, and sang until pain eased. When a dying warrior asked why he helped enemies, the angel answered, ìThere are no enemies here ó only the hurt and the lost. And I was sent to the lost.î
+Khavia tells the Last Cat about a good angel who entered a battlefield after the fighting, sat in the dirt with the wounded, bound their injuries, and sang until pain eased. When a dying warrior asked why he helped enemies, the angel answered, ‚ÄúThere are no enemies here ‚Äî only the hurt and the lost. And I was sent to the lost.‚Äù
 
 **Gameplay use:** This story anchors Khavia's Friendship domain and should unlock bridge-building, reconciliation, and nonviolent settlement options while still leaving room for boundaries and justice.
 
@@ -505,7 +505,7 @@ Darkly passionate, jealous, intense, loyal when healed, needs careful boundaries
 
 ## Angel story
 
-### Dark angel story ó Worms in the Veins
+### Dark angel story ‚Äî Worms in the Veins
 
 Maera tells the Last Cat that a dark form came to her in the blood caves as a big black beast, told her blood proved she was cursed, and made her feel worms crawling and biting inside her veins. He made her watch herself bleed out in visions and called it mercy.
 
@@ -559,9 +559,9 @@ Cool, feline, platinum-haired shadow elegance, guarded tenderness.
 
 ## Angel story
 
-### Good angel story ó The Angel Who Left a Gift Behind
+### Good angel story ‚Äî The Angel Who Left a Gift Behind
 
-Nyxari tells a complicated story about a good angel who lived inside a dead man's body for six years, healed the sick, protected the weak, and brought light to dying worlds. On the seventh year, the original man returned alive, young, strong, beloved, and able to continue the heroic work as himself. The angel's final message was, ìTell them even the worst of us can sometimes leave gifts behind.î
+Nyxari tells a complicated story about a good angel who lived inside a dead man's body for six years, healed the sick, protected the weak, and brought light to dying worlds. On the seventh year, the original man returned alive, young, strong, beloved, and able to continue the heroic work as himself. The angel's final message was, ‚ÄúTell them even the worst of us can sometimes leave gifts behind.‚Äù
 
 **Gameplay use:** This story belongs to Nyxari because it is about shadow, fragmentation, possession, identity, and a terrifying thing choosing to give instead of take.
 

@@ -8,17 +8,17 @@
 | Recipient | The Great One / Leviathan / future readers |
 | Tone | Ancient scripture tone |
 | Suggested Location | Late Astral Caverns or post-Leviathan archive |
-| Guardian / Attribute Mapping | Leviathan — many heads, chaos judged into nourishment |
+| Guardian / Attribute Mapping | Leviathan â€” many heads, chaos judged into nourishment |
 | Best Star Reactions | Elusiaa, Nyxari |
 | Gameplay Use | Frames judgment as mercy and defeated chaos as food for the wilderness. |
 
 ## Letter Text
 
-Long ago, the Great One looked upon the twisting serpent of chaos—the great sea creatures who still carried His will deep inside.
+Long ago, the Great One looked upon the twisting serpent of chaosâ€”the great sea creatures who still carried His will deep inside.
 
 With perfect strength He divided the raging waters.
 
-He shattered the many heads of pride and deception—not in hatred, but from the bosom of love.
+He shattered the many heads of pride and deceptionâ€”not in hatred, but from the bosom of love.
 
 What was once a terror that swallowed worlds became food for every hungry spirit in the wilderness: man, alien, angel, and fallen alike.
 

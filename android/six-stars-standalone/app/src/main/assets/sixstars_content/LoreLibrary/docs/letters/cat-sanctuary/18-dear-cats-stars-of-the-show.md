@@ -1,4 +1,4 @@
-# Dear Cats — Stars of the Show
+# Dear Cats â€” Stars of the Show
 
 | Field | Value |
 |---|---|
@@ -8,9 +8,9 @@
 | Recipient | Dear Cats |
 | Tone | Warning, observational, meta-prophetic |
 | Suggested Location | Hidden-cat sanctuary clue / post-Star meeting |
-| Guardian / Attribute Mapping | Hidden cats — watch the tormented; identify the true Stars |
+| Guardian / Attribute Mapping | Hidden cats â€” watch the tormented; identify the true Stars |
 | Best Star Reactions | All Six Stars |
-| Gameplay Use | Reframes “Stars” as the people/spirits selected by evil for torment and therefore central to rescue. |
+| Gameplay Use | Reframes â€œStarsâ€ as the people/spirits selected by evil for torment and therefore central to rescue. |
 
 ## Letter Text
 

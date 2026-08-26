@@ -8,9 +8,9 @@ I am working through a redemptive reading of several biblical passages involving
 
 My central thesis is this:
 
-No spirit, no creature, no being ó whether clothed in flesh or otherwise ó should be treated as beyond the reach of Godís mercy unless Scripture itself places that being under final judgment.
+No spirit, no creature, no being ‚Äî whether clothed in flesh or otherwise ‚Äî should be treated as beyond the reach of God‚Äôs mercy unless Scripture itself places that being under final judgment.
 
-This does not mean we should be naÔve. Scripture commands us to test the spirits (1 John 4:1). But it also says to preach the gospel to every creature (Mark 16:15), reminds us that some have entertained angels unawares (Hebrews 13:2), and speaks of God reconciling ìall thingsî through Christ (Colossians 1:20).
+This does not mean we should be na√Øve. Scripture commands us to test the spirits (1 John 4:1). But it also says to preach the gospel to every creature (Mark 16:15), reminds us that some have entertained angels unawares (Hebrews 13:2), and speaks of God reconciling ‚Äúall things‚Äù through Christ (Colossians 1:20).
 
 So my question is: Can Leviathan and Behemoth be read not merely as monsters to be feared, but as pictures of fallen or dangerous guardian beings whose original design can be restored under God?
 
@@ -18,11 +18,11 @@ So my question is: Can Leviathan and Behemoth be read not merely as monsters to 
 
 Psalm 104:18 says:
 
-ìThe high mountains are for the wild goats; the rocks are a refuge for the rock badgers.î
+‚ÄúThe high mountains are for the wild goats; the rocks are a refuge for the rock badgers.‚Äù
 
 I am reading this not primarily as a comment about human beings, but as an archetypal picture of lesser spiritual creatures.
 
-The wild goat loves the high places. In Scripture, high places often become associated with pride, idolatry, and rebellious worship. So the wild goat can represent a spirit drawn upward in pride ó a lesser evil spirit that wants height without humility.
+The wild goat loves the high places. In Scripture, high places often become associated with pride, idolatry, and rebellious worship. So the wild goat can represent a spirit drawn upward in pride ‚Äî a lesser evil spirit that wants height without humility.
 
 The rock badger, by contrast, is small and vulnerable, but it makes its home in the rock. In Christian symbolism, the Rock points to Christ (1 Corinthians 10:4). So the rock badger can represent a fallen or lesser spirit that is not proud, but hidden, weak, and seeking refuge in the true Rock.
 
@@ -30,14 +30,14 @@ This distinction matters. Not every strange or fallen thing should be treated th
 
 ## 2. Great sea creatures and sea monsters
 
-Genesis 1:21 says God created the great sea creatures. They are not evil by origin. They are part of Godís good creation.
+Genesis 1:21 says God created the great sea creatures. They are not evil by origin. They are part of God‚Äôs good creation.
 
-Psalm 74:13ñ14, however, says:
+Psalm 74:13‚Äì14, however, says:
 
-ìYou divided the sea by your strength;
+‚ÄúYou divided the sea by your strength;
 You broke the heads of the sea monsters in the waters.
 You crushed the heads of Leviathan;
-You gave him as food for the creatures inhabiting the wilderness.î
+You gave him as food for the creatures inhabiting the wilderness.‚Äù
 
 At first, this sounds only like destruction. But I am wondering whether it may also contain a pattern of transformation.
 
@@ -51,31 +51,31 @@ This seems to fit a wider biblical pattern: God does not merely defeat evil; He 
 
 ## 3. Behemoth / Bahamut in Job 40: internal strength Guardian Cherubim
 
-In Job 40:15ñ24, God describes Behemoth. Some traditions associate this figure with a great beast, and in later imagination it is sometimes connected with Bahamut. I am using ìBahamutî here as a poetic name for Behemoth, not claiming that the word itself appears in the biblical text.
+In Job 40:15‚Äì24, God describes Behemoth. Some traditions associate this figure with a great beast, and in later imagination it is sometimes connected with Bahamut. I am using ‚ÄúBahamut‚Äù here as a poetic name for Behemoth, not claiming that the word itself appears in the biblical text.
 
 Several details stand out:
 
-ìBehold now Behemoth, which I made with youî
+‚ÄúBehold now Behemoth, which I made with you‚Äù
 
 Behemoth is made by God. He is not outside creation. He is not a rival creator. He is a creature made alongside man. That gives the passage a tone of kinship, not merely terror. It is a message to the fallen angel that he was made like man, in God's image.
 
-ìHe eats grass like an oxî
+‚ÄúHe eats grass like an ox‚Äù
 
 This suggests humble nourishment. This mighty creature is sustained by something simple. He is not described as devouring people here, but as eating like an ox. Grass is the glory of man and it is his strength. He is saying that the glory of man is this Guardian Cherubim's nutrition.
 
-ìHis strength is in his loins, and his power in the muscles of his bellyî
+‚ÄúHis strength is in his loins, and his power in the muscles of his belly‚Äù
 
-I read this as internal strength. The loins suggest generative power, endurance, and the ability to carry life forward. The belly suggests the ability to digest heavy things ó suffering, sorrow, judgment, and pain ó without being destroyed by them. His power in the muscles means his stomach is able to digest meat "I fed you with milk, not solid food, for you were not ready for it. And even now you are not yet ready," 1 Corinthians 3:2. "But solid food is for†the mature, for those who have their powers†of discernment trained by constant practice to distinguish good from evil." Hebrews 5:14. This guardian cherubim is able to digest difficult suffering for others. He can consume suffering to make things better with angel powers.
+I read this as internal strength. The loins suggest generative power, endurance, and the ability to carry life forward. The belly suggests the ability to digest heavy things ‚Äî suffering, sorrow, judgment, and pain ‚Äî without being destroyed by them. His power in the muscles means his stomach is able to digest meat "I fed you with milk, not solid food, for you were not ready for it. And even now you are not yet ready," 1 Corinthians 3:2. "But solid food is for¬†the mature, for those who have their powers¬†of discernment trained by constant practice to distinguish good from evil." Hebrews 5:14. This guardian cherubim is able to digest difficult suffering for others. He can consume suffering to make things better with angel powers.
 
-ìThe sinews of his thighs are knit togetherî
+‚ÄúThe sinews of his thighs are knit together‚Äù
 
-This suggests inner coherence and discernment. Hebrews 4:12 speaks of the word of God dividing soul and spirit, joints and marrow. In that light, Behemothís tightly knit sinews can be seen as a picture of a guardian who must learn what to hold together and what only Godís sword can divide. Sinews are what separate joint from marrow and legs are what carry the gospel. So he can carry deep things about God and use them powerfully.
+This suggests inner coherence and discernment. Hebrews 4:12 speaks of the word of God dividing soul and spirit, joints and marrow. In that light, Behemoth‚Äôs tightly knit sinews can be seen as a picture of a guardian who must learn what to hold together and what only God‚Äôs sword can divide. Sinews are what separate joint from marrow and legs are what carry the gospel. So he can carry deep things about God and use them powerfully.
 
-ìHis bones are tubes of bronze, his limbs like rods of ironî
+‚ÄúHis bones are tubes of bronze, his limbs like rods of iron‚Äù
 
-Bones guard marrow or life force. The bronze material speaks of divine judgement, purification, strength and endurance. He uses these to guard the life force and his arms are like rods of iron which speak of†strength, unyielding power, and discipline. He has the ability to do great and strong things with power and restraint that and led the many like Jesus.
+Bones guard marrow or life force. The bronze material speaks of divine judgement, purification, strength and endurance. He uses these to guard the life force and his arms are like rods of iron which speak of¬†strength, unyielding power, and discipline. He has the ability to do great and strong things with power and restraint that and led the many like Jesus.
 
-ìHe lies under the lotus trees, in the covert of the reeds and marshî
+‚ÄúHe lies under the lotus trees, in the covert of the reeds and marsh‚Äù
 
 This is one of the richest details. The marsh is muddy, stagnant, and full of decay. The lotus rises out of mud into beauty. So Behemoth rests in the place where suffering and new life meet.
 
@@ -87,7 +87,7 @@ So my reading is that Behemoth represents internal strength restored: the guardi
 
 This document serves as a spiritual blueprint for training and encouraging youthful fallen angels toward restoration. By decoding the physical anatomy of Leviathan in Job 41, we uncover the mechanics of high-level spiritual authority, defensive armor, and the raw power of divine expression. Where Behemoth represents the internal capacity to endure suffering and digest heavy spiritual meat, Leviathan represents the external structure of a fully mature, unyielding Guardian Cherub.
 
-ìCan you draw out Leviathan with a fishhook or press down his tongue with a cord?î
+‚ÄúCan you draw out Leviathan with a fishhook or press down his tongue with a cord?‚Äù
 
 A fisher of men is a preacher. Can you gather an angel with a preacher or give abundant blessing "Good measure, pressed down, shaken together, running over, will be put into your lap" Luke 6:38 (press down his tongue) to his speech with a cord: unity, divine protection, redemption, and boundaries/inheritance.
 
@@ -95,7 +95,7 @@ A fisher of men is a preacher. Can you gather an angel with a preacher or give a
 
 Can you make Leviathan sad for unity hope and deliverance with bondage to sin?
 
-Can you change make him devote his strength, divine deliverance, and the power of speech†with divine judgment and control, spiritual salvation, or covenantal connection?
+Can you change make him devote his strength, divine deliverance, and the power of speech¬†with divine judgment and control, spiritual salvation, or covenantal connection?
 
 "Who can open the doors of his face? Around his teeth is terror."
 
@@ -123,53 +123,53 @@ The neck supports the head (authority) and connects it to the body (action). Str
 
 "His underparts are like sharp potsherds; he spreads himself like a threshing sledge on the mire."
 
-The "mire" represents the lowest, muddiest, and most corrupted situations on earthóthe realm of human brokenness and demonic filth. Having an underside of sharp potsherds means that when this Cherub moves through messy situations, they do not get dirty. Instead, they act as a "threshing sledge," tearing up the mud, breaking up hidden sins, and paving a sharp, righteous path through chaos.
+The "mire" represents the lowest, muddiest, and most corrupted situations on earth‚Äîthe realm of human brokenness and demonic filth. Having an underside of sharp potsherds means that when this Cherub moves through messy situations, they do not get dirty. Instead, they act as a "threshing sledge," tearing up the mud, breaking up hidden sins, and paving a sharp, righteous path through chaos.
 
 "He makes the deep boil like a pot; he makes the sea like a pot of ointment. He leaves a shining wake behind him; one would think the deep had white hair."
 
-The "deep" and the "sea" represent the turbulent masses of humanity and the spiritual atmosphere. When Leviathan moves, the atmosphere shifts drastically. He turns raw chaos into a "pot of ointment"óa place of healing, fragrance, and anointing. The "shining wake" and "white hair" represent the unmistakable trail of wisdom, purity, and righteousness left behind every action.
+The "deep" and the "sea" represent the turbulent masses of humanity and the spiritual atmosphere. When Leviathan moves, the atmosphere shifts drastically. He turns raw chaos into a "pot of ointment"‚Äîa place of healing, fragrance, and anointing. The "shining wake" and "white hair" represent the unmistakable trail of wisdom, purity, and righteousness left behind every action.
 
 "On earth there is nothing like him, which is made without fear. He beholds every high thing; he is king over all the children of pride."
 
-A restored Guardian Cherub fears nothing on earth because their identity is anchored entirely in God. To "behold every high thing" means having the spiritual discernment to look down upon lofty, arrogant principalities without being intimidated by them. By mastering these traitsóemotional resilience, unified protection, and controlled speechóthis Cherub is uniquely equipped to rule over and dismantle the spirit of pride, guiding younger spirits back into the humility of divine order.
+A restored Guardian Cherub fears nothing on earth because their identity is anchored entirely in God. To "behold every high thing" means having the spiritual discernment to look down upon lofty, arrogant principalities without being intimidated by them. By mastering these traits‚Äîemotional resilience, unified protection, and controlled speech‚Äîthis Cherub is uniquely equipped to rule over and dismantle the spirit of pride, guiding younger spirits back into the humility of divine order.
 
 ## 5. Their habitats: marsh and sea
 
-Leviathanís Habitat: The Sea
+Leviathan‚Äôs Habitat: The Sea
 
-The sea is the turbulent deep ó vast, chaotic, seemingly endless, and full of hidden currents. Spiritually it represents:
+The sea is the turbulent deep ‚Äî vast, chaotic, seemingly endless, and full of hidden currents. Spiritually it represents:
 
-The immense and mysterious depths of God ó unfathomable love, wisdom, and power that no one can fully measure.
+The immense and mysterious depths of God ‚Äî unfathomable love, wisdom, and power that no one can fully measure.
 
-Love as an ocean ó not a gentle stream, but a powerful, overwhelming force that can rage with storms yet also soothe and carry all things.
+Love as an ocean ‚Äî not a gentle stream, but a powerful, overwhelming force that can rage with storms yet also soothe and carry all things.
 
-Leviathanís calling as guardian of the deep is to dwell in that turbulence without being overcome by it. His restored purpose is to transform the boiling, chaotic sea into ìa pot of ointmentî ó turning the roughest waters of suffering, emotion, and spiritual warfare into something healing and nourishing.
+Leviathan‚Äôs calling as guardian of the deep is to dwell in that turbulence without being overcome by it. His restored purpose is to transform the boiling, chaotic sea into ‚Äúa pot of ointment‚Äù ‚Äî turning the roughest waters of suffering, emotion, and spiritual warfare into something healing and nourishing.
 
-What the sea specifically means for Leviathan: He is not just in the ocean. He rules its chaos. When restored, his very movement calms storms and turns the deepest turbulence into medicine. This is why he is king over the children of pride ó he has faced the full depth of chaos and emerged able to bring healing from it.
+What the sea specifically means for Leviathan: He is not just in the ocean. He rules its chaos. When restored, his very movement calms storms and turns the deepest turbulence into medicine. This is why he is king over the children of pride ‚Äî he has faced the full depth of chaos and emerged able to bring healing from it.
 
-Bahamutís Habitat: The Marsh & Lotus Tree
+Bahamut‚Äôs Habitat: The Marsh & Lotus Tree
 
-The marsh is the shallow, muddy, murky place where land and water meet ó a place of decay, heavy soil, and apparent stagnation. It represents the messy, earthly suffering of daily life, the places where things rot and feel stuck.
+The marsh is the shallow, muddy, murky place where land and water meet ‚Äî a place of decay, heavy soil, and apparent stagnation. It represents the messy, earthly suffering of daily life, the places where things rot and feel stuck.
 
 The lotus tree growing there is the central symbol of hope:
 
 It roots in the mud (the suffering) yet rises pure and beautiful above the water.
 
-Its seed already contains the full plant ó hidden potential waiting to bloom.
+Its seed already contains the full plant ‚Äî hidden potential waiting to bloom.
 
-Bahamutís calling in the marsh: He rests under the lotus plants. He does not flee the mud. Instead, with his powerful belly and sinews, he digests the heavy meat of earthly suffering while protecting the hidden life (the lotus seed / marrow). His presence in the marsh says: ìEven here, in the dirtiest and most stagnant places, redemption and new life are already forming.î
+Bahamut‚Äôs calling in the marsh: He rests under the lotus plants. He does not flee the mud. Instead, with his powerful belly and sinews, he digests the heavy meat of earthly suffering while protecting the hidden life (the lotus seed / marrow). His presence in the marsh says: ‚ÄúEven here, in the dirtiest and most stagnant places, redemption and new life are already forming.‚Äù
 
-## 6. How this destroys Satanís kingdom
+## 6. How this destroys Satan‚Äôs kingdom
 
 Satan's kingdom exists due to the terror of God that is expressed by evil doers when they think they are beyond repentance. They see God as evil and Satan will reinforce that to get angels and spirits alike under his control. If we show how the rebukes to Satan are loving encouragement to a fallen spirit or angel directly we can learn to cast Satan out rightly and test the spirits to see if they are from God and also even teach them God loves them and destroy Satan from the inside.
 
 ## 7. Final hope
 
-Christ will return. Every eye will see Him (Revelation 1:7). We shall all be changed in a moment, in the twinkling of an eye (1 Corinthians 15:51ñ52). Until then, creation groans, waiting for the revealing of the sons of God (Romans 8:19ñ21). Blessed are the peacemakers for they shall be called sons of God.
+Christ will return. Every eye will see Him (Revelation 1:7). We shall all be changed in a moment, in the twinkling of an eye (1 Corinthians 15:51‚Äì52). Until then, creation groans, waiting for the revealing of the sons of God (Romans 8:19‚Äì21). Blessed are the peacemakers for they shall be called sons of God.
 
-So my hope is not sentimental universalism or careless spiritual curiosity. My hope is that Godís kingdom is larger, deeper, and more merciful than Satan wants any creature to believe.
+So my hope is not sentimental universalism or careless spiritual curiosity. My hope is that God‚Äôs kingdom is larger, deeper, and more merciful than Satan wants any creature to believe.
 
-If Leviathan and Behemoth can be read as fallen guardian archetypes, then perhaps Job 40ñ41 is not about fear of evil but fear of God, hatred of evil. It is about restoration: internal strength in the marsh, external mercy in the sea, and the crushing of Satanís kingdom through truth, testing, humility, and love.
+If Leviathan and Behemoth can be read as fallen guardian archetypes, then perhaps Job 40‚Äì41 is not about fear of evil but fear of God, hatred of evil. It is about restoration: internal strength in the marsh, external mercy in the sea, and the crushing of Satan‚Äôs kingdom through truth, testing, humility, and love.
 
 My question for the community:
 

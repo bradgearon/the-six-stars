@@ -1,4 +1,4 @@
-CONSTELLATION FORGE — LIGHT SEED PASS {{ data.phaseNumber }}
+CONSTELLATION FORGE â€” LIGHT SEED PASS {{ data.phaseNumber }}
 
 CONTRIBUTING STAR
 Name: {{ data.displayName }}

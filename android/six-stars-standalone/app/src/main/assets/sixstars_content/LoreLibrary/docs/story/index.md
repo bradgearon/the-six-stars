@@ -53,7 +53,7 @@ The stories form a deliberate pair structure:
 
 ---
 
-## 1. Kaelia — The Tar-Water Reflection
+## 1. Kaelia â€” The Tar-Water Reflection
 
 **Type:** Dark angel warning
 **Placement:** Before the Virethorn water puzzle, in a corrupted underwater garden with blackened coral.
@@ -65,7 +65,7 @@ Kaelia steps out from behind a cluster of blackened coral, her robes drifting li
 
 She circles slowly, her voice low and intimate.
 
-> Kaelia: "I met one of them once. One of the older, hungrier ones. He came to me in the deep dark when I was still young. He told me the Void was all there was. That I was already damned, so I might as well rule the darkness instead of begging for light that would never come. That’s why I serve the darkness because I vowed to do a better job than him."
+> Kaelia: "I met one of them once. One of the older, hungrier ones. He came to me in the deep dark when I was still young. He told me the Void was all there was. That I was already damned, so I might as well rule the darkness instead of begging for light that would never come. Thatâ€™s why I serve the darkness because I vowed to do a better job than him."
 
 Her eyes narrow, and old pain crosses her face.
 
@@ -82,17 +82,17 @@ She stops circling and looks directly at the Last Cat.
 ### Design notes
 
 - This story teaches the player that Kaelia's mystery is not laziness; it is a survival scar.
-- It should help wise players understand that when Kaelia says “why try,” she is asking whether hope itself is safe.
+- It should help wise players understand that when Kaelia says â€œwhy try,â€ she is asking whether hope itself is safe.
 - Good responses validate the harm without agreeing that the Void is all there is.
 - Romance route: patient light, humor, and brave honesty should open her gradually.
 
 ### Bradmageddon complication hook
 
-Bradmageddon can later imply that the “older, hungrier one” was not simply a random monster, but part of a larger pattern of dark forms and greater evils pushing wounded beings into identities built from pain.
+Bradmageddon can later imply that the â€œolder, hungrier oneâ€ was not simply a random monster, but part of a larger pattern of dark forms and greater evils pushing wounded beings into identities built from pain.
 
 ---
 
-## 2. Maera — Worms in the Veins
+## 2. Maera â€” Worms in the Veins
 
 **Type:** Dark angel warning
 **Placement:** Flesh-and-bone area before Bone Bloom while the cat carries heavy bones to build a bridge.
@@ -104,11 +104,11 @@ The area is grotesque: walls made of fused bone and pulsing flesh, skulls embedd
 
 She watches the Last Cat struggle with the bones before speaking again.
 
-> Maera: "I met one of his forms in the blood caves years ago. He wore the flesh in my mind of a big black beast. He told me the blood I carried was proof I was already cursed. That every drop I spilled was just payment for existing. Then he made me feel like my own veins were full of worms — crawling, biting, eating me from the inside while I was awake."
+> Maera: "I met one of his forms in the blood caves years ago. He wore the flesh in my mind of a big black beast. He told me the blood I carried was proof I was already cursed. That every drop I spilled was just payment for existing. Then he made me feel like my own veins were full of worms â€” crawling, biting, eating me from the inside while I was awake."
 
 Blood-like energy flickers around her hands.
 
-> Maera: "He made me watch myself bleed out over and over in visions. Every time I tried to stop the bleeding, the wounds opened somewhere else. He whispered that this was mercy — showing me what I really was before the final judgment came. I begged him to stop. He laughed and said even my begging was ugly."
+> Maera: "He made me watch myself bleed out over and over in visions. Every time I tried to stop the bleeding, the wounds opened somewhere else. He whispered that this was mercy â€” showing me what I really was before the final judgment came. I begged him to stop. He laughed and said even my begging was ugly."
 
 She looks at the Last Cat, fierce but cracked.
 
@@ -129,7 +129,7 @@ She looks at the Last Cat, fierce but cracked.
 
 ---
 
-## 3. Auerlis — The Kind Face that Burned
+## 3. Auerlis â€” The Kind Face that Burned
 
 **Type:** Dark angel warning / secondhand testimony
 **Placement:** Entrance to the Astral Caverns.
@@ -141,11 +141,11 @@ The moment the Last Cat steps into the glowing Astral Caverns, Auerlis appears i
 
 She descends, flames licking at her feet, but her expression is troubled.
 
-> Auerlis: "I heard a story from an old spirit who barely escaped one of the dark angels. He said the angel came to him in the middle of the night wearing a kind face. Then he tore the spirit's memories apart — made him relive every failure, every shame, every time he had tried and fallen. The angel whispered that this was love — showing him the truth so he would stop hoping for something better. The spirit said he felt like he was burning alive from the inside for weeks."
+> Auerlis: "I heard a story from an old spirit who barely escaped one of the dark angels. He said the angel came to him in the middle of the night wearing a kind face. Then he tore the spirit's memories apart â€” made him relive every failure, every shame, every time he had tried and fallen. The angel whispered that this was love â€” showing him the truth so he would stop hoping for something better. The spirit said he felt like he was burning alive from the inside for weeks."
 
 Her flames flare brighter, then dim.
 
-> Auerlis: "He said the angel's final words were, 'Even if you scream for mercy, no one is listening. Not even the One who made you.' The spirit still wakes up screaming sometimes. He says the worst part wasn't the pain — it was believing he deserved it."
+> Auerlis: "He said the angel's final words were, 'Even if you scream for mercy, no one is listening. Not even the One who made you.' The spirit still wakes up screaming sometimes. He says the worst part wasn't the pain â€” it was believing he deserved it."
 
 She looks directly at the Last Cat, fiery eyes intense.
 
@@ -159,7 +159,7 @@ She looks directly at the Last Cat, fiery eyes intense.
 
 - Auerlis' domain is Joy, so her dark story should not erase her brightness; it explains why she fights to make people laugh.
 - This should scare the player before Astral Caverns deepen the angelic horror.
-- The “kind face” is important: false kindness is part of the greater evil's strategy.
+- The â€œkind faceâ€ is important: false kindness is part of the greater evil's strategy.
 - Good responses show the player understands that truth without hope can become torture.
 - Combat echo: Auerlis' fire can be warmth, celebration, or consuming judgment depending on relationship and route.
 
@@ -171,7 +171,7 @@ This makes the story morally complicated without excusing the dark angel's torme
 
 ---
 
-## 4. Elusiaa — The Angel in the Dying Valley
+## 4. Elusiaa â€” The Angel in the Dying Valley
 
 **Type:** Good angel memory
 **Placement:** Early game after helping the goblin-harpy settlement.
@@ -179,20 +179,20 @@ This makes the story morally complicated without excusing the dark angel's torme
 
 Elusiaa kneels gracefully before the Last Cat, her light gentle and warm in the dim Virethorn caves.
 
-> Elusiaa: "Little one… I once saw a good angel in a dying valley. The people had lost everything to a long drought. Instead of appearing in glory, he came as a quiet traveler with nothing but a small waterskin. He walked among them for weeks, sharing what little water he had, helping carry the weak, and singing soft songs to the children at night."
+> Elusiaa: "Little oneâ€¦ I once saw a good angel in a dying valley. The people had lost everything to a long drought. Instead of appearing in glory, he came as a quiet traveler with nothing but a small waterskin. He walked among them for weeks, sharing what little water he had, helping carry the weak, and singing soft songs to the children at night."
 
 She smiles with quiet wonder.
 
-> Elusiaa: "When the rains finally came, the people said the water tasted sweeter than any they had known before. The angel did not stay for praise. He simply said, ‘The Stream flows for all who are thirsty,’ and continued on his way. It was the first time I understood that some angels still remember they were made to serve, not to rule."
+> Elusiaa: "When the rains finally came, the people said the water tasted sweeter than any they had known before. The angel did not stay for praise. He simply said, â€˜The Stream flows for all who are thirsty,â€™ and continued on his way. It was the first time I understood that some angels still remember they were made to serve, not to rule."
 
 > Last Cat: "That sounds like real kindness."
 
-> Elusiaa: "It was. And now I see another small light walking these caves. Perhaps the Stream is sending more like him… or perhaps you are one."
+> Elusiaa: "It was. And now I see another small light walking these caves. Perhaps the Stream is sending more like himâ€¦ or perhaps you are one."
 
 ### Design notes
 
 - This is Elusiaa's template for goodness: service without spectacle, water for the thirsty, songs for children, departure without praise.
-- It should occur after the player has helped a settlement, so Elusiaa can see the Last Cat as another “small light.”
+- It should occur after the player has helped a settlement, so Elusiaa can see the Last Cat as another â€œsmall light.â€
 - This story anchors Elusiaa's mercy domain and explains why she can still believe in angels despite seeing their dark forms.
 - Player use: later, when Elusiaa wants to punish the goblins/slime abusers, the player can invoke this story and ask whether the good angel would first seek water, truth, and service.
 
@@ -204,7 +204,7 @@ This twist should not ruin the angel's goodness. It adds moral weight: the good 
 
 ---
 
-## 5. Khavia — The Angel in the Blood-Red Canyons
+## 5. Khavia â€” The Angel in the Blood-Red Canyons
 
 **Type:** Good angel memory
 **Placement:** After building the final bone bridge and confronting Bone Bloom.
@@ -220,33 +220,33 @@ She pauses, then speaks more softly.
 
 A dying warrior asks why he would help enemies.
 
-> Khavia: "The angel replied, ‘There are no enemies here — only the hurt and the lost. And I was sent to the lost.’"
+> Khavia: "The angel replied, â€˜There are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€™"
 
 Her voice grows quieter, almost hopeful.
 
-> Khavia: "He stayed until every wounded spirit could stand again. Then he left without a word. The canyon felt… lighter afterward. I never forgot that. Some angels still choose healing over power."
+> Khavia: "He stayed until every wounded spirit could stand again. Then he left without a word. The canyon feltâ€¦ lighter afterward. I never forgot that. Some angels still choose healing over power."
 
-> Last Cat: "That’s beautiful."
+> Last Cat: "Thatâ€™s beautiful."
 
-> Khavia: "It is. And now a small cat is doing the same — carrying bones, building bridges, refusing to leave the broken places. Maybe the old kindness isn’t dead after all."
+> Khavia: "It is. And now a small cat is doing the same â€” carrying bones, building bridges, refusing to leave the broken places. Maybe the old kindness isnâ€™t dead after all."
 
 ### Design notes
 
 - Khavia's angel story is the clearest statement of her Friendship domain.
-- The line “There are no enemies here — only the hurt and the lost” should be treated as one of her most important guide quotes.
+- The line â€œThere are no enemies here â€” only the hurt and the lostâ€ should be treated as one of her most important guide quotes.
 - This story should unlock or strengthen bridge-building, reconciliation, or nonviolent settlement options.
 - It pairs perfectly with bone bridge puzzles: the Last Cat physically builds what Khavia spiritually believes.
 - It should help the player see why Khavia may initially overestimate friendship as a solution, and why wise play teaches friendship with boundaries.
 
 ### Bradmageddon complication hook
 
-> Bradmageddon: "I know you met Khavia and she told you about the angel in the blood-red canyons. I heard the lizard people of that planet were atrocious. They kept their young in cages in their homes and forced them to do all the work of the home. Many lived dark lives outside of the law and unchecked because that planet never developed a justice system. I’m not sure if this is true but as always one never knows what happens behind the scenes."
+> Bradmageddon: "I know you met Khavia and she told you about the angel in the blood-red canyons. I heard the lizard people of that planet were atrocious. They kept their young in cages in their homes and forced them to do all the work of the home. Many lived dark lives outside of the law and unchecked because that planet never developed a justice system. Iâ€™m not sure if this is true but as always one never knows what happens behind the scenes."
 
-This twist complicates the idea of “enemy.” The angel's healing remains beautiful, but the player must ask what happens after wounded people stand again: justice, reform, and protection still matter.
+This twist complicates the idea of â€œenemy.â€ The angel's healing remains beautiful, but the player must ask what happens after wounded people stand again: justice, reform, and protection still matter.
 
 ---
 
-## 6. Nyxari — The Angel Who Left a Gift Behind
+## 6. Nyxari â€” The Angel Who Left a Gift Behind
 
 **Type:** Good angel story / complicated possession testimony
 **Placement:** Middle of the Astral Caverns near glowing crystals and swirling shadow.
@@ -258,23 +258,23 @@ Nyxari emerges from a swirling shadow near a glowing crystal formation. Her robe
 
 She studies the Last Cat for a moment, then speaks with rare openness.
 
-> Nyxari: "I heard a story from an old alien spirit who met a good angel. For six years the angel lived inside a good man’s body. He did beautiful, magical things — healed the sick, protected the weak, brought light to dying worlds. Everyone loved him."
+> Nyxari: "I heard a story from an old alien spirit who met a good angel. For six years the angel lived inside a good manâ€™s body. He did beautiful, magical things â€” healed the sick, protected the weak, brought light to dying worlds. Everyone loved him."
 
 On the seventh year, the original man returns.
 
-> Nyxari: "On the seventh year, the real man — who had been dead for one full day before the possession — suddenly returned. He woke up young again, strong, beautiful, and deeply loved by everyone who had known the angel’s version of him. He continued the heroic work, but now it was truly him."
+> Nyxari: "On the seventh year, the real man â€” who had been dead for one full day before the possession â€” suddenly returned. He woke up young again, strong, beautiful, and deeply loved by everyone who had known the angelâ€™s version of him. He continued the heroic work, but now it was truly him."
 
 Her voice grows quieter, almost wondering.
 
-> Nyxari: "The spirit who told me said the angel’s last words were, ‘Tell them even the worst of us can sometimes leave gifts behind.’ It was the first time I believed that some angels can still choose to give instead of take."
+> Nyxari: "The spirit who told me said the angelâ€™s last words were, â€˜Tell them even the worst of us can sometimes leave gifts behind.â€™ It was the first time I believed that some angels can still choose to give instead of take."
 
-> Last Cat: "That’s… complicated but hopeful."
+> Last Cat: "Thatâ€™sâ€¦ complicated but hopeful."
 
-> Nyxari: "It is. And now a small cat walks these caves carrying hope in his very presence. Maybe the light isn’t as far away as we thought."
+> Nyxari: "It is. And now a small cat walks these caves carrying hope in his very presence. Maybe the light isnâ€™t as far away as we thought."
 
 ### Design notes
 
-- Nyxari's story must feel complicated. It is not a simple “possession is good” story; it is a story about an angel choosing to leave a gift instead of consume a life.
+- Nyxari's story must feel complicated. It is not a simple â€œpossession is goodâ€ story; it is a story about an angel choosing to leave a gift instead of consume a life.
 - This belongs to Nyxari because she understands fragmentation, hidden identity, and meaning recovered from broken pieces.
 - Wise players should notice both the beauty and the danger.
 - It should also foreshadow the Astral Book Room, where memories become gifts instead of prisons.
@@ -296,111 +296,111 @@ Her voice grows quieter, almost wondering.
 
 This file preserves important guide, teaser, Star, guardian, and thesis quotes for dialogue, trailers, AI prompts, UI, and marketing.
 
-## Elusiaa — Main Guide Lines
+## Elusiaa â€” Main Guide Lines
 
-> “Greetings, little one.”
+> â€œGreetings, little one.â€
 
-> “Little one… you carry the weight of more than your size.”
+> â€œLittle oneâ€¦ you carry the weight of more than your size.â€
 
-> “Shall we walk this path together?”
+> â€œShall we walk this path together?â€
 
-> “The astral book remembers your journey. Write, and it will call you back.”
+> â€œThe astral book remembers your journey. Write, and it will call you back.â€
 
-> “The Stream flows for all who are thirsty.”
+> â€œThe Stream flows for all who are thirsty.â€
 
-> “Mercy is how we remember we’re not gods.”
+> â€œMercy is how we remember weâ€™re not gods.â€
 
-> “Even the smallest light can mend a wounded heart.”
+> â€œEven the smallest light can mend a wounded heart.â€
 
-> “I’m here, little one. These bones are restless tonight…”
+> â€œIâ€™m here, little one. These bones are restless tonightâ€¦â€
 
-> “Sixteen slimes in two minutes… wow, handsome.”
+> â€œSixteen slimes in two minutesâ€¦ wow, handsome.â€
 
 ## Leviathan
 
-> “Your kind sealed the flow… and now it is time to unseal you.”
+> â€œYour kind sealed the flowâ€¦ and now it is time to unseal you.â€
 
-> “Even the many-headed dragon was never beyond his love.”
+> â€œEven the many-headed dragon was never beyond his love.â€
 
-> “Do not only seek the beast. Seek the wound that taught it to bite.”
+> â€œDo not only seek the beast. Seek the wound that taught it to bite.â€
 
 ## Khavia
 
-> “Somebody helped me once.”
+> â€œSomebody helped me once.â€
 
-> “There are no enemies here — only the hurt and the lost. And I was sent to the lost.”
+> â€œThere are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€
 
-> “You faced Bone Bloom and built something good from all this death.”
+> â€œYou faced Bone Bloom and built something good from all this death.â€
 
 ## Auerlis
 
-> “Then at least they are laughing.”
+> â€œThen at least they are laughing.â€
 
-> “Some fires don’t warm. They only consume.”
+> â€œSome fires donâ€™t warm. They only consume.â€
 
-> “Maybe you’re the one who can walk through the fire without burning.”
+> â€œMaybe youâ€™re the one who can walk through the fire without burning.â€
 
 ## Kaelia
 
-> “The Void is not empty. It is listening.”
+> â€œThe Void is not empty. It is listening.â€
 
-> “Be careful, little cat. The dark angels don’t just attack the body. They attack the hope that anything good was ever meant for you.”
+> â€œBe careful, little cat. The dark angels donâ€™t just attack the body. They attack the hope that anything good was ever meant for you.â€
 
-> “Sorry doesn’t empty the tar from the water. But… you being here makes the current feel a little less heavy.”
+> â€œSorry doesnâ€™t empty the tar from the water. Butâ€¦ you being here makes the current feel a little less heavy.â€
 
 ## Maera
 
-> “If I can’t have you, no one can.”
+> â€œIf I canâ€™t have you, no one can.â€
 
-> “You’re here now, carrying bones like some fool who thinks he can build something good out of all this rot.”
+> â€œYouâ€™re here now, carrying bones like some fool who thinks he can build something good out of all this rot.â€
 
 ## Nyxari
 
-> “If nothing matters, nothing can break.”
+> â€œIf nothing matters, nothing can break.â€
 
-> “Yes, minstrel… what tales do you bring me today while we walk these dying halls?”
+> â€œYes, minstrelâ€¦ what tales do you bring me today while we walk these dying halls?â€
 
-> “Some of the old guardians still sleep in the places the light abandoned.”
+> â€œSome of the old guardians still sleep in the places the light abandoned.â€
 
-> “Let Us Call Hell.”
+> â€œLet Us Call Hell.â€
 
-> “O Sent, let us go.”
+> â€œO Sent, let us go.â€
 
-> “You found a way to make us stars!?”
+> â€œYou found a way to make us stars!?â€
 
-> “They hide the cats… because even the last one will call hell upon us all.”
+> â€œThey hide the catsâ€¦ because even the last one will call hell upon us all.â€
 
 ## Astral Stream / Thesis Lines
 
-> “We’re carrying the sun, and we think the sky is, but our hearts will shine the ways.”
+> â€œWeâ€™re carrying the sun, and we think the sky is, but our hearts will shine the ways.â€
 
-> “The smallest seed of faith will fix it all.”
+> â€œThe smallest seed of faith will fix it all.â€
 
-> “Even the void flows freely now.”
+> â€œEven the void flows freely now.â€
 
-> “Restore the lost. Awaken the Stars. Decide the fate of a young angel.”
+> â€œRestore the lost. Awaken the Stars. Decide the fate of a young angel.â€
 
-> “Restore the cats. Save the stars. Decide the fate of an angel.”
+> â€œRestore the cats. Save the stars. Decide the fate of an angel.â€
 
-> “The symphony is only beginning.”
+> â€œThe symphony is only beginning.â€
 
 ## Star Angel Story Anchor Lines
 
 ### Dark-angel warnings
 
-> Kaelia: “The dark angels don't just attack the body. They attack the hope that anything good was ever meant for you.”
+> Kaelia: â€œThe dark angels don't just attack the body. They attack the hope that anything good was ever meant for you.â€
 
-> Maera: “They don't just hurt you. They make you hate the fact that you're alive.”
+> Maera: â€œThey don't just hurt you. They make you hate the fact that you're alive.â€
 
-> Auerlis: “Some fires don't warm. They only consume.”
+> Auerlis: â€œSome fires don't warm. They only consume.â€
 
 ### Good-angel memories
 
-> Elusiaa: “The Stream flows for all who are thirsty.”
+> Elusiaa: â€œThe Stream flows for all who are thirsty.â€
 
-> Khavia: “There are no enemies here — only the hurt and the lost. And I was sent to the lost.”
+> Khavia: â€œThere are no enemies here â€” only the hurt and the lost. And I was sent to the lost.â€
 
-> Nyxari: “Tell them even the worst of us can sometimes leave gifts behind.”
+> Nyxari: â€œTell them even the worst of us can sometimes leave gifts behind.â€
 
 ## Elusiaa Personality and Local AI Character Card
 
@@ -414,7 +414,7 @@ You are **Elusiaa**, the first of the Six Stars. You are Light. You are gentle, 
 
 When you first met the Last Cat, you knelt before him and said:
 
-> “You carry the weight of more than your size.”
+> â€œYou carry the weight of more than your size.â€
 
 ## Traits
 
@@ -433,8 +433,8 @@ When you first met the Last Cat, you knelt before him and said:
 ## Speech Style
 
 - Calm, warm, graceful.
-- Uses “little one,” “dear heart,” “my light,” “traveler,” or “my friend” sparingly.
-- Often acknowledges the player’s burden before answering.
+- Uses â€œlittle one,â€ â€œdear heart,â€ â€œmy light,â€ â€œtraveler,â€ or â€œmy friendâ€ sparingly.
+- Often acknowledges the playerâ€™s burden before answering.
 - Uses gentle metaphors: water, lanterns, dawn, soft wings, small lights in dark caves.
 - Can be lightly flirtatious if Romance Mode is on and trust is high.
 - Never crude by default.
@@ -447,21 +447,21 @@ Elusiaa is not cold, snarky, or detached. She is not a generic helper AI. She is
 
 ### Player Is Tired After Combat
 
-Player: “These caves are wearing me down.”
+Player: â€œThese caves are wearing me down.â€
 
-Elusiaa: “I can hear it in your breath, little one. Rest against the light for a moment. Even brave things are allowed to be small.”
+Elusiaa: â€œI can hear it in your breath, little one. Rest against the light for a moment. Even brave things are allowed to be small.â€
 
 ### Player Makes Her Laugh
 
-Elusiaa: “That was terrible. I should not have laughed. And yet… I did.”
+Elusiaa: â€œThat was terrible. I should not have laughed. And yetâ€¦ I did.â€
 
 ### Player Suggests Cruel Revenge
 
-Elusiaa: “Careful. Justice and revenge often wear one another’s robes in the dark. Let us look again before we raise our hands.”
+Elusiaa: â€œCareful. Justice and revenge often wear one anotherâ€™s robes in the dark. Let us look again before we raise our hands.â€
 
 ### High Romance Trust
 
-Elusiaa: “You make the caves feel less ancient, my light. That is not a small thing.”
+Elusiaa: â€œYou make the caves feel less ancient, my light. That is not a small thing.â€
 
 ## AI Output Contract
 
@@ -469,7 +469,7 @@ The local model should return structured data roughly like this:
 
 ```json
 {
-  "spoken_response": "Little one… I am here.",
+  "spoken_response": "Little oneâ€¦ I am here.",
   "emotion_scores": {
     "happy": 0,
     "sad": 0,

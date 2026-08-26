@@ -36,7 +36,7 @@ This file indexes the large creature brainstorm source. The complete imported so
 - 3. Ashscale Slime Dragons
 - 4. Oculthorax Apostles
 - 5. Marrowreef Goblins
-- 6. Leviathanís Tonguefish
+- 6. Leviathan‚Äôs Tonguefish
 - 7. Virethorn Saints
 - 8. Itchy Star-Mites
 - 9. Grave-Owls of the Lower Astral
@@ -186,7 +186,7 @@ This file indexes the large creature brainstorm source. The complete imported so
 - 23. Bloodglass Rose
 - 24. Abyssal Sunflower
 - 25. Mirethorn Creeping Altar
-- 26. Slime Saintís Cradle
+- 26. Slime Saint‚Äôs Cradle
 - 27. Blackfire Bramble
 - 28. Astral Vein Grass
 - 29. Bonepetal Trapjaw
@@ -194,22 +194,22 @@ This file indexes the large creature brainstorm source. The complete imported so
 - 1. Moonmilk Bellflower
 - 2. Void-Pearl Kelp
 - 3. Bloodglass Weeping Tree
-- 4. Saintís Rib Fern
+- 4. Saint‚Äôs Rib Fern
 - 5. Ashveil Lotus
 - 6. Slimewomb Pod
 - 7. Star-Script Moss
 - 8. Virethorn Mourning Willow
 - 9. Crystal Lung Reed
 - 10. Black Halo Mushroom
-- 11. Leviathanís Doorvine
+- 11. Leviathan‚Äôs Doorvine
 - 12. Cinderfruit Rosary
 - 13. Hollow-Eye Orchid
-- 14. Marrowlilyís Dark Cousin
+- 14. Marrowlily‚Äôs Dark Cousin
 - 15. Bloodroot Harpgrass
 - 16. Astral Vein Cactus
 - 17. Glassmire Lily Pads
 - 18. Shadow Choir Fungus
-- 19. Behemothís Root-Knuckle
+- 19. Behemoth‚Äôs Root-Knuckle
 - 20. Null-Pollen Dandelion
 
 ## Production notes
@@ -230,8 +230,8 @@ The strongest recurring enemy families from this brainstorm are:
 | --- | --- | --- | --- |
 | Nullfeather Owl | Alien Cave Owl | 250 | Shadow/void owl. Silent dive, blinking teleport. |
 | Cordwing Owl | Alien Cave Owl | 250 | Glowing cord-wing owl. Uses electric/astral tether attacks. |
-| Jack | Sky-Dweller NPC | ó | Not an enemy. Immortal, strange, unable to taste or feel. |
-| Jillianium | Sky-Dweller NPC | ó | Not an enemy. Alien cave owl-like being with glowing cords/bat wings. |
+| Jack | Sky-Dweller NPC | ‚Äî | Not an enemy. Immortal, strange, unable to taste or feel. |
+| Jillianium | Sky-Dweller NPC | ‚Äî | Not an enemy. Alien cave owl-like being with glowing cords/bat wings. |
 
 ## Buzz Line and Small Astral Mutations
 
@@ -240,8 +240,8 @@ The strongest recurring enemy families from this brainstorm are:
 | Buzz | Insect | 45 | Base form. |
 | Buzz Ooze | Slime-Insect | 75 | Drips poison or slime trails. |
 | Buzz Oogle | Eye-Insect | 150 | Uses eye beams or confusion. |
-| Buzz Rule | Insect Commander | 250 | Stronger ìroyalî Buzz that buffs smaller Buzzes. |
-| Ickyís Minion | Slime/Fungal Servant | 175 | Small minion tied to Icky. |
+| Buzz Rule | Insect Commander | 250 | Stronger ‚Äúroyal‚Äù Buzz that buffs smaller Buzzes. |
+| Icky‚Äôs Minion | Slime/Fungal Servant | 175 | Small minion tied to Icky. |
 | Icky | Slime/Fungal Trickster | 175 | Low HP but annoying; should split, flee, or summon. |
 
 ## Dragons and Draconian Creatures
@@ -298,7 +298,7 @@ The strongest recurring enemy families from this brainstorm are:
 | --- | --- | --- | --- |
 | Slimastadon | Ancient Slime Titan | 5,000 | Big Area 3 boss; slime as large as a house. |
 | Virethorn Queen | Poison Plant Queen | 15,000 | Greater Virethorn evolution; probably optional or late-game return boss. |
-| Eyes | Astral Flesh/Eye Horror | 25,000 | Major cosmic horror boss. Iíd rename the full title to Eyes of the Deep Astral. |
+| Eyes | Astral Flesh/Eye Horror | 25,000 | Major cosmic horror boss. I‚Äôd rename the full title to Eyes of the Deep Astral. |
 | Bone Bloom | Bahamut/Life-Force Guardian | 45,000 | Major boss/future ally. Guards life force and tests mercy. |
 | Leviathan | Astral Sea Dragon | 100,000 | Ultimate-scale being; boss, friend, and story pillar. |
 
@@ -310,7 +310,7 @@ The strongest recurring enemy families from this brainstorm are:
 | Threadstep Assassin | Ninja | 550 | Uses red thread traps and wall jumps. |
 | Emberwing Kunoichi | Fire Ninja | 650 | Flame dash, aerial slash, bomb toss. |
 | Void-Talon Ronin | Void Ninja | 800 | Teleports through short void cuts. |
-| Crimson Mirror Ninja | Elite Ninja | 1,000 | Copies the playerís last attack. Excellent miniboss. |
+| Crimson Mirror Ninja | Elite Ninja | 1,000 | Copies the player‚Äôs last attack. Excellent miniboss. |
 
 ## Slimes and Gel Creatures
 

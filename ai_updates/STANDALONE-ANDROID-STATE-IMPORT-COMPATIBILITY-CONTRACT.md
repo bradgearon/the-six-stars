@@ -111,3 +111,20 @@ For every change touching state, memory, deterministic relationship calculations
 8. Can the resulting standalone state still be exported to the canonical import DTO without semantic loss?
 
 This compatibility review is part of the definition of done for future standalone state-system changes.
+
+## Interstar relationship isolation
+
+Interstar relay/reaction state is not a substitute for direct relationship experience with the Last Cat.
+
+The canonical rule is:
+
+- second-hand interstar impressions may influence private awareness and separate Star-to-Star relationships;
+- they must not award or remove Last Cat Heart, Trust, Romance, or EmotionalConnectionPercent;
+- they must not enter direct-player relationship accumulators/vector history where they could later cash out as relationship points;
+- only direct Last Cat interactions may mutate those player relationship meters.
+
+The desktop runtime enforces this for `interstarMicroUpdate=true`. Standalone Android does not currently run the desktop interstar scheduler; when that scheduler is ported, this isolation rule is mandatory for import-compatible state.
+
+## Important quote authority
+
+Important quote significance is again background-LLM-selected, not inferred from ordinary emotion magnitude. The deterministic layer remains responsible only for validation/durability: an LLM-selected exact quote must occur verbatim in the current player turn before it is persisted. This semantic must remain aligned between desktop/game and standalone Android.

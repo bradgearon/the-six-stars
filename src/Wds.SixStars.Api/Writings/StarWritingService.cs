@@ -439,7 +439,7 @@ namespace Wds.SixStars.Api.Writings
             ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: outline ready — “" + outline.Title
                 + "” with " + outline.Beats.Count.ToString(CultureInfo.InvariantCulture) + " structural beats, "
                 + (outline.Characters ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + " cast entries, and "
-                + (outline.StorySubjects ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + " story subjects. Collaborative drafting begins.");
+                + (outline.StorySubjects ?? new List<string>()).Count.ToString(CultureInfo.InvariantCulture) + " story subjects. The viewpoint Star writes the first full draft next.");
 
             List<StarProfile> builders = ShuffleProfiles(allProfiles
                 .Where(x => !string.Equals(x.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase)));
@@ -448,8 +448,79 @@ namespace Wds.SixStars.Api.Writings
                 throw new InvalidOperationException("Constellation Forge needs at least two active collaborator Stars other than the viewpoint Star so pending finish can be audited by someone different from the requester.");
             }
 
+            // The viewpoint Star is the originating author, so she must turn her own architecture into
+            // the first complete prose draft before any collaborator receives the story. Previously the
+            // collaborator list excluded the viewpoint Star and currentStory started empty, which meant
+            // the first shuffled collaborator (often Elusiaa) accidentally authored the first draft.
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: outline complete. "
+                + viewpointProfile.StarId + " is writing the first complete draft before collaborator development begins.");
+            StarWritingStoryBuildResult viewpointDraft = await _agent.BuildStoryPhaseAsync(
+                viewpointProfile,
+                viewpointProfile,
+                state,
+                outline,
+                string.Empty,
+                subjects,
+                verbs,
+                storyWishes,
+                _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
+                Array.Empty<string>(),
+                builders.Select(x => x.StarId).ToList(),
+                1,
+                false,
+                string.Empty,
+                cancellationToken).ConfigureAwait(false);
+
+            string currentStory = viewpointDraft.Story.Trim();
+            outline.Title = string.IsNullOrWhiteSpace(viewpointDraft.Title) ? outline.Title : viewpointDraft.Title.Trim();
+            if (viewpointDraft.Characters != null && viewpointDraft.Characters.Count > 0)
+            {
+                outline.Characters = viewpointDraft.Characters.ToList();
+            }
+            if (viewpointDraft.StorySubjects != null && viewpointDraft.StorySubjects.Count > 0)
+            {
+                outline.StorySubjects = viewpointDraft.StorySubjects.ToList();
+            }
+            if (viewpointDraft.RevisedBeats != null && viewpointDraft.RevisedBeats.Count > 0)
+            {
+                outline.Beats = viewpointDraft.RevisedBeats.ToList();
+            }
+
+            phaseNumber++;
+            development.CurrentPhase = phaseNumber;
+            development.Title = outline.Title;
+            development.Characters = (outline.Characters ?? new List<string>()).ToList();
+            development.StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList();
+            development.OutlineBeats = outline.Beats.ToList();
+            development.CurrentStory = currentStory;
+            development.StoryWishes = CloneStoryWishes(storyWishes);
+            development.ContributingStarIds = new List<string> { viewpointProfile.StarId };
+            development.PendingFinish = false;
+            development.FinishRequestedByStarId = string.Empty;
+            development.UpdatedAt = DateTimeOffset.UtcNow;
+            development.Phases.Add(new StarWritingStoryDevelopmentPhase
+            {
+                PhaseNumber = phaseNumber,
+                Stage = "viewpoint-first-draft",
+                StarId = viewpointProfile.StarId,
+                Characters = (outline.Characters ?? new List<string>()).ToList(),
+                StorySubjects = (outline.StorySubjects ?? new List<string>()).ToList(),
+                StoryWishes = CloneStoryWishes(storyWishes),
+                CompletionDecision = "continue",
+                Summary = "Viewpoint Star wrote the first complete prose draft from her own story architecture before collaborator development.",
+                StorySnapshot = currentStory,
+                UpdatedAt = development.UpdatedAt
+            });
+            state.LatestSelectedPassCount = 1;
+            state.LatestCompletedPassCount = 1;
+            state.LatestAppliedImprovementCount = 0;
+            state.LatestPassUpdatedAt = development.UpdatedAt;
+            await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);
+            ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: viewpoint first draft ready — “"
+                + outline.Title + "”, " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture)
+                + " words. Passing the draft to the collaborator rotation now.");
+
             List<string> buildContributors = new List<string>();
-            string currentStory = string.Empty;
             bool pendingFinish = false;
             string finishRequestedByStarId = string.Empty;
             bool completionApproved = false;
@@ -460,7 +531,7 @@ namespace Wds.SixStars.Api.Writings
             {
                 StarProfile contributor = SelectStoryBuilder(builders, buildPhaseCount, lastBuilderId, finishRequestedByStarId);
                 bool wasPendingFinish = pendingFinish;
-                string buildStage = wasPendingFinish ? "finish audit" : (string.IsNullOrWhiteSpace(currentStory) ? "first full draft" : "development pass");
+                string buildStage = wasPendingFinish ? "finish audit" : "development pass";
                 ReportProgress(progress, viewpointProfile.StarId + " Constellation Forge: phase "
                     + (buildPhaseCount + 1).ToString(CultureInfo.InvariantCulture) + " — " + contributor.StarId
                     + " is running the " + buildStage + ". Current draft: " + CountWords(currentStory).ToString(CultureInfo.InvariantCulture) + " words.");
@@ -474,9 +545,9 @@ namespace Wds.SixStars.Api.Writings
                     verbs,
                     storyWishes,
                     _seedWordProvider?.CreateSeedWords() ?? Array.Empty<string>(),
-                    buildContributors,
+                    new[] { viewpointProfile.StarId }.Concat(buildContributors).ToList(),
                     builders.Select(x => x.StarId).ToList(),
-                    buildPhaseCount + 1,
+                    buildPhaseCount + 2,
                     wasPendingFinish,
                     finishRequestedByStarId,
                     cancellationToken).ConfigureAwait(false);
@@ -544,7 +615,10 @@ namespace Wds.SixStars.Api.Writings
                 development.OutlineBeats = outline.Beats.ToList();
                 development.CurrentStory = currentStory;
                 development.StoryWishes = CloneStoryWishes(storyWishes);
-                development.ContributingStarIds = buildContributors.ToList();
+                development.ContributingStarIds = new[] { viewpointProfile.StarId }
+                    .Concat(buildContributors)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
                 development.PendingFinish = pendingFinish;
                 development.FinishRequestedByStarId = finishRequestedByStarId;
                 development.UpdatedAt = DateTimeOffset.UtcNow;
@@ -562,8 +636,8 @@ namespace Wds.SixStars.Api.Writings
                     StorySnapshot = currentStory,
                     UpdatedAt = development.UpdatedAt
                 });
-                state.LatestSelectedPassCount = Math.Max(1, buildPhaseCount);
-                state.LatestCompletedPassCount = buildPhaseCount;
+                state.LatestSelectedPassCount = Math.Max(1, buildPhaseCount + 1);
+                state.LatestCompletedPassCount = buildPhaseCount + 1;
                 state.LatestAppliedImprovementCount = buildPhaseCount;
                 state.LatestPassUpdatedAt = development.UpdatedAt;
                 await _store.SaveAsync(state, CancellationToken.None).ConfigureAwait(false);

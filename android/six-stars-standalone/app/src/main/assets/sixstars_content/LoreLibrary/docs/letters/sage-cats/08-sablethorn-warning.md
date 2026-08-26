@@ -8,7 +8,7 @@
 | Recipient | Behemoth and every great creature |
 | Tone | Commander, prophet, military authority |
 | Suggested Location | Bone Caves / guardian letter return |
-| Guardian / Attribute Mapping | Behemoth — strength under threat; enemies beneath the feet |
+| Guardian / Attribute Mapping | Behemoth â€” strength under threat; enemies beneath the feet |
 | Best Star Reactions | Maera, Auerlis |
 | Gameplay Use | Warns great creatures that the enemy is internal and already underneath them. |
 

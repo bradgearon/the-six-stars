@@ -1,3 +1,7 @@
+# IMPORTANT: SUPERSEDED
+
+This historical update is no longer the active quote policy. As of the Cloudflare/private-analytics/interstar-guard update, important-player-quote significance is selected **rarely by the protected background review LLM** and the deterministic layer only verifies exact current-turn provenance. See `CLOUDFLARE-PROXY-PRIVATE-ANALYTICS-IMPORTANT-QUOTES-INTERSTAR-GUARD.md`. The older behavior is preserved below only as history.
+
 # Important Quote Deterministic High-Emotion Capture
 
 This update removes important-player-quote decision making from the LLM and moves quote capture into the deterministic memory layer.

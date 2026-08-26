@@ -8,7 +8,7 @@
 | Recipient | Behemoth |
 | Tone | Gentle sage, slightly whimsical |
 | Suggested Location | Crystal/temple section or Astral Book Room archive |
-| Guardian / Attribute Mapping | Behemoth ó crystals, restoration, desire to see beauty before it disappears |
+| Guardian / Attribute Mapping | Behemoth ‚Äî crystals, restoration, desire to see beauty before it disappears |
 | Best Star Reactions | Khavia, Nyxari |
 | Gameplay Use | Points toward crystal restoration and asks Behemoth/Leviathan to reveal hidden crystal locations. |
 
@@ -32,4 +32,4 @@ A wise and curious Archstride
 
 ## Developer Notes
 
-Keep as internal canon for now. Replace or veil ìMinfiliaî before public release unless intentionally used as homage/parody-safe reference.
+Keep as internal canon for now. Replace or veil ‚ÄúMinfilia‚Äù before public release unless intentionally used as homage/parody-safe reference.

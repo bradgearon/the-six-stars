@@ -12,8 +12,8 @@ The first settlement music should feel like a safe place that is not fully safe:
 
 The music can distort during important decisions.
 
-- **Negative choices**: “Let Us Call Hell” appears as whisper, scream, reversed phrase, or metal distortion.
-- **Positive choices**: “O Sent, let us go” resolves as hope, movement, release, or soft choral light.
+- **Negative choices**: â€œLet Us Call Hellâ€ appears as whisper, scream, reversed phrase, or metal distortion.
+- **Positive choices**: â€œO Sent, let us goâ€ resolves as hope, movement, release, or soft choral light.
 
 These cues tell the player that conversation is spiritual gameplay without becoming preachy.
 
@@ -48,13 +48,13 @@ Use more frequent, lighter distortions:
 
 ## Nightmare / Monty Python Contrast
 
-The game can use absurdity and nightmare together. A late-game cutscene can become strange or darkly comic, then twist into a chant of “Let Us Call Hell” as Benaveil grows angrier during the Six Star rewrite sequence.
+The game can use absurdity and nightmare together. A late-game cutscene can become strange or darkly comic, then twist into a chant of â€œLet Us Call Hellâ€ as Benaveil grows angrier during the Six Star rewrite sequence.
 
 ## Ending Music
 
-- Unity Ending: triumphant “O Sent / Let Us Go” variant.
-- Tragic Ending: “Let Us Call Hell” variant, possibly with dove and olive branch.
-- Team/Kind Ending: “O Hell (Rescue the Stars)” can become a triumphant call to bring judgment against the greater evil through unity.
+- Unity Ending: triumphant â€œO Sent / Let Us Goâ€ variant.
+- Tragic Ending: â€œLet Us Call Hellâ€ variant, possibly with dove and olive branch.
+- Team/Kind Ending: â€œO Hell (Rescue the Stars)â€ can become a triumphant call to bring judgment against the greater evil through unity.
 
 ## Hell Arcade Audio Echo
 

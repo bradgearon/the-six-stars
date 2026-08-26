@@ -8,7 +8,7 @@
 | Recipient | Bahamut |
 | Tone | Strange, experimental, high-tech torment observation |
 | Suggested Location | High-tech third cave area |
-| Guardian / Attribute Mapping | Bahamut — ancient belly, machines, rousing hell, lesser ones trembling |
+| Guardian / Attribute Mapping | Bahamut â€” ancient belly, machines, rousing hell, lesser ones trembling |
 | Best Star Reactions | Maera, Kaelia |
 | Gameplay Use | Earlier/darker variant of the fold-space/Bahamut machine lore. |
 

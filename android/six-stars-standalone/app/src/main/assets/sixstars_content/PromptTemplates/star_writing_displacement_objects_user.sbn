@@ -22,7 +22,7 @@ PRIVATE OR CANON DETAILS THAT MAY SHAPE WHAT CATCHES YOUR ATTENTION
 - {{ item }}
 {{ end }}
 
-SEED NOUNS — 100 OPTIONAL IDEAS
+SEED NOUNS â€” 100 OPTIONAL IDEAS
 These are noun seeds only. Use any that spark a fresh object choice, or ignore them.
 {{ if data.seedNouns.size == 0 }}
 (disabled)

@@ -89,7 +89,7 @@ Gameplay: eats small enemies and spits them back as slime-coated projectiles.
 Elements: Virethorn + Light
 Ivy that grows in glowing writing across cave walls. The letters twitch like living insects.
 
-Gameplay: glyph hazard; touching certain ìlettersî triggers thorn bursts.
+Gameplay: glyph hazard; touching certain ‚Äúletters‚Äù triggers thorn bursts.
 
 14. Bloodroot Choir
 
@@ -175,7 +175,7 @@ A low wet plant that grows into altar shapes with bone candles.
 
 Gameplay: creates enemy spawn points unless cut down quickly.
 
-26. Slime Saintís Cradle
+26. Slime Saint‚Äôs Cradle
 
 Elements: Slime + Light + Blood
 A soft glowing plant cradle holding tiny slime embryos. It rocks by itself.
@@ -206,14 +206,14 @@ Gameplay: snaps shut on the player; must be baited open before attacking.
 30. The Hollow Garden Heart
 
 Elements: Light + Blood + Void + Virethorn
-A large alien plant-core that looks like a glowing heart suspended inside a cage of roots, thorns, and floating petals. It is not fully evil ó it seems wounded and confused.
+A large alien plant-core that looks like a glowing heart suspended inside a cage of roots, thorns, and floating petals. It is not fully evil ‚Äî it seems wounded and confused.
 
 Gameplay: mini-boss plant. It changes phases: healing light, blood thorn attacks, void pull, then desperate root armor.
 
 1. Moonmilk Bellflower
 
 Elements: Water + Light
-A pale blue bellflower that drips glowing ìmoonmilkî from its petals. The drops float upward instead of falling. Cats are strangely calm around it.
+A pale blue bellflower that drips glowing ‚Äúmoonmilk‚Äù from its petals. The drops float upward instead of falling. Cats are strangely calm around it.
 
 2. Void-Pearl Kelp
 
@@ -225,7 +225,7 @@ Long black kelp strands with pearl-like bubbles growing along them. Each pearl c
 Elements: Blood + Light
 A small red crystal tree that constantly leaks bright crimson sap. The sap hardens into glass tears around its roots.
 
-4. Saintís Rib Fern
+4. Saint‚Äôs Rib Fern
 
 Elements: Bone Bloom + Light
 A fern shaped like tiny rib bones, each rib tipped with a soft golden glow. It looks like a plant trying to become a chapel.
@@ -238,7 +238,7 @@ A black lotus with smoky petals that never fully burn away. Its center glows ora
 6. Slimewomb Pod
 
 Elements: Slime + Blood + Water
-A translucent hanging pod with curled alien embryos inside. They are not animals yet, not plants anymore ó just soft sleeping possibilities.
+A translucent hanging pod with curled alien embryos inside. They are not animals yet, not plants anymore ‚Äî just soft sleeping possibilities.
 
 7. Star-Script Moss
 
@@ -260,7 +260,7 @@ Tall reeds with transparent sacs that inflate and deflate like lungs. Their brea
 Elements: Shadow + Light
 A mushroom with a glowing stem and a flat black cap surrounded by a thin golden ring. It looks sacred from far away, but wrong up close.
 
-11. Leviathanís Doorvine
+11. Leviathan‚Äôs Doorvine
 
 Elements: Water + Void + Shadow
 A vine that grows tiny door-shaped leaves. Sometimes one opens and shows deep ocean behind it, even in a dry cave.
@@ -275,7 +275,7 @@ A thorny vine with glowing bead-like fruits arranged like a rosary. Each fruit p
 Elements: Void + Light
 A white orchid whose center is a perfect black circular hole. Looking at it too long feels like looking into an eye that has forgotten how to see.
 
-14. Marrowlilyís Dark Cousin
+14. Marrowlily‚Äôs Dark Cousin
 
 Elements: Slime + Bone Bloom + Shadow
 A beautiful slime-flower with bone petals and black jelly roots. It is not evil, but it feels lonely and hungry.
@@ -298,9 +298,9 @@ Floating lily pads made of slick glassy slime. They shimmer with oil-rainbow col
 18. Shadow Choir Fungus
 
 Elements: Shadow + Slime + Light
-A colony of mushrooms with tiny mouths under their caps. They do not sing loudly ó they whisper harmonies you almost understand.
+A colony of mushrooms with tiny mouths under their caps. They do not sing loudly ‚Äî they whisper harmonies you almost understand.
 
-19. Behemothís Root-Knuckle
+19. Behemoth‚Äôs Root-Knuckle
 
 Elements: Bone Bloom + Blood + Virethorn
 A thick root formation shaped like a giant buried hand. Bone plates grow over the bark like armor.
@@ -320,7 +320,7 @@ A cave coral that burns underwater. Blue flames curl along its red branches, but
 Elements: Light + Virethorn
 A sharp white flower with rainbow crystal thorns. It looks delicate but every petal edge is knife-thin.
 
-23. Slime Saintís Veil
+23. Slime Saint‚Äôs Veil
 
 Elements: Slime + Light
 A hanging curtain of translucent plant-slime that glows softly like stained glass. It sways like fabric and sometimes forms a kneeling silhouette.

@@ -8,7 +8,7 @@
 | Recipient | Dear friend / the Last Cat |
 | Tone | Protective, worried, practical |
 | Suggested Location | Childhood clue carried from the orphanage |
-| Guardian / Attribute Mapping | Leviathan — closeness to the Stream; discernment against counterfeit light |
+| Guardian / Attribute Mapping | Leviathan â€” closeness to the Stream; discernment against counterfeit light |
 | Best Star Reactions | Kaelia, Elusiaa |
 | Gameplay Use | Warns the player that mana and stardust are politically/spiritually contested. |
 

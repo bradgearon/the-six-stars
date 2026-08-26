@@ -8,7 +8,7 @@
 | Recipient | The Last Cat |
 | Tone | Excited, hopeful, young |
 | Suggested Location | Childhood clue / later Astral Book replay |
-| Guardian / Attribute Mapping | Last Cat — public myth, hope, awakening magic |
+| Guardian / Attribute Mapping | Last Cat â€” public myth, hope, awakening magic |
 | Best Star Reactions | Auerlis, Khavia |
 | Gameplay Use | Shows the Last Cat becoming a myth before he is ready. |
 

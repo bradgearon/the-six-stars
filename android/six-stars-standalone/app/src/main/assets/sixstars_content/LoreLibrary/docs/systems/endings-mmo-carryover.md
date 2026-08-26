@@ -28,7 +28,7 @@ Benaveil denies the mana system or the player loses access to unlearned powers. 
 
 ### Benjudiel Tragic Name
 
-In a tragic path, Benaveil can become **Benjudiel**, a name implying the veil lifted into a Judas-like tragic guardian identity. This is tied to judgment, self-condemnation, and “Let Us Call Hell.”
+In a tragic path, Benaveil can become **Benjudiel**, a name implying the veil lifted into a Judas-like tragic guardian identity. This is tied to judgment, self-condemnation, and â€œLet Us Call Hell.â€
 
 ## Ending Archetypes
 

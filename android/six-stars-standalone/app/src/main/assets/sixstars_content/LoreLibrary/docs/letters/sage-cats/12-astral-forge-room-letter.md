@@ -8,7 +8,7 @@
 | Recipient | Behemoth |
 | Tone | Militant, forge-lit, final |
 | Suggested Location | Astral Forge Room / ancient cat temple |
-| Guardian / Attribute Mapping | Behemoth — weapon authority, legs, land, internal furnace |
+| Guardian / Attribute Mapping | Behemoth â€” weapon authority, legs, land, internal furnace |
 | Best Star Reactions | Maera, Auerlis |
 | Gameplay Use | Connects the Astral Forge Room to the weapon against the common enemy and hidden sea kittens. |
 
@@ -26,4 +26,4 @@ Asheveil, with flames
 
 ## Developer Notes
 
-Preserve as-written but flag for rewrite. “Sea kitten” likely refers to hidden cats or cats transformed/hidden in sea/astral folds.
+Preserve as-written but flag for rewrite. â€œSea kittenâ€ likely refers to hidden cats or cats transformed/hidden in sea/astral folds.

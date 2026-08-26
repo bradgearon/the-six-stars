@@ -4,7 +4,7 @@ Canonical Star-safe area reference for the cave network. All area material is co
 
 ## Area Index
 
-The cave network is large enough to support a 35–45 hour single-player campaign. It should not be described as only “the Virethorn Caves.” Virethorn is the first major section, not the whole world.
+The cave network is large enough to support a 35â€“45 hour single-player campaign. It should not be described as only â€œthe Virethorn Caves.â€ Virethorn is the first major section, not the whole world.
 
 | Order | Area | Core Identity | Major Content |
 |---|---|---|---|
@@ -180,7 +180,7 @@ The Astral Book Room is a save/memory sanctuary and one of the most important re
 
 ## Key Quote
 
-> “The astral book remembers your journey. Write, and it will call you back.”
+> â€œThe astral book remembers your journey. Write, and it will call you back.â€
 
 ## Visual Notes
 

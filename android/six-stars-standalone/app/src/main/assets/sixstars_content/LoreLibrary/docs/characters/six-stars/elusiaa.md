@@ -23,9 +23,9 @@ Gentle, radiant, emotionally intimate, protective, flirty through warmth and won
 
 ## Angel story
 
-### Good angel story ó The Angel in the Dying Valley
+### Good angel story ‚Äî The Angel in the Dying Valley
 
-Elusiaa tells the Last Cat about a good angel who came to a drought-stricken valley as a quiet traveler with only a waterskin. He shared water, carried the weak, sang to children, and left after the rain came without seeking praise. His line, ìThe Stream flows for all who are thirsty,î defines Elusiaa's mercy ideal: angels were made to serve, not rule.
+Elusiaa tells the Last Cat about a good angel who came to a drought-stricken valley as a quiet traveler with only a waterskin. He shared water, carried the weak, sang to children, and left after the rain came without seeking praise. His line, ‚ÄúThe Stream flows for all who are thirsty,‚Äù defines Elusiaa's mercy ideal: angels were made to serve, not rule.
 
 **Gameplay use:** This story should be a callback when Elusiaa is tempted to punish goblins or destroy a settlement. A wise player can remind her that the good angel sought water, truth, and service before judgment.
 

@@ -8,7 +8,7 @@
 | Recipient | Bahamut |
 | Tone | Curious scientist |
 | Suggested Location | Early Virethorn or first high-tech cave transition |
-| Guardian / Attribute Mapping | Bahamut — belly/strength; cats and water; stardust leakage |
+| Guardian / Attribute Mapping | Bahamut â€” belly/strength; cats and water; stardust leakage |
 | Best Star Reactions | Elusiaa, Khavia |
 | Gameplay Use | Teaches that cats have a strange relationship with water and may have started on this planet. |
 

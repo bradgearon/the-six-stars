@@ -4,12 +4,12 @@ The Six Stars are the early focus of The Last Cat: The Early Years. They are pow
 
 | Star | Element | Daughter/Form | Domain | Core Quote | Magical Focus |
 |---|---|---|---|---|---|
-| [Elusiaa](elusiaa.md) | Light | Daughter of Racha | Mercy | “Mercy is how we remember we’re not gods.” | Lumen’s Grace staff |
-| [Khavia](khavia.md) | Water | Daughter of Chavera | Friendship | “Somebody helped me once.” | Tideweaver’s Codex |
-| [Auerlis](auerlis.md) | Fire | Daughter of Simchi | Joy | “Then at least they are laughing.” | Ember Eternal lantern |
-| [Maera](maera.md) | Blood | Daughter of Maerrow | Possession | “If I can’t have you, no one can.” | Sanguine Heart crystal |
-| [Kaelia](kaelia.md) | Void | Daughter of Kaeliss | Mystery | “The Void is not empty. It is listening.” | Nullheart Orb |
-| [Nyxari](nyxari.md) | Shadow | Daughter of Nyxara | Fragmentation | “If nothing matters, nothing can break.” | Eclipse Mirror |
+| [Elusiaa](elusiaa.md) | Light | Daughter of Racha | Mercy | â€œMercy is how we remember weâ€™re not gods.â€ | Lumenâ€™s Grace staff |
+| [Khavia](khavia.md) | Water | Daughter of Chavera | Friendship | â€œSomebody helped me once.â€ | Tideweaverâ€™s Codex |
+| [Auerlis](auerlis.md) | Fire | Daughter of Simchi | Joy | â€œThen at least they are laughing.â€ | Ember Eternal lantern |
+| [Maera](maera.md) | Blood | Daughter of Maerrow | Possession | â€œIf I canâ€™t have you, no one can.â€ | Sanguine Heart crystal |
+| [Kaelia](kaelia.md) | Void | Daughter of Kaeliss | Mystery | â€œThe Void is not empty. It is listening.â€ | Nullheart Orb |
+| [Nyxari](nyxari.md) | Shadow | Daughter of Nyxara | Fragmentation | â€œIf nothing matters, nothing can break.â€ | Eclipse Mirror |
 
 
 

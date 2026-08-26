@@ -8,7 +8,7 @@
 | Recipient | Dear little one / the Last Cat |
 | Tone | Bitter, exhausted, defeated |
 | Suggested Location | Childhood clue carried from the orphanage |
-| Guardian / Attribute Mapping | Hidden cats — despair, concealment, and false finality |
+| Guardian / Attribute Mapping | Hidden cats â€” despair, concealment, and false finality |
 | Best Star Reactions | Kaelia, Nyxari |
 | Gameplay Use | Makes the player question whether the cats are dead, hidden, or unreachable in normal space. |
 

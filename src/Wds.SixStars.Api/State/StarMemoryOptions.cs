@@ -3,7 +3,10 @@ namespace Wds.SixStars.Api.State
     public sealed class StarMemoryOptions
     {
         public bool AcceptModelSuggestedDeltas { get; set; }
-        public bool AutoCaptureHighImpactPlayerQuotes { get; set; } = true;
+        // Legacy configuration keys retained so older appsettings continue to bind cleanly.
+        // They are intentionally ignored: important quote significance is selected by the
+        // protected background review LLM and deterministic storage only validates provenance.
+        public bool AutoCaptureHighImpactPlayerQuotes { get; set; } = false;
         public double AutoImportantQuoteMinEmotionConfidence { get; set; } = 0.15;
         public double AutoImportantQuoteMinEmotionScore { get; set; } = 30;
         public double AutoImportantQuoteMinWeightedEmotionScore { get; set; } = 4.5;

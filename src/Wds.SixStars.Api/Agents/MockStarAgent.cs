@@ -412,10 +412,8 @@ namespace Wds.SixStars.Api.Agents
             response.ConversationSummary = "The Last Cat is speaking with " + profile.DisplayName + ". Latest request type: " + request.RequestType + ". Prior summary: " + prior + " Latest exchange: player said '" + Truncate(playerText, 180) + "' and she answered '" + Truncate(response.SpokenText, 180) + "'.";
             response.ChangesSummary = profile.DisplayName + " responded to the player's latest " + request.RequestType + " input; purpose=" + response.EmotionalPurpose + ".";
 
-            if (!string.IsNullOrWhiteSpace(playerText) && response.EmotionScores.Any(x => x.Value.Score >= 80 && x.Value.Confidence >= 0.75))
-            {
-                response.ImportantPlayerQuotes.Add(playerText);
-            }
+            // Important-player-quote significance belongs to the protected background review LLM.
+            // The mock path intentionally does not infer quotes from emotion magnitude.
 
             if (response.DetectedCombos.Count > 0)
             {

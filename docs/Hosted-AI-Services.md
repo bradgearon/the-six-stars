@@ -42,7 +42,7 @@ DASHSCOPE_API_KEY=...
 
 The generic key aliases `SIX_STARS_HOSTED_LLM_API_KEY`, `SIX_STARS_HOSTED_ASR_API_KEY`, and `SIX_STARS_HOSTED_TTS_API_KEY` are also supported.
 
-## Hosted LLM — Google AI Studio
+## Hosted LLM â€” Google AI Studio
 
 Default model: `gemma-4-26b-a4b-it`.
 
@@ -66,7 +66,7 @@ Existing shared LLM controls such as `SIX_STARS_LLM_TEMPERATURE`, `SIX_STARS_LLM
 
 The dedicated `ScreenLLM` vision path is intentionally unchanged; it remains independently configured under `ScreenLLM`.
 
-## Hosted ASR — Groq
+## Hosted ASR â€” Groq
 
 Default model: `whisper-large-v3-turbo`.
 
@@ -81,7 +81,7 @@ SIX_STARS_HOSTED_ASR_TIMEOUT_SECONDS=60
 SIX_STARS_HOSTED_ASR_ENDPOINT=https://api.groq.com/openai/v1/audio/transcriptions
 ```
 
-## Hosted TTS — Alibaba Qwen3-TTS voice cloning
+## Hosted TTS â€” Alibaba Qwen3-TTS voice cloning
 
 Default synthesis model: `qwen3-tts-vc-2026-01-22`.
 
@@ -89,7 +89,7 @@ This path uses the Qwen3-TTS voice-cloning API rather than Qwen-Audio-TTS becaus
 
 On the first hosted TTS request for a Star, the generator resolves the existing `VoiceCloneAudioFile`, enrolls it using `qwen-voice-enrollment`, receives the hosted voice ID, and writes that ID to `state/hosted-tts-voices.json`. Later runs reuse the cached voice and do not enroll it again. A pre-created voice can also be supplied under `HostedServices:TTS:VoiceIds` keyed by Star ID.
 
-The six bundled clone WAVs are already 16-bit, mono, 24 kHz samples in the roughly 12–16 second range, matching the published Qwen3-TTS VC format/rate/duration requirements.
+The six bundled clone WAVs are already 16-bit, mono, 24 kHz samples in the roughly 12â€“16 second range, matching the published Qwen3-TTS VC format/rate/duration requirements.
 
 The existing sentence/chunk speech pipeline remains in charge. Each text part is synthesized in order, downloaded as hosted audio, and emitted through the same `IStreamingVoiceGenerator` events used by local WebSocket TTS.
 

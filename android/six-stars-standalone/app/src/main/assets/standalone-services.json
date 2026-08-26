@@ -41,5 +41,10 @@
     "EnableDailyStateRefresh": true,
     "EnableGirlfriendHourlyRefresh": true,
     "TraceEnabled": true
+  },
+  "Proxy": {
+    "Enabled": false,
+    "BaseUrl": "https://api.example.com",
+    "AccessToken": ""
   }
 }

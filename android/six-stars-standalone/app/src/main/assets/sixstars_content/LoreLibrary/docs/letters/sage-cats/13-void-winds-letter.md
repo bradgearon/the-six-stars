@@ -8,7 +8,7 @@
 | Recipient | Behemoth |
 | Tone | Concerned, observational, sad |
 | Suggested Location | Upper/Bone caves or Astral Caverns wind puzzle |
-| Guardian / Attribute Mapping | Behemoth — legs, earth, names lost in void winds |
+| Guardian / Attribute Mapping | Behemoth â€” legs, earth, names lost in void winds |
 | Best Star Reactions | Nyxari, Khavia |
 | Gameplay Use | Introduces winds that used to have names and may or may not return. |
 

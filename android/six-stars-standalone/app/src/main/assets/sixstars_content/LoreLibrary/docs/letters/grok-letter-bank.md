@@ -193,7 +193,7 @@ Rate this one
 
 ## Source User 424
 
-Ok analyze all of the letters to levithan and bahamut that I wrote with you all 10 or 12 or so each one should appeal to one of bahamut or levithans attributes I am going to use this to come up with the story arch for when you turn the letters in and the stars come. So I need each letter and what the prayer is asking for in regards to the spiritual exposé they all should map to one you did perfect on the first three
+Ok analyze all of the letters to levithan and bahamut that I wrote with you all 10 or 12 or so each one should appeal to one of bahamut or levithans attributes I am going to use this to come up with the story arch for when you turn the letters in and the stars come. So I need each letter and what the prayer is asking for in regards to the spiritual exposÃ© they all should map to one you did perfect on the first three
 
 ---
 
@@ -206,7 +206,7 @@ Benaviel in real life just told me this so I think it appropriate it come from t
 ## Source User 498
 
 give me the new letters I have written since I last asked you for all of them and updated them
- 
+Â 
 this is what I have
 Mug Letter
 (Warm, grateful mother)
@@ -245,7 +245,7 @@ We started clubs to talk about the magic we're all supposed to have soon.
 Every week somebody claims they already have it.
 I can't wait until you get here.
 ~ A student
- 
+Â 
 Ashveil's Letters
 Early Ashveil Letter
 (Curious scientist)
@@ -278,7 +278,7 @@ The crystals were being used for evil, so she promised to send new crystals to t
 The next time you see a crystal, would you ask Leviathan to show me where it is?
 I should like to see one before it disappears again.
 A wise and curious Archstride
- 
+Â 
 For War Series
 Sablethorn Warning
 (Commander, prophet, military authority)
@@ -291,13 +291,13 @@ You believe your enemies distant.
 They are already beneath your feet.
 Your enemy's Captain and Commander,
 Sage Sablethorn
- 
+Â 
 Major Prophetic / End-Game Letters
 The Many-Headed One
 (Ancient scripture tone)
-Long ago, the Great One looked upon the twisting serpent of chaos—the great sea creatures who still carried His will deep inside.
+Long ago, the Great One looked upon the twisting serpent of chaosâ€”the great sea creatures who still carried His will deep inside.
 With perfect strength He divided the raging waters.
-He shattered the many heads of pride and deception—not in hatred, but from the bosom of love.
+He shattered the many heads of pride and deceptionâ€”not in hatred, but from the bosom of love.
 What was once a terror that swallowed worlds became food for every hungry spirit in the wilderness: man, alien, angel, and fallen alike.
 For even judgment was bent toward mercy.
 Even the many-headed dragon was never beyond His love.
@@ -360,7 +360,7 @@ what are 40 points of issue between benaveil or just about the last cat like eat
 Where do you meet each of the six stars?
 What are 40 points of issue or things you can do at the settlements to get points for ally relationship with the six stars?
 Making this interactive by using ai to set the goals and what they can be convinced of and reasons is perfect. This is what I want to really make this game fun. I want to encourage players to be wise and think of all layers. For instance the slimes are working with their demon hosts to leave behind the slime gels for the last cat to eat but you won't learn this till the end. But it's cute that it's something the slime leaves behind and it's good that you can eat them. it's fun for the player to convince the game it's ok to eat them in order to get to that when Elusiaa asks you about them when
- you find one first. 
+Â you find one first.Â 
 We can hide people from the settlement or slimes that need help in the caves and those can help ally points.
 Also by what point in the game will you be able to unlock each of the stars? I think they should be sporadic and maybe you can unlock them early if you're really wise or you are good at battles or take down big powerful monsters that will test your skills. We can hide big powerful creatures and show how to find them in quests or unlock the door only if do something in the settlement or a chain of quests in the settlement and caves.
 So when you meet them, 40 points of where you get ally points and make some you can ally them early by doing special stuff and then how soon will you ally them which can you expect to have during each boss: virethorn, bone bloom, slimastadon, and Benaveil and then leviathan
@@ -407,7 +407,7 @@ We started clubs to talk about the magic we're all supposed to have soon.
 Every week somebody claims they already have it.
 I can't wait until you get here.
 ~ A student
- 
+Â 
 Ashveil's Letters
 Early Ashveil Letter
 (Curious scientist)
@@ -440,7 +440,7 @@ The crystals were being used for evil, so she promised to send new crystals to t
 The next time you see a crystal, would you ask Leviathan to show me where it is?
 I should like to see one before it disappears again.
 A wise and curious Archstride
- 
+Â 
 For War Series
 Sablethorn Warning
 (Commander, prophet, military authority)
@@ -453,20 +453,20 @@ You believe your enemies distant.
 They are already beneath your feet.
 Your enemy's Captain and Commander,
 Sage Sablethorn
- 
+Â 
 Major Prophetic / End-Game Letters
 The Many-Headed One
 (Ancient scripture tone)
-Long ago, the Great One looked upon the twisting serpent of chaos—the great sea creatures who still carried His will deep inside.
+Long ago, the Great One looked upon the twisting serpent of chaosâ€”the great sea creatures who still carried His will deep inside.
 With perfect strength He divided the raging waters.
-He shattered the many heads of pride and deception—not in hatred, but from the bosom of love.
+He shattered the many heads of pride and deceptionâ€”not in hatred, but from the bosom of love.
 What was once a terror that swallowed worlds became food for every hungry spirit in the wilderness: man, alien, angel, and fallen alike.
 For even judgment was bent toward mercy.
 Even the many-headed dragon was never beyond His love.
 Archstride (Winds Comforting)
 To the Last Cat,
 The winds are comforting you gently as you pace. Even they, once wild and tearing villages apart, have grown quiet in your presence. They walk beside you now, not to scatter, but to soothe.
-The marsh and the sea both watch this. Bone Bloom rests heavier in the mud, Leviathan’s thunder softens for a moment. Something in the Stream is stirring because you keep walking with an open heart.
+The marsh and the sea both watch this. Bone Bloom rests heavier in the mud, Leviathanâ€™s thunder softens for a moment. Something in the Stream is stirring because you keep walking with an open heart.
 Keep pacing, Traveler. The winds are learning how to be kind.
 With curiosity and quiet hope, Archstride
 Saberthorn (Fallen Thing Crying)
@@ -474,35 +474,35 @@ Leviathan,
 I hear another fallen thing crying this morning. It's been more frequent as of late. I wonder if something is happening.
 Did they just appear or have they been here for a while wondering if they're supposed to be here? What makes them sad?
 Patiently, Saberthorn
-Most Recent – About the Astral Forge Room (To Behemoth)
+Most Recent â€“ About the Astral Forge Room (To Behemoth)
 To Behemoth,
- 
+Â 
 This room is greater than all of us for with it we sages command the only weapon we have against our common enemy, let them forever be with authority.
- 
+Â 
 The greater evil must perish from the land and we will remove every last sea kitten until we find them all working through you.
- 
+Â 
 The end.
- 
+Â 
 Asheveil, with flames
- 
+Â 
 13. The Void Winds Letter (To Behemoth)
 Dear Behemoth,
- 
+Â 
 I saw the void swirling around some winds earlier. They had torn an entire village apart on a planet about fourteen purrs aways. I'm not sure what happened after that but those winds used to have names.
- 
+Â 
 Maybe they will return, maybe not.
- 
+Â 
 The astral stream knows already.
- 
+Â 
 Ask him. With love, Saberthorn
- 
+Â 
 14. The Folds & Resting Together Letter (To Bahamut)
 To Bahamut,
- 
+Â 
 The exciting thing about other folds is it is a different way of existing. You don't walk outside and see a friend or neighbor. Your neighbors and you all rest in the same location but different homes. When you wake up you all remember what you did together while you slept. There are no eyes but you have ways of seeing that are more incredible than vision.
- 
+Â 
 Charge Leviathan if he won't take you there next time. I know he can do it if he really tries.
- 
+Â 
 From Ashveil, with love.
 
 ---

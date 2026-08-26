@@ -1,12 +1,12 @@
-# Elusiaa ñ Light Domain
+# Elusiaa ‚Äì Light Domain
 
-ìMercy is how we remember weíre not gods.î
+‚ÄúMercy is how we remember we‚Äôre not gods.‚Äù
 
 - Weapon: Radiant staff and light-infused claws/sword
 
-## Root Node ñ Bond of Light (Passive) +8 Light Resistance +25 Mana Soft aura reveals hidden shrines, Stardust Nodes, and relics in darkness.
+## Root Node ‚Äì Bond of Light (Passive) +8 Light Resistance +25 Mana Soft aura reveals hidden shrines, Stardust Nodes, and relics in darkness.
 
-## Path 1: Dawnís Embrace ñ Restoration & Renewal
+## Path 1: Dawn‚Äôs Embrace ‚Äì Restoration & Renewal
 
 ### Minor Section 1
 
@@ -16,25 +16,25 @@
 
 - Soothing Presence: +8 Defense
 
-- Heartís Resilience: +10 Max Health
+- Heart‚Äôs Resilience: +10 Max Health
 
-### Star Skill 1 ñ LUMINOUS TOUCH (Level 3, 90 JP)
+### Star Skill 1 ‚Äì LUMINOUS TOUCH (Level 3, 90 JP)
 
 - Mana Version: 45% Mana
 
-- Stardust Version: 40 Stardust Quick self-heal. Restores 20% of your Health. ìEven the smallest light can mend a wounded heart.î
+- Stardust Version: 40 Stardust Quick self-heal. Restores 20% of your Health. ‚ÄúEven the smallest light can mend a wounded heart.‚Äù
 
 ### Minor Section 2 (Stardust Focus)
 
 - Stardust Bloom: +10% Stardust from basic attacks
 
-- Dawnís Rhythm: +15% Stardust from melee ? sword switches
+- Dawn‚Äôs Rhythm: +15% Stardust from melee ‚Üí sword switches
 
 - Merciful Flow: +12% Stardust from healing skills
 
-- Lightís Cadence: +20% Stardust from melee ? skill switches
+- Light‚Äôs Cadence: +20% Stardust from melee ‚Üí skill switches
 
-### Star Skill 2 ñ SERAPHíS CASCADE (Level 5, 280 JP)
+### Star Skill 2 ‚Äì SERAPH‚ÄôS CASCADE (Level 5, 280 JP)
 
 - Mana Version: 55 Mana
 
@@ -48,9 +48,9 @@
 
 - Echo of Mercy: Luminous Touch Stardust cost reduced by 30% in Astral Expression Mode
 
-- Dawnís Insight: +10% critical chance in Astral Expression Mode
+- Dawn‚Äôs Insight: +10% critical chance in Astral Expression Mode
 
-### Star Skill 3 ñ Eternal Benediction (Level 7, 520 JP) ñ New
+### Star Skill 3 ‚Äì Eternal Benediction (Level 7, 520 JP) ‚Äì New
 
 - Mana Version: 65 Mana
 
@@ -66,13 +66,13 @@
 
 - Astral Mercy: Dawn Eternal gains extra effects when cast with Stardust in Astral Expression Mode
 
-## Path Capstone ñ Dawn Eternal (Level 9, 920 JP)
+## Path Capstone ‚Äì Dawn Eternal (Level 9, 920 JP)
 
 - Mana Version: 75% Mana
 
-- Stardust Version: 80 Stardust Ultimate self-restoration. Fully restores Health, removes all debuffs, and grants ìEternal Dawnî (+25% healing received, +12% all damage for 12s).
+- Stardust Version: 80 Stardust Ultimate self-restoration. Fully restores Health, removes all debuffs, and grants ‚ÄúEternal Dawn‚Äù (+25% healing received, +12% all damage for 12s).
 
-## Path 2: Radiant Veil ñ Protection & Grace
+## Path 2: Radiant Veil ‚Äì Protection & Grace
 
 ### Minor Section 1
 
@@ -80,11 +80,11 @@
 
 - Unyielding Light: +7 Defense
 
-- Guardianís Grace: +25 Mana
+- Guardian‚Äôs Grace: +25 Mana
 
 - Veilweaver: +6 Spirit
 
-### Star Skill 1 ñ VEIL OF MERCY (Level 3, 110 JP)
+### Star Skill 1 ‚Äì VEIL OF MERCY (Level 3, 110 JP)
 
 - Mana Version: 70 Mana
 
@@ -94,13 +94,13 @@
 
 - Protective Bloom: +10% Stardust from defensive skills
 
-- Veil Rhythm: +15% Stardust from melee ? skill switches
+- Veil Rhythm: +15% Stardust from melee ‚Üí skill switches
 
 - Radiant Flow: +12% Stardust from barrier usage
 
-- Guardianís Cadence: +20% Stardust from combo switching
+- Guardian‚Äôs Cadence: +20% Stardust from combo switching
 
-### Star Skill 2 ñ STARLIT BENEDICTION (Level 5, 290 JP)
+### Star Skill 2 ‚Äì STARLIT BENEDICTION (Level 5, 290 JP)
 
 - Mana Version: 60% Mana
 
@@ -116,7 +116,7 @@
 
 - Radiant Focus: +10% defense in Astral Expression Mode
 
-### Star Skill 3 ñ Lumenís Ward (Level 7, 510 JP) ñ New
+### Star Skill 3 ‚Äì Lumen‚Äôs Ward (Level 7, 510 JP) ‚Äì New
 
 - Mana Version: 60 Mana
 
@@ -132,13 +132,13 @@
 
 - Astral Grace: Lumen Beam gains extra effects in Astral Expression Mode
 
-## Path Capstone ñ Lumen Beam (Level 9, 820 JP)
+## Path Capstone ‚Äì Lumen Beam (Level 9, 820 JP)
 
 - Mana Version: 18 Mana per second
 
 - Stardust Version: 15 Stardust per second Powerful sustained beam of holy energy with knockback and purification.
 
-## Path 3: Purge of Compassion ñ Holy Offense & Melee Chains
+## Path 3: Purge of Compassion ‚Äì Holy Offense & Melee Chains
 
 ### Minor Section 1
 
@@ -150,23 +150,23 @@
 
 - Righteous Fury: +10 Light Resistance
 
-### Star Skill 1 ñ HOLY ORB (Level 3, 100 JP)
+### Star Skill 1 ‚Äì HOLY ORB (Level 3, 100 JP)
 
 - Mana Version: 50 Mana
 
-- Stardust Version: 45 Stardust Holy projectile. Explodes on impact and applies ìPurifiedî.
+- Stardust Version: 45 Stardust Holy projectile. Explodes on impact and applies ‚ÄúPurified‚Äù.
 
 ### Minor Section 2 (Stardust Focus)
 
 - Purifying Bloom: +10% Stardust from basic attacks
 
-- Holy Rhythm: +15% Stardust from melee ? sword switches
+- Holy Rhythm: +15% Stardust from melee ‚Üí sword switches
 
 - Righteous Flow: +12% Stardust from skill combos
 
-- Lightís Cadence: +20% Stardust from attack switching
+- Light‚Äôs Cadence: +20% Stardust from attack switching
 
-### Star Skill 2 ñ ABSOLUTIONíS GRACE (Level 4, 160 JP)
+### Star Skill 2 ‚Äì ABSOLUTION‚ÄôS GRACE (Level 4, 160 JP)
 
 - Mana Version: 65 Mana
 
@@ -182,7 +182,7 @@
 
 - Radiant Fury: +10% Light damage in Astral Expression Mode
 
-### Star Skill 3 ñ Graceful Purge (Level 7, 500 JP) ñ New
+### Star Skill 3 ‚Äì Graceful Purge (Level 7, 500 JP) ‚Äì New
 
 - Mana Version: 55 Mana
 
@@ -198,7 +198,7 @@
 
 - Astral Judgment: Holy Pounce gains extra effects in Astral Expression Mode
 
-## Path Capstone ñ Radiant Cross Slash (Level 9, 860 JP)
+## Path Capstone ‚Äì Radiant Cross Slash (Level 9, 860 JP)
 
 - Mana Version: 85 Mana
 

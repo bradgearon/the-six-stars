@@ -23,7 +23,7 @@ Darkly passionate, jealous, intense, loyal when healed, needs careful boundaries
 
 ## Angel story
 
-### Dark angel story — Worms in the Veins
+### Dark angel story â€” Worms in the Veins
 
 Maera tells the Last Cat that a dark form came to her in the blood caves as a big black beast, told her blood proved she was cursed, and made her feel worms crawling and biting inside her veins. He made her watch herself bleed out in visions and called it mercy.
 

@@ -1,4 +1,4 @@
-# Saberthorn — Fallen Thing Crying
+# Saberthorn â€” Fallen Thing Crying
 
 | Field | Value |
 |---|---|
@@ -8,7 +8,7 @@
 | Recipient | Leviathan |
 | Tone | Patient, watchful, troubled |
 | Suggested Location | Astral Caverns or Hell-adjacent route |
-| Guardian / Attribute Mapping | Leviathan — listening to fallen things; mercy before explanation |
+| Guardian / Attribute Mapping | Leviathan â€” listening to fallen things; mercy before explanation |
 | Best Star Reactions | Nyxari, Elusiaa |
 | Gameplay Use | Foreshadows Benaveil fragments and fallen beings appearing before anyone understands why. |
 

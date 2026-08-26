@@ -1,4 +1,4 @@
-CONSTELLATION FORGE — BUILD PHASE {{ data.phaseNumber }}
+CONSTELLATION FORGE — {{ if data.isViewpointInitialDraft }}VIEWPOINT FIRST DRAFT{{ else }}BUILD PHASE {{ data.phaseNumber }}{{ end }}
 
 VIEWPOINT STAR
 {{ data.viewpointDisplayName }} — {{ data.viewpointElement }} / {{ data.viewpointDomain }}
@@ -6,7 +6,11 @@ Core line: {{ data.viewpointCoreQuote }}
 Viewpoint personality: {{ data.viewpointPersonality }}
 Viewpoint action/battle appetite: {{ data.viewpointActionBattlePreference }}
 
+{{ if data.isViewpointInitialDraft }}
+ORIGINAL VIEWPOINT AUTHOR WRITING THE FIRST DRAFT
+{{ else }}
 CURRENT CONTRIBUTING STAR
+{{ end }}
 Name: {{ data.displayName }}
 Star ID: {{ data.starId }}
 Element: {{ data.element }}

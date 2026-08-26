@@ -141,3 +141,6 @@ android/**/*.apk
 /redist/**/*.spec
 /redist/**/__pycache__/
 **/*.spec
+
+# Cloudflare local Worker secrets
+cloudflare/**/.dev.vars

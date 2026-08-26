@@ -8,7 +8,7 @@
 | Recipient | Leviathan |
 | Tone | Gentle mentor, affectionate, corrective |
 | Suggested Location | Astral Caverns / return-to-Leviathan cutscene |
-| Guardian / Attribute Mapping | Leviathan — sea, honey, rest, bridled wandering |
+| Guardian / Attribute Mapping | Leviathan â€” sea, honey, rest, bridled wandering |
 | Best Star Reactions | Elusiaa, Auerlis |
 | Gameplay Use | A major Leviathan relationship letter; softens the dragon before/after battle. |
 

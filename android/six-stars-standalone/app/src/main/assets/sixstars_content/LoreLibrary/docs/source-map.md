@@ -31,6 +31,6 @@
 - `assets/source-imports/grok-images/` contains local image assets from the Grok export.
 - `assets/visual-reference/levels-and-temples-extended-media/` contains media extracted from the updated levels/temples DOCX.
 
-- `docs/dialogue/star-angel-stories.md` — curated promotion of the six angel stories from `Meeting the stars.docx` and the Grok archive.
+- `docs/dialogue/star-angel-stories.md` â€” curated promotion of the six angel stories from `Meeting the stars.docx` and the Grok archive.
 
-- `docs/systems/hell-arcade-the-six-stars.md` — curated promotion of the Hell arcade / The Six Stars 616 fighting-game system from the Grok archive.
+- `docs/systems/hell-arcade-the-six-stars.md` â€” curated promotion of the Hell arcade / The Six Stars 616 fighting-game system from the Grok archive.

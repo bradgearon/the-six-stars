@@ -1,4 +1,4 @@
-# Hell Arcade ó The Six Stars
+# Hell Arcade ‚Äî The Six Stars
 
 ## Production Status
 
@@ -12,7 +12,7 @@ In Hell, the Last Cat can find an old battered black-and-white arcade cabinet ti
 
 - **Location:** Optional Hell detour / ruined alcove / settlement edge / ash-lit arcade corner.
 - **Look:** Old black-and-white cabinet, cracked screen, brutal blocky pixels, low static hum.
-- **Mood:** Nostalgic and fun, but wrong ó a little toy glowing defiantly in the lowest place.
+- **Mood:** Nostalgic and fun, but wrong ‚Äî a little toy glowing defiantly in the lowest place.
 - **Title screen:**
 
 ```text
@@ -192,7 +192,7 @@ The final Benaveil rewrite should echo this machine directly:
 
 Elusiaa can explain this if she is present:
 
-> ìThe black-and-white machine was practice. The final rewrite is the real battle. Both are part of the same song.î
+> ‚ÄúThe black-and-white machine was practice. The final rewrite is the real battle. Both are part of the same song.‚Äù
 
 ## Tone Rules
 
@@ -217,7 +217,7 @@ The feature can be built early as a playable proof-of-concept for the final rewr
 
 ## Canon Links
 
-- Foreshadows: **Endgame ó The Rewrite**.
+- Foreshadows: **Endgame ‚Äî The Rewrite**.
 - Supports: **Hell detour**, **Benaveil fragments**, **Star relationships**, **tragedy/redemption paths**.
 - Echoes: **Let Us Call Hell / O Sent Let Us Go** audio system.
 - Contrasts: The main game's fast, elegant, multi-ability combat by reducing everything to one brutal move.

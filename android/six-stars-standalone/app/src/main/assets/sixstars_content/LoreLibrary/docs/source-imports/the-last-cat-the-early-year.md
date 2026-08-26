@@ -4,17 +4,17 @@ Original file: `The Last Cat_ The Early Year.docx`
 
 The Last Cat: The Early Years
 Developer Instruction Manual / Game Bible
-Final Updated Version ñ Comprehensive Design Document
+Final Updated Version ‚Äì Comprehensive Design Document
 
 ## 1. Core Concept & High-Level Vision
 
 Genre: Dark Fantasy Action RPG / Metroidvania with fluid combo combat, deep AI-driven relationships, light-to-moderate horror, wisdom training, outfit collecting, and romance appeal.
 
-Tone: Atmospheric wonder intertwined with cosmic horror, moral tension (ìthis might end poorlyî), heartfelt growth, slapstick comedy, and genuine flirtation.
+Tone: Atmospheric wonder intertwined with cosmic horror, moral tension (‚Äúthis might end poorly‚Äù), heartfelt growth, slapstick comedy, and genuine flirtation.
 
-Length: 35ñ45 hour single-player campaign with high replayability through multiple paths, romance routes, and hidden content.
+Length: 35‚Äì45 hour single-player campaign with high replayability through multiple paths, romance routes, and hidden content.
 
-Core Fantasy: You are the Last Cat ó an innate astral conduit ó growing alongside a young, flawed angel (Benaveil) and his sexy, powerful Stars. Through exploration, combat mastery, discernment, and deep bonds, you restore ancient legacies and influence redemption.
+Core Fantasy: You are the Last Cat ‚Äî an innate astral conduit ‚Äî growing alongside a young, flawed angel (Benaveil) and his sexy, powerful Stars. Through exploration, combat mastery, discernment, and deep bonds, you restore ancient legacies and influence redemption.
 
 Target Appeal: Players who love games with hot/sexy female characters, meaningful outfit collecting, feeling genuinely desired through authentic flirtation, powerful visuals, and rich Metroidvania exploration.
 
@@ -24,25 +24,25 @@ Tagline: Restore the lost. Awaken the Stars. Decide the fate of a young angel. T
 
 Cosmic Backdrop: No cat has been seen for one hundred years. The universe is drying up. Ancient worlds crumble to dust. Cats were once sage warriors who mastered the Astral Stream (the living will of the ancients) and sealed a vital flow.
 
-The Last Cat: You are a natural astral conduit. This innate nature allows you to instinctively process astral power ó which is why real cats hate water (it causes unstable stardust leakage and weakens your form). Full no-mana mastery requires active use of attuned Star abilities after unlocking the soul sword.
+The Last Cat: You are a natural astral conduit. This innate nature allows you to instinctively process astral power ‚Äî which is why real cats hate water (it causes unstable stardust leakage and weakens your form). Full no-mana mastery requires active use of attuned Star abilities after unlocking the soul sword.
 
-Benaveil: A young ìbabyî angel with a name of divine purpose. He appears in radiant named forms and guides with fierce but imperfect love. He possesses a carnal/unnamed dark form amplified by greater evils. He fears independent astral power (yours and Leviathanís) because it bypasses his mana system.
+Benaveil: A young ‚Äúbaby‚Äù angel with a name of divine purpose. He appears in radiant named forms and guides with fierce but imperfect love. He possesses a carnal/unnamed dark form amplified by greater evils. He fears independent astral power (yours and Leviathan‚Äôs) because it bypasses his mana system.
 
 Leviathan: Pure embodiment of the Astral Stream. Knows truths even Benaveil fears.
 
-The Stars: Ten sexy, flawed sages who wield mana magic and crave deep bonds (early focus on six). They remain loyal companions throughout ó you have never fought them before. Elusiaa (Light ñ main guide), Khavia (Water), Auerlis (Fire), Maera (Blood), Kaelia (Void), Nyxari (Shadow).
+The Stars: Ten sexy, flawed sages who wield mana magic and crave deep bonds (early focus on six). They remain loyal companions throughout ‚Äî you have never fought them before. Elusiaa (Light ‚Äì main guide), Khavia (Water), Auerlis (Fire), Maera (Blood), Kaelia (Void), Nyxari (Shadow).
 
 Greater Antagonists: Vile higher-ranking angel army seeking universal soul-destruction.
 
 Major Cave Network (Central Metroidvania Hub):
 
-Virethorn Section ó Dark, spooky, rocky surfaces. Poisoned water flow puzzles. Goblin-harpie settlement as the initial safe hub (Jwls vendors, pranks, romance, conversations). Ambient: ìFirst Sanctuaryî track.
+Virethorn Section ‚Äî Dark, spooky, rocky surfaces. Poisoned water flow puzzles. Goblin-harpie settlement as the initial safe hub (Jwls vendors, pranks, romance, conversations). Ambient: ‚ÄúFirst Sanctuary‚Äù track.
 
-Upper Caves ó Less dark, action-packed and vertical. Features the house-sized slime encounter.
+Upper Caves ‚Äî Less dark, action-packed and vertical. Features the house-sized slime encounter.
 
-Lower Caves ó Slightly high-tech/ancient aesthetic. Visceral atmosphere with skulls in walls and bone/flesh tilesets. Home to the Bone Bloom boss (mammoth-like living mass with astral core). Defeating it yields the Slime Fragment for the slime pet.
+Lower Caves ‚Äî Slightly high-tech/ancient aesthetic. Visceral atmosphere with skulls in walls and bone/flesh tilesets. Home to the Bone Bloom boss (mammoth-like living mass with astral core). Defeating it yields the Slime Fragment for the slime pet.
 
-Astral Caverns ó Ethereal transition to the Astral Sea. Road to Leviathan. Astral sword unlock here.
+Astral Caverns ‚Äî Ethereal transition to the Astral Sea. Road to Leviathan. Astral sword unlock here.
 
 Post-Caves: Undisclosed regions lead to the finale.
 
@@ -62,11 +62,11 @@ Companions: Slime pet (unlocked via Bone Bloom), Leviathan (mentor/ally), Stars 
 
 X: Jump
 
-?: Claw (light attack)
+‚ñ°: Claw (light attack)
 
-?: Sword
+‚ñ≥: Sword
 
-?: Roll/Dodge
+‚óã: Roll/Dodge
 
 L1: Parry
 
@@ -96,7 +96,7 @@ First Sanctuary Track: Eerie cavernous ambient that evolves across cave sections
 
 O Sent ~ Fallen Angel Requiem: Dark metal version for tragic boss fight.
 
-ìLet Us Call Hell / Let Us Goî Motif: Reinforces negative/positive decisions.
+‚ÄúLet Us Call Hell / Let Us Go‚Äù Motif: Reinforces negative/positive decisions.
 
 Dark Force: Rare major takeover (pixel-worm overlay) + recurring subtle glitches. When the angels darker side wants to stream visions to the last cat.
 
@@ -106,28 +106,28 @@ Jwls: Pink jewel currency earned through exploration and combat. Spent in Vireth
 
 ## 8. Endgame & Multiple Paths
 
-Climax ñ The Rewrite
-After the Astral Caverns and your encounter with Leviathan, you begin speaking with the dragon. As Leviathan starts revealing deeper truths about the Astral Stream and Benaveilís judgment, the angel ó feeling profoundly threatened ó rewrites the game itself.
+Climax ‚Äì The Rewrite
+After the Astral Caverns and your encounter with Leviathan, you begin speaking with the dragon. As Leviathan starts revealing deeper truths about the Astral Stream and Benaveil‚Äôs judgment, the angel ‚Äî feeling profoundly threatened ‚Äî rewrites the game itself.
 
 The screen suddenly shifts into a classic Mega Man-style boss select menu.
 
-Benaveilís voice (urgent, emotional, possibly with ìLet Us Call Hellî distortion) attempts to reassert control.
+Benaveil‚Äôs voice (urgent, emotional, possibly with ‚ÄúLet Us Call Hell‚Äù distortion) attempts to reassert control.
 
 You must select and defeat each of the 6 Star stages individually. These are first-time confrontations (never fought before), forced by the rewrite. Each stage is story-heavy with personal dialogue, flashbacks, relationship reflections, and emotional weight.
 
-Your girlfriend Starís stage is specially highlighted with glowing border, astral/heart motifs, and enhanced visuals of her best gear.
+Your girlfriend Star‚Äôs stage is specially highlighted with glowing border, astral/heart motifs, and enhanced visuals of her best gear.
 
 Clear UI signaling shows allied vs. opposed Stars.
 
-After defeating all 6 Stars ? Direct progression into the multi-phase fight against Benaveil.
+After defeating all 6 Stars ‚Üí Direct progression into the multi-phase fight against Benaveil.
 
 Benaveil channels special skills borrowed from Stars allied with him, making the fight dynamic and personalized.
 
-Three escalating phases: intimate/personal duel ? carnal/dark form ? cosmic judgment form.
+Three escalating phases: intimate/personal duel ‚Üí carnal/dark form ‚Üí cosmic judgment form.
 
 The sequence is highly story-heavy with romance-flavored lines and reflections on the journey.
 
-Resolution: The rewrite collapses. Return to a quieter final scene. Cinematic life recap reveals Benaveilís fate. Concluding conversation with Leviathan about traveling the Astral Rivers. Credits roll, leaving a strong sense of wonder about other planets and the possibility of more cats (subtle tease only).
+Resolution: The rewrite collapses. Return to a quieter final scene. Cinematic life recap reveals Benaveil‚Äôs fate. Concluding conversation with Leviathan about traveling the Astral Rivers. Credits roll, leaving a strong sense of wonder about other planets and the possibility of more cats (subtle tease only).
 
 Endings: Wise, Shrewd, Kind (with unique romance/girlfriend variants). Last-minute redemption chances exist. Full carry-over to the MMO.
 
@@ -137,7 +137,7 @@ Persistent astral-connected worlds (up to 16 players). Different server flavors 
 
 ## 10. Development Priorities & Polish
 
-Cave Scale: Four distinct, interconnected biomes supporting 35ñ45 hours with meaningful backtracking and secrets.
+Cave Scale: Four distinct, interconnected biomes supporting 35‚Äì45 hours with meaningful backtracking and secrets.
 
 Finale Focus: Make the rewrite transition shocking and cinematic. Emphasize emotional Star stages and girlfriend visuals.
 
@@ -149,4 +149,4 @@ This Game Bible represents the complete, cohesive, and beautiful vision for The 
 
 The Virethorn sanctuary and the rewritten finale are destined to be iconic.
 
-The symphony awaits. ??????????
+The symphony awaits. üê±ü™Ωüíé‚öîÔ∏èüåå

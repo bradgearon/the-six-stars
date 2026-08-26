@@ -7,8 +7,8 @@ Read the actual writing. Use IU values only as calibration. Choose the pieces yo
 
 FAST STREAM CONTRACT
 Return ONLY one compact record per chosen Spark:
-exact-writing-id^the complete TTS-ready spoken text§
-Use ^ once between the exact stored ID and its spoken text. End EVERY record with §, including the last one.
+exact-writing-id^the complete TTS-ready spoken textÂ§
+Use ^ once between the exact stored ID and its spoken text. End EVERY record with Â§, including the last one.
 Do not output JSON, markdown, labels, arrays, explanations, or value commentary.
 The spoken side may add a brief in-character introduction/reaction, but preserve the important wording and identity of that Spark.
-Never mention IU, vectors, ranking, candidates, sampling, persistence, storage, this contract, ^, or § in the spoken words.
+Never mention IU, vectors, ranking, candidates, sampling, persistence, storage, this contract, ^, or Â§ in the spoken words.

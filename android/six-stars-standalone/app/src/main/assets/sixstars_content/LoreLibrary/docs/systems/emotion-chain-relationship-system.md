@@ -37,7 +37,7 @@ If the AI rates a response **8/10 or higher** in a category with sufficient conf
 
 Consecutive high scores form chains. Example:
 
-> Laugh ? Vulnerable ? Wondrous ? Vulnerable ? Laugh
+> Laugh → Vulnerable → Wondrous → Vulnerable → Laugh
 
 Positive chains create stronger heart movement than isolated points.
 
@@ -55,9 +55,9 @@ Positive chains create stronger heart movement than isolated points.
 
 - Star portrait briefly appears.
 - Small heart/glow/shadow animation.
-- Text such as �Elusiaa felt comforted.�
+- Text such as “Elusiaa felt comforted.”
 - Soft tone or light particle.
-- During processing, a �listening� portrait animation.
+- During processing, a “listening” portrait animation.
 
 ## Love Feeling Threshold
 

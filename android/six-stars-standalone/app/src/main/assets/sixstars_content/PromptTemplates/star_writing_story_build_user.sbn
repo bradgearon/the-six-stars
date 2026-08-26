@@ -1,7 +1,7 @@
-CONSTELLATION FORGE — {{ if data.isViewpointInitialDraft }}VIEWPOINT FIRST DRAFT{{ else }}BUILD PHASE {{ data.phaseNumber }}{{ end }}
+CONSTELLATION FORGE â€” {{ if data.isViewpointInitialDraft }}VIEWPOINT FIRST DRAFT{{ else }}BUILD PHASE {{ data.phaseNumber }}{{ end }}
 
 VIEWPOINT STAR
-{{ data.viewpointDisplayName }} — {{ data.viewpointElement }} / {{ data.viewpointDomain }}
+{{ data.viewpointDisplayName }} â€” {{ data.viewpointElement }} / {{ data.viewpointDomain }}
 Core line: {{ data.viewpointCoreQuote }}
 Viewpoint personality: {{ data.viewpointPersonality }}
 Viewpoint action/battle appetite: {{ data.viewpointActionBattlePreference }}
@@ -33,7 +33,7 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
-CHARACTER / WORLD REFERENCE — INSPIRATION, NOT AUTOMATIC STORY CANON
+CHARACTER / WORLD REFERENCE â€” INSPIRATION, NOT AUTOMATIC STORY CANON
 {{ for item in data.relevantSecrets }}
 - {{ item }}
 {{ end }}
@@ -62,7 +62,7 @@ TITLE
 PREMISE
 {{ data.premise }}
 
-CURRENT CAST — collaborative and editable
+CURRENT CAST â€” collaborative and editable
 {{ if data.characters.size == 0 }}
 (no named cast yet; establish memorable named characters now)
 {{ else }}
@@ -71,7 +71,7 @@ CURRENT CAST — collaborative and editable
 {{ end }}
 {{ end }}
 
-CURRENT STORY SUBJECTS — collaborative and editable
+CURRENT STORY SUBJECTS â€” collaborative and editable
 {{ if data.storySubjects.size == 0 }}
 (no explicit story subjects yet; establish them now)
 {{ else }}
@@ -102,7 +102,7 @@ TEAM VERBS
 - {{ word }}
 {{ end }}
 
-TEAM STORY WISHES — OPTIONAL
+TEAM STORY WISHES â€” OPTIONAL
 {{ if data.storyWishes.size == 0 }}
 (none)
 {{ else }}

@@ -1,4 +1,4 @@
-# Flameveil — Goodbye Leviathan
+# Flameveil â€” Goodbye Leviathan
 
 | Field | Value |
 |---|---|
@@ -8,9 +8,9 @@
 | Recipient | Leviathan |
 | Tone | War grief, fierce love, farewell |
 | Suggested Location | Late Astral Caverns / pre-Leviathan fight |
-| Guardian / Attribute Mapping | Leviathan — sea turned fire, invitation into danger, willing confrontation |
+| Guardian / Attribute Mapping | Leviathan â€” sea turned fire, invitation into danger, willing confrontation |
 | Best Star Reactions | Auerlis, Maera |
-| Gameplay Use | A strong fire/war letter that makes Leviathan’s abandonment feel personal. |
+| Gameplay Use | A strong fire/war letter that makes Leviathanâ€™s abandonment feel personal. |
 
 ## Letter Text
 

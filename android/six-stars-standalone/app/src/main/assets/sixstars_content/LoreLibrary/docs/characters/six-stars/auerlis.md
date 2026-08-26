@@ -23,9 +23,9 @@ Passionate, playful, intense, musical, dangerous but hopeful.
 
 ## Angel story
 
-### Dark angel story ó The Kind Face that Burned
+### Dark angel story ‚Äî The Kind Face that Burned
 
-Auerlis tells the Last Cat a secondhand story about an old spirit who barely escaped a dark angel wearing a kind face. The angel tore the spirit's memories apart, made him relive shame and failure, called that ìlove,î and left him believing no one was listening when he screamed for mercy.
+Auerlis tells the Last Cat a secondhand story about an old spirit who barely escaped a dark angel wearing a kind face. The angel tore the spirit's memories apart, made him relive shame and failure, called that ‚Äúlove,‚Äù and left him believing no one was listening when he screamed for mercy.
 
 **Gameplay use:** This story explains why Auerlis insists that some fires do not warm; they consume. It should make the Astral Caverns feel dangerous while preserving her role as the Star of Joy.
 

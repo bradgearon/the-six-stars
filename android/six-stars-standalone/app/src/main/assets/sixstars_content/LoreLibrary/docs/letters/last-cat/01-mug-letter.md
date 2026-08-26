@@ -8,7 +8,7 @@
 | Recipient | Leviathan |
 | Tone | Warm, grateful, exhausted |
 | Suggested Location | Opening sequence / carried childhood clue |
-| Guardian / Attribute Mapping | Leviathan — mercy that turns hunger into comfort |
+| Guardian / Attribute Mapping | Leviathan â€” mercy that turns hunger into comfort |
 | Best Star Reactions | Elusiaa, Khavia |
 | Gameplay Use | Opening emotional hook; introduces Dyvena, hunger, and the lost-cat mystery. |
 

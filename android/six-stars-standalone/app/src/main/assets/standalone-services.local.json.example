@@ -7,5 +7,10 @@
   },
   "TTS": {
     "ApiKey": "PASTE_DASHSCOPE_API_KEY_HERE"
+  },
+  "Proxy": {
+    "Enabled": false,
+    "BaseUrl": "https://api.your-domain.example",
+    "AccessToken": "PASTE_PROXY_ACCESS_TOKEN_HERE"
   }
 }

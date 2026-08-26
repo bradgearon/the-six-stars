@@ -23,7 +23,7 @@ Mysterious, wounded, teasing, intimate, requires many letters and patient trust.
 
 ## Angel story
 
-### Dark angel story — The Tar-Water Reflection
+### Dark angel story â€” The Tar-Water Reflection
 
 Kaelia tells the Last Cat that an older, hungrier dark angel came to her in the deep dark and told her the Void was all there was. He made her watch her own reflection drown again and again; whenever she reached for the surface, the water turned to tar. He laughed that even her own light rejected her.
 

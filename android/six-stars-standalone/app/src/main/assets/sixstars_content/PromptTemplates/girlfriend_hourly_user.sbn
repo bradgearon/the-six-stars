@@ -21,7 +21,7 @@ RELATIONSHIP AND GIRLFRIEND CONTEXT
 {{ for item in data.petNamesSheUsesForPlayer }}- {{ item }}
 {{ end }}{{ end }}
 
-COMPACT RECENT NEED/WANT HISTORY — use only to vary this refresh
+COMPACT RECENT NEED/WANT HISTORY â€” use only to vary this refresh
 {{ data.compactNeedWantHistory }}
 
 RECENT CONVERSATION AND MEMORY
@@ -47,10 +47,10 @@ PREVIOUS GIRLFRIEND HOURLY STATE
 {{ for item in data.previousState.cuteThingsSheWantedToSay }}- {{ item }}
 {{ end }}{{ end }}{{ else }}none
 {{ end }}
-NEED CATALOG — use these itemId values
+NEED CATALOG â€” use these itemId values
 {{ for item in data.needCatalog }}- {{ item }}
 {{ end }}
-WANT CATALOG — use these itemId values
+WANT CATALOG â€” use these itemId values
 {{ for item in data.wantCatalog }}- {{ item }}
 {{ end }}
 OUTPUT REQUIREMENTS

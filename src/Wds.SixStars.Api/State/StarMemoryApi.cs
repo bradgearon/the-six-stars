@@ -148,10 +148,9 @@ namespace Wds.SixStars.Api.State
                 state.ConversationSummary = request.ConversationSummary.Trim();
             }
 
-            // Important player quotes are no longer chosen by the LLM. The deterministic layer
-            // captures the exact latest player message only when the accepted compact emotion
-            // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
-            // are ignored for durable storage so ordinary turns do not bloat the quote list.
+            // Important quote SIGNIFICANCE is chosen by the protected background LLM again.
+            // The deterministic layer only validates exactness/current-turn provenance before
+            // making those rare selections durable; ordinary emotion magnitude is not enough.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
             AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, turnStartedAt, now, request.RequestType);
             if (state.IsGirlfriend && request.SextingDetected)
@@ -190,12 +189,13 @@ namespace Wds.SixStars.Api.State
             UpdateStoryHistory(state, request, now);
             PruneExpiredEffectors(state, now);
 
-            string autoQuoteReason = string.Empty;
-            string autoQuote = isInternalBackgroundUpdate ? string.Empty : TryCreateAutoQuote(request, applied, out autoQuoteReason);
-            if (!string.IsNullOrWhiteSpace(autoQuote))
+            List<string> selectedImportantQuotes = isInternalBackgroundUpdate
+                ? new List<string>()
+                : PrepareModelSelectedImportantQuotes(request, 3);
+            if (selectedImportantQuotes.Count > 0)
             {
-                AddUnique(state.ImportantPlayerQuotes, new[] { autoQuote }, _options.MaxImportantQuotes);
-                AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, string.IsNullOrWhiteSpace(autoQuoteReason) ? "auto-high-emotion-quote" : autoQuoteReason);
+                AddUnique(state.ImportantPlayerQuotes, selectedImportantQuotes, _options.MaxImportantQuotes);
+                AddImportantQuoteSourceRecords(state, request, selectedImportantQuotes, markersToStore, applied, now, "background-review-significant-player-quote");
             }
 
             ConversationLogEntry entry = new ConversationLogEntry();
@@ -218,7 +218,7 @@ namespace Wds.SixStars.Api.State
                 DeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty,
                 WisdomScore = request.WisdomScore
             };
-            if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
+            entry.ImportantQuotes.AddRange(selectedImportantQuotes);
             entry.ThingsLearnedOrSuggestedByPlayer.AddRange(newlyLearnedOrSuggested);
             entry.RememberedMarkers.AddRange(markersToStore);
             entry.ReferencedMemoryMarkerIds.AddRange(request.ReferencedMemoryMarkerIds);
@@ -1837,6 +1837,27 @@ namespace Wds.SixStars.Api.State
         }
 
 
+        private static List<string> PrepareModelSelectedImportantQuotes(StarStateUpdateRequest request, int maxItems)
+        {
+            List<string> result = new List<string>();
+            if (request == null || maxItems <= 0) return result;
+            string player = (request.PlayerText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(player)) return result;
+
+            foreach (string raw in request.ImportantPlayerQuotes ?? new List<string>())
+            {
+                string quote = CleanMarkerText(raw, 700);
+                if (string.IsNullOrWhiteSpace(quote)) continue;
+                // Significance belongs to the background LLM. Durability still validates that the
+                // alleged exact quote actually occurs in this turn so a model cannot invent wording.
+                if (player.IndexOf(quote, StringComparison.Ordinal) < 0) continue;
+                if (result.Any(x => string.Equals(x, quote, StringComparison.Ordinal))) continue;
+                result.Add(quote);
+                if (result.Count >= maxItems) break;
+            }
+            return result;
+        }
+
         private void AddImportantQuoteSourceRecords(StarState state, StarStateUpdateRequest request, IEnumerable<string> quotes, IEnumerable<StarRememberedMarker> markers, RelationshipDelta applied, DateTimeOffset now, string reason)
         {
             state.AllImportantPlayerQuotes ??= new List<StarImportantQuoteRecord>();
@@ -2059,48 +2080,6 @@ namespace Wds.SixStars.Api.State
             string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
             if (cleaned.Length <= maxLength) return cleaned;
             return cleaned.Substring(0, maxLength).Trim() + "...";
-        }
-
-        private string TryCreateAutoQuote(StarStateUpdateRequest request, RelationshipDelta delta, out string reason)
-        {
-            reason = string.Empty;
-            if (!_options.AutoCaptureHighImpactPlayerQuotes) return string.Empty;
-            string text = (request.PlayerText ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-
-            List<TopAffectedEmotion> affected = RelationshipDeltaCalculator
-                .BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector)
-                .Where(x => x != null)
-                .OrderByDescending(x => x.WeightedScore)
-                .ThenByDescending(x => x.Score)
-                .ThenByDescending(x => x.Confidence)
-                .ToList();
-
-            double minConfidence = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionConfidence);
-            double minScore = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionScore);
-            double minWeighted = Math.Max(0.0, _options.AutoImportantQuoteMinWeightedEmotionScore);
-            TopAffectedEmotion? qualifying = affected.FirstOrDefault(x =>
-                x.Confidence >= minConfidence &&
-                x.Score >= minScore &&
-                x.WeightedScore >= minWeighted);
-
-            if (qualifying == null) return string.Empty;
-
-            int maxLength = Math.Max(80, _options.AutoImportantQuoteMaxLength);
-            string cleaned = CleanMarkerText(text, maxLength);
-            if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
-
-            reason = "auto-high-emotion-quote:"
-                + qualifying.Valence
-                + ":"
-                + qualifying.EmotionId
-                + ":score="
-                + qualifying.Score.ToString("0", CultureInfo.InvariantCulture)
-                + ":confidence="
-                + qualifying.Confidence.ToString("0.00", CultureInfo.InvariantCulture)
-                + ":weighted="
-                + qualifying.WeightedScore.ToString("0.0", CultureInfo.InvariantCulture);
-            return cleaned;
         }
 
         private static UnityEventEnvelope CreateMemoryUpdatedEvent(string starId, StarState state, ConversationLogEntry entry, RelationshipDelta delta, bool acceptedModelDelta)

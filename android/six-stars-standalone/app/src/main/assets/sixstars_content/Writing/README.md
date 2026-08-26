@@ -6,7 +6,7 @@ The value system is open-ended and measured in **information units (IU)**: value
 
 ## Canonical review discipline
 
-All newly reviewed shelf outputs — both **Sparks** and **Constellation Stories** — use:
+All newly reviewed shelf outputs â€” both **Sparks** and **Constellation Stories** â€” use:
 
 `reviewDiscipline: "reader-emotion-iu-v1"`
 

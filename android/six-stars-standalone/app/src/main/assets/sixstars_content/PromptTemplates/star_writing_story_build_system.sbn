@@ -52,7 +52,7 @@ Otherwise choose "continue".
 
 Return the entire revised story, the complete updated cast, the complete updated story-subject list, the revised ordered beats, a short list of layers you added, one completionDecision, and a brief completionReason. Do not return commentary outside JSON.
 
-OUTPUT SHAPE — formatting only, not a creative length restriction:
+OUTPUT SHAPE â€” formatting only, not a creative length restriction:
 - `characters`, `storySubjects`, `revisedBeats`, and `addedLayers` must be JSON arrays of plain strings. Entries may be as detailed as needed.
 - `story` must contain the entire revised prose draft as one string.
 - Do not wrap array entries in objects.

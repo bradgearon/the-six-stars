@@ -56,8 +56,8 @@ Major Bosses
 | Buzz | Insect | 45 | Base form. |
 | Buzz Ooze | Slime-Insect | 75 | Drips poison or slime trails. |
 | Buzz Oogle | Eye-Insect | 150 | Uses eye beams or confusion. |
-| Buzz Rule | Insect Commander | 250 | Stronger ìroyalî Buzz that buffs smaller Buzzes. |
-| Ickyís Minion | Slime/Fungal Servant | 175 | Small minion tied to Icky. |
+| Buzz Rule | Insect Commander | 250 | Stronger ‚Äúroyal‚Äù Buzz that buffs smaller Buzzes. |
+| Icky‚Äôs Minion | Slime/Fungal Servant | 175 | Small minion tied to Icky. |
 | Icky | Slime/Fungal Trickster | 175 | Low HP but annoying; should split, flee, or summon. |
 
 ### Table 3
@@ -105,7 +105,7 @@ Major Bosses
 | Threadstep Assassin | Ninja | 550 | Uses red thread traps and wall jumps. |
 | Emberwing Kunoichi | Fire Ninja | 650 | Flame dash, aerial slash, bomb toss. |
 | Void-Talon Ronin | Void Ninja | 800 | Teleports through short void cuts. |
-| Crimson Mirror Ninja | Elite Ninja | 1,000 | Copies the playerís last attack. Excellent miniboss. |
+| Crimson Mirror Ninja | Elite Ninja | 1,000 | Copies the player‚Äôs last attack. Excellent miniboss. |
 
 ### Table 7
 | Monster | Type | HP | Notes |
@@ -136,8 +136,8 @@ Major Bosses
 | --- | --- | --- | --- |
 | Nullfeather Owl | Alien Cave Owl | 250 | Shadow/void owl. Silent dive, blinking teleport. |
 | Cordwing Owl | Alien Cave Owl | 250 | Glowing cord-wing owl. Uses electric/astral tether attacks. |
-| Jack | Sky-Dweller NPC | ó | Not an enemy. Immortal, strange, unable to taste or feel. |
-| Jillianium | Sky-Dweller NPC | ó | Not an enemy. Alien cave owl-like being with glowing cords/bat wings. |
+| Jack | Sky-Dweller NPC | ‚Äî | Not an enemy. Immortal, strange, unable to taste or feel. |
+| Jillianium | Sky-Dweller NPC | ‚Äî | Not an enemy. Alien cave owl-like being with glowing cords/bat wings. |
 
 ### Table 11
 | Guardian | Element Lean | HP | Role |
@@ -158,6 +158,6 @@ Major Bosses
 | --- | --- | --- | --- |
 | Slimastadon | Ancient Slime Titan | 5,000 | Big Area 3 boss; slime as large as a house. |
 | Virethorn Queen | Poison Plant Queen | 15,000 | Greater Virethorn evolution; probably optional or late-game return boss. |
-| Eyes | Astral Flesh/Eye Horror | 25,000 | Major cosmic horror boss. Iíd rename the full title to Eyes of the Deep Astral. |
+| Eyes | Astral Flesh/Eye Horror | 25,000 | Major cosmic horror boss. I‚Äôd rename the full title to Eyes of the Deep Astral. |
 | Bone Bloom | Bahamut/Life-Force Guardian | 45,000 | Major boss/future ally. Guards life force and tests mercy. |
 | Leviathan | Astral Sea Dragon | 100,000 | Ultimate-scale being; boss, friend, and story pillar. |

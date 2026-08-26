@@ -661,7 +661,7 @@ namespace Wds.SixStars.Api.Ai
                         { "questionResolutionVector", StringProperty(4200) },
                         { "emotionAnimation", StringProperty(32) },
                         { "informationNeedsVector", StringProperty(2400) },
-                        { "importantPlayerQuotes", EmptyStringArray() },
+                        { "importantPlayerQuotes", StringArray(3) },
                         { "memoryNotes", StringArray(6) },
                         { "rememberedMarkers", RememberedMarkerArray(4) },
                         { "referencedMemoryMarkerIds", StringArray(6) },

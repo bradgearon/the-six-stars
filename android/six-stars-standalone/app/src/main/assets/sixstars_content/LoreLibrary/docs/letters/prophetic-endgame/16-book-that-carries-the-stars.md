@@ -8,7 +8,7 @@
 | Recipient | Guardians |
 | Tone | Prophetic, resigned, hopeful |
 | Suggested Location | Astral Book Room / late-game secret |
-| Guardian / Attribute Mapping | All guardians — return through the book and Stream |
+| Guardian / Attribute Mapping | All guardians â€” return through the book and Stream |
 | Best Star Reactions | All Six Stars |
 | Gameplay Use | Directly connects the Astral Book Room to returning after catastrophe. |
 
