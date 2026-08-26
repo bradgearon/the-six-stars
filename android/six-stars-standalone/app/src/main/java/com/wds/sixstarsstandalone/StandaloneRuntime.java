@@ -33,7 +33,7 @@ final class StandaloneRuntime implements AutoCloseable {
     private final AndroidPromptBuilder prompts;
     private final GoogleAiStudioClient llm;
     private final GroqAsrClient asr;
-    private final AlibabaQwenTtsClient tts;
+    private final StarTtsClient tts;
     private final AudioPlaybackService audio;
     private final MemoryStateUpdater memory;
     private final MaintenanceService maintenance;
@@ -56,7 +56,7 @@ final class StandaloneRuntime implements AutoCloseable {
         prompts=new AndroidPromptBuilder(content,settings);
         llm=new GoogleAiStudioClient(settings);
         asr=new GroqAsrClient(settings);
-        tts=new AlibabaQwenTtsClient(context,settings,content);
+        tts=settings.useLocalTts() ? new LocalQwenTtsClient(settings) : new AlibabaQwenTtsClient(context,settings,content);
         audio=new AudioPlaybackService(context);
         memory=new MemoryStateUpdater(settings);
         trace=new RuntimeTrace(context,settings);
@@ -193,10 +193,10 @@ final class StandaloneRuntime implements AutoCloseable {
 
     private void queueTts(JSONObject profile,String sentence,Callbacks cb){
         if(sentence==null||sentence.trim().isEmpty())return;
-        if(!settings.ttsEnabled()||settings.ttsKey().isEmpty())return;
+        if(!settings.ttsEnabled()||!settings.ttsConfigured())return;
         final JSONObject p;
         try{p=JsonUtil.deepCopy(profile);}catch(Exception e){return;}
-        ttsExecutor.submit(()->{try{trace.log("tts.start","star="+p.optString("starId")+" chars="+sentence.length());AlibabaQwenTtsClient.AudioResult generated=tts.synthesize(p,sentence);trace.log("tts.generated","bytes="+generated.bytes.length);audio.playBlocking(generated);trace.log("tts.playback-complete","star="+p.optString("starId"));}catch(Throwable e){trace.log("tts.failed",e.toString());error(cb,"TTS",e);}});
+        ttsExecutor.submit(()->{try{trace.log("tts.start","mode="+tts.modeName()+" star="+p.optString("starId")+" chars="+sentence.length());TtsAudioResult generated=tts.synthesize(p,sentence);trace.log("tts.generated","mode="+tts.modeName()+" bytes="+generated.bytes.length);audio.playBlocking(generated);trace.log("tts.playback-complete","mode="+tts.modeName()+" star="+p.optString("starId"));}catch(Throwable e){trace.log("tts.failed","mode="+tts.modeName()+" "+e);error(cb,"TTS",e);}});
     }
 
     private void waitForPrimaryReview(Callbacks cb)throws Exception{

@@ -6,7 +6,9 @@
     "ApiKey": "PASTE_GROQ_API_KEY_HERE"
   },
   "TTS": {
-    "ApiKey": "PASTE_DASHSCOPE_API_KEY_HERE"
+    "Mode": "auto",
+    "ApiKey": "",
+    "LocalWebSocketUrl": ""
   },
   "Proxy": {
     "Enabled": false,

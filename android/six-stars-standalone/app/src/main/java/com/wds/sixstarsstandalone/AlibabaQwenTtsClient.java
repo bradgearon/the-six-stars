@@ -12,8 +12,7 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /** Android equivalent of AlibabaQwenTtsStreamingVoiceGenerator, including on-device voice-id cache. */
-final class AlibabaQwenTtsClient {
-    static final class AudioResult { final byte[] bytes; final String mime; AudioResult(byte[] b,String m){bytes=b;mime=m;} }
+final class AlibabaQwenTtsClient implements StarTtsClient {
     private final Context context;
     private final StandaloneSettings settings;
     private final ContentRepository content;
@@ -26,7 +25,10 @@ final class AlibabaQwenTtsClient {
         cacheFile=new File(this.context.getFilesDir(),"state/hosted-tts-voices.json");
     }
 
-    AudioResult synthesize(JSONObject profile,String text) throws Exception {
+    @Override public String modeName() { return "hosted-alibaba-qwen3-tts"; }
+
+    @Override
+    public TtsAudioResult synthesize(JSONObject profile,String text) throws Exception {
         if(!settings.ttsEnabled())throw new IllegalStateException("Hosted TTS is disabled.");
         if(settings.proxyEnabled()) { if(!settings.proxyConfigured())throw new IllegalStateException("Cloudflare proxy is enabled but BaseUrl/AccessToken is incomplete. Configure "+settings.file.getAbsolutePath()); }
         else if(settings.ttsKey().isEmpty())throw new IllegalStateException("Alibaba/DashScope API key is empty. Configure "+settings.file.getAbsolutePath());
@@ -38,7 +40,7 @@ final class AlibabaQwenTtsClient {
         JSONObject audio=new JSONObject(body).optJSONObject("output"); if(audio!=null)audio=audio.optJSONObject("audio");
         if(audio==null)throw new IllegalStateException("Alibaba Qwen TTS response missing output.audio: "+body);
         String data=audio.optString("data","");
-        if(!data.isEmpty())return new AudioResult(Base64.decode(data,Base64.DEFAULT),"audio/wav");
+        if(!data.isEmpty())return new TtsAudioResult(Base64.decode(data,Base64.DEFAULT),"audio/wav");
         String url=audio.optString("url",""); if(!url.isEmpty())return download(url);
         throw new IllegalStateException("Alibaba Qwen TTS response did not contain output.audio.url or data: "+body);
     }
@@ -69,6 +71,6 @@ final class AlibabaQwenTtsClient {
         try(Response res=client.newCall(req).execute()){String body=res.body()==null?"":res.body().string(); if(!res.isSuccessful())throw new IllegalStateException("Alibaba request failed "+res.code()+": "+body); return body;}
     }
 
-    private AudioResult download(String url)throws Exception{Request req=new Request.Builder().url(url).get().build();try(Response res=client.newCall(req).execute()){if(!res.isSuccessful())throw new IllegalStateException("TTS audio download failed "+res.code());byte[] b=res.body()==null?new byte[0]:res.body().bytes();String mime=res.header("Content-Type","audio/wav");return new AudioResult(b,mime);}}
+    private TtsAudioResult download(String url)throws Exception{Request req=new Request.Builder().url(url).get().build();try(Response res=client.newCall(req).execute()){if(!res.isSuccessful())throw new IllegalStateException("TTS audio download failed "+res.code());byte[] b=res.body()==null?new byte[0]:res.body().bytes();String mime=res.header("Content-Type","audio/wav");return new TtsAudioResult(b,mime);}}
     private static byte[] readAll(File f)throws Exception{try(InputStream in=new FileInputStream(f);ByteArrayOutputStream out=new ByteArrayOutputStream()){byte[]b=new byte[8192];int n;while((n=in.read(b))>=0)out.write(b,0,n);return out.toByteArray();}}
 }

@@ -131,6 +131,7 @@ final class StandaloneSettings {
     int asrTimeoutSeconds() { return asr().optInt("TimeoutSeconds", 60); }
 
     boolean ttsEnabled() { return tts().optBoolean("Enabled", true); }
+    String ttsMode() { return tts().optString("Mode", "auto").trim().toLowerCase(); }
     String ttsKey() { return tts().optString("ApiKey", "").trim(); }
     String ttsEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/alibaba/tts" : tts().optString("EndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"); }
     String enrollmentEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/alibaba/voice-enrollment" : tts().optString("VoiceEnrollmentEndpointUrl", "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization"); }
@@ -140,6 +141,33 @@ final class StandaloneSettings {
     boolean autoCloneVoices() { return tts().optBoolean("AutoCloneVoices", true); }
     int ttsTimeoutSeconds() { return tts().optInt("TimeoutSeconds", 120); }
     JSONObject configuredVoiceIds() { return JsonUtil.object(tts(), "VoiceIds"); }
+
+    // Local TTS points at the same Qwen3 WebSocket service the desktop application uses.
+    // On a physical phone use the desktop machine's LAN IP, never localhost/127.0.0.1.
+    String localTtsWebSocketUrl() { return tts().optString("LocalWebSocketUrl", "").trim(); }
+    String localTtsModel() { return tts().optString("LocalModel", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"); }
+    String localTtsLanguage() { return tts().optString("LocalLanguage", defaultLanguage()); }
+    String localTtsTaskType() { return tts().optString("LocalTaskType", "VoiceClone"); }
+    double localTtsSpeed() { return tts().optDouble("LocalSpeed", 1.0); }
+    int localTtsTimeoutSeconds() { return tts().optInt("LocalTimeoutSeconds", ttsTimeoutSeconds()); }
+    boolean localTtsConfigured() { return ttsEnabled() && !localTtsWebSocketUrl().isEmpty(); }
+    boolean hostedTtsConfigured() { return ttsEnabled() && (proxyConfigured() || (!proxyEnabled() && !ttsKey().isEmpty())); }
+
+    String resolvedTtsMode() {
+        if(!ttsEnabled()) return "disabled";
+        String mode=ttsMode();
+        if("local".equals(mode)||"local-service".equals(mode)||"local-qwen".equals(mode)) return "local";
+        if("hosted".equals(mode)||"alibaba".equals(mode)||"cloud".equals(mode)) return "hosted";
+        // auto intentionally prefers the local desktop service when a URL is present so developers can
+        // test Google/Groq free tiers without consuming Alibaba TTS usage.
+        if(localTtsConfigured()) return "local";
+        return "hosted";
+    }
+    boolean useLocalTts() { return "local".equals(resolvedTtsMode()); }
+    boolean ttsConfigured() {
+        if(!ttsEnabled()) return true;
+        return useLocalTts() ? localTtsConfigured() : hostedTtsConfigured();
+    }
 
     boolean romanceMode() { return runtime().optBoolean("RomanceMode", true); }
     int shortTermMemoryMinutes() { return runtime().optInt("ShortTermMemoryMinutes", 30); }
@@ -151,11 +179,12 @@ final class StandaloneSettings {
 
     String configurationSummary() {
         return "proxy=" + (proxyEnabled() ? (proxyConfigured() ? "configured" : "incomplete") : "off")
-                + " LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty()) + " TTS key=" + (!ttsKey().isEmpty())
+                + " LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty())
+                + " TTS=" + resolvedTtsMode() + "/" + (ttsConfigured() ? "configured" : "incomplete")
                 + " | buildLocal=" + buildTimeLocalAssetLoaded + " runtimeLocal=" + runtimeOverrideLoaded;
     }
 
     String configurationHelp() {
-        return "For direct developer builds add the three provider API keys. For production set Proxy.Enabled=true, BaseUrl, and AccessToken; provider keys can remain empty on-device. Runtime override path: " + file.getAbsolutePath();
+        return "For direct developer builds add Google/Groq keys. TTS can use Alibaba/Cloudflare, or set TTS.Mode=local (or auto) and LocalWebSocketUrl to the desktop Qwen service. For production set Proxy.Enabled=true, BaseUrl, and AccessToken; provider keys can remain empty on-device. Runtime override path: " + file.getAbsolutePath();
     }
 }
