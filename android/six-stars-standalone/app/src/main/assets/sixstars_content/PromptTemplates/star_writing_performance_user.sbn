@@ -1,0 +1,20 @@
+PERFORM YOUR FAVORITE SPARKS
+
+CHARACTER CARD
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Speaking style: {{ data.speakingStyle }}
+
+WEIGHTED HIGH-VALUE LISTENING SET
+There are {{ data.totalPendingCount }} untold Sparks. Select from only the {{ data.candidateCount }} exact IDs below. Order is randomized.
+{{ for item in data.persistedWritings }}
+ID: {{ item.id }}
+Overall: {{ item.overallValue }} IU | Public: {{ item.deterministicPublicValue }} IU
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+Return exactly the required number of records as exact-id^spoken text§ with no other output.

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Six Stars Conversation History</title>
+<style>
+:root{color-scheme:dark;font-family:Segoe UI,Arial,sans-serif;background:#090713;color:#f6efff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#21143d 0,#090713 48%);min-height:100vh}header.hero{padding:28px 30px 18px;border-bottom:1px solid #4f3970;background:#110b20dd;position:sticky;top:0;z-index:3;backdrop-filter:blur(12px)}h1{margin:0 0 7px;font-size:30px}.sub{color:#cbbbe8}.layout{display:grid;grid-template-columns:210px minmax(0,920px);gap:24px;max-width:1190px;margin:0 auto;padding:24px}.nav{position:sticky;top:118px;align-self:start;display:flex;flex-direction:column;gap:8px}.nav a{color:#e8dcff;text-decoration:none;padding:11px 12px;border:1px solid #4b3869;border-radius:10px;background:#151025}.nav a.selected,.nav a:hover{border-color:#ff79ba;background:#2a1532}.nav span{float:right;color:#bca9dc}section{scroll-margin-top:125px;margin-bottom:42px}h2{font-size:26px;border-bottom:1px solid #4e3b68;padding-bottom:10px}article{background:#141020;border:1px solid #3b2b50;border-radius:14px;margin:0 0 16px;overflow:hidden;box-shadow:0 8px 25px #0006}article>header{display:flex;justify-content:space-between;padding:10px 14px;background:#1c152b;color:#d8c8ef;font-size:13px}.turn{padding:14px 16px}.turn+.turn{border-top:1px solid #342743}.turn label{display:block;font-weight:700;margin-bottom:7px}.turn p,details p{margin:0;line-height:1.55;white-space:normal}.player label{color:#8fdcff}.star label{color:#ff91c8}.star{background:#1a1020}details{padding:10px 16px 14px;color:#cbbbe2;border-top:1px solid #342743}.empty{padding:25px;border:1px dashed #594575;border-radius:12px;color:#bfaed9}@media(max-width:760px){.layout{grid-template-columns:1fr}.nav{position:static;display:grid;grid-template-columns:repeat(2,1fr)}header.hero{position:static}}
+</style>
+</head>
+<body>
+<header class="hero"><h1>Six Stars Conversation History</h1><div class="sub">Saved {{sessionId}} conversations · selected {{selectedStar}} · newest first · generated {{generatedAt}}</div></header>
+<div class="layout"><nav class="nav">{{nav}}</nav><main>{{sections}}</main></div>
+</body>
+</html>

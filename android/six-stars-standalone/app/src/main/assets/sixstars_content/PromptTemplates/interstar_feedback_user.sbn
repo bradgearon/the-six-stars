@@ -1,0 +1,15 @@
+{{ data.currentTimeContext }}
+
+ORIGIN STAR STATE / PERSONALITY
+{{ data.originProfileContext }}
+
+ORIGINAL LAST CAT MESSAGE
+{{ data.playerTextBlock }}
+Your spoken reply was:
+{{ data.originReplyBlock }}
+
+OTHER STARS' PRIVATE REACTIONS
+{{ data.reactionsContext }}
+{{ if data.requiredFlatFields != "" }}Required flat Star-to-Star vector fields for this feedback pass:
+{{ data.requiredFlatFields }}
+{{ end }}Return lastCatEmotionalEffectVector / lastCatNegativeEmotionVector for the Last Cat, plus the flat per-Star vector fields above. Do not use object-shaped vector values.

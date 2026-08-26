@@ -1,0 +1,16 @@
+{{ if data.hasState }}situationSummary: {{ data.situationSummary }}
+feelingsSummary: {{ data.feelingsSummary }}
+desires: {{ data.desires }}
+privateSecretsOrHooks: {{ data.privateSecretsOrHooks }}
+whatSheIsDoing: {{ data.whatSheIsDoing }}
+moodTags:
+{{ if data.moodTags.size > 0 }}{{ for tag in data.moodTags }}- {{ tag }}
+{{ end }}{{ else }}- none
+{{ end }}conversationHooks:
+{{ if data.conversationHooks.size > 0 }}{{ for hook in data.conversationHooks }}- {{ hook }}
+{{ end }}{{ else }}- none
+{{ end }}wantsToTalkAbout:
+{{ if data.wantsToTalkAbout.size > 0 }}{{ for topic in data.wantsToTalkAbout }}- {{ topic }}
+{{ end }}{{ else }}- none
+{{ end }}{{ else }}No generated Star state is available.
+{{ end }}

@@ -1,0 +1,81 @@
+CREATE FIVE VERB-AND-NOUN DISPLACEMENT WRITINGS
+
+CHARACTER IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY AND INNER WORLD
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory summary: {{ data.backstorySummary }}
+Relevant background: {{ data.completeBackgroundStory }}
+
+WRITING VOICE
+Voice archetype: {{ data.voiceArchetype }}
+Speaking style: {{ data.speakingStyle }}
+Writing delivery: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for note in data.characterAttributeNotes }}
+- {{ note }}
+{{ end }}
+
+SIGNATURE IMAGERY AND BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORY / POETRY INSTINCTS
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+REPRESENTATIVE LINES
+{{ for quote in data.quotes }}
+- {{ quote }}
+{{ end }}
+
+RELEVANT PRIVATE OR CANON DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+LAST TEN SAVED WRITINGS
+Use these only to avoid repeating old sentence shapes, images, or conclusions.
+{{ if data.recentWritings.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.recentWritings }}
+[{{ item.generatedAt }}] Words: {{ item.words }}
+Writing: {{ item.writing }}
+{{ end }}
+{{ end }}
+
+VALUE-CALIBRATED REFERENCE SPARKS
+These are quality anchors, not templates. Do not copy their wording, imagery, premise, sentence shape, or conclusion.
+The value scale is measured in information units (IU), not dollars or percentages, and is open-ended. {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling. A new work can be worth more.
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued reference works are available yet; create the strongest work you can)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+{{ if item.title != "" }}Title: {{ item.title }}
+{{ end }}Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
+
+OBJECTS AND NORMAL ACTIONS
+Preserve this object order:
+{{ for item in data.objects }}
+{{ item.index }}. {{ item.object }}
+{{ for action in item.normalActions }}
+- {{ action }}
+{{ end }}
+{{ end }}
+
+For each object, replace one ordinary action with an unexpected verb and finish the statement. Use five different displaced verbs, and do not reuse any supplied normal-action verb as a displaced verb. Return only JSON.

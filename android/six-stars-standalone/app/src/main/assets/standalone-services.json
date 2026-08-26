@@ -1,0 +1,47 @@
+{
+  "SessionId": "android-standalone",
+  "LLM": {
+    "Enabled": true,
+    "Provider": "google-ai-studio",
+    "ApiKey": "",
+    "EndpointBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "Model": "gemma-4-26b-a4b-it",
+    "ThinkingLevel": "high",
+    "EnableGoogleSearch": false,
+    "Temperature": 0.75,
+    "MaxOutputTokens": 8192,
+    "ReviewMaxOutputTokens": 4096,
+    "TimeoutSeconds": 600
+  },
+  "ASR": {
+    "Enabled": true,
+    "Provider": "groq",
+    "ApiKey": "",
+    "EndpointUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "Model": "whisper-large-v3-turbo",
+    "Language": "en",
+    "TimeoutSeconds": 60
+  },
+  "TTS": {
+    "Enabled": true,
+    "Provider": "alibaba-qwen3-tts-vc",
+    "ApiKey": "",
+    "EndpointUrl": "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    "VoiceEnrollmentEndpointUrl": "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization",
+    "Model": "qwen3-tts-vc-2026-01-22",
+    "VoiceEnrollmentModel": "qwen-voice-enrollment",
+    "DefaultLanguage": "English",
+    "AutoCloneVoices": true,
+    "TimeoutSeconds": 120,
+    "VoiceIds": {}
+  },
+  "Runtime": {
+    "RomanceMode": true,
+    "ShortTermMemoryMinutes": 30,
+    "RecentConversationTurns": 10,
+    "BlockNextForegroundUntilPrimaryReviewSettles": true,
+    "EnableDailyStateRefresh": true,
+    "EnableGirlfriendHourlyRefresh": true,
+    "TraceEnabled": true
+  }
+}

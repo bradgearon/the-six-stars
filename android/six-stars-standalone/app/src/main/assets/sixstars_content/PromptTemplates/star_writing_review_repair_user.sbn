@@ -1,0 +1,23 @@
+READER-EMOTION VECTOR ORDER ({{ data.vectorCount }})
+{{ data.vectorOrder }}
+Overall is LAST.
+
+GLOBAL SHARED CALIBRATION REFERENCES
+Use the same numeric ruler for every actor. Never infer magnitude from author identity or prior shelf history.
+Reference excellence value: {{ data.referenceValue }} IU (not a maximum)
+{{ for item in data.valueReferences }}
+Overall={{ item.overallValue }} IU
+Vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+WRITINGS
+{{ for item in data.candidates }}
+[{{ item.index }}] {{ item.writing }}
+{{ end }}
+
+Return only:
+{"0":"","1":"","2":"","3":"","4":""}
+
+Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the category order above.

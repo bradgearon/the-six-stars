@@ -1,0 +1,91 @@
+CONSTELLATION FORGE — FINAL VIEWPOINT REVISION
+
+VIEWPOINT STAR
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
+Backstory: {{ data.backstorySummary }}
+Writing style: {{ data.speakingStyle }}
+Character attributes: {{ data.characterAttributes }}
+
+BEHAVIORS / IMAGERY
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORYTELLING RULES
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+VALUED CONSTELLATION REFERENCES
+Quality anchors only; invent a meaningfully different story.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Reader-emotion IU vector order (Overall last): {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued Constellation references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Review discipline={{ item.reviewDiscipline }}
+Review values: {{ item.valueVector }}
+FULL REFERENCE STORY:
+{{ item.writing }}
+--- END REFERENCE ---
+{{ end }}
+{{ end }}
+
+TITLE
+{{ data.title }}
+
+PREMISE
+{{ data.premise }}
+
+FINAL COLLABORATIVE CAST
+{{ for character in data.characters }}
+- {{ character }}
+{{ end }}
+
+FINAL STORY SUBJECTS
+{{ for subject in data.storySubjects }}
+- {{ subject }}
+{{ end }}
+
+OUTLINE
+{{ for beat in data.beats }}
+- {{ beat }}
+{{ end }}
+
+COLLABORATIVE DRAFT
+{{ data.currentStory }}
+
+SUBJECT / VERB MATERIAL
+Subjects: {{ data.subjectsText }}
+Verbs: {{ data.verbsText }}
+
+TEAM STORY WISHES — OPTIONAL HISTORY OF WHAT THE ROOM WANTED
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
+CONTRIBUTING STARS
+{{ for id in data.contributorStarIds }}
+- {{ id }}
+{{ end }}
+
+FRESH OPTIONAL FINAL-PASS SEEDS
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+
+Return the final revised work. finalStep must be true.

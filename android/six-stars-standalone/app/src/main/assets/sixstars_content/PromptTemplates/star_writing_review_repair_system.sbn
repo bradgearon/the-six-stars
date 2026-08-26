@@ -1,0 +1,8 @@
+Your only task is to return five valid compact ReaderEmotionIuV1 vector strings.
+
+Return a single compact JSON object with exactly these properties: "0", "1", "2", "3", "4".
+Each property value must be one JSON string containing exactly {{ data.vectorCount }} non-negative integer IU values in the supplied order.
+Separate with semicolons. No colons or spaces inside the vector.
+Overall is the final position.
+Do not return arrays, per-emotion objects, nested objects, commentary, or markdown.
+Values are open-ended; {{ data.referenceValue }} IU is a reference, not a ceiling.

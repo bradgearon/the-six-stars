@@ -1,0 +1,30 @@
+SELECT TODAY'S FIVE X POSTS
+
+CHARACTER CARD
+Name: {{ data.displayName }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core line: {{ data.coreQuote }}
+Personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory: {{ data.backstorySummary }}
+Speaking style: {{ data.speakingStyle }}
+Voice direction: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for behavior in data.behaviors }}
+- {{ behavior }}
+{{ end }}
+
+There are {{ data.totalUnpostedCount }} unposted persisted writings. The deterministic shelf-ranking layer has already reduced them to the {{ data.candidateCount }} strongest eligible writings using their saved review vectors. This candidate window is listed strongest-first.
+Choose exactly {{ data.requestedCount }} distinct IDs from this high-quality window and provide the final public post text for each.
+
+ELIGIBLE UNPOSTED WRITINGS
+{{ for item in data.unpostedWritings }}
+ID: {{ item.id }}
+Created: {{ item.generatedAt }}
+Words: {{ item.words }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+Return starId and posts. Every posts item must contain writingId and text. Return only JSON.

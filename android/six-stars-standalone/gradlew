@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -e
+GRADLE_VERSION=9.6.1
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+BOOTSTRAP_DIR="$SCRIPT_DIR/.gradle/bootstrap"
+GRADLE_HOME="$BOOTSTRAP_DIR/gradle-$GRADLE_VERSION"
+GRADLE_BIN="$GRADLE_HOME/bin/gradle"
+if [ ! -x "$GRADLE_BIN" ]; then
+  echo "Downloading Gradle $GRADLE_VERSION for Six Stars Mobile..."
+  mkdir -p "$BOOTSTRAP_DIR"
+  ZIP="$BOOTSTRAP_DIR/gradle-$GRADLE_VERSION-bin.zip"
+  if [ ! -f "$ZIP" ]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -L "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" -o "$ZIP"
+    elif command -v wget >/dev/null 2>&1; then
+      wget "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" -O "$ZIP"
+    else
+      echo "Install curl/wget or install Gradle $GRADLE_VERSION manually." >&2
+      exit 1
+    fi
+  fi
+  unzip -q -o "$ZIP" -d "$BOOTSTRAP_DIR"
+fi
+exec "$GRADLE_BIN" "$@"

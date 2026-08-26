@@ -1,0 +1,62 @@
+IMPROVE THE VERB-AND-NOUN DISPLACEMENT SET
+
+PASS
+This is pass {{ data.passNumber }} of {{ data.totalPasses }}. The current items already include every accepted change from earlier passes.
+
+CHARACTER IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY AND WRITING VOICE
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Speaking style: {{ data.speakingStyle }}
+Writing delivery: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+RELEVANT PRIVATE OR CANON DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+SEED NOUNS
+These are optional noun ideas only. Use one if it helps improve a noun choice, or ignore them; do not treat this list as displaced-verb suggestions.
+{{ if data.seedWords.size == 0 }}
+(disabled)
+{{ else }}
+{{ for word in data.seedWords }}
+- {{ word }}
+{{ end }}
+{{ end }}
+
+VALUE-CALIBRATED REFERENCE SPARKS
+These are calibration anchors only. Do not imitate or recycle them.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
+
+CURRENT CANDIDATES
+The two words are noun + displaced verb.
+{{ for item in data.candidates }}
+ID: {{ item.id }}
+Noun + displaced verb: {{ item.words }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+
+Return only proposed replacements. You may change the noun, the verb, or both. Keep every displaced verb unique across the five current candidates. Value old and new in open-ended information units (IU) using the same calibration standard; the runtime keeps the higher-valued version.
