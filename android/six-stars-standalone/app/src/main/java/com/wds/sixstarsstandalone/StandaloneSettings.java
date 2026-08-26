@@ -5,24 +5,100 @@ import android.content.Context;
 import org.json.JSONObject;
 
 import java.io.*;
+import java.util.Iterator;
 
-/** File-backed settings model. A UI editor is intentionally deferred; this file is the seam for it. */
+/**
+ * File-backed hosted-service settings for the server-free Android app.
+ *
+ * Precedence (lowest -> highest):
+ *  1. app/src/main/assets/standalone-services.json
+ *  2. optional app/src/main/assets/standalone-services.local.json (developer build-time secrets)
+ *  3. optional <app files>/config/standalone-services.local.json (future Settings UI/runtime override)
+ *
+ * standalone-services.local.json is intentionally git-ignored by the repository's *.local.json rule.
+ */
 final class StandaloneSettings {
     final File file;
     final JSONObject root;
+    private final boolean buildTimeLocalAssetLoaded;
+    private final boolean runtimeOverrideLoaded;
 
-    private StandaloneSettings(File file, JSONObject root) { this.file = file; this.root = root; }
+    private StandaloneSettings(File file, JSONObject root, boolean buildTimeLocalAssetLoaded, boolean runtimeOverrideLoaded) {
+        this.file = file;
+        this.root = root;
+        this.buildTimeLocalAssetLoaded = buildTimeLocalAssetLoaded;
+        this.runtimeOverrideLoaded = runtimeOverrideLoaded;
+    }
 
     static StandaloneSettings load(Context context) throws Exception {
+        JSONObject merged;
+        try (InputStream in = context.getAssets().open("standalone-services.json")) {
+            merged = new JSONObject(JsonUtil.readUtf8(in));
+        }
+
+        boolean buildLocal = false;
+        try (InputStream in = context.getAssets().open("standalone-services.local.json")) {
+            mergeInto(merged, new JSONObject(JsonUtil.readUtf8(in)));
+            buildLocal = true;
+        } catch (IOException ignored) {
+            // Optional local developer secrets file.
+        }
+
         File configDir = new File(context.getFilesDir(), "config");
-        if (!configDir.exists()) configDir.mkdirs();
-        File target = new File(configDir, "standalone-services.json");
-        if (!target.exists()) {
-            try (InputStream in = context.getAssets().open("standalone-services.json"); OutputStream out = new FileOutputStream(target)) {
-                byte[] b = new byte[8192]; int n; while ((n = in.read(b)) >= 0) out.write(b, 0, n);
+        if (!configDir.exists() && !configDir.mkdirs()) {
+            throw new IOException("Unable to create settings directory: " + configDir.getAbsolutePath());
+        }
+        File runtimeOverride = new File(configDir, "standalone-services.local.json");
+        boolean runtimeLocal = runtimeOverride.exists();
+        if (runtimeLocal) {
+            mergeInto(merged, JsonUtil.readObject(runtimeOverride));
+        } else {
+            migrateLegacyKeysIfPresent(configDir, merged, runtimeOverride);
+            runtimeLocal = runtimeOverride.exists();
+            if (runtimeLocal) mergeInto(merged, JsonUtil.readObject(runtimeOverride));
+        }
+
+        return new StandaloneSettings(runtimeOverride, merged, buildLocal, runtimeLocal);
+    }
+
+    /** Migrate only non-empty API keys from the old copied standalone-services.json layout. */
+    private static void migrateLegacyKeysIfPresent(File configDir, JSONObject merged, File runtimeOverride) {
+        File legacy = new File(configDir, "standalone-services.json");
+        if (!legacy.exists()) return;
+        try {
+            JSONObject old = JsonUtil.readObject(legacy);
+            JSONObject local = new JSONObject();
+            copyNonEmptyApiKey(old, local, "LLM");
+            copyNonEmptyApiKey(old, local, "ASR");
+            copyNonEmptyApiKey(old, local, "TTS");
+            if (local.length() > 0) {
+                JsonUtil.writeObject(runtimeOverride, local);
+                mergeInto(merged, local);
+            }
+        } catch (Exception ignored) {
+            // Legacy migration must never prevent app startup.
+        }
+    }
+
+    private static void copyNonEmptyApiKey(JSONObject source, JSONObject target, String section) throws Exception {
+        JSONObject src = source.optJSONObject(section);
+        if (src == null) return;
+        String key = src.optString("ApiKey", "").trim();
+        if (key.isEmpty()) return;
+        target.put(section, new JSONObject().put("ApiKey", key));
+    }
+
+    private static void mergeInto(JSONObject target, JSONObject override) throws Exception {
+        Iterator<String> keys = override.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = override.get(key);
+            if (value instanceof JSONObject && target.opt(key) instanceof JSONObject) {
+                mergeInto(target.getJSONObject(key), (JSONObject)value);
+            } else {
+                target.put(key, value);
             }
         }
-        return new StandaloneSettings(target, JsonUtil.readObject(target));
     }
 
     String sessionId() { return root.optString("SessionId", "android-standalone"); }
@@ -68,6 +144,11 @@ final class StandaloneSettings {
     boolean traceEnabled() { return runtime().optBoolean("TraceEnabled", true); }
 
     String configurationSummary() {
-        return "config=" + file.getAbsolutePath() + " | LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty()) + " TTS key=" + (!ttsKey().isEmpty());
+        return "LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty()) + " TTS key=" + (!ttsKey().isEmpty())
+                + " | buildLocal=" + buildTimeLocalAssetLoaded + " runtimeLocal=" + runtimeOverrideLoaded;
+    }
+
+    String configurationHelp() {
+        return "For developer builds copy app/src/main/assets/standalone-services.local.json.example to standalone-services.local.json and add the three API keys. Runtime override path: " + file.getAbsolutePath();
     }
 }

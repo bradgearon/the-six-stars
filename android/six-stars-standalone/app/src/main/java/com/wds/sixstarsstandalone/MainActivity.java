@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
     private void initializeRuntime(){
         try{
             StandaloneRuntime r=new StandaloneRuntime(this); VoiceCaptureService capture=new VoiceCaptureService(this);runtime=r;voiceCapture=capture;
-            ui(()->{sendButton.setEnabled(true);talkButton.setEnabled(true);selectStar(selectedStarId);status.setText("Standalone • no desktop/server • "+r.settings().configurationSummary()+"\nstate="+r.stateStore().file().getAbsolutePath()+"\ncontent="+r.content().root().getAbsolutePath());});
+            ui(()->{sendButton.setEnabled(true);talkButton.setEnabled(true);selectStar(selectedStarId);String config="The Last Cat: the Six Stars • standalone • "+r.settings().configurationSummary()+"\nstate="+r.stateStore().file().getAbsolutePath()+"\ncontent="+r.content().root().getAbsolutePath();if(r.settings().llmKey().isEmpty()||r.settings().asrKey().isEmpty()||r.settings().ttsKey().isEmpty())config+="\n"+r.settings().configurationHelp();status.setText(config);});
         }catch(Throwable e){ui(()->status.setText("Standalone runtime initialization failed: "+friendly(e)));}
     }
 

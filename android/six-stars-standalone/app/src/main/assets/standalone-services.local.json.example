@@ -1,0 +1,11 @@
+{
+  "LLM": {
+    "ApiKey": "PASTE_GEMINI_API_KEY_HERE"
+  },
+  "ASR": {
+    "ApiKey": "PASTE_GROQ_API_KEY_HERE"
+  },
+  "TTS": {
+    "ApiKey": "PASTE_DASHSCOPE_API_KEY_HERE"
+  }
+}
