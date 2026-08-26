@@ -271,7 +271,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _voiceCaptureSettings,
             new WhisperTranscriptionOptions
             {
-                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
+                Language = ResolveWhisperLanguage(),
                 Prompt = CreateWhisperNamePrompt()
             });
 
@@ -279,10 +279,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         // so spoken replies begin playing chunk-by-chunk. The old HTTP /v1/audio/speech path is
         // intentionally disabled in this harness; non-streaming falls back to a mock generator.
         string? streamingOverride = Environment.GetEnvironmentVariable("SIX_STARS_USE_STREAMING_TTS");
-        _useStreamingTts = !string.IsNullOrWhiteSpace(streamingOverride)
-            ? IsTruthy(streamingOverride)
-            : _appConfig.WebSocketTTS.Enabled;
-        System.Diagnostics.Debug.WriteLine($"[TTS] Using streaming WebSocket TTS: {_useStreamingTts}");
+        bool hostedTtsEnabled = IsHostedTtsEnabled();
+        _useStreamingTts = hostedTtsEnabled
+            || (!string.IsNullOrWhiteSpace(streamingOverride)
+                ? IsTruthy(streamingOverride)
+                : _appConfig.WebSocketTTS.Enabled);
+        System.Diagnostics.Debug.WriteLine(hostedTtsEnabled
+            ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
+            : $"[TTS] Using streaming WebSocket TTS: {_useStreamingTts}");
 
         IWavePlaybackEndpoint playbackEndpoint = CreatePlaybackEndpoint();
         _playbackEndpoint = playbackEndpoint;
@@ -943,6 +947,46 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             configuredApiKey);
     }
 
+    private bool IsHostedLlmEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_ENABLED"), _appConfig.HostedServices?.LLM?.Enabled ?? false);
+    }
+
+    private bool IsHostedAsrEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_ENABLED"), _appConfig.HostedServices?.ASR?.Enabled ?? false);
+    }
+
+    private bool IsHostedTtsEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENABLED"), _appConfig.HostedServices?.TTS?.Enabled ?? false);
+    }
+
+    private static string? GetHostedLlmApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_API_KEY"),
+            Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
+            Environment.GetEnvironmentVariable("GOOGLE_API_KEY"),
+            configuredApiKey);
+    }
+
+    private static string? GetHostedAsrApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_API_KEY"),
+            Environment.GetEnvironmentVariable("GROQ_API_KEY"),
+            configuredApiKey);
+    }
+
+    private static string? GetHostedTtsApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_API_KEY"),
+            Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY"),
+            configuredApiKey);
+    }
+
     private static string? GetScreenLlmApiKey(string? configuredApiKey)
     {
         return FirstNonEmpty(
@@ -1107,10 +1151,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStarAgent CreateStarAgent()
     {
+        bool hostedLlmEnabled = IsHostedLlmEnabled();
         string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_LLM_ENDPOINT")
             ?? _appConfig.LLM.EndpointUrl
             ?? _appConfig.LocalModels.LlmEndpointUrl;
-        if (string.IsNullOrWhiteSpace(endpoint))
+        if (!hostedLlmEnabled && string.IsNullOrWhiteSpace(endpoint))
         {
             System.Diagnostics.Debug.WriteLine("[LLM] No endpoint configured. Using MockStarAgent.");
             return new MockStarAgent();
@@ -1189,6 +1234,40 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         System.Diagnostics.Debug.WriteLine($"[PromptMemory] RecentHistoryCount: {promptOptions.RecentHistoryCount}, ImportantQuotes: {promptOptions.ImportantQuoteCount}, MemoryNotes: {promptOptions.MemoryNoteCount}");
 
+        if (hostedLlmEnabled)
+        {
+            HostedLlmConfig hosted = _appConfig.HostedServices?.LLM ?? new HostedLlmConfig();
+            string? hostedKey = GetHostedLlmApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(hostedKey))
+            {
+                throw new InvalidOperationException("Hosted LLM is enabled but no Google AI Studio key is configured. Set GEMINI_API_KEY, GOOGLE_API_KEY, SIX_STARS_HOSTED_LLM_API_KEY, or HostedServices:LLM:ApiKey.");
+            }
+
+            GoogleAiStudioChatModelClient hostedClient = new GoogleAiStudioChatModelClient(new GoogleAiStudioChatModelOptions
+            {
+                ApiKey = hostedKey,
+                EndpointBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_ENDPOINT_BASE_URL") ?? hosted.EndpointBaseUrl,
+                Model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_MODEL") ?? hosted.Model,
+                ThinkingLevel = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_THINKING_LEVEL") ?? hosted.ThinkingLevel,
+                EnableGoogleSearch = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_GOOGLE_SEARCH"), hosted.EnableGoogleSearch),
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_TIMEOUT_SECONDS"), hosted.TimeoutSeconds),
+                MaxTokens = GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_MAX_TOKENS"), _appConfig.LLM.MaxTokens),
+                Temperature = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_TEMPERATURE"), _appConfig.LLM.Temperature),
+                LogExchangesToDisk = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_EXCHANGES"), _appConfig.LLM.LogExchangesToDisk),
+                ExchangeLogDirectory = Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR") ?? _appConfig.LLM.ExchangeLogDirectory,
+                ExchangeLogMaxTextChars = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_MAX_TEXT_CHARS"), _appConfig.LLM.ExchangeLogMaxTextChars)
+            });
+            hostedClient.ExchangeLogged += (_, args) => AppendLlmDebugLog(args.FormattedText);
+            System.Diagnostics.Debug.WriteLine($"[LLM] Hosted provider=Google AI Studio, model={Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_MODEL") ?? hosted.Model}, thinking={Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_THINKING_LEVEL") ?? hosted.ThinkingLevel}");
+
+            return new StructuredStarAgent(
+                hostedClient,
+                library.LoadMainInstructions(),
+                promptOptions,
+                GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_SPEECH_MAX_TOKENS"), _appConfig.LLM.SpeechMaxTokens),
+                GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_REVIEW_MAX_TOKENS"), _appConfig.LLM.ReviewMaxTokens));
+        }
+
         LocalModelServiceOptions localOptions = CreateLocalModelServiceOptions(options);
         LocalAiClient client = new LocalAiClient(localOptions);
         client.ExchangeLogged += (_, args) => AppendLlmDebugLog(args.FormattedText);
@@ -1207,9 +1286,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IWhisperSpeechStreamer CreateWhisperStreamer()
     {
-        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")
-            ?? _appConfig.Whisper.EndpointUrl
-            ?? _appConfig.LocalModels.WhisperEndpointUrl;
         bool useMockWhisper = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_USE_MOCK_WHISPER"), false);
         if (useMockWhisper)
         {
@@ -1217,23 +1293,60 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return new MockWhisperSpeechStreamer();
         }
 
-        if (string.IsNullOrWhiteSpace(endpoint))
+        if (IsHostedAsrEnabled())
+        {
+            HostedAsrConfig hosted = _appConfig.HostedServices?.ASR ?? new HostedAsrConfig();
+            string? apiKey = GetHostedAsrApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException("Hosted ASR is enabled but no Groq API key is configured. Set GROQ_API_KEY, SIX_STARS_HOSTED_ASR_API_KEY, or HostedServices:ASR:ApiKey.");
+            }
+
+            string endpoint = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_ENDPOINT") ?? hosted.EndpointUrl;
+            string model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_MODEL") ?? hosted.Model;
+            System.Diagnostics.Debug.WriteLine($"[Whisper] Hosted Groq transcription endpoint: {endpoint}; model={model}");
+            return new LocalWhisperHttpSpeechStreamer(new WhisperStreamEndpointOptions
+            {
+                Provider = "groq",
+                EndpointUrl = endpoint,
+                Model = model,
+                ApiKey = apiKey,
+                Language = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_LANGUAGE") ?? hosted.Language,
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_TIMEOUT_SECONDS"), hosted.TimeoutSeconds)
+            });
+        }
+
+        string? localEndpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")
+            ?? _appConfig.Whisper.EndpointUrl
+            ?? _appConfig.LocalModels.WhisperEndpointUrl;
+        if (string.IsNullOrWhiteSpace(localEndpoint))
         {
             System.Diagnostics.Debug.WriteLine("[Whisper] No endpoint configured. Real voice input will fail loudly instead of using a mock transcript.");
             return new UnconfiguredWhisperSpeechStreamer();
         }
 
-        System.Diagnostics.Debug.WriteLine($"[Whisper] Real microphone transcription endpoint: {endpoint}");
+        System.Diagnostics.Debug.WriteLine($"[Whisper] Real microphone transcription endpoint: {localEndpoint}");
         return new LocalWhisperHttpSpeechStreamer(new WhisperStreamEndpointOptions
         {
             Provider = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_PROVIDER") ?? _appConfig.Whisper.Provider,
-            EndpointUrl = endpoint,
+            EndpointUrl = localEndpoint,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL") ?? _appConfig.Whisper.Model,
             ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH")
                 ?? (!string.IsNullOrWhiteSpace(_appConfig.Whisper.ModelPath) ? _appConfig.Whisper.ModelPath : _appConfig.LocalModels.WhisperLocalPath),
             ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_API_KEY") ?? _appConfig.Whisper.ApiKey,
             Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
             TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_TIMEOUT_SECONDS"), _appConfig.Whisper.TimeoutSeconds)
         });
+    }
+
+    private string ResolveWhisperLanguage()
+    {
+        if (IsHostedAsrEnabled())
+        {
+            HostedAsrConfig hosted = _appConfig.HostedServices?.ASR ?? new HostedAsrConfig();
+            return Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_LANGUAGE") ?? hosted.Language;
+        }
+        return Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language;
     }
 
     private VoiceCaptureSettings CreateVoiceCaptureSettings()
@@ -1330,6 +1443,31 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStreamingVoiceGenerator CreateStreamingVoiceGenerator()
     {
+        if (IsHostedTtsEnabled())
+        {
+            HostedTtsConfig hosted = _appConfig.HostedServices?.TTS ?? new HostedTtsConfig();
+            string? apiKey = GetHostedTtsApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException("Hosted TTS is enabled but no Alibaba Model Studio key is configured. Set DASHSCOPE_API_KEY, SIX_STARS_HOSTED_TTS_API_KEY, or HostedServices:TTS:ApiKey.");
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Hosted Alibaba Qwen3-TTS model: {Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_MODEL") ?? hosted.Model}");
+            return new AlibabaQwenTtsStreamingVoiceGenerator(new AlibabaQwenTtsOptions
+            {
+                ApiKey = apiKey,
+                EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENDPOINT") ?? hosted.EndpointUrl,
+                VoiceEnrollmentEndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENROLLMENT_ENDPOINT") ?? hosted.VoiceEnrollmentEndpointUrl,
+                Model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_MODEL") ?? hosted.Model,
+                VoiceEnrollmentModel = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENROLLMENT_MODEL") ?? hosted.VoiceEnrollmentModel,
+                DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_LANGUAGE") ?? hosted.DefaultLanguage,
+                AutoCloneVoices = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_AUTO_CLONE"), hosted.AutoCloneVoices),
+                VoiceCachePath = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_VOICE_CACHE") ?? hosted.VoiceCachePath,
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_TIMEOUT_SECONDS"), hosted.TimeoutSeconds),
+                VoiceIds = hosted.VoiceIds ?? new Dictionary<string, string>()
+            });
+        }
+
         string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
             ?? _appConfig.WebSocketTTS.WebSocketUrl
             ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;

@@ -8,6 +8,7 @@ namespace Wds.SixStars.Ui.Configuration
         public OpenWakeWordConfig OpenWakeWord { get; set; } = new OpenWakeWordConfig();
         public VoiceInputConfig VoiceInput { get; set; } = new VoiceInputConfig();
         public LlmConfig LLM { get; set; } = new LlmConfig();
+        public HostedServicesConfig HostedServices { get; set; } = new HostedServicesConfig();
         public WhisperConfig Whisper { get; set; } = new WhisperConfig();
         public TtsConfig TTS { get; set; } = new TtsConfig();
         public WebSocketTtsConfig WebSocketTTS { get; set; } = new WebSocketTtsConfig();
@@ -325,11 +326,68 @@ namespace Wds.SixStars.Ui.Configuration
         public double Temperature { get; set; } = 0.65;
     }
 
+    public sealed class HostedServicesConfig
+    {
+        /// <summary>Hosted LLM replacement. Disabled by default so the local stack remains unchanged.</summary>
+        public HostedLlmConfig LLM { get; set; } = new HostedLlmConfig();
+
+        /// <summary>Hosted speech-to-text replacement.</summary>
+        public HostedAsrConfig ASR { get; set; } = new HostedAsrConfig();
+
+        /// <summary>Hosted speech synthesis replacement.</summary>
+        public HostedTtsConfig TTS { get; set; } = new HostedTtsConfig();
+    }
+
+    public sealed class HostedLlmConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "google-ai-studio";
+        public string? ApiKey { get; set; }
+        public string EndpointBaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
+        public string Model { get; set; } = "gemma-4-26b-a4b-it";
+        /// <summary>Gemma 4 accepts high (thinking on) or minimal (thinking off).</summary>
+        public string ThinkingLevel { get; set; } = "high";
+        /// <summary>Enable Gemini API Google Search grounding for normal text/streaming replies. JSON review calls do not attach search tools.</summary>
+        public bool EnableGoogleSearch { get; set; } = false;
+        public int TimeoutSeconds { get; set; } = 600;
+    }
+
+    public sealed class HostedAsrConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "groq";
+        public string? ApiKey { get; set; }
+        public string EndpointUrl { get; set; } = "https://api.groq.com/openai/v1/audio/transcriptions";
+        public string Model { get; set; } = "whisper-large-v3-turbo";
+        public string Language { get; set; } = "en";
+        public int TimeoutSeconds { get; set; } = 60;
+    }
+
+    public sealed class HostedTtsConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "alibaba-qwen3-tts-vc";
+        public string? ApiKey { get; set; }
+        public string EndpointUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+        public string VoiceEnrollmentEndpointUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization";
+        public string Model { get; set; } = "qwen3-tts-vc-2026-01-22";
+        public string VoiceEnrollmentModel { get; set; } = "qwen-voice-enrollment";
+        public string DefaultLanguage { get; set; } = "English";
+        /// <summary>When true, the existing per-Star local clone WAV is automatically enrolled the first time that Star speaks through hosted TTS.</summary>
+        public bool AutoCloneVoices { get; set; } = true;
+        /// <summary>Relative paths resolve under the desktop executable directory.</summary>
+        public string VoiceCachePath { get; set; } = "state/hosted-tts-voices.json";
+        public int TimeoutSeconds { get; set; } = 120;
+        /// <summary>Optional pre-enrolled voice IDs keyed by StarId. These bypass automatic enrollment.</summary>
+        public Dictionary<string, string> VoiceIds { get; set; } = new Dictionary<string, string>();
+    }
+
     public sealed class WhisperConfig
     {
         public string Provider { get; set; } = "faster-whisper";
         public string EndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
         public string ModelPath { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
         public string? ApiKey { get; set; }
         public int TimeoutSeconds { get; set; } = 60;
         public string Language { get; set; } = "en";

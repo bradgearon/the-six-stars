@@ -87,7 +87,17 @@ namespace Wds.SixStars.Api.Speech
                 form.Add(fileContent, "file", "speech.wav");
                 string language = string.IsNullOrWhiteSpace(_endpointOptions.Language) ? "en" : _endpointOptions.Language;
                 form.Add(new StringContent(language), "language");
-                form.Add(new StringContent("transcribe"), "task");
+                bool isGroq = string.Equals(_endpointOptions.Provider, "groq", StringComparison.OrdinalIgnoreCase);
+                if (isGroq)
+                {
+                    string model = string.IsNullOrWhiteSpace(_endpointOptions.Model) ? "whisper-large-v3-turbo" : _endpointOptions.Model.Trim();
+                    form.Add(new StringContent(model), "model");
+                    form.Add(new StringContent("json"), "response_format");
+                }
+                else
+                {
+                    form.Add(new StringContent("transcribe"), "task");
+                }
 
                 using (HttpResponseMessage response = await _httpClient.PostAsync(_endpointOptions.EndpointUrl, form, cancellationToken).ConfigureAwait(false))
                 {
@@ -104,7 +114,7 @@ namespace Wds.SixStars.Api.Speech
                         StartedAt = startedAt == default(DateTimeOffset) ? DateTimeOffset.UtcNow : startedAt,
                         EndedAt = DateTimeOffset.UtcNow,
                         AudioDurationMs = (double)wavBytes.Length / Math.Max(1, format.BytesPerSecond) * 1000.0,
-                        Source = "local-whisper-http",
+                        Source = string.Equals(_endpointOptions.Provider, "groq", StringComparison.OrdinalIgnoreCase) ? "groq-whisper-http" : "local-whisper-http",
                         RawJson = body
                     };
                 }

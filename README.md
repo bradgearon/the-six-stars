@@ -597,3 +597,7 @@ Use **Clear All Star Data** in the desktop UI or Android app to reset all local 
 ## LLM exchange logs
 
 The desktop runtime now appends local LLM request/response/debug entries to one plain daily log file: `logs/llm-exchanges/YYYY-MM-DD.log`. Use **Open LLM Exchange Log Folder** in Quick Actions to inspect the day's `.log` file and trim unused prompt/context sections.
+
+## Optional hosted LLM / ASR / TTS
+
+The main Star LLM, microphone transcription, and Star TTS can now be switched independently from the local stack to Google AI Studio (Gemma 4), Groq Whisper, and Alibaba Qwen3-TTS voice cloning. The hosted providers are disabled by default and can be enabled with keys in `appsettings.Local.json` or environment variables. See [`docs/Hosted-AI-Services.md`](docs/Hosted-AI-Services.md).
