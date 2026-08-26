@@ -5,7 +5,11 @@ import org.json.JSONObject;
 import java.time.OffsetDateTime;
 import java.util.List;
 
-/** Low-priority living-state generation after a protected direct-turn memory review has committed. */
+/**
+ * Low-priority living-state generation after a protected direct-turn memory review has committed.
+ * This is event-driven staleness maintenance, not a timer/polling loop: it runs only after a committed
+ * interaction and generates daily/hourly state only when the corresponding saved state is stale.
+ */
 final class MaintenanceService {
     static final class Result { JSONObject todayState; JSONObject girlfriendHourlyState; boolean hasChanges(){return todayState!=null||girlfriendHourlyState!=null;} }
 
@@ -47,7 +51,7 @@ final class MaintenanceService {
     private JSONObject generateDaily(JSONObject profile, JSONObject state) throws Exception {
         trace.log("maintenance.daily.start",profile.optString("starId"));
         List<ChatMessage> messages=prompts.buildDailyState(profile,state,"standalone state missing or stale");
-        JSONObject stored=JsonUtil.parseObject(llm.completeJson(messages,settings.reviewMaxTokens()));
+        JSONObject stored=JsonUtil.parseObject(llm.completeJson(messages));
         OffsetDateTime now=OffsetDateTime.now();
         stored.put("Version",1).put("StarId",profile.optString("starId")).put("StarName",profile.optString("displayName",profile.optString("starId")))
                 .put("LocalDate",now.toLocalDate().toString()).put("SlotId",daySlot(now.getHour())).put("GeneratedAt",now.toString())
@@ -58,7 +62,7 @@ final class MaintenanceService {
     private JSONObject generateGirlfriendHourly(JSONObject profile, JSONObject state) throws Exception {
         trace.log("maintenance.girlfriend-hourly.start",profile.optString("starId"));
         List<ChatMessage> messages=prompts.buildGirlfriendHourly(profile,state,"standalone hourly state missing or stale");
-        JSONObject stored=JsonUtil.parseObject(llm.completeJson(messages,settings.reviewMaxTokens()));
+        JSONObject stored=JsonUtil.parseObject(llm.completeJson(messages));
         OffsetDateTime now=OffsetDateTime.now();
         stored.put("GeneratedAt",now.toString()).put("SlotId",now.withMinute(0).withSecond(0).withNano(0).toString()).put("GenerationReason","standalone girlfriend hourly refresh");
         trace.log("maintenance.girlfriend-hourly.complete",profile.optString("starId")); return stored;

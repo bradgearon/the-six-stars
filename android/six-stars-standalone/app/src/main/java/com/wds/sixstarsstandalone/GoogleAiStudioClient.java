@@ -28,7 +28,7 @@ final class GoogleAiStudioClient {
 
     String completeStreaming(List<ChatMessage> messages, Consumer<String> onDelta) throws Exception {
         requireConfigured();
-        JSONObject payload = buildPayload(messages, settings.maxTokens(), false, settings.googleSearch());
+        JSONObject payload = buildPayload(messages, false, settings.googleSearch());
         Request request = request(endpoint("streamGenerateContent") + "?alt=sse", payload);
         StringBuilder all = new StringBuilder();
         try (Response response = client.newCall(request).execute()) {
@@ -47,14 +47,14 @@ final class GoogleAiStudioClient {
         return all.toString();
     }
 
-    String completeJson(List<ChatMessage> messages, int maxTokens) throws Exception {
+    String completeJson(List<ChatMessage> messages) throws Exception {
         requireConfigured();
-        JSONObject payload = buildPayload(messages, maxTokens, true, false);
+        JSONObject payload = buildPayload(messages, true, false);
         try {
             return completeOnce(payload, "json");
         } catch (Http400 e) {
             // Match desktop hosted adapter behavior: keep provider, retry without responseMimeType.
-            payload = buildPayload(messages, maxTokens, false, false);
+            payload = buildPayload(messages, false, false);
             return completeOnce(payload, "prompt-json");
         }
     }
@@ -73,7 +73,7 @@ final class GoogleAiStudioClient {
         }
     }
 
-    private JSONObject buildPayload(List<ChatMessage> messages, int maxTokens, boolean wantsJson, boolean allowSearch) throws Exception {
+    private JSONObject buildPayload(List<ChatMessage> messages, boolean wantsJson, boolean allowSearch) throws Exception {
         StringBuilder system = new StringBuilder();
         JSONArray contents = new JSONArray();
         String lastRole = null; JSONObject current = null; JSONArray parts = null;
@@ -90,7 +90,8 @@ final class GoogleAiStudioClient {
         JSONObject gen = new JSONObject();
         gen.put("temperature", settings.temperature());
         gen.put("thinkingConfig", new JSONObject().put("thinkingLevel", normalizeThinking(settings.thinkingLevel())));
-        if (maxTokens > 0) gen.put("maxOutputTokens", maxTokens);
+        // Deliberately do not send maxOutputTokens. The desktop Star runtime also lets the model stop
+        // on EOS/context; artificial per-request caps can truncate speech, reviews, and state JSON.
         if (wantsJson) gen.put("responseMimeType", "application/json");
         JSONObject payload = new JSONObject().put("contents", contents).put("generationConfig", gen);
         if (system.length() > 0) payload.put("systemInstruction", new JSONObject().put("parts", new JSONArray().put(new JSONObject().put("text",system.toString()))));

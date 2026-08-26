@@ -9,8 +9,6 @@
     "ThinkingLevel": "high",
     "EnableGoogleSearch": false,
     "Temperature": 0.75,
-    "MaxOutputTokens": 8192,
-    "ReviewMaxOutputTokens": 4096,
     "TimeoutSeconds": 600
   },
   "ASR": {

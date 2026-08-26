@@ -38,8 +38,7 @@ final class StandaloneSettings {
     String thinkingLevel() { return llm().optString("ThinkingLevel", "high"); }
     boolean googleSearch() { return llm().optBoolean("EnableGoogleSearch", false); }
     double temperature() { return llm().optDouble("Temperature", 0.75); }
-    int maxTokens() { return llm().optInt("MaxOutputTokens", 8192); }
-    int reviewMaxTokens() { return llm().optInt("ReviewMaxOutputTokens", 4096); }
+    // No foreground/review output-token cap is configurable here by design; keep parity with desktop.
     int llmTimeoutSeconds() { return llm().optInt("TimeoutSeconds", 600); }
 
     boolean asrEnabled() { return asr().optBoolean("Enabled", true); }

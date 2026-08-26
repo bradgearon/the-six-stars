@@ -152,7 +152,7 @@ final class StandaloneRuntime implements AutoCloseable {
                 try{
                     trace.log("primary-review.llm-start","star="+starId+" attempt="+attempt);
                     List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-                    String json=llm.completeJson(messages,settings.reviewMaxTokens());
+                    String json=llm.completeJson(messages);
                     review=JsonUtil.parseObject(json); trace.log("primary-review.llm-complete","star="+starId+" attempt="+attempt+" chars="+json.length()); break;
                 }catch(Throwable e){last=e;trace.log("primary-review.llm-attempt-failed","star="+starId+" attempt="+attempt+" "+e);if(attempt<3)Thread.sleep(attempt*400L);}
             }
@@ -228,7 +228,7 @@ final class StandaloneRuntime implements AutoCloseable {
     private void runRecoveryReview(JSONObject profile,JSONObject stateBefore,JSONObject pending)throws Exception{
         String starId=profile.optString("starId");trace.log("primary-review.recovery-start","star="+starId);
         List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-        JSONObject review=JsonUtil.parseObject(llm.completeJson(messages,settings.reviewMaxTokens()));
+        JSONObject review=JsonUtil.parseObject(llm.completeJson(messages));
         synchronized(stateStore){JSONObject live=stateStore.star(starId);memory.apply(profile,live,review,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));live.remove("StandalonePendingPrimaryReview");stateStore.persist();}
         trace.log("primary-review.recovery-commit","star="+starId);
     }
