@@ -25,7 +25,6 @@ public final class MainActivity extends Activity {
     private ImageView portrait;
     private EditText input;
     private Button sendButton,talkButton;
-    private LinearLayout starButtons;
     private volatile boolean assistantLineOpen;
 
     private final StandaloneRuntime.Callbacks callbacks=new StandaloneRuntime.Callbacks(){
@@ -40,8 +39,8 @@ public final class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle savedInstanceState){
         super.onCreate(savedInstanceState);setContentView(R.layout.activity_main);
-        status=findViewById(R.id.status);starName=findViewById(R.id.starName);relationship=findViewById(R.id.relationship);transcript=findViewById(R.id.transcript);portrait=findViewById(R.id.starPortrait);input=findViewById(R.id.input);sendButton=findViewById(R.id.sendButton);talkButton=findViewById(R.id.talkButton);starButtons=findViewById(R.id.starButtons);
-        sendButton.setEnabled(false);talkButton.setEnabled(false);buildStarButtons();
+        status=findViewById(R.id.status);starName=findViewById(R.id.starName);relationship=findViewById(R.id.relationship);transcript=findViewById(R.id.transcript);portrait=findViewById(R.id.starPortrait);input=findViewById(R.id.input);sendButton=findViewById(R.id.sendButton);talkButton=findViewById(R.id.talkButton);
+        sendButton.setEnabled(false);talkButton.setEnabled(false);bindDeclarativeStarButtons();
         sendButton.setOnClickListener(v->sendTyped()); talkButton.setOnClickListener(v->toggleTalk());
         initExecutor.submit(this::initializeRuntime);
     }
@@ -53,8 +52,18 @@ public final class MainActivity extends Activity {
         }catch(Throwable e){ui(()->status.setText("Standalone runtime initialization failed: "+friendly(e)));}
     }
 
-    private void buildStarButtons(){
-        for(String id:StarProfileRepository.IDS){Button b=new Button(this);b.setText(id);b.setAllCaps(false);b.setOnClickListener(v->selectStar(id));starButtons.addView(b,new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,LinearLayout.LayoutParams.WRAP_CONTENT));}
+    /** All visible controls are declared in res/layout/activity_main.xml for Android Studio's Layout Editor. */
+    private void bindDeclarativeStarButtons(){
+        bindStarButton(R.id.starElusiaaButton,"Elusiaa");
+        bindStarButton(R.id.starKaeliaButton,"Kaelia");
+        bindStarButton(R.id.starMaeraButton,"Maera");
+        bindStarButton(R.id.starKhaviaButton,"Khavia");
+        bindStarButton(R.id.starAuerlisButton,"Auerlis");
+        bindStarButton(R.id.starNyxariButton,"Nyxari");
+    }
+
+    private void bindStarButton(int viewId,String starId){
+        findViewById(viewId).setOnClickListener(v->selectStar(starId));
     }
 
     private void selectStar(String id){

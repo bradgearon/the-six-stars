@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="#100E19"
-    android:padding="12dp">
+    android:padding="12dp"
+    tools:context=".MainActivity">
 
     <TextView
         android:id="@+id/title"
@@ -19,55 +21,114 @@
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:paddingBottom="8dp"
         android:text="Standalone runtime"
         android:textColor="#BFAFD6"
         android:textSize="12sp"
-        android:paddingBottom="8dp" />
+        tools:text="Standalone • hosted services ready\nstate=/data/user/0/.../six-stars-standalone-state.json" />
 
+    <!--
+        Keep the six Star selector buttons declared here rather than creating them in Java.
+        This makes the complete screen editable in Android Studio's Design/Layout Editor.
+    -->
     <HorizontalScrollView
+        android:id="@+id/starSelectorScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:fillViewport="true">
+
         <LinearLayout
             android:id="@+id/starButtons"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/starElusiaaButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Elusiaa"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/starKaeliaButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Kaelia"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/starMaeraButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Maera"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/starKhaviaButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Khavia"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/starAuerlisButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Auerlis"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/starNyxariButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Nyxari"
+                android:textAllCaps="false" />
+        </LinearLayout>
     </HorizontalScrollView>
 
     <LinearLayout
+        android:id="@+id/selectedStarHeader"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingTop="8dp"
         android:paddingBottom="8dp">
+
         <ImageView
             android:id="@+id/starPortrait"
             android:layout_width="88dp"
             android:layout_height="88dp"
+            android:contentDescription="Selected Star"
             android:scaleType="fitCenter"
-            android:contentDescription="Selected Star" />
+            android:src="@drawable/portrait_elusiaa"
+            tools:src="@drawable/portrait_elusiaa" />
+
         <LinearLayout
+            android:id="@+id/selectedStarText"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:orientation="vertical"
             android:paddingStart="12dp">
+
             <TextView
                 android:id="@+id/starName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Elusiaa"
                 android:textColor="#FFFFFF"
-                android:textStyle="bold"
-                android:textSize="20sp" />
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
             <TextView
                 android:id="@+id/relationship"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="#D6C7E8"
-                android:textSize="13sp" />
+                android:textSize="13sp"
+                tools:text="Heart 0  •  Trust 0  •  Romance 0\nConnection 0.0%  •  Building relationship" />
         </LinearLayout>
     </LinearLayout>
 
@@ -78,38 +139,43 @@
         android:layout_weight="1"
         android:background="#181522"
         android:padding="10dp">
+
         <TextView
             android:id="@+id/transcript"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:lineSpacingExtra="4dp"
             android:textColor="#F4F0F8"
             android:textSize="15sp"
-            android:lineSpacingExtra="4dp" />
+            tools:text="You: Hello.\n\nElusiaa: Hello, little one." />
     </ScrollView>
 
     <EditText
         android:id="@+id/input"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Talk to the selected Star"
-        android:textColor="#FFFFFF"
-        android:textColorHint="#9289A0"
         android:backgroundTint="#BFAFD6"
+        android:hint="Talk to the selected Star"
+        android:inputType="textCapSentences|textMultiLine"
         android:maxLines="5"
         android:minLines="2"
-        android:inputType="textCapSentences|textMultiLine" />
+        android:textColor="#FFFFFF"
+        android:textColorHint="#9289A0" />
 
     <LinearLayout
+        android:id="@+id/conversationActions"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:paddingTop="8dp">
+
         <Button
             android:id="@+id/sendButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Send" />
+
         <Button
             android:id="@+id/talkButton"
             android:layout_width="0dp"
