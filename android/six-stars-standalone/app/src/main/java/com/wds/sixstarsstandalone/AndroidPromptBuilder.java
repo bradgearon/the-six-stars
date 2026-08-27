@@ -1,6 +1,7 @@
 package com.wds.sixstarsstandalone;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.time.OffsetDateTime;
@@ -241,21 +242,26 @@ final class AndroidPromptBuilder {
         return "CURRENT TIME\nCurrent time: " + now + "\nLocal date: " + now.toLocalDate() + "\nTime zone: " + ZoneId.systemDefault();
     }
 
-    private String recentConversationText(JSONObject state, int max) { JSONArray a=recentTurnObjects(state,max); StringBuilder b=new StringBuilder(); for(int i=0;i<a.length();i++){JSONObject t=a.optJSONObject(i); if(t!=null)b.append("- Turn ").append(t.optInt("index",i+1)).append(": player=\"").append(t.optString("player")).append("\"; Star=\"").append(t.optString("star")).append("\"\n");} return b.length()==0?"No recent usable turns yet.":b.toString().trim(); }
+    private String recentConversationText(JSONObject state, int max) throws JSONException { JSONArray a=recentTurnObjects(state,max); StringBuilder b=new StringBuilder(); for(int i=0;i<a.length();i++){JSONObject t=a.optJSONObject(i); if(t!=null)b.append("- Turn ").append(t.optInt("index",i+1)).append(": player=\"").append(t.optString("player")).append("\"; Star=\"").append(t.optString("star")).append("\"\n");} return b.length()==0?"No recent usable turns yet.":b.toString().trim(); }
 
-    private JSONArray recentTurnObjects(JSONObject state, int max) {
+    private JSONArray recentTurnObjects(JSONObject state, int max) throws JSONException {
         JSONArray log=state.optJSONArray("MemoryLog"); JSONArray out=new JSONArray(); if(log==null)return out;
-        int count=Math.min(max,log.length()); for(int i=0;i<count;i++){JSONObject e=log.optJSONObject(i); if(e==null)continue; JSONObject t=new JSONObject(); t.put("index",i+1); t.put("player",e.optString("PlayerText","")); t.put("star",e.optString("StarResponse","")); out.put(t);} return out;
+        int count=Math.min(max,log.length()); for(int i=0;i<count;i++){JSONObject e=log.optJSONObject(i); if(e==null)continue; JSONObject t=new JSONObject();
+            t.put("index",i+1);
+            t.put("player",e.optString("PlayerText",""));
+            t.put("star",e.optString("StarResponse",""));
+            out.put(t);
+        } return out;
     }
 
-    private JSONArray recentTurnObjectsForSpeech(JSONObject state, int max) {
+    private JSONArray recentTurnObjectsForSpeech(JSONObject state, int max) throws JSONException {
         JSONArray log=state.optJSONArray("MemoryLog"); JSONArray out=new JSONArray(); if(log==null)return out;
         List<JSONObject> selected=new ArrayList<>(); for(int i=0;i<Math.min(max,log.length());i++){JSONObject e=log.optJSONObject(i); if(e!=null)selected.add(e);} Collections.reverse(selected);
         int base=Math.max(1,state.optInt("InteractionCount",selected.size())-selected.size()+1);
         for(int i=0;i<selected.size();i++){JSONObject e=selected.get(i); JSONObject t=new JSONObject(); t.put("turnNumber",base+i); t.put("timestamp",e.optString("CreatedAt","")); t.put("player",e.optString("PlayerText","")); t.put("you",e.optString("StarResponse","")); out.put(t);} return out;
     }
 
-    private JSONArray normalizeSummaryBlocks(JSONArray source) { JSONArray out=new JSONArray(); if(source==null)return out; for(int i=0;i<source.length();i++){JSONObject s=source.optJSONObject(i); if(s==null)continue; JSONObject x=new JSONObject(); x.put("startTurn",s.optInt("StartTurn",s.optInt("startTurn",0))); x.put("endTurn",s.optInt("EndTurn",s.optInt("endTurn",0))); x.put("summary",s.optString("Summary",s.optString("summary",""))); out.put(x);} return out; }
+    private JSONArray normalizeSummaryBlocks(JSONArray source) throws JSONException { JSONArray out=new JSONArray(); if(source==null)return out; for(int i=0;i<source.length();i++){JSONObject s=source.optJSONObject(i); if(s==null)continue; JSONObject x=new JSONObject(); x.put("startTurn",s.optInt("StartTurn",s.optInt("startTurn",0))); x.put("endTurn",s.optInt("EndTurn",s.optInt("endTurn",0))); x.put("summary",s.optString("Summary",s.optString("summary",""))); out.put(x);} return out; }
 
     private String shortTermMemoryText(JSONObject state) { return formatArray("SHORT-TERM MEMORY", state.optJSONArray("ShortTermMemory"), 12); }
     private String durableMemoryText(JSONObject state) { StringBuilder b=new StringBuilder(); b.append(formatArray("Important player quotes",state.optJSONArray("ImportantPlayerQuotes"),16)); b.append('\n').append(formatArray("Memory notes",state.optJSONArray("MemoryNotes"),16)); b.append('\n').append(formatArray("Things learned or suggested by the Last Cat",state.optJSONArray("ThingsLearnedOrSuggestedByPlayer"),24)); b.append('\n').append(formatArray("Remembered markers",state.optJSONArray("RememberedMarkers"),16)); return b.toString().trim(); }

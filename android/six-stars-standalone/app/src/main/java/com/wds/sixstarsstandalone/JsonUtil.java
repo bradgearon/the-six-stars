@@ -48,7 +48,7 @@ final class JsonUtil {
         return current;
     }
 
-    static void writeObject(File file, JSONObject value) throws IOException {
+    static void writeObject(File file, JSONObject value) throws IOException, JSONException {
         File parent = file.getParentFile();
         if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("Unable to create " + parent);
         File tmp = new File(file.getAbsolutePath() + ".tmp");

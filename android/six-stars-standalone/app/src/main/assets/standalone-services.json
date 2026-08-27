@@ -3,7 +3,7 @@
   "LLM": {
     "Enabled": true,
     "Provider": "google-ai-studio",
-    "ApiKey": "",
+    "ApiKey": "AQ.Ab8RN6JqHtwT8iJxqX5O-bF42JHXHBRldy8Vpfg4z4J9CS7Sqw",
     "EndpointBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
     "Model": "gemma-4-26b-a4b-it",
     "ThinkingLevel": "high",
@@ -14,7 +14,7 @@
   "ASR": {
     "Enabled": true,
     "Provider": "groq",
-    "ApiKey": "",
+    "ApiKey": "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",
     "EndpointUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
     "Model": "whisper-large-v3-turbo",
     "Language": "en",
@@ -22,7 +22,7 @@
   },
   "TTS": {
     "Enabled": true,
-    "Mode": "auto",
+    "Mode": "local",
     "Provider": "alibaba-qwen3-tts-vc",
     "ApiKey": "",
     "EndpointUrl": "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
@@ -33,7 +33,7 @@
     "AutoCloneVoices": true,
     "TimeoutSeconds": 120,
     "VoiceIds": {},
-    "LocalWebSocketUrl": "",
+    "LocalWebSocketUrl": "ws://192.168.1.179:8100/tts/stream",
     "LocalModel": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
     "LocalLanguage": "English",
     "LocalTaskType": "VoiceClone",

@@ -25,7 +25,7 @@
         android:text="Standalone runtime"
         android:textColor="#BFAFD6"
         android:textSize="12sp"
-        tools:text="Standalone • hosted services ready\nstate=/data/user/0/.../six-stars-standalone-state.json" />
+        tools:text="Standalone ï¿½ hosted services ready\nstate=/data/user/0/.../six-stars-standalone-state.json" />
 
     <!--
         Keep the six Star selector buttons declared here rather than creating them in Java.
@@ -128,7 +128,7 @@
                 android:layout_height="wrap_content"
                 android:textColor="#D6C7E8"
                 android:textSize="13sp"
-                tools:text="Heart 0  •  Trust 0  •  Romance 0\nConnection 0.0%  •  Building relationship" />
+                tools:text="Heart 0  ï¿½  Trust 0  ï¿½  Romance 0\nConnection 0.0%  ï¿½  Building relationship" />
         </LinearLayout>
     </LinearLayout>
 
