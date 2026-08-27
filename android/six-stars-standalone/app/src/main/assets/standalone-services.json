@@ -6,7 +6,7 @@
     "ApiKey": "AQ.Ab8RN6JqHtwT8iJxqX5O-bF42JHXHBRldy8Vpfg4z4J9CS7Sqw",
     "EndpointBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
     "Model": "gemma-4-26b-a4b-it",
-    "ThinkingLevel": "high",
+    "ThinkingLevel": "off",
     "EnableGoogleSearch": false,
     "Temperature": 0.75,
     "TimeoutSeconds": 600

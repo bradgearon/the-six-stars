@@ -123,6 +123,14 @@ namespace Wds.SixStars.Api.Ai
                     return;
                 }
 
+                if (element.ValueKind == JsonValueKind.String
+                    && BackgroundReviewCompactCodec.TryParseKnownListItem<T>(element.GetString(), out T? compactItem)
+                    && compactItem != null)
+                {
+                    result.Add(compactItem);
+                    return;
+                }
+
                 T? item = element.Deserialize<T>(options);
                 if (item != null) result.Add(item);
             }

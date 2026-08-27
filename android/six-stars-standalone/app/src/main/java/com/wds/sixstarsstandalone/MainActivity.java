@@ -6,6 +6,8 @@ import android.app.AlertDialog;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.Window;
@@ -19,7 +21,9 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -35,7 +39,9 @@ public final class MainActivity extends Activity {
     private VoiceCaptureService voiceCapture;
     private String selectedStarId = "Elusiaa";
     private boolean recording;
-    private boolean assistantLineOpen;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private StarAnimationCoordinator starAnimationCoordinator;
+    private String activePlaybackStarId = "";
 
     private TextView starNameText;
     private TextView starSubtitleText;
@@ -58,7 +64,8 @@ public final class MainActivity extends Activity {
     private View textComposer;
     private Button sendTextButton;
 
-    private final StringBuilder sessionConversation = new StringBuilder();
+    private final Map<String, StringBuilder> sessionConversationByStar = new HashMap<>();
+    private final Map<String, Integer> assistantContentStartByStar = new HashMap<>();
 
     private final StandaloneRuntime.Callbacks callbacks = new StandaloneRuntime.Callbacks() {
         @Override public void onStatus(String text) {
@@ -66,30 +73,19 @@ public final class MainActivity extends Activity {
         }
 
         @Override public void onUserText(String starId, String text) {
-            ui(() -> appendConversation("You", text));
+            ui(() -> appendConversation(starId, "You", text));
         }
 
         @Override public void onAssistantStart(String starId) {
-            ui(() -> {
-                assistantLineOpen = true;
-                appendConversationPrefix(displayName(starId));
-                setStarAnimation("talking");
-            });
+            ui(() -> appendConversationPrefix(starId, displayName(starId)));
         }
 
         @Override public void onAssistantDelta(String starId, String delta) {
-            ui(() -> appendConversationDelta(delta));
+            ui(() -> appendConversationDelta(starId, delta));
         }
 
         @Override public void onAssistantComplete(String starId, String text) {
-            ui(() -> {
-                if (assistantLineOpen) {
-                    sessionConversation.append("\n\n");
-                    assistantLineOpen = false;
-                    refreshConversationSurface();
-                }
-                setStarAnimation("idle");
-            });
+            ui(() -> finishAssistantConversation(starId, text));
         }
 
         @Override public void onStateChanged(String starId, JSONObject snapshot) {
@@ -110,6 +106,7 @@ public final class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         bindProductionViews();
+        starAnimationCoordinator = new StarAnimationCoordinator(mainHandler, this::setStarAnimation);
         wireProductionActions();
         updateRecordingUi();
         refreshConversationSurface();
@@ -174,11 +171,11 @@ public final class MainActivity extends Activity {
         });
         findViewById(R.id.prod_listen_spark_option).setOnClickListener(v -> {
             listenSubmenu.setVisibility(View.GONE);
-            Toast.makeText(this, "The writing shelf is game/desktop-owned for now.", Toast.LENGTH_SHORT).show();
+            if (runtime != null) runtime.playRoughSpark(selectedStarId, callbacks);
         });
         findViewById(R.id.prod_listen_constellation_option).setOnClickListener(v -> {
             listenSubmenu.setVisibility(View.GONE);
-            Toast.makeText(this, "Constellation shelf playback is not in the standalone relationship app yet.", Toast.LENGTH_SHORT).show();
+            if (runtime != null) runtime.playRoughStory(selectedStarId, callbacks);
         });
         photoButton.setOnClickListener(v -> Toast.makeText(this, "Photo conversation will be ported after the core voice path is stable.", Toast.LENGTH_SHORT).show());
     }
@@ -189,6 +186,23 @@ public final class MainActivity extends Activity {
             VoiceCaptureService capture = new VoiceCaptureService(this);
             runtime = r;
             voiceCapture = capture;
+            r.setPlaybackObserver(new StandaloneRuntime.PlaybackObserver() {
+                @Override public void onPlaybackStarted(String starId, long durationMs, long playbackElapsedMs, int[] speechActivitySegmentsMs) {
+                    ui(() -> {
+                        activePlaybackStarId = starId == null ? "" : starId;
+                        if (selectedStarId.equalsIgnoreCase(activePlaybackStarId) && starAnimationCoordinator != null) {
+                            starAnimationCoordinator.beginVoice(durationMs, speechActivitySegmentsMs, playbackElapsedMs);
+                        }
+                    });
+                }
+                @Override public void onPlaybackFinished(String starId, boolean completedNormally) {
+                    ui(() -> {
+                        if (starId != null && starId.equalsIgnoreCase(activePlaybackStarId)) activePlaybackStarId = "";
+                        if (selectedStarId.equalsIgnoreCase(starId) && starAnimationCoordinator != null) starAnimationCoordinator.endVoice();
+                    });
+                }
+            });
+            r.onAppResumed();
             ui(() -> {
                 selectStar(selectedStarId);
                 setPreparedStatus("Standalone ready • " + r.settings().configurationSummary());
@@ -202,7 +216,9 @@ public final class MainActivity extends Activity {
         selectedStarId = id;
         starNameText.setText(displayName(id));
         starSubtitleText.setText(starSubtitle(id));
-        setStarAnimation("idle");
+        if (starAnimationCoordinator != null) starAnimationCoordinator.cancel();
+        else setStarAnimation("idle");
+        refreshConversationSurface();
         if (runtime == null) {
             relationshipText.setText("♥ Heart 0   Trust 0   Romance 0   0.0%");
             return;
@@ -396,10 +412,10 @@ public final class MainActivity extends Activity {
                 + runtime.settings().configurationSummary() + "\n\n"
                 + "State: " + runtime.stateStore().file().getAbsolutePath() + "\n"
                 + "Content: " + runtime.content().root().getAbsolutePath() + "\n"
-                + "Trace: " + runtime.trace().file().getAbsolutePath() + "\n"
+                + "Trace: " + runtime.trace().fileForStar(selectedStarId).getAbsolutePath() + "\n"
                 + "Pending primary review: " + runtime.hasPendingPrimaryReview();
         summary.setText(text);
-        log.setText(runtime.trace().readTail(96 * 1024));
+        log.setText(runtime.trace().readTailForStar(selectedStarId, 96 * 1024));
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
     }
 
@@ -410,27 +426,49 @@ public final class MainActivity extends Activity {
         if (negative != null) negative.setTextColor(0xFFEAF7FF);
     }
 
-    private void appendConversation(String speaker, String text) {
-        if (sessionConversation.length() > 0 && !assistantLineOpen) sessionConversation.append("\n\n");
-        sessionConversation.append(speaker).append(": ").append(text == null ? "" : text.trim());
-        refreshConversationSurface();
+    private StringBuilder conversationFor(String starId) {
+        String key = starId == null || starId.trim().isEmpty() ? selectedStarId : starId;
+        return sessionConversationByStar.computeIfAbsent(key, ignored -> new StringBuilder());
     }
 
-    private void appendConversationPrefix(String speaker) {
-        if (sessionConversation.length() > 0) sessionConversation.append("\n\n");
-        sessionConversation.append(speaker).append(": ");
-        refreshConversationSurface();
+    private void appendConversation(String starId, String speaker, String text) {
+        StringBuilder conversation = conversationFor(starId);
+        if (conversation.length() > 0) conversation.append("\n\n");
+        conversation.append(speaker).append(": ").append(text == null ? "" : SpeechTextFormatter.normalize(text));
+        if (starId != null && starId.equalsIgnoreCase(selectedStarId)) refreshConversationSurface();
     }
 
-    private void appendConversationDelta(String delta) {
+    private void appendConversationPrefix(String starId, String speaker) {
+        StringBuilder conversation = conversationFor(starId);
+        if (conversation.length() > 0) conversation.append("\n\n");
+        conversation.append(speaker).append(": ");
+        assistantContentStartByStar.put(starId, conversation.length());
+        if (starId != null && starId.equalsIgnoreCase(selectedStarId)) refreshConversationSurface();
+    }
+
+    private void appendConversationDelta(String starId, String delta) {
         if (delta == null || delta.isEmpty()) return;
-        sessionConversation.append(delta);
-        refreshConversationSurface();
+        conversationFor(starId).append(delta);
+        if (starId != null && starId.equalsIgnoreCase(selectedStarId)) refreshConversationSurface();
+    }
+
+    private void finishAssistantConversation(String starId, String finalText) {
+        StringBuilder conversation = conversationFor(starId);
+        Integer contentStart = assistantContentStartByStar.remove(starId);
+        String clean = SpeechTextFormatter.normalize(finalText);
+        if (contentStart != null && contentStart >= 0 && contentStart <= conversation.length()) {
+            conversation.replace(contentStart, conversation.length(), clean);
+        } else if (!clean.isEmpty()) {
+            if (conversation.length() > 0) conversation.append("\n\n");
+            conversation.append(displayName(starId)).append(": ").append(clean);
+        }
+        if (starId != null && starId.equalsIgnoreCase(selectedStarId)) refreshConversationSurface();
     }
 
     private void refreshConversationSurface() {
         if (conversationText == null) return;
-        conversationText.setText(sessionConversation.length() == 0 ? "No conversation yet." : sessionConversation.toString());
+        StringBuilder conversation = conversationFor(selectedStarId);
+        conversationText.setText(conversation.length() == 0 ? "No conversation yet." : conversation.toString());
         conversationScroll.post(() -> conversationScroll.fullScroll(View.FOCUS_DOWN));
     }
 
@@ -454,6 +492,12 @@ public final class MainActivity extends Activity {
         while (x.getCause() != null && x.getCause() != x) x = x.getCause();
         String m = x.getMessage();
         return x.getClass().getSimpleName() + (m == null ? "" : ": " + m);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        StandaloneRuntime r = runtime;
+        if (r != null) r.onAppResumed();
     }
 
     @Override protected void onDestroy() {

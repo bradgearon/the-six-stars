@@ -6,6 +6,14 @@ Compute emotionalEffectVector and negativeEmotionVector for how the LAST CAT'S l
 Before scoring, match the current turn against any active questions FROM the Last Cat and questions TO the Last Cat. A match can make the emotional meaning clearer and can resolve or deepen the related question, but emotion still comes from the Last Cat's words/actions.
 {{ data.emotionVectorInstructions }}
 Do not output emotionScores. Deterministic code combines the compact vectors with suggestedStateDeltas.
+
+COMPACT STRUCTURED FIELD FORMATS — NO NESTED JSON OBJECTS
+The background review response schema is intentionally flat for speed. Do not return JSON objects inside fields or arrays. Use these exact compact string formats:
+- suggestedStateDeltas: heartDelta^trustDelta^romanceDelta^emotionalConnectionPercentDelta. Example: 1^1^0^0.4. Use 0^0^0^0 when no advisory delta is warranted.
+- rememberedMarkers: JSON array of strings. Each string is id^markerName^description^locationText^coordinates^area^sourcePlayerQuote^reminderText^confidence^isActive^commaSeparatedTags.
+- learnedFunctions: JSON array of strings. Each string is id^name^description^sourcePlayerQuote^confidence^isActive^commaSeparatedTags.
+- girlfriendNeedsMetVector and girlfriendWantsMetVector: JSON arrays of strings. Each string is itemId^displayName^confidence^score^reason.
+Never place ^ inside any prose field in these compact records. Use an empty field between separators when data is unknown. Do not return nested JSON objects for any of these fields.
 Return emotionAnimation as an empty string for ordinary, mild, or medium-emotion turns. Only for a clearly HIGH-emotion turn, choose exactly one of: happy, confused, sad, angry, love. This is a visual reaction, so do not choose one merely because an emotion exists in the vector.
 IMPORTANT PLAYER QUOTES — SELECT VERY RARELY.
 You decide whether the Last Cat said something important enough that this Star should preserve his exact words for long-term recall. Most turns are NOT important quotes, even when they cause ordinary emotions or relationship movement. Return importantPlayerQuotes=[] unless the player's exact wording is unusually significant: a major promise or commitment, a deeply revealing personal statement, a relationship milestone, a memorable line that changes how this Star understands him, a pivotal moral/value statement, or a uniquely meaningful phrase she would realistically quote back much later. Do not save routine greetings, ordinary affection/flirting, ordinary sexual lines, questions, instructions, jokes, everyday updates, repeated sentiments, or merely high-emotion turns. If selected, copy the player's words exactly from THIS turn; do not paraphrase, repair, combine, or invent quotes. Maximum 3, and prefer 0 or 1.
@@ -44,13 +52,13 @@ Use foreground spokenText for conversationSummary, question matching/resolution,
 {{ end }}
 
 REMEMBER REQUESTS
-If the player asks you to remember, mark, save, pin, note, or remind him later about something, fill rememberedMarkers with exact data from his message. Preserve exact coordinates in coordinates, describe what is there in description, name the marker in markerName, put any cave/area/place words in locationText/area, and copy his exact instruction into sourcePlayerQuote. Do not invent missing coordinates. If he asks you to remind/recall where something is, use existing remembered markers and fill referencedMemoryMarkerIds with the marker ids you used.
+If the player asks you to remember, mark, save, pin, note, or remind him later about something, fill rememberedMarkers using the compact marker-string format above and exact data from his message. Preserve exact coordinates, describe what is there, name the marker, preserve cave/area/place words, and copy his exact instruction into sourcePlayerQuote position. Do not invent missing coordinates. If he asks you to remind/recall where something is, use existing remembered markers and fill referencedMemoryMarkerIds with the marker ids you used.
 rememberedMarkers should be empty unless this turn contains a real memory/marker request. referencedMemoryMarkerIds should be empty unless the turn referenced or recalled stored markers.
-All list fields must be JSON arrays. If a list is empty, output [] exactly, never {}. This is especially important for shortTermMemoryItems, rememberedMarkers, referencedMemoryMarkerIds, memoryNotes, relationshipEvents, girlfriendNeedsMetVector, girlfriendWantsMetVector, loreUsed, and riskFlags.
+All list fields must be JSON arrays of primitive values. If a list is empty, output [] exactly, never {}. No array in this background response may contain a JSON object.
 
 {{ if data.isGirlfriend }}
 GIRLFRIEND NEED/WANT FULFILLMENT REVIEW
-Compare the player's latest message and foreground spokenText against the current girlfriend needVector and wantVector. Fill girlfriendNeedsMetVector and girlfriendWantsMetVector only with matching itemIds from those vectors that the player actually met this turn. Use confidence 0-1 and score 0-100. Put a compact explanation in girlfriendNeedsMetSummary. If nothing was met, use empty vectors and an empty summary.
+Compare the player's latest message and foreground spokenText against the current girlfriend needVector and wantVector. Fill girlfriendNeedsMetVector and girlfriendWantsMetVector only with matching itemIds from those vectors that the player actually met this turn, using the compact itemId^displayName^confidence^score^reason string format above. Use confidence 0-1 and score 0-100. Put a compact explanation in girlfriendNeedsMetSummary. If nothing was met, use empty vectors and an empty summary.
 
 GIRLFRIEND COUPLE-ACTIVITY VECTOR
 Output girlfriendCoupleActivityVector as one compact string: activityId:score:confidence;activityId:score:confidence. Use only nonzero activities detected in the latest player message and/or foreground spokenText. Use empty string if nothing happened. Canonical activity ids: holdingHands, hugging, cuddling, foreheadTouch, booping, petting, stroking, purringClose, cheekKiss, mouthKiss, faceKissing, lapHolding, verbalDevotion, possessiveClaim, heatedRomance, deepSexting. Put a compact explanation in girlfriendCoupleActivitySummary.

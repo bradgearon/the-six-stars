@@ -622,69 +622,84 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateBackgroundReviewResponseFormat(string schemaName = "six_stars_background_memory_review_compact")
         {
-            Dictionary<string, object> schema = new Dictionary<string, object>
+            Dictionary<string, object> schema = CreateBackgroundReviewRawSchema();
+            return WrapSchema(schemaName, schema);
+        }
+
+        /// <summary>
+        /// Deliberately flat background-review schema. The response object contains only primitive
+        /// values and arrays of primitive strings. Structures that used to be nested JSON objects
+        /// are encoded as compact ^-delimited strings and decoded deterministically after parsing.
+        /// This keeps grammar-constrained generation light for LM Studio and hosted Gemma.
+        /// </summary>
+        public static Dictionary<string, object> CreateBackgroundReviewRawSchema()
+        {
+            string[] required = new[]
+            {
+                "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
+                "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
+                "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "isSexting", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
+                "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
+                "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
+            };
+
+            return new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[]
-                    {
-                        "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
-                        "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
-                        "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "isSexting", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
-                        "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
-                        "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
-                    }
-                },
+                { "required", required },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "emotionalEffectVector", EmotionEffectVectorProperty() },
                         { "negativeEmotionVector", NegativeEmotionVectorProperty() },
-                        { "storyTitle", NullableStringProperty() },
+                        // Empty string means no story. Avoid nullable union types in the compact review grammar.
+                        { "storyTitle", StringProperty() },
                         { "storyId", StringProperty() },
-                        { "storySummary", StringProperty(700) },
+                        { "storySummary", StringProperty() },
                         { "storyIsFinished", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "storyPartIndex", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 } } },
-                        { "detectedCombos", StringArray(4) },
-                        { "suggestedStateDeltas", DeltaObject() },
-                        { "conversationSummary", StringProperty(900) },
-                        { "changesSummary", StringProperty(450) },
-                        { "tenTurnConversationSummary", StringProperty(1400) },
-                        { "hundredTurnConversationSummary", StringProperty(1800) },
-                        { "thingsLearnedOrSuggestedByPlayer", StringArray(8) },
-                        { "shortTermMemoryItems", StringArray(8) },
+                        { "storyPartIndex", new Dictionary<string, object> { { "type", "number" } } },
+                        { "detectedCombos", StringArray() },
+                        // Four numeric positions: heart^trust^romance^emotionalConnectionPercent.
+                        { "suggestedStateDeltas", StringProperty() },
+                        { "conversationSummary", StringProperty() },
+                        { "changesSummary", StringProperty() },
+                        { "tenTurnConversationSummary", StringProperty() },
+                        { "hundredTurnConversationSummary", StringProperty() },
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray() },
+                        { "shortTermMemoryItems", StringArray() },
                         { "isSexting", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "questionsFromLastCatVector", StringProperty(4800) },
-                        { "questionsToLastCatVector", StringProperty(6000) },
-                        { "questionResolutionVector", StringProperty(4200) },
-                        { "emotionAnimation", StringProperty(32) },
-                        { "informationNeedsVector", StringProperty(2400) },
-                        { "importantPlayerQuotes", StringArray(3) },
-                        { "memoryNotes", StringArray(6) },
-                        { "rememberedMarkers", RememberedMarkerArray(4) },
-                        { "referencedMemoryMarkerIds", StringArray(6) },
-                        { "secretsUnlocked", StringArray(3) },
-                        { "learnedFunctions", LearnedFunctionArray(3) },
-                        { "relationshipEvents", StringArray(4) },
-                        { "girlfriendHistoryUpdates", StringArray(3) },
-                        { "petNamesPlayerUsesForStar", StringArray(3) },
-                        { "petNamesStarUsesForPlayer", StringArray(3) },
-                        { "girlfriendNeedsMetSummary", StringProperty(420) },
-                        { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
-                        { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
-                        { "girlfriendCoupleActivitySummary", StringProperty(520) },
-                        { "girlfriendCoupleActivityVector", StringProperty(1200) },
+                        { "questionsFromLastCatVector", StringProperty() },
+                        { "questionsToLastCatVector", StringProperty() },
+                        { "questionResolutionVector", StringProperty() },
+                        { "emotionAnimation", StringProperty() },
+                        { "informationNeedsVector", StringProperty() },
+                        { "importantPlayerQuotes", StringArray() },
+                        { "memoryNotes", StringArray() },
+                        // Each item is one ^-delimited marker record; no nested objects in the response schema.
+                        { "rememberedMarkers", StringArray() },
+                        { "referencedMemoryMarkerIds", StringArray() },
+                        { "secretsUnlocked", StringArray() },
+                        // Each item is one ^-delimited learned-function record.
+                        { "learnedFunctions", StringArray() },
+                        { "relationshipEvents", StringArray() },
+                        { "girlfriendHistoryUpdates", StringArray() },
+                        { "petNamesPlayerUsesForStar", StringArray() },
+                        { "petNamesStarUsesForPlayer", StringArray() },
+                        { "girlfriendNeedsMetSummary", StringProperty() },
+                        // Each item is itemId^displayName^confidence^score^reason.
+                        { "girlfriendNeedsMetVector", StringArray() },
+                        { "girlfriendWantsMetVector", StringArray() },
+                        { "girlfriendCoupleActivitySummary", StringProperty() },
+                        { "girlfriendCoupleActivityVector", StringProperty() },
                         { "requestToShowBoobs", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "loreUsed", StringArray(5) },
-                        { "riskFlags", StringArray(3) },
-                        { "wisdomScore", NumberProperty(0, 1) }
+                        { "loreUsed", StringArray() },
+                        { "riskFlags", StringArray() },
+                        { "wisdomScore", new Dictionary<string, object> { { "type", "number" } } }
                     }
                 }
             };
-
-            return WrapSchema(schemaName, schema);
         }
 
         public static object CreateDecisionScoreResponseFormat()

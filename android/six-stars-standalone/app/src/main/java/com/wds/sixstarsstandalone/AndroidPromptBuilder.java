@@ -161,6 +161,117 @@ final class AndroidPromptBuilder {
         return data;
     }
 
+    List<ChatMessage> buildRoughStory(JSONObject profile, JSONObject state) throws Exception {
+        String seed = "Tell me one complete new story you personally feel like telling right now. "
+                + "This is a rough one-shot Story button performance: make it vivid and complete in about 8-12 natural sentences, with a beginning, development, turning point, and ending. "
+                + "Do not discuss the writing process and do not ask what kind of story I want.";
+        JSONObject data = baseSpeechData(profile, state, seed);
+        data.put("requestType", "Story");
+        data.put("storyModeSystemContext", "RequestType is Story. Generate one complete rough standalone story in this single foreground pass. There is no shelf review, persistence pass, or follow-up generation.");
+        JSONObject tasks = mainInstructions.optJSONObject("taskInstructions");
+        data.put("taskSpecificGuidance", tasks == null ? seed : tasks.optString("Story", seed) + "\n" + seed);
+        data.put("currentPlayerText", seed);
+        String system = renderer.render(content.readText("PromptTemplates/speech_system.sbn"), data);
+        String user = renderer.render(content.readText("PromptTemplates/speech_user.sbn"), data);
+        return Arrays.asList(new ChatMessage("system", system), new ChatMessage("user", user));
+    }
+
+    List<ChatMessage> buildRoughSpark(JSONObject profile, boolean displacement, Random random) throws Exception {
+        JSONObject data = writingProfileData(profile);
+        if (displacement) {
+            data.put("objects", roughDisplacementObjects(random));
+            String system = renderer.render(content.readText("PromptTemplates/star_writing_displacement_generate_system.sbn"), data);
+            String user = renderer.render(content.readText("PromptTemplates/star_writing_displacement_generate_user.sbn"), data);
+            return Arrays.asList(new ChatMessage("system", system), new ChatMessage("user", user));
+        }
+        data.put("wordPairs", roughWordPairs(random));
+        String system = renderer.render(content.readText("PromptTemplates/star_writing_generate_system.sbn"), data);
+        String user = renderer.render(content.readText("PromptTemplates/star_writing_generate_user.sbn"), data);
+        return Arrays.asList(new ChatMessage("system", system), new ChatMessage("user", user));
+    }
+
+    private JSONObject writingProfileData(JSONObject profile) throws JSONException {
+        JSONObject data = new JSONObject();
+        data.put("displayName", profile.optString("displayName", profile.optString("starId", "Star")));
+        data.put("starId", profile.optString("starId", profile.optString("displayName", "Star")));
+        data.put("element", profile.optString("element", ""));
+        data.put("domain", profile.optString("domain", ""));
+        data.put("coreQuote", profile.optString("coreQuote", ""));
+        data.put("personalityShort", profile.optString("personalityShort", ""));
+        data.put("deepPersonality", profile.optString("deepPersonality", ""));
+        data.put("backstorySummary", profile.optString("backstorySummary", ""));
+        data.put("completeBackgroundStory", profile.optString("completeBackgroundStory", ""));
+        data.put("voiceArchetype", profile.optString("voiceArchetype", ""));
+        data.put("speakingStyle", stringArray(profile.opt("speakingStyle")));
+        data.put("voiceDirection", profile.optString("voiceDirection", ""));
+        data.put("characterAttributes", profile.optString("characterAttributes", ""));
+        data.put("characterAttributeNotes", arrayOrEmpty(profile.optJSONArray("characterAttributeNotes")));
+        data.put("behaviors", arrayOrEmpty(profile.optJSONArray("behaviors")));
+        data.put("storytellingRules", arrayOrEmpty(profile.optJSONArray("storytellingRules")));
+        data.put("quotes", arrayOrEmpty(profile.optJSONArray("quotes")));
+        JSONArray secrets = new JSONArray();
+        appendLimited(secrets, profile.optJSONArray("starSecrets"), 4);
+        appendLimited(secrets, profile.optJSONArray("skillSecrets"), 4);
+        data.put("relevantSecrets", secrets);
+        data.put("recentWritings", new JSONArray());
+        data.put("referenceValue", "100");
+        data.put("vectorOrder", "ReaderEmotionIuV1 rough generation; no review is run on device for this button.");
+        data.put("valueReferences", new JSONArray());
+        return data;
+    }
+
+    private static JSONArray roughWordPairs(Random random) throws JSONException {
+        String[] words = {
+                "lantern","tide","mirror","moss","crown","hunger","window","ember","silence","bell",
+                "river","bone","garden","shadow","thread","door","mercy","storm","pearl","echo",
+                "bread","moon","feather","iron","memory","rain","bridge","song","glass","root",
+                "clock","fur","star","cave","salt","flame","lute","dream","stone","hand"
+        };
+        ArrayList<String> pool = new ArrayList<>(Arrays.asList(words));
+        Collections.shuffle(pool, random == null ? new Random() : random);
+        JSONArray pairs = new JSONArray();
+        for (int i = 0; i < 5; i++) {
+            pairs.put(new JSONObject()
+                    .put("index", i + 1)
+                    .put("first", pool.get(i * 2))
+                    .put("second", pool.get(i * 2 + 1)));
+        }
+        return pairs;
+    }
+
+    private static JSONArray roughDisplacementObjects(Random random) throws JSONException {
+        String[][] catalog = {
+                {"river","flows","carries","erodes"}, {"lantern","glows","hangs","lights"},
+                {"door","opens","closes","swings"}, {"bell","rings","hangs","chimes"},
+                {"mirror","reflects","hangs","shines"}, {"root","grows","anchors","drinks"},
+                {"lute","plays","resonates","sings"}, {"stone","rests","falls","cracks"},
+                {"thread","binds","sews","wraps"}, {"window","opens","frames","admits"},
+                {"flame","burns","flickers","warms"}, {"tide","rises","falls","pulls"}
+        };
+        ArrayList<String[]> pool = new ArrayList<>(Arrays.asList(catalog));
+        Collections.shuffle(pool, random == null ? new Random() : random);
+        JSONArray objects = new JSONArray();
+        for (int i = 0; i < 5; i++) {
+            String[] item = pool.get(i);
+            JSONArray actions = new JSONArray();
+            for (int a = 1; a < item.length; a++) actions.put(item[a]);
+            objects.put(new JSONObject().put("index", i + 1).put("object", item[0]).put("normalActions", actions));
+        }
+        return objects;
+    }
+
+    private static JSONArray arrayOrEmpty(JSONArray source) { return source == null ? new JSONArray() : source; }
+    private static JSONArray stringArray(Object value) {
+        if (value instanceof JSONArray) return (JSONArray)value;
+        JSONArray out = new JSONArray();
+        if (value != null && !String.valueOf(value).trim().isEmpty()) out.put(String.valueOf(value));
+        return out;
+    }
+    private static void appendLimited(JSONArray target, JSONArray source, int max) {
+        if (target == null || source == null) return;
+        for (int i = 0; i < Math.min(max, source.length()); i++) target.put(source.opt(i));
+    }
+
     String relationshipContext(JSONObject profile, JSONObject state) {
         StringBuilder b = new StringBuilder();
         b.append("RELATIONSHIP / EMOTION STATE\n");

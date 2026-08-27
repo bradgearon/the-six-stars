@@ -117,7 +117,7 @@ final class StandaloneSettings {
     String llmKey() { return llm().optString("ApiKey", "").trim(); }
     String llmEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/google/v1beta" : llm().optString("EndpointBaseUrl", "https://generativelanguage.googleapis.com/v1beta"); }
     String llmModel() { return llm().optString("Model", "gemma-4-26b-a4b-it"); }
-    String thinkingLevel() { return llm().optString("ThinkingLevel", "off"); }
+    String thinkingLevel() { return "off"; }
     boolean googleSearch() { return llm().optBoolean("EnableGoogleSearch", false); }
     double temperature() { return llm().optDouble("Temperature", 0.75); }
     // No foreground/review output-token cap is configurable here by design; keep parity with desktop.

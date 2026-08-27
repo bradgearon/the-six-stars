@@ -1,6 +1,7 @@
 {
   "LLM": {
-    "ApiKey": "PASTE_GEMINI_API_KEY_HERE"
+    "ApiKey": "PASTE_GEMINI_API_KEY_HERE",
+    "ThinkingLevel": "off"
   },
   "ASR": {
     "ApiKey": "PASTE_GROQ_API_KEY_HERE"

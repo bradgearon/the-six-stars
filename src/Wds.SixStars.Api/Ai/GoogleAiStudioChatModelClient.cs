@@ -287,8 +287,17 @@ namespace Wds.SixStars.Api.Ai
             if (resolvedMaxTokens > 0) generationConfig["maxOutputTokens"] = resolvedMaxTokens;
             if (wantsJson)
             {
-                generationConfig["responseMimeType"] = "application/json";
-                if (schema != null) generationConfig["responseJsonSchema"] = schema;
+                // Current Google GenerateContent structured-output REST shape. Keep the OpenAI
+                // response_format wrapper out of this payload: only the raw inner schema belongs here.
+                Dictionary<string, object> textFormat = new Dictionary<string, object>
+                {
+                    { "mimeType", "application/json" }
+                };
+                if (schema != null) textFormat["schema"] = schema;
+                generationConfig["responseFormat"] = new Dictionary<string, object>
+                {
+                    { "text", textFormat }
+                };
             }
 
             Dictionary<string, object> payload = new Dictionary<string, object>

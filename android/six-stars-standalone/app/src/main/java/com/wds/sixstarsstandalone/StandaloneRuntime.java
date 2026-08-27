@@ -26,6 +26,11 @@ final class StandaloneRuntime implements AutoCloseable {
         void onError(String operation, Throwable error);
     }
 
+    interface PlaybackObserver {
+        void onPlaybackStarted(String starId, long durationMs, long playbackElapsedMs, int[] speechActivitySegmentsMs);
+        void onPlaybackFinished(String starId, boolean completedNormally);
+    }
+
     private final StandaloneSettings settings;
     private final ContentRepository content;
     private final StarProfileRepository profiles;
@@ -38,6 +43,7 @@ final class StandaloneRuntime implements AutoCloseable {
     private final MemoryStateUpdater memory;
     private final MaintenanceService maintenance;
     private final RuntimeTrace trace;
+    private volatile PlaybackObserver playbackObserver;
 
     private final ExecutorService foregroundExecutor=Executors.newSingleThreadExecutor(named("SixStarsForeground"));
     private final ExecutorService memoryExecutor=Executors.newSingleThreadExecutor(named("SixStarsPrimaryReview"));
@@ -47,6 +53,7 @@ final class StandaloneRuntime implements AutoCloseable {
     private final Object barrierLock=new Object();
     private CompletableFuture<Void> primaryReviewBarrier=CompletableFuture.completedFuture(null);
     private volatile boolean closed;
+    private final Random roughWritingRandom = new Random();
 
     StandaloneRuntime(Context context) throws Exception {
         settings=StandaloneSettings.load(context);
@@ -54,7 +61,8 @@ final class StandaloneRuntime implements AutoCloseable {
         profiles=new StarProfileRepository(content);
         stateStore=new StarStateStore(context,settings);
         prompts=new AndroidPromptBuilder(content,settings);
-        llm=new GoogleAiStudioClient(settings);
+        trace=new RuntimeTrace(context,settings);
+        llm=new GoogleAiStudioClient(context,settings,trace);
         asr=new GroqAsrClient(settings);
         if (settings.useLocalTts()) {
             // Prefer the .NET bridge because it resolves the canonical desktop Star profile and
@@ -67,8 +75,21 @@ final class StandaloneRuntime implements AutoCloseable {
             tts = new AlibabaQwenTtsClient(context,settings,content);
         }
         audio=new AudioPlaybackService(context);
+        audio.setListener(new AudioPlaybackService.Listener() {
+            @Override public void onPlaybackStarted(String starId, String label, long durationMs, long playbackElapsedMs, int[] speechActivitySegmentsMs) {
+                trace.log("tts.playback-start", "star=" + starId + " " + label + " durationMs=" + durationMs + " speechSegments=" + (speechActivitySegmentsMs == null ? 0 : speechActivitySegmentsMs.length / 2));
+                PlaybackObserver observer = playbackObserver;
+                if (observer != null) observer.onPlaybackStarted(starId, durationMs, playbackElapsedMs, speechActivitySegmentsMs == null ? new int[0] : speechActivitySegmentsMs);
+            }
+            @Override public void onPlaybackFinished(String starId, String label, boolean completedNormally) {
+                trace.log("tts.playback-complete", "star=" + starId + " " + label + " completed=" + completedNormally + " queued=" + audio.queuedCount());
+                PlaybackObserver observer = playbackObserver;
+                if (observer != null) observer.onPlaybackFinished(starId, completedNormally);
+            }
+            @Override public void onPlaybackError(String starId, String label, Throwable error) { trace.log("tts.playback-failed", "star=" + starId + " " + label + " " + error); }
+            @Override public void onQueueIdle() { trace.log("tts.playback-queue-idle", "true"); }
+        });
         memory=new MemoryStateUpdater(settings);
-        trace=new RuntimeTrace(context,settings);
         trace.log("runtime.start", settings.configurationSummary() + " ttsClient=" + tts.modeName());
         maintenance=new MaintenanceService(settings,prompts,llm,trace);
         recoverPendingPrimaryReviews();
@@ -79,6 +100,12 @@ final class StandaloneRuntime implements AutoCloseable {
     StarStateStore stateStore(){return stateStore;}
     StarProfileRepository profiles(){return profiles;}
     RuntimeTrace trace(){return trace;}
+    void setPlaybackObserver(PlaybackObserver observer){ playbackObserver = observer; }
+
+    void onAppResumed(){
+        trace.log("runtime.app-resumed","refreshing hosted LLM network route");
+        llm.onAppResumed();
+    }
 
     JSONObject stateSnapshot(String starId) throws Exception { synchronized(stateStore){return JsonUtil.deepCopy(stateStore.star(starId));} }
 
@@ -106,6 +133,79 @@ final class StandaloneRuntime implements AutoCloseable {
         });
     }
 
+    void playRoughSpark(String starId, Callbacks cb){
+        if(closed)return;
+        foregroundExecutor.submit(()->runRoughSpark(starId,cb));
+    }
+
+    void playRoughStory(String starId, Callbacks cb){
+        if(closed)return;
+        foregroundExecutor.submit(()->runRoughStory(starId,cb));
+    }
+
+    private void runRoughSpark(String starId,Callbacks cb){
+        try{
+            JSONObject profile=JsonUtil.deepCopy(profiles.get(starId));
+            boolean displacement;
+            synchronized(roughWritingRandom){displacement=roughWritingRandom.nextBoolean();}
+            String method=displacement?"verb-noun-displacement":"semantic-collision";
+            trace.log("rough-spark.start","star="+starId+" method="+method);
+            status(cb,profile.optString("displayName",starId)+" is making five rough Sparks...");
+            if(cb!=null)cb.onAssistantStart(starId);
+            List<ChatMessage> messages;
+            synchronized(roughWritingRandom){messages=prompts.buildRoughSpark(profile,displacement,roughWritingRandom);}
+            String json=llm.completeJson(messages,"rough-spark-"+method);
+            JSONObject result=JsonUtil.parseObject(json);
+            List<String> writings=new ArrayList<>();
+            if(displacement){
+                JSONArray items=result.optJSONArray("items");
+                if(items!=null)for(int i=0;i<items.length();i++){
+                    JSONObject item=items.optJSONObject(i);
+                    if(item!=null){String writing=SpeechTextFormatter.normalize(item.optString("writing",""));if(!writing.isEmpty())writings.add(writing);}
+                }
+            }else{
+                JSONArray jokes=result.optJSONArray("jokes");
+                if(jokes!=null)for(int i=0;i<jokes.length();i++){
+                    String writing=SpeechTextFormatter.normalize(jokes.optString(i,""));if(!writing.isEmpty())writings.add(writing);
+                }
+            }
+            if(writings.isEmpty())throw new IllegalStateException("Rough Spark generator returned no speakable writings.");
+            StringBuilder combined=new StringBuilder();
+            for(int i=0;i<writings.size();i++){
+                String writing=writings.get(i);
+                if(combined.length()>0)combined.append("  ");
+                combined.append("✦ ").append(writing);
+                queueTts(profile,writing,cb);
+            }
+            String spoken=combined.toString();
+            if(cb!=null){cb.onAssistantDelta(starId,spoken);cb.onAssistantComplete(starId,spoken);}
+            trace.log("rough-spark.complete","star="+starId+" method="+method+" count="+writings.size());
+            status(cb,"Rough Sparks queued for playback. Nothing was reviewed or saved.");
+        }catch(Throwable e){trace.log("rough-spark.failed","star="+starId+" "+e);error(cb,"Rough Spark",e);}
+    }
+
+    private void runRoughStory(String starId,Callbacks cb){
+        try{
+            JSONObject profile=JsonUtil.deepCopy(profiles.get(starId));
+            JSONObject state;
+            synchronized(stateStore){state=JsonUtil.deepCopy(stateStore.star(starId));}
+            trace.log("rough-story.start","star="+starId);
+            status(cb,profile.optString("displayName",starId)+" is telling one rough story...");
+            if(cb!=null)cb.onAssistantStart(starId);
+            SentenceChunker chunker=new SentenceChunker();
+            List<ChatMessage> request=prompts.buildRoughStory(profile,state);
+            String raw=llm.completeStreaming(request,"rough-story",delta->{
+                if(cb!=null)cb.onAssistantDelta(starId,delta);
+                for(String chunk:chunker.accept(delta))queueTts(profile,SpeechTextFormatter.normalizeChunk(chunk),cb);
+            });
+            for(String chunk:chunker.finish())queueTts(profile,SpeechTextFormatter.normalizeChunk(chunk),cb);
+            String spoken=SpeechTextFormatter.normalize(raw);
+            if(cb!=null)cb.onAssistantComplete(starId,spoken);
+            trace.log("rough-story.complete","star="+starId+" chars="+spoken.length());
+            status(cb,"Rough story queued for playback. Nothing was reviewed or saved.");
+        }catch(Throwable e){trace.log("rough-story.failed","star="+starId+" "+e);error(cb,"Rough Story",e);}
+    }
+
     private void submitTextInternalUserAlreadyShown(String starId,String text,Callbacks cb){
         foregroundExecutor.submit(()->processForegroundInternal(starId,text,cb,false,"foreground-chat-voice"));
     }
@@ -122,35 +222,44 @@ final class StandaloneRuntime implements AutoCloseable {
             synchronized(stateStore){stateBefore=JsonUtil.deepCopy(stateStore.star(starId));}
             String turnStartedAt=OffsetDateTime.now().toString();
             trace.log("foreground.llm-start","star="+starId+" turn="+turnStartedAt);
-            status(cb,""+profile.optString("displayName",starId)+" is thinking...");
+            status(cb,""+profile.optString("displayName",starId)+" is answering...");
             if(cb!=null)cb.onAssistantStart(starId);
 
             SentenceChunker chunker=new SentenceChunker();
             final boolean[] firstSentence={false};
             List<ChatMessage> request=prompts.buildSpeech(profile,stateBefore,playerText);
-            String spoken=llm.completeStreaming(request,foregroundOperation,delta->{
+            String rawSpoken=llm.completeStreaming(request,foregroundOperation,delta->{
                 try{
                     if(cb!=null)cb.onAssistantDelta(starId,delta);
                     for(String sentence:chunker.accept(delta)){
-                        if(!firstSentence[0]){firstSentence[0]=true;trace.log("foreground.first-sentence-tts-queued","star="+starId+" chars="+sentence.length());}
-                        queueTts(profile,sentence,cb);
+                        String cleanSentence=SpeechTextFormatter.normalizeChunk(sentence);
+                        if(cleanSentence.isEmpty())continue;
+                        if(!firstSentence[0]){firstSentence[0]=true;trace.log("foreground.first-sentence-tts-queued","star="+starId+" chars="+cleanSentence.length());}
+                        queueTts(profile,cleanSentence,cb);
                     }
                 }catch(Exception e){error(cb,"TTS queue",e);}
             });
             for(String sentence:chunker.finish()){
-                if(!firstSentence[0]){firstSentence[0]=true;trace.log("foreground.first-sentence-tts-queued","star="+starId+" chars="+sentence.length());}
-                queueTts(profile,sentence,cb);
+                String cleanSentence=SpeechTextFormatter.normalizeChunk(sentence);
+                if(cleanSentence.isEmpty())continue;
+                if(!firstSentence[0]){firstSentence[0]=true;trace.log("foreground.first-sentence-tts-queued","star="+starId+" chars="+cleanSentence.length());}
+                queueTts(profile,cleanSentence,cb);
             }
-            trace.log("foreground.llm-eos","star="+starId+" chars="+spoken.length());
-            if(cb!=null)cb.onAssistantComplete(starId,spoken);
+            String spoken=SpeechTextFormatter.normalize(rawSpoken);
+            trace.log("foreground.llm-eos","star="+starId+" rawChars="+rawSpoken.length()+" cleanChars="+spoken.length());
 
-            // Persist a restart-safe marker BEFORE starting the protected review. No relationship/memory
-            // mutation has happened yet; if Android dies here, startup replays this exact primary review.
+            // Persist and launch the protected review immediately at Gemma EOS. This occurs while
+            // the playback queue is still speaking; it never waits for voice playback to drain.
             JSONObject pending=new JSONObject().put("StarId",starId).put("PlayerText",playerText).put("StarResponse",spoken)
                     .put("TurnStartedAt",turnStartedAt).put("QueuedAt",OffsetDateTime.now().toString()).put("RequestType","Chat");
             synchronized(stateStore){JSONObject live=stateStore.star(starId);live.put("StandalonePendingPrimaryReview",pending);stateStore.persist();}
             queueProtectedPrimaryReview(profile,stateBefore,pending,cb);
-            status(cb,"Speech is flowing; protected memory review is running.");
+            trace.log("primary-review.queued-at-eos","star="+starId+" audioQueued="+audio.queuedCount());
+
+            if(cb!=null)cb.onAssistantComplete(starId,spoken);
+            status(cb, settings.ttsEnabled() && settings.ttsConfigured()
+                    ? profile.optString("displayName", starId) + " is speaking..."
+                    : "Response ready.");
         }catch(Throwable e){trace.log("foreground.failed",e.toString());error(cb,"Foreground",e);}
     }
 
@@ -170,9 +279,10 @@ final class StandaloneRuntime implements AutoCloseable {
                     long reviewStarted=System.nanoTime();
                     trace.log("primary-review.llm-start","star="+starId+" attempt="+attempt);
                     List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-                    String json=llm.completeJson(messages,"background-review");
+                    trace.log("primary-review.prompt-ready","star="+starId+" chars="+messageChars(messages)+" messages="+messages.size());
+                    String json=llm.completeJson(messages,"background-review",BackgroundReviewContract.schema());
                     try {
-                        review=JsonUtil.parseObject(json);
+                        review=BackgroundReviewContract.normalize(JsonUtil.parseObject(json));
                     } catch (Throwable parseError) {
                         trace.log("primary-review.json-parse-failed","star="+starId+" attempt="+attempt+" chars="+json.length()+" response="+debugPreview(json));
                         throw parseError;
@@ -194,7 +304,7 @@ final class StandaloneRuntime implements AutoCloseable {
             trace.log("primary-review.commit-complete","star="+starId);
             barrier.complete(null);
             if(cb!=null)cb.onStateChanged(starId,snapshot);
-            status(cb,"Memory review committed. Ready for the next turn.");
+            status(cb, audio.isIdle() ? "Ready." : profile.optString("displayName", starId) + " is speaking...");
             queueMaintenance(profile,snapshot,cb);
         }catch(Throwable e){
             trace.log("primary-review.failed-protected","star="+starId+" "+e);
@@ -221,7 +331,28 @@ final class StandaloneRuntime implements AutoCloseable {
         if(!settings.ttsEnabled()||!settings.ttsConfigured())return;
         final JSONObject p;
         try{p=JsonUtil.deepCopy(profile);}catch(Exception e){return;}
-        ttsExecutor.submit(()->{try{trace.log("tts.start","mode="+tts.modeName()+" star="+p.optString("starId")+" chars="+sentence.length());TtsAudioResult generated=tts.synthesize(p,sentence);trace.log("tts.generated","mode="+tts.modeName()+" bytes="+generated.bytes.length);audio.playBlocking(generated);trace.log("tts.playback-complete","mode="+tts.modeName()+" star="+p.optString("starId"));}catch(Throwable e){trace.log("tts.failed","mode="+tts.modeName()+" "+e);error(cb,"TTS",e);}});
+        final String spoken=SpeechTextFormatter.normalizeChunk(sentence);
+        if(spoken.isEmpty())return;
+        // IMPORTANT: this executor performs synthesis only. AudioPlaybackService owns a separate
+        // playback queue/thread, so the moment sentence N's WAV comes back we enqueue it and begin
+        // synthesizing sentence N+1 immediately while N is still speaking. This is the same
+        // generation-ahead/playback-behind pipeline used by the working thin client.
+        ttsExecutor.submit(()->{
+            try{
+                String star=p.optString("starId",p.optString("displayName","Star"));
+                trace.log("tts.generate-start","mode="+tts.modeName()+" star="+star+" chars="+spoken.length()+" playbackQueued="+audio.queuedCount());
+                long started=System.nanoTime();
+                TtsAudioResult generated=tts.synthesize(p,spoken);
+                long elapsedMs=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+                trace.log("tts.generate-complete","mode="+tts.modeName()+" star="+star+" bytes="+generated.bytes.length+" elapsedMs="+elapsedMs);
+                WavSpeechActivityAnalyzer.Analysis activity=audio.enqueue(generated,star,star+" • "+spoken);
+                trace.log("tts.lipsync-analysis","star="+star+" "+activity.debugSummary());
+                trace.log("tts.playback-enqueued","star="+star+" queue="+audio.queuedCount()+"; next synthesis may begin immediately");
+            }catch(Throwable e){
+                trace.log("tts.failed","mode="+tts.modeName()+" "+e);
+                error(cb,"TTS",e);
+            }
+        });
     }
 
     private void waitForPrimaryReview(Callbacks cb)throws Exception{
@@ -319,16 +450,23 @@ final class StandaloneRuntime implements AutoCloseable {
     private void runRecoveryReview(JSONObject profile,JSONObject stateBefore,JSONObject pending)throws Exception{
         String starId=profile.optString("starId");trace.log("primary-review.recovery-start","star="+starId);
         List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-        String json=llm.completeJson(messages,"background-review-recovery");
+        trace.log("primary-review.recovery-prompt-ready","star="+starId+" chars="+messageChars(messages)+" messages="+messages.size());
+        String json=llm.completeJson(messages,"background-review-recovery",BackgroundReviewContract.schema());
         JSONObject review;
         try {
-            review=JsonUtil.parseObject(json);
+            review=BackgroundReviewContract.normalize(JsonUtil.parseObject(json));
         } catch (Throwable parseError) {
             trace.log("primary-review.recovery-json-parse-failed","star="+starId+" chars="+json.length()+" response="+debugPreview(json));
             throw parseError;
         }
         synchronized(stateStore){JSONObject live=stateStore.star(starId);memory.apply(profile,live,review,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));live.remove("StandalonePendingPrimaryReview");stateStore.persist();}
         trace.log("primary-review.recovery-commit","star="+starId);
+    }
+
+    private static int messageChars(List<ChatMessage> messages){
+        int total=0;
+        if(messages!=null)for(ChatMessage message:messages)if(message!=null&&message.content!=null)total+=message.content.length();
+        return total;
     }
 
     private static String debugPreview(String value){
@@ -340,5 +478,5 @@ final class StandaloneRuntime implements AutoCloseable {
     private static void status(Callbacks cb,String text){if(cb!=null)try{cb.onStatus(text);}catch(Exception ignored){}}
     private static void error(Callbacks cb,String op,Throwable e){if(cb!=null)try{cb.onError(op,e);}catch(Exception ignored){}}
 
-    @Override public void close(){closed=true;foregroundExecutor.shutdownNow();ioExecutor.shutdownNow();ttsExecutor.shutdownNow();maintenanceExecutor.shutdownNow();memoryExecutor.shutdown();}
+    @Override public void close(){closed=true;foregroundExecutor.shutdownNow();ioExecutor.shutdownNow();ttsExecutor.shutdownNow();maintenanceExecutor.shutdownNow();memoryExecutor.shutdownNow();audio.close();}
 }
