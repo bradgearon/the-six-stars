@@ -89,7 +89,10 @@ final class GoogleAiStudioClient {
         if (contents.length() == 0) contents.put(new JSONObject().put("role","user").put("parts",new JSONArray().put(new JSONObject().put("text",""))));
         JSONObject gen = new JSONObject();
         gen.put("temperature", settings.temperature());
-        gen.put("thinkingConfig", new JSONObject().put("thinkingLevel", normalizeThinking(settings.thinkingLevel())));
+        // Deliberately do NOT send thinkingConfig for standalone Star conversations/reviews. Gemma 4
+        // thinking is unnecessary here and increases latency/output complexity. The copied prompt
+        // templates also never inject the <|think|> trigger token. We still defensively discard any
+        // thought=true part a provider happens to return.
         // Deliberately do not send maxOutputTokens. The desktop Star runtime also lets the model stop
         // on EOS/context; artificial per-request caps can truncate speech, reviews, and state JSON.
         if (wantsJson) gen.put("responseMimeType", "application/json");
@@ -122,13 +125,26 @@ final class GoogleAiStudioClient {
     }
 
     private static String extractText(JSONObject root) {
-        StringBuilder b = new StringBuilder(); JSONArray candidates = root.optJSONArray("candidates"); if (candidates == null) return "";
-        for (int i=0;i<candidates.length();i++) { JSONObject c=candidates.optJSONObject(i); if(c==null)continue; JSONObject content=c.optJSONObject("content"); if(content==null)continue; JSONArray parts=content.optJSONArray("parts"); if(parts==null)continue; for(int j=0;j<parts.length();j++){JSONObject p=parts.optJSONObject(j); if(p!=null && p.has("text")) b.append(p.optString("text",""));} }
+        StringBuilder b = new StringBuilder();
+        JSONArray candidates = root.optJSONArray("candidates");
+        if (candidates == null) return "";
+        for (int i = 0; i < candidates.length(); i++) {
+            JSONObject c = candidates.optJSONObject(i);
+            if (c == null) continue;
+            JSONObject content = c.optJSONObject("content");
+            if (content == null) continue;
+            JSONArray parts = content.optJSONArray("parts");
+            if (parts == null) continue;
+            for (int j = 0; j < parts.length(); j++) {
+                JSONObject p = parts.optJSONObject(j);
+                if (p == null || p.optBoolean("thought", false) || !p.has("text")) continue;
+                b.append(p.optString("text", ""));
+            }
+        }
         return b.toString();
     }
 
     private static String safeBody(Response response) throws Exception { return response.body() == null ? "" : response.body().string(); }
-    private static String normalizeThinking(String v) { String x=v==null?"":v.trim().toLowerCase(Locale.ROOT); return (x.equals("minimal")||x.equals("off")||x.equals("none"))?"minimal":"high"; }
     private void requireConfigured() {
         if (!settings.llmEnabled()) throw new IllegalStateException("Hosted LLM is disabled.");
         if (settings.proxyEnabled()) {

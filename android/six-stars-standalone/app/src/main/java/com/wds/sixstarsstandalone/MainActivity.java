@@ -2,10 +2,19 @@ package com.wds.sixstarsstandalone;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.pm.PackageManager;
+import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
+import android.view.LayoutInflater;
 import android.view.View;
-import android.widget.*;
+import android.view.Window;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -14,93 +23,448 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Minimal first shell for the server-free relationship builder. Settings/import UI is intentionally next. */
+/**
+ * Standalone companion shell using the exact production layout from six-stars-mobile.
+ * The service/runtime is local-to-device; only provider calls leave the phone.
+ */
 public final class MainActivity extends Activity {
-    private static final int RECORD_AUDIO_REQUEST=41;
-    private final ExecutorService initExecutor=Executors.newSingleThreadExecutor();
+    private static final int RECORD_AUDIO_REQUEST = 41;
+    private final ExecutorService initExecutor = Executors.newSingleThreadExecutor();
+
     private StandaloneRuntime runtime;
     private VoiceCaptureService voiceCapture;
-    private String selectedStarId="Elusiaa";
-    private TextView status,starName,relationship,transcript;
-    private ImageView portrait;
-    private EditText input;
-    private Button sendButton,talkButton;
-    private volatile boolean assistantLineOpen;
+    private String selectedStarId = "Elusiaa";
+    private boolean recording;
+    private boolean assistantLineOpen;
 
-    private final StandaloneRuntime.Callbacks callbacks=new StandaloneRuntime.Callbacks(){
-        @Override public void onStatus(String text){ui(()->status.setText(text));}
-        @Override public void onUserText(String starId,String text){ui(()->appendTranscript("You: "+text+"\n\n"));}
-        @Override public void onAssistantStart(String starId){ui(()->{assistantLineOpen=true;appendTranscript(displayName(starId)+": ");});}
-        @Override public void onAssistantDelta(String starId,String delta){ui(()->appendTranscript(delta));}
-        @Override public void onAssistantComplete(String starId,String text){ui(()->{assistantLineOpen=false;appendTranscript("\n\n");scrollToBottom();});}
-        @Override public void onStateChanged(String starId,JSONObject snapshot){if(starId.equalsIgnoreCase(selectedStarId))ui(()->showState(snapshot));}
-        @Override public void onError(String operation,Throwable error){ui(()->{status.setText(operation+" failed: "+friendly(error));Toast.makeText(MainActivity.this,operation+" failed",Toast.LENGTH_LONG).show();});}
+    private TextView starNameText;
+    private TextView starSubtitleText;
+    private TextView relationshipText;
+    private TextView preparedIndicatorText;
+    private TextView talkText;
+    private TextView conversationText;
+    private ImageView talkIcon;
+    private PixelStarAnimationView spriteView;
+    private ScrollView conversationScroll;
+    private EditText messageEdit;
+    private View talkButton;
+    private View listenButton;
+    private View listenSubmenu;
+    private View photoButton;
+    private View voiceActions;
+    private Button cancelVoiceButton;
+    private Button sendVoiceButton;
+    private View textToggleButton;
+    private View textComposer;
+    private Button sendTextButton;
+
+    private final StringBuilder sessionConversation = new StringBuilder();
+
+    private final StandaloneRuntime.Callbacks callbacks = new StandaloneRuntime.Callbacks() {
+        @Override public void onStatus(String text) {
+            ui(() -> setPreparedStatus(text));
+        }
+
+        @Override public void onUserText(String starId, String text) {
+            ui(() -> appendConversation("You", text));
+        }
+
+        @Override public void onAssistantStart(String starId) {
+            ui(() -> {
+                assistantLineOpen = true;
+                appendConversationPrefix(displayName(starId));
+                setStarAnimation("talking");
+            });
+        }
+
+        @Override public void onAssistantDelta(String starId, String delta) {
+            ui(() -> appendConversationDelta(delta));
+        }
+
+        @Override public void onAssistantComplete(String starId, String text) {
+            ui(() -> {
+                if (assistantLineOpen) {
+                    sessionConversation.append("\n\n");
+                    assistantLineOpen = false;
+                    refreshConversationSurface();
+                }
+                setStarAnimation("idle");
+            });
+        }
+
+        @Override public void onStateChanged(String starId, JSONObject snapshot) {
+            if (starId.equalsIgnoreCase(selectedStarId)) ui(() -> showState(snapshot));
+        }
+
+        @Override public void onError(String operation, Throwable error) {
+            ui(() -> {
+                String message = operation + " failed: " + friendly(error);
+                setPreparedStatus(message);
+                Toast.makeText(MainActivity.this, operation + " failed", Toast.LENGTH_LONG).show();
+                if (runtime != null) runtime.trace().log("ui.error", message);
+            });
+        }
     };
 
-    @Override protected void onCreate(Bundle savedInstanceState){
-        super.onCreate(savedInstanceState);setContentView(R.layout.activity_main);
-        status=findViewById(R.id.status);starName=findViewById(R.id.starName);relationship=findViewById(R.id.relationship);transcript=findViewById(R.id.transcript);portrait=findViewById(R.id.starPortrait);input=findViewById(R.id.input);sendButton=findViewById(R.id.sendButton);talkButton=findViewById(R.id.talkButton);
-        sendButton.setEnabled(false);talkButton.setEnabled(false);bindDeclarativeStarButtons();
-        sendButton.setOnClickListener(v->sendTyped()); talkButton.setOnClickListener(v->toggleTalk());
+    @Override protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        bindProductionViews();
+        wireProductionActions();
+        updateRecordingUi();
+        refreshConversationSurface();
+        setStarAnimation("idle");
         initExecutor.submit(this::initializeRuntime);
     }
 
-    private void initializeRuntime(){
-        try{
-            StandaloneRuntime r=new StandaloneRuntime(this); VoiceCaptureService capture=new VoiceCaptureService(this);runtime=r;voiceCapture=capture;
-            ui(()->{sendButton.setEnabled(true);talkButton.setEnabled(true);selectStar(selectedStarId);String config="The Last Cat: the Six Stars • standalone • "+r.settings().configurationSummary()+"\nstate="+r.stateStore().file().getAbsolutePath()+"\ncontent="+r.content().root().getAbsolutePath();if(r.settings().llmKey().isEmpty()||r.settings().asrKey().isEmpty()||!r.settings().ttsConfigured())config+="\n"+r.settings().configurationHelp();status.setText(config);});
-        }catch(Throwable e){ui(()->status.setText("Standalone runtime initialization failed: "+friendly(e)));}
+    private void bindProductionViews() {
+        starNameText = findViewById(R.id.prod_star_name);
+        starSubtitleText = findViewById(R.id.prod_star_subtitle);
+        relationshipText = findViewById(R.id.prod_relationship);
+        preparedIndicatorText = findViewById(R.id.prod_prepared_speech_indicator);
+        talkText = findViewById(R.id.prod_talk_text);
+        talkIcon = findViewById(R.id.prod_talk_icon);
+        spriteView = findViewById(R.id.prod_sprite_view);
+        talkButton = findViewById(R.id.prod_talk_button);
+        listenButton = findViewById(R.id.prod_listen_button);
+        listenSubmenu = findViewById(R.id.prod_listen_submenu);
+        photoButton = findViewById(R.id.prod_photo_button);
+        voiceActions = findViewById(R.id.prod_voice_actions);
+        cancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
+        sendVoiceButton = findViewById(R.id.prod_send_voice_button);
+        textToggleButton = findViewById(R.id.prod_text_toggle_button);
+        textComposer = findViewById(R.id.prod_text_composer);
+        messageEdit = findViewById(R.id.prod_message_edit);
+        sendTextButton = findViewById(R.id.prod_send_text_button);
+        conversationScroll = findViewById(R.id.prod_conversation_scroll);
+        conversationText = findViewById(R.id.prod_conversation_text);
+        conversationText.setTextIsSelectable(true);
     }
 
-    /** All visible controls are declared in res/layout/activity_main.xml for Android Studio's Layout Editor. */
-    private void bindDeclarativeStarButtons(){
-        bindStarButton(R.id.starElusiaaButton,"Elusiaa");
-        bindStarButton(R.id.starKaeliaButton,"Kaelia");
-        bindStarButton(R.id.starMaeraButton,"Maera");
-        bindStarButton(R.id.starKhaviaButton,"Khavia");
-        bindStarButton(R.id.starAuerlisButton,"Auerlis");
-        bindStarButton(R.id.starNyxariButton,"Nyxari");
+    private void wireProductionActions() {
+        View titlePanel = findViewById(R.id.prod_star_title_panel);
+        View avatarFrame = findViewById(R.id.prod_avatar_frame);
+        View catAvatar = findViewById(R.id.prod_cat_avatar);
+        View stage = findViewById(R.id.prod_stage);
+
+        View.OnClickListener chooseStar = v -> showStarSelectionDialog();
+        titlePanel.setOnClickListener(chooseStar);
+        starNameText.setOnClickListener(chooseStar);
+        starSubtitleText.setOnClickListener(chooseStar);
+        stage.setOnClickListener(chooseStar);
+        spriteView.setOnClickListener(chooseStar);
+        avatarFrame.setOnClickListener(v -> showCompanionConsole());
+        catAvatar.setOnClickListener(v -> showCompanionConsole());
+
+        talkButton.setOnClickListener(v -> {
+            if (recording) sendVoiceRecording(); else toggleTalk();
+        });
+        cancelVoiceButton.setOnClickListener(v -> cancelVoiceRecording());
+        sendVoiceButton.setOnClickListener(v -> sendVoiceRecording());
+        textToggleButton.setOnClickListener(v -> toggleTextComposer());
+        sendTextButton.setOnClickListener(v -> sendTyped());
+
+        listenButton.setOnClickListener(v -> {
+            boolean show = listenSubmenu.getVisibility() != View.VISIBLE;
+            listenSubmenu.setVisibility(show ? View.VISIBLE : View.GONE);
+        });
+        findViewById(R.id.prod_listen_thought_option).setOnClickListener(v -> {
+            listenSubmenu.setVisibility(View.GONE);
+            Toast.makeText(this, "Standalone spontaneous Thought is not ported yet.", Toast.LENGTH_SHORT).show();
+        });
+        findViewById(R.id.prod_listen_spark_option).setOnClickListener(v -> {
+            listenSubmenu.setVisibility(View.GONE);
+            Toast.makeText(this, "The writing shelf is game/desktop-owned for now.", Toast.LENGTH_SHORT).show();
+        });
+        findViewById(R.id.prod_listen_constellation_option).setOnClickListener(v -> {
+            listenSubmenu.setVisibility(View.GONE);
+            Toast.makeText(this, "Constellation shelf playback is not in the standalone relationship app yet.", Toast.LENGTH_SHORT).show();
+        });
+        photoButton.setOnClickListener(v -> Toast.makeText(this, "Photo conversation will be ported after the core voice path is stable.", Toast.LENGTH_SHORT).show());
     }
 
-    private void bindStarButton(int viewId,String starId){
-        findViewById(viewId).setOnClickListener(v->selectStar(starId));
+    private void initializeRuntime() {
+        try {
+            StandaloneRuntime r = new StandaloneRuntime(this);
+            VoiceCaptureService capture = new VoiceCaptureService(this);
+            runtime = r;
+            voiceCapture = capture;
+            ui(() -> {
+                selectStar(selectedStarId);
+                setPreparedStatus("Standalone ready • " + r.settings().configurationSummary());
+            });
+        } catch (Throwable e) {
+            ui(() -> setPreparedStatus("Standalone runtime initialization failed: " + friendly(e)));
+        }
     }
 
-    private void selectStar(String id){
-        selectedStarId=id;starName.setText(displayName(id));portrait.setImageResource(portraitFor(id));
-        if(runtime==null){relationship.setText("Loading local state...");return;}
-        try{showState(runtime.stateSnapshot(id));}catch(Exception e){relationship.setText("State error: "+friendly(e));}
+    private void selectStar(String id) {
+        selectedStarId = id;
+        starNameText.setText(displayName(id));
+        starSubtitleText.setText(starSubtitle(id));
+        setStarAnimation("idle");
+        if (runtime == null) {
+            relationshipText.setText("♥ Heart 0   Trust 0   Romance 0   0.0%");
+            return;
+        }
+        try {
+            showState(runtime.stateSnapshot(id));
+        } catch (Exception e) {
+            relationshipText.setText("State error: " + friendly(e));
+        }
     }
 
-    private void sendTyped(){
-        StandaloneRuntime r=runtime;if(r==null)return;String text=input.getText().toString().trim();if(text.isEmpty())return;input.setText("");r.submitText(selectedStarId,text,callbacks);
+    private void showState(JSONObject state) {
+        String suffix = state.optBoolean("IsGirlfriend", false) ? "   ♥ Girlfriend"
+                : state.optBoolean("IsGirlfriendReady", false) ? "   ♥ Ready" : "";
+        relationshipText.setText("♥ Heart " + state.optInt("Heart", 0)
+                + "   Trust " + state.optInt("Trust", 0)
+                + "   Romance " + state.optInt("Romance", 0)
+                + "   " + String.format(Locale.US, "%.1f", state.optDouble("EmotionalConnectionPercent", 0.0)) + "%" + suffix);
     }
 
-    private void toggleTalk(){
-        if(runtime==null||voiceCapture==null)return;
-        if(voiceCapture.isRecording()){stopTalk();return;}
-        if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},RECORD_AUDIO_REQUEST);return;}
+    private String starSubtitle(String id) {
+        if (runtime != null) {
+            try {
+                JSONObject p = runtime.profiles().get(id);
+                String element = p.optString("element", "Star");
+                String domain = p.optString("domain", "Companion");
+                return element + " Star • " + domain;
+            } catch (Exception ignored) { }
+        }
+        switch (id.toLowerCase(Locale.ROOT)) {
+            case "kaelia": return "Void Star • Mystery";
+            case "maera": return "Blood Star • Possession";
+            case "khavia": return "Water Star • Community";
+            case "auerlis": return "Fire Star • Zeal";
+            case "nyxari": return "Shadow Star • Solitude";
+            default: return "Light Star • Mercy";
+        }
+    }
+
+    private void toggleTextComposer() {
+        boolean show = textComposer.getVisibility() != View.VISIBLE;
+        textComposer.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) messageEdit.requestFocus();
+    }
+
+    private void sendTyped() {
+        StandaloneRuntime r = runtime;
+        if (r == null) return;
+        String text = messageEdit.getText().toString().trim();
+        if (text.isEmpty()) {
+            Toast.makeText(this, "Type a message first.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        messageEdit.setText("");
+        r.submitText(selectedStarId, text, callbacks);
+    }
+
+    private void toggleTalk() {
+        if (runtime == null || voiceCapture == null) return;
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, RECORD_AUDIO_REQUEST);
+            return;
+        }
         startTalk();
     }
 
-    private void startTalk(){try{voiceCapture.start();talkButton.setText("Stop");status.setText("Recording locally... tap Stop when finished.");}catch(Exception e){callbacks.onError("Microphone",e);}}
-    private void stopTalk(){try{File wav=voiceCapture.stop();talkButton.setText("Talk");runtime.transcribeAndSubmit(selectedStarId,wav,callbacks);}catch(Exception e){talkButton.setText("Talk");callbacks.onError("Microphone",e);}}
-
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){super.onRequestPermissionsResult(requestCode,permissions,grantResults);if(requestCode==RECORD_AUDIO_REQUEST){if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)startTalk();else Toast.makeText(this,"Microphone permission is required for Talk.",Toast.LENGTH_LONG).show();}}
-
-    private void showState(JSONObject state){
-        relationship.setText(String.format(Locale.US,"Heart %d  •  Trust %d  •  Romance %d\nConnection %.1f%%  •  %s%s",
-                state.optInt("Heart",0),state.optInt("Trust",0),state.optInt("Romance",0),state.optDouble("EmotionalConnectionPercent",0),
-                state.optBoolean("IsGirlfriend",false)?"Girlfriend":state.optBoolean("IsGirlfriendReady",false)?"Girlfriend-ready":"Building relationship",
-                state.optBoolean("GirlfriendSextingEnabled",false)?"  •  Sexting continuity active":""));
+    private void startTalk() {
+        if (recording || voiceCapture == null) return;
+        try {
+            voiceCapture.start();
+            recording = true;
+            updateRecordingUi();
+            setPreparedStatus("Recording locally... press Send Voice or Cancel.");
+            if (runtime != null) runtime.trace().log("voice.recording-start", "star=" + selectedStarId);
+        } catch (Exception e) {
+            recording = false;
+            updateRecordingUi();
+            callbacks.onError("Microphone", e);
+        }
     }
 
-    private String displayName(String id){try{return runtime==null?id:runtime.profiles().displayName(id);}catch(Exception e){return id;}}
-    private int portraitFor(String id){switch(id.toLowerCase(Locale.ROOT)){case"kaelia":return R.drawable.portrait_kaelia;case"maera":return R.drawable.portrait_maera;case"khavia":return R.drawable.portrait_khavia;case"auerlis":return R.drawable.portrait_auerlis;case"nyxari":return R.drawable.portrait_nyxari;default:return R.drawable.portrait_elusiaa;}}
-    private void appendTranscript(String text){transcript.append(text);scrollToBottom();}
-    private void scrollToBottom(){final ScrollView s=findViewById(R.id.transcriptScroll);s.post(()->s.fullScroll(View.FOCUS_DOWN));}
-    private void ui(Runnable r){runOnUiThread(r);}
-    private static String friendly(Throwable e){if(e==null)return"unknown error";Throwable x=e;while(x.getCause()!=null&&x.getCause()!=x)x=x.getCause();String m=x.getMessage();return x.getClass().getSimpleName()+(m==null?"":": "+m);}
+    private void cancelVoiceRecording() {
+        if (!recording || voiceCapture == null) return;
+        try {
+            File wav = voiceCapture.stop();
+            if (wav != null) wav.delete();
+            if (runtime != null) runtime.trace().log("voice.recording-cancel", "star=" + selectedStarId);
+            setPreparedStatus("Voice cancelled.");
+        } catch (Exception e) {
+            callbacks.onError("Cancel voice", e);
+        } finally {
+            recording = false;
+            updateRecordingUi();
+        }
+    }
 
-    @Override protected void onDestroy(){super.onDestroy();try{if(voiceCapture!=null&&voiceCapture.isRecording())voiceCapture.stop();}catch(Exception ignored){}if(runtime!=null)runtime.close();initExecutor.shutdownNow();}
+    private void sendVoiceRecording() {
+        if (!recording || voiceCapture == null || runtime == null) return;
+        try {
+            File wav = voiceCapture.stop();
+            recording = false;
+            updateRecordingUi();
+            if (wav == null || wav.length() <= 44) {
+                if (wav != null) wav.delete();
+                setPreparedStatus("No microphone audio was captured.");
+                return;
+            }
+            runtime.trace().log("voice.recording-send", "star=" + selectedStarId + " bytes=" + wav.length());
+            runtime.transcribeAndSubmit(selectedStarId, wav, callbacks);
+        } catch (Exception e) {
+            recording = false;
+            updateRecordingUi();
+            callbacks.onError("Voice", e);
+        }
+    }
+
+    private void updateRecordingUi() {
+        if (talkText != null) talkText.setText(recording ? "Send Voice" : "Talk");
+        if (voiceActions != null) voiceActions.setVisibility(recording ? View.VISIBLE : View.GONE);
+        if (talkIcon != null) talkIcon.setImageResource(recording ? R.drawable.ui_send_pixel : R.drawable.ui_mic_pixel);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != RECORD_AUDIO_REQUEST) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) startTalk();
+        else Toast.makeText(this, "Microphone permission is required for Talk.", Toast.LENGTH_LONG).show();
+    }
+
+    private void setStarAnimation(String state) {
+        if (spriteView == null) return;
+        spriteView.setStarAnimation(selectedStarId, state, fallbackFrames(selectedStarId));
+    }
+
+    private int[] fallbackFrames(String id) {
+        switch (id.toLowerCase(Locale.ROOT)) {
+            case "kaelia": return new int[]{R.drawable.star_kaelia_idle_0};
+            case "maera": return new int[]{R.drawable.star_maera_idle_0};
+            case "khavia": return new int[]{R.drawable.star_khavia_idle_0};
+            case "auerlis": return new int[]{R.drawable.star_auerlis_idle_0};
+            case "nyxari": return new int[]{R.drawable.star_nyxari_idle_0};
+            default: return new int[]{R.drawable.star_elusiaa_idle_0};
+        }
+    }
+
+    private void showStarSelectionDialog() {
+        View view = LayoutInflater.from(this).inflate(R.layout.dialog_star_selection, null, false);
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(view).setNegativeButton("Close", null).create();
+        bindStarChoice(view, R.id.select_elusiaa, "Elusiaa", dialog);
+        bindStarChoice(view, R.id.select_kaelia, "Kaelia", dialog);
+        bindStarChoice(view, R.id.select_maera, "Maera", dialog);
+        bindStarChoice(view, R.id.select_khavia, "Khavia", dialog);
+        bindStarChoice(view, R.id.select_auerlis, "Auerlis", dialog);
+        bindStarChoice(view, R.id.select_nyxari, "Nyxari", dialog);
+        dialog.setOnShowListener(x -> styleDialog(dialog));
+        dialog.show();
+    }
+
+    private void bindStarChoice(View root, int id, String starId, AlertDialog dialog) {
+        root.findViewById(id).setOnClickListener(v -> {
+            selectStar(starId);
+            dialog.dismiss();
+        });
+    }
+
+    private void showCompanionConsole() {
+        View view = LayoutInflater.from(this).inflate(R.layout.dialog_companion_console, null, false);
+        TextView summary = view.findViewById(R.id.console_summary);
+        TextView log = view.findViewById(R.id.console_log);
+        ScrollView logScroll = view.findViewById(R.id.console_log_scroll);
+        Runnable refresh = () -> refreshConsole(summary, log, logScroll);
+        view.findViewById(R.id.console_refresh).setOnClickListener(v -> refresh.run());
+        view.findViewById(R.id.console_retry_review).setOnClickListener(v -> {
+            if (runtime == null) return;
+            runtime.retryPendingPrimaryReviews(callbacks);
+            refresh.run();
+        });
+        refresh.run();
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(view).setNegativeButton("Close", null).create();
+        dialog.setOnShowListener(x -> styleDialog(dialog));
+        dialog.show();
+    }
+
+    private void refreshConsole(TextView summary, TextView log, ScrollView scroll) {
+        if (runtime == null) {
+            summary.setText("Runtime is still starting.");
+            log.setText("No runtime trace yet.");
+            return;
+        }
+        String text = "Star: " + selectedStarId + "\n"
+                + runtime.settings().configurationSummary() + "\n\n"
+                + "State: " + runtime.stateStore().file().getAbsolutePath() + "\n"
+                + "Content: " + runtime.content().root().getAbsolutePath() + "\n"
+                + "Trace: " + runtime.trace().file().getAbsolutePath() + "\n"
+                + "Pending primary review: " + runtime.hasPendingPrimaryReview();
+        summary.setText(text);
+        log.setText(runtime.trace().readTail(96 * 1024));
+        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void styleDialog(AlertDialog dialog) {
+        Window window = dialog.getWindow();
+        if (window != null) window.setBackgroundDrawable(new ColorDrawable(0xF00B1220));
+        Button negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        if (negative != null) negative.setTextColor(0xFFEAF7FF);
+    }
+
+    private void appendConversation(String speaker, String text) {
+        if (sessionConversation.length() > 0 && !assistantLineOpen) sessionConversation.append("\n\n");
+        sessionConversation.append(speaker).append(": ").append(text == null ? "" : text.trim());
+        refreshConversationSurface();
+    }
+
+    private void appendConversationPrefix(String speaker) {
+        if (sessionConversation.length() > 0) sessionConversation.append("\n\n");
+        sessionConversation.append(speaker).append(": ");
+        refreshConversationSurface();
+    }
+
+    private void appendConversationDelta(String delta) {
+        if (delta == null || delta.isEmpty()) return;
+        sessionConversation.append(delta);
+        refreshConversationSurface();
+    }
+
+    private void refreshConversationSurface() {
+        if (conversationText == null) return;
+        conversationText.setText(sessionConversation.length() == 0 ? "No conversation yet." : sessionConversation.toString());
+        conversationScroll.post(() -> conversationScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void setPreparedStatus(String text) {
+        if (preparedIndicatorText == null) return;
+        String value = text == null ? "" : text.trim();
+        preparedIndicatorText.setText(value);
+        preparedIndicatorText.setVisibility(value.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private String displayName(String id) {
+        try { return runtime == null ? id : runtime.profiles().displayName(id); }
+        catch (Exception e) { return id; }
+    }
+
+    private void ui(Runnable r) { runOnUiThread(r); }
+
+    private static String friendly(Throwable e) {
+        if (e == null) return "unknown error";
+        Throwable x = e;
+        while (x.getCause() != null && x.getCause() != x) x = x.getCause();
+        String m = x.getMessage();
+        return x.getClass().getSimpleName() + (m == null ? "" : ": " + m);
+    }
+
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        try {
+            if (voiceCapture != null && voiceCapture.isRecording()) {
+                File wav = voiceCapture.stop();
+                if (wav != null) wav.delete();
+            }
+        } catch (Exception ignored) { }
+        if (runtime != null) runtime.close();
+        initExecutor.shutdownNow();
+    }
 }

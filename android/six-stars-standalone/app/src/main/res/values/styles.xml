@@ -1,10 +1,48 @@
 <resources>
-    <style name="Theme.SixStarsStandalone" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.SixStarsStandalone" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:colorAccent">#D7B8FF</item>
-        <item name="android:navigationBarColor">#100E19</item>
-        <item name="android:statusBarColor">#100E19</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#08101C</item>
+        <item name="android:navigationBarColor">#08101C</item>
+        <item name="android:windowBackground">#08101C</item>
+        <item name="android:colorAccent">#00D5D7</item>
+    </style>
+
+    <style name="StandaloneStarCard">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">224dp</item>
+        <item name="android:layout_columnWeight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:padding">10dp</item>
+        <item name="android:background">@drawable/ui_selection_card</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:foreground">?android:attr/selectableItemBackground</item>
+    </style>
+    <style name="StandaloneStarCardImage">
+        <item name="android:layout_width">132dp</item>
+        <item name="android:layout_height">140dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:adjustViewBounds">false</item>
+    </style>
+    <style name="StandaloneStarCardName">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">8dp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="StandaloneStarCardSubtitle">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">#CFFAFE</item>
+        <item name="android:textSize">12sp</item>
     </style>
 </resources>

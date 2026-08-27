@@ -4,6 +4,8 @@ import android.content.Context;
 
 import java.io.File;
 import java.io.FileWriter;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 
 /** Small opt-in lifecycle trace mirroring the desktop background-analysis trace philosophy. */
@@ -26,4 +28,25 @@ final class RuntimeTrace {
     }
 
     File file() { return file; }
+
+    synchronized String readTail(int maxBytes) {
+        if (!file.exists()) return enabled ? "Trace is enabled, but no events have been written yet." : "Runtime trace file logging is disabled.";
+        int cap = Math.max(4096, maxBytes);
+        try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
+            long length = in.length();
+            long start = Math.max(0L, length - cap);
+            in.seek(start);
+            byte[] bytes = new byte[(int)(length - start)];
+            in.readFully(bytes);
+            String text = new String(bytes, StandardCharsets.UTF_8);
+            if (start > 0) {
+                int newline = text.indexOf('\n');
+                if (newline >= 0 && newline + 1 < text.length()) text = text.substring(newline + 1);
+                text = "… older trace entries omitted …\n" + text;
+            }
+            return text.trim().isEmpty() ? "Trace file is empty." : text;
+        } catch (Exception e) {
+            return "Unable to read trace: " + e.getMessage();
+        }
+    }
 }

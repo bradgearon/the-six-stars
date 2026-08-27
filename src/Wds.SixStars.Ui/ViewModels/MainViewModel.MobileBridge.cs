@@ -139,6 +139,7 @@ public sealed partial class MainViewModel
             ProcessMobileMessageAsync,
             ProcessMobileAudioAsync,
             ProcessMobileTestAudioAsync,
+            ProcessStandaloneLocalTtsAsync,
             CreateMobileHealthPayload,
             CreateMobileStarsPayload,
             CreateMobileStatePayloadAsync,
@@ -1901,6 +1902,47 @@ public sealed partial class MainViewModel
         return hash.Length <= 12 ? hash : hash.Substring(0, 12);
     }
 
+
+    private async Task<byte[]> ProcessStandaloneLocalTtsAsync(string starId, string text, CancellationToken cancellationToken)
+    {
+        string normalizedStar = string.IsNullOrWhiteSpace(starId) ? SelectedStarId ?? "Elusiaa" : starId.Trim();
+        string spoken = (text ?? string.Empty).Trim();
+        if (spoken.Length == 0) throw new InvalidOperationException("Standalone local TTS text is empty.");
+
+        StarInteractionResponse response = CreateLiveVoiceTemplateResponse(normalizedStar);
+        response.SetSpokenParts(new[] { spoken });
+        VoiceSynthesisRequest request = CreateVoiceSynthesisRequest(response);
+        string clonePath = request.VoiceSettings?.VoiceCloneAudioFile ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(clonePath) || !Path.IsPathFullyQualified(clonePath) || !File.Exists(clonePath))
+        {
+            throw new FileNotFoundException(
+                "Standalone local TTS could not resolve the canonical absolute voice-clone file for " + normalizedStar + ".",
+                clonePath);
+        }
+        AppendMobileBridgeVoiceDebug("Standalone local TTS request", normalizedStar + " clone=" + clonePath);
+
+        using IStreamingVoiceGenerator generator = CreateLocalStreamingVoiceGenerator();
+        TaskCompletionSource<byte[]> audioReady = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        generator.AudioChunkReady += (_, args) =>
+        {
+            if (args.AudioData != null && args.AudioData.Length > 0) audioReady.TrySetResult(args.AudioData);
+        };
+        generator.GenerationError += (_, args) =>
+        {
+            audioReady.TrySetException(args.Exception ?? new InvalidOperationException(args.ErrorMessage));
+        };
+        generator.GenerationComplete += (_, args) =>
+        {
+            if (args.WasCancelled) audioReady.TrySetCanceled(cancellationToken);
+            else if (!audioReady.Task.IsCompleted) audioReady.TrySetException(new InvalidOperationException("Local TTS completed without returning a WAV chunk."));
+        };
+
+        await generator.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        await generator.GenerateStreamingAsync(request, cancellationToken).ConfigureAwait(false);
+        byte[] wav = await audioReady.Task.WaitAsync(TimeSpan.FromSeconds(120), cancellationToken).ConfigureAwait(false);
+        AppendMobileBridgeVoiceDebug("Standalone local TTS", normalizedStar + " generated " + wav.Length + " WAV bytes through the desktop-resolved clone path.");
+        return wav;
+    }
 
     private async Task<object> ProcessMobileTestAudioAsync(CancellationToken cancellationToken)
     {

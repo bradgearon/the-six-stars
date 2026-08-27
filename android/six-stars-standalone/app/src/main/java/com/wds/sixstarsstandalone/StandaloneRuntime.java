@@ -56,10 +56,20 @@ final class StandaloneRuntime implements AutoCloseable {
         prompts=new AndroidPromptBuilder(content,settings);
         llm=new GoogleAiStudioClient(settings);
         asr=new GroqAsrClient(settings);
-        tts=settings.useLocalTts() ? new LocalQwenTtsClient(settings) : new AlibabaQwenTtsClient(context,settings,content);
+        if (settings.useLocalTts()) {
+            // Prefer the .NET bridge because it resolves the canonical desktop Star profile and
+            // absolute voice-clone file path. Keep direct Python WebSocket TTS only as a legacy
+            // developer route when LocalServiceUrl is not configured.
+            tts = settings.localTtsServiceConfigured()
+                    ? new DesktopLocalTtsServiceClient(settings)
+                    : new LocalQwenTtsClient(settings);
+        } else {
+            tts = new AlibabaQwenTtsClient(context,settings,content);
+        }
         audio=new AudioPlaybackService(context);
         memory=new MemoryStateUpdater(settings);
         trace=new RuntimeTrace(context,settings);
+        trace.log("runtime.start", settings.configurationSummary() + " ttsClient=" + tts.modeName());
         maintenance=new MaintenanceService(settings,prompts,llm,trace);
         recoverPendingPrimaryReviews();
     }
@@ -82,7 +92,14 @@ final class StandaloneRuntime implements AutoCloseable {
         ioExecutor.submit(()->{
             try{
                 status(cb,"Transcribing with Groq..."); trace.log("asr.start",wav.getName());
-                String text=asr.transcribe(wav); trace.log("asr.complete","chars="+text.length());
+                String text=asr.transcribe(wav);
+                text=text==null?"":text.trim();
+                trace.log("asr.complete","chars="+text.length());
+                if(text.isEmpty()){
+                    status(cb,"No speech was detected. Nothing was sent.");
+                    trace.log("asr.empty","star="+starId);
+                    return;
+                }
                 if(cb!=null)cb.onUserText(starId,text);
                 submitTextInternalUserAlreadyShown(starId,text,cb);
             }catch(Throwable e){trace.log("asr.failed",e.toString());error(cb,"ASR",e);}finally{if(wav!=null)wav.delete();}
@@ -150,10 +167,18 @@ final class StandaloneRuntime implements AutoCloseable {
             JSONObject review=null;Throwable last=null;
             for(int attempt=1;attempt<=3;attempt++){
                 try{
+                    long reviewStarted=System.nanoTime();
                     trace.log("primary-review.llm-start","star="+starId+" attempt="+attempt);
                     List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
                     String json=llm.completeJson(messages,"background-review");
-                    review=JsonUtil.parseObject(json); trace.log("primary-review.llm-complete","star="+starId+" attempt="+attempt+" chars="+json.length()); break;
+                    try {
+                        review=JsonUtil.parseObject(json);
+                    } catch (Throwable parseError) {
+                        trace.log("primary-review.json-parse-failed","star="+starId+" attempt="+attempt+" chars="+json.length()+" response="+debugPreview(json));
+                        throw parseError;
+                    }
+                    long elapsedMs=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-reviewStarted);
+                    trace.log("primary-review.llm-complete","star="+starId+" attempt="+attempt+" chars="+json.length()+" elapsedMs="+elapsedMs); break;
                 }catch(Throwable e){last=e;trace.log("primary-review.llm-attempt-failed","star="+starId+" attempt="+attempt+" "+e);if(attempt<3)Thread.sleep(attempt*400L);}
             }
             if(review==null)throw new IllegalStateException("Protected primary review failed after retries",last);
@@ -202,18 +227,84 @@ final class StandaloneRuntime implements AutoCloseable {
     private void waitForPrimaryReview(Callbacks cb)throws Exception{
         if(!settings.blockForReview())return;
         CompletableFuture<Void> barrier; synchronized(barrierLock){barrier=primaryReviewBarrier;}
-        if(barrier.isDone()){
-            try{barrier.get();}catch(ExecutionException e){throw new IllegalStateException("The previous protected memory review did not commit. Restart after correcting provider/configuration errors; the pending review is preserved on device.",e.getCause());}
+        if(!barrier.isDone()){
+            trace.log("foreground.wait-primary-review","waiting=true");
+            status(cb,"Finishing the previous protected memory update...");
+            try{
+                barrier.get();
+                trace.log("foreground.wait-primary-review-complete","ok=true");
+                return;
+            }catch(ExecutionException e){
+                trace.log("foreground.wait-primary-review-failed","willRetry=true error="+e.getCause());
+            }
+        }else{
+            try{
+                barrier.get();
+                return;
+            }catch(ExecutionException e){
+                trace.log("foreground.previous-primary-review-failed","willRetry=true error="+e.getCause());
+            }
+        }
+
+        // A protected review failure must never permanently poison the app. The pending turn is
+        // persisted on-device, so retry it synchronously here before allowing the next foreground.
+        // This preserves the invariant the app wants: primary memory commit first, next turn second.
+        status(cb,"Retrying the previous protected memory update before continuing...");
+        retryPendingPrimaryReviewsBlocking(cb);
+    }
+
+    boolean hasPendingPrimaryReview(){
+        try{
+            synchronized(stateStore){
+                for(String id:StarProfileRepository.IDS){
+                    JSONObject pending=stateStore.star(id).optJSONObject("StandalonePendingPrimaryReview");
+                    if(pending!=null&&pending.length()>0)return true;
+                }
+            }
+        }catch(Exception ignored){}
+        return false;
+    }
+
+    void retryPendingPrimaryReviews(Callbacks cb){
+        if(closed)return;
+        ioExecutor.submit(()->{
+            try{retryPendingPrimaryReviewsBlocking(cb);status(cb,"Pending memory review committed.");}
+            catch(Throwable e){trace.log("primary-review.manual-retry-failed",e.toString());error(cb,"Primary memory review retry",e);}
+        });
+    }
+
+    private void retryPendingPrimaryReviewsBlocking(Callbacks cb)throws Exception{
+        List<JSONObject> pendingStates=collectPendingPrimaryReviews();
+        if(pendingStates.isEmpty()){
+            synchronized(barrierLock){primaryReviewBarrier=CompletableFuture.completedFuture(null);}
             return;
         }
-        trace.log("foreground.wait-primary-review","waiting=true");status(cb,"Finishing the previous protected memory update...");
-        try{barrier.get();trace.log("foreground.wait-primary-review-complete","ok=true");}
-        catch(ExecutionException e){throw new IllegalStateException("The previous protected memory review did not commit. The next foreground is intentionally blocked.",e.getCause());}
+        trace.log("primary-review.retry-before-foreground","count="+pendingStates.size());
+        for(JSONObject item:pendingStates){
+            String id=item.optString("StarId");
+            status(cb,"Retrying protected memory for "+id+"...");
+            runRecoveryReview(profiles.get(id),item.getJSONObject("State"),item.getJSONObject("Pending"));
+        }
+        synchronized(barrierLock){primaryReviewBarrier=CompletableFuture.completedFuture(null);}
+        trace.log("primary-review.retry-before-foreground-complete","count="+pendingStates.size());
+    }
+
+    private List<JSONObject> collectPendingPrimaryReviews() throws Exception {
+        List<JSONObject> pendingStates=new ArrayList<>();
+        synchronized(stateStore){
+            for(String id:StarProfileRepository.IDS){
+                JSONObject state=stateStore.star(id);
+                JSONObject pending=state.optJSONObject("StandalonePendingPrimaryReview");
+                if(pending!=null&&pending.length()>0){
+                    pendingStates.add(new JSONObject().put("StarId",id).put("Pending",JsonUtil.deepCopy(pending)).put("State",JsonUtil.deepCopy(state)));
+                }
+            }
+        }
+        return pendingStates;
     }
 
     private void recoverPendingPrimaryReviews() throws Exception {
-        List<JSONObject> pendingStates=new ArrayList<>();
-        for(String id:StarProfileRepository.IDS){JSONObject state=stateStore.star(id);JSONObject pending=state.optJSONObject("StandalonePendingPrimaryReview");if(pending!=null&&pending.length()>0)pendingStates.add(new JSONObject().put("StarId",id).put("Pending",JsonUtil.deepCopy(pending)).put("State",JsonUtil.deepCopy(state)));}
+        List<JSONObject> pendingStates=collectPendingPrimaryReviews();
         if(pendingStates.isEmpty())return;
         trace.log("primary-review.recovery-found","count="+pendingStates.size());
         CompletableFuture<Void> recovery=new CompletableFuture<>(); synchronized(barrierLock){primaryReviewBarrier=recovery;}
@@ -228,9 +319,21 @@ final class StandaloneRuntime implements AutoCloseable {
     private void runRecoveryReview(JSONObject profile,JSONObject stateBefore,JSONObject pending)throws Exception{
         String starId=profile.optString("starId");trace.log("primary-review.recovery-start","star="+starId);
         List<ChatMessage> messages=prompts.buildReview(profile,stateBefore,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));
-        JSONObject review=JsonUtil.parseObject(llm.completeJson(messages,"background-review-recovery"));
+        String json=llm.completeJson(messages,"background-review-recovery");
+        JSONObject review;
+        try {
+            review=JsonUtil.parseObject(json);
+        } catch (Throwable parseError) {
+            trace.log("primary-review.recovery-json-parse-failed","star="+starId+" chars="+json.length()+" response="+debugPreview(json));
+            throw parseError;
+        }
         synchronized(stateStore){JSONObject live=stateStore.star(starId);memory.apply(profile,live,review,pending.optString("PlayerText"),pending.optString("StarResponse"),pending.optString("TurnStartedAt"));live.remove("StandalonePendingPrimaryReview");stateStore.persist();}
         trace.log("primary-review.recovery-commit","star="+starId);
+    }
+
+    private static String debugPreview(String value){
+        String x=value==null?"":value.replace('\r',' ').replace('\n',' ').trim();
+        return x.length()<=1800?x:x.substring(0,1800)+"…";
     }
 
     private static ThreadFactory named(String base){return r->{Thread t=new Thread(r,base);t.setDaemon(true);return t;};}

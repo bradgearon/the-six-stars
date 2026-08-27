@@ -117,7 +117,7 @@ final class StandaloneSettings {
     String llmKey() { return llm().optString("ApiKey", "").trim(); }
     String llmEndpoint() { return proxyEnabled() ? proxyBaseUrl() + "/google/v1beta" : llm().optString("EndpointBaseUrl", "https://generativelanguage.googleapis.com/v1beta"); }
     String llmModel() { return llm().optString("Model", "gemma-4-26b-a4b-it"); }
-    String thinkingLevel() { return llm().optString("ThinkingLevel", "high"); }
+    String thinkingLevel() { return llm().optString("ThinkingLevel", "off"); }
     boolean googleSearch() { return llm().optBoolean("EnableGoogleSearch", false); }
     double temperature() { return llm().optDouble("Temperature", 0.75); }
     // No foreground/review output-token cap is configurable here by design; keep parity with desktop.
@@ -142,15 +142,23 @@ final class StandaloneSettings {
     int ttsTimeoutSeconds() { return tts().optInt("TimeoutSeconds", 120); }
     JSONObject configuredVoiceIds() { return JsonUtil.object(tts(), "VoiceIds"); }
 
-    // Local TTS points at the same Qwen3 WebSocket service the desktop application uses.
-    // On a physical phone use the desktop machine's LAN IP, never localhost/127.0.0.1.
+    // Preferred local TTS route: Android sends only starId + text to the existing desktop .NET
+    // mobile bridge. The desktop resolves the canonical Star voice-clone file to an absolute path
+    // and invokes its normal local Qwen WebSocket generator. On a physical phone use the desktop
+    // machine's LAN IP, never localhost/127.0.0.1.
+    String localTtsServiceUrl() { return tts().optString("LocalServiceUrl", "").trim(); }
+
+    // Legacy/direct development route to scripts/websocket_tts_server.py. This requires the caller
+    // to provide a host-valid absolute clone path, so the .NET service route above is preferred.
     String localTtsWebSocketUrl() { return tts().optString("LocalWebSocketUrl", "").trim(); }
     String localTtsModel() { return tts().optString("LocalModel", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"); }
     String localTtsLanguage() { return tts().optString("LocalLanguage", defaultLanguage()); }
     String localTtsTaskType() { return tts().optString("LocalTaskType", "VoiceClone"); }
     double localTtsSpeed() { return tts().optDouble("LocalSpeed", 1.0); }
     int localTtsTimeoutSeconds() { return tts().optInt("LocalTimeoutSeconds", ttsTimeoutSeconds()); }
-    boolean localTtsConfigured() { return ttsEnabled() && !localTtsWebSocketUrl().isEmpty(); }
+    boolean localTtsServiceConfigured() { return ttsEnabled() && !localTtsServiceUrl().isEmpty(); }
+    boolean localTtsWebSocketConfigured() { return ttsEnabled() && !localTtsWebSocketUrl().isEmpty(); }
+    boolean localTtsConfigured() { return localTtsServiceConfigured() || localTtsWebSocketConfigured(); }
     boolean hostedTtsConfigured() { return ttsEnabled() && (proxyConfigured() || (!proxyEnabled() && !ttsKey().isEmpty())); }
 
     String resolvedTtsMode() {
@@ -178,13 +186,14 @@ final class StandaloneSettings {
     boolean traceEnabled() { return runtime().optBoolean("TraceEnabled", true); }
 
     String configurationSummary() {
+        String localRoute = localTtsServiceConfigured() ? "dotnet" : (localTtsWebSocketConfigured() ? "websocket" : "none");
         return "proxy=" + (proxyEnabled() ? (proxyConfigured() ? "configured" : "incomplete") : "off")
-                + " LLM key=" + (!llmKey().isEmpty()) + " ASR key=" + (!asrKey().isEmpty())
-                + " TTS=" + resolvedTtsMode() + "/" + (ttsConfigured() ? "configured" : "incomplete")
+                + " LLM key=" + (!llmKey().isEmpty()) + " thinking=" + thinkingLevel() + " ASR key=" + (!asrKey().isEmpty())
+                + " TTS=" + resolvedTtsMode() + "/" + (ttsConfigured() ? "configured" : "incomplete") + " localRoute=" + localRoute
                 + " | buildLocal=" + buildTimeLocalAssetLoaded + " runtimeLocal=" + runtimeOverrideLoaded;
     }
 
     String configurationHelp() {
-        return "For direct developer builds add Google/Groq keys. TTS can use Alibaba/Cloudflare, or set TTS.Mode=local (or auto) and LocalWebSocketUrl to the desktop Qwen service. For production set Proxy.Enabled=true, BaseUrl, and AccessToken; provider keys can remain empty on-device. Runtime override path: " + file.getAbsolutePath();
+        return "For direct developer builds add Google/Groq keys. TTS can use Alibaba/Cloudflare, or set TTS.Mode=local (or auto) and LocalServiceUrl to the desktop .NET bridge (preferred). LocalWebSocketUrl remains a legacy direct-Qwen option. For production set Proxy.Enabled=true, BaseUrl, and AccessToken; provider keys can remain empty on-device. Runtime override path: " + file.getAbsolutePath();
     }
 }

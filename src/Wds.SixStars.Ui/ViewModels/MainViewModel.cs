@@ -1468,6 +1468,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             });
         }
 
+        return CreateLocalStreamingVoiceGenerator();
+    }
+
+    /// <summary>
+    /// Always creates the repository's local Qwen WebSocket generator, even when the desktop's
+    /// normal voice output is configured to use hosted Alibaba TTS. The standalone Android
+    /// local-TTS bridge calls this so a developer can keep phone TTS entirely on the desktop GPU.
+    /// </summary>
+    private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator()
+    {
         string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
             ?? _appConfig.WebSocketTTS.WebSocketUrl
             ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
@@ -1475,7 +1485,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             wsUrl = "ws://localhost:8100/tts/stream";
         }
-        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured WebSocket URL: {wsUrl}");
+        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured local WebSocket URL: {wsUrl}");
 
         return new WebSocketTtsVoiceGenerator(new WebSocketTtsOptions
         {

@@ -33,6 +33,7 @@
     "AutoCloneVoices": true,
     "TimeoutSeconds": 120,
     "VoiceIds": {},
+    "LocalServiceUrl": "http://192.168.1.179:8066/api/mobile/local-tts",
     "LocalWebSocketUrl": "ws://192.168.1.179:8100/tts/stream",
     "LocalModel": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
     "LocalLanguage": "English",

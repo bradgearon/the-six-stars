@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="Choose a Star"
+            android:textColor="#EAF7FF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="Choose a companion."
+            android:textColor="#B6E6F2"
+            android:textSize="12sp" />
+
+        <GridLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:columnCount="2"
+            android:useDefaultMargins="true">
+
+            <LinearLayout
+                android:id="@+id/select_elusiaa"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_elusiaa_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Elusiaa" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Light • Mercy" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/select_kaelia"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_kaelia_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Kaelia" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Void • Mystery" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/select_maera"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_maera_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Maera" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Blood • Possession" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/select_khavia"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_khavia_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Khavia" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Water • Community" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/select_auerlis"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_auerlis_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Auerlis" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Fire • Zeal" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/select_nyxari"
+                style="@style/StandaloneStarCard">
+                <ImageView style="@style/StandaloneStarCardImage" android:src="@drawable/star_nyxari_idle_0" />
+                <TextView style="@style/StandaloneStarCardName" android:text="Nyxari" />
+                <TextView style="@style/StandaloneStarCardSubtitle" android:text="Shadow • Solitude" />
+            </LinearLayout>
+        </GridLayout>
+    </LinearLayout>
+</ScrollView>
