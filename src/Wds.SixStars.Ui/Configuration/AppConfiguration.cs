@@ -242,22 +242,22 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class LocalModelsConfig
     {
-        /// <summary>Repository-local models folder shared by LLM, faster-whisper, and Qwen TTS.</summary>
+        /// <summary>Repository-local models folder shared by llama-server, whisper.cpp, and qwentts.cpp.</summary>
         public string Root { get; set; } = "models";
         public string HuggingFaceHome { get; set; } = "models/hf";
         public string HuggingFaceHubCache { get; set; } = "models/hf/hub";
 
-        /// <summary>OpenAI-compatible LLM endpoint. Defaults to LM Studio for speed; the Python Gemma server is optional.</summary>
+        /// <summary>OpenAI-compatible LLM endpoint. The launcher starts llama-server on this port by default.</summary>
         public string LlmEndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string LlmModel { get; set; } = "local-model";
+        public string LlmModel { get; set; } = "six-stars-gemma4";
         public string LlmLocalPath { get; set; } = string.Empty;
 
-        public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
-        public string WhisperModel { get; set; } = "tiny.en";
-        public string WhisperLocalPath { get; set; } = string.Empty;
+        public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/inference";
+        public string WhisperModel { get; set; } = "large-v3-turbo";
+        public string WhisperLocalPath { get; set; } = "models/asr/ggml-large-v3-turbo.bin";
 
-        public string QwenTtsWebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
-        public string QwenTtsModel { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        public string QwenTtsHttpUrl { get; set; } = "http://localhost:8101";
+        public string QwenTtsModel { get; set; } = "qwen3-tts-base";
         public string QwenTtsLocalPath { get; set; } = string.Empty;
     }
 
@@ -296,13 +296,13 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class LlmConfig
     {
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string Model { get; set; } = "local-model";
+        public string Model { get; set; } = "six-stars-gemma4";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
         public bool DisableReasoning { get; set; } = true;
         public int ReasoningBudget { get; set; } = 0;
         public string ReasoningFormat { get; set; } = "none";
-        public bool SendReasoningControlFields { get; set; } = true;
+        public bool SendReasoningControlFields { get; set; } = false;
 
         /// <summary>
         /// Local models can take a while after the backend reports 100% generation because
@@ -384,8 +384,8 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class WhisperConfig
     {
-        public string Provider { get; set; } = "faster-whisper";
-        public string EndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
+        public string Provider { get; set; } = "whispercpp";
+        public string EndpointUrl { get; set; } = "http://localhost:8000/inference";
         public string ModelPath { get; set; } = string.Empty;
         public string Model { get; set; } = string.Empty;
         public string? ApiKey { get; set; }
@@ -396,7 +396,7 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class TtsConfig
     {
         public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        public string Model { get; set; } = "qwen3-tts-base";
         public string? ApiKey { get; set; }
         public string PayloadShape { get; set; } = "OpenAiSpeech";
         public string TaskType { get; set; } = "VoiceClone";
@@ -406,14 +406,16 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class WebSocketTtsConfig
     {
         /// <summary>
-        /// Streaming TTS is the default desktop voice path. Set Enabled=false or SIX_STARS_USE_STREAMING_TTS=false
-        /// to fall back to the normal HTTP /v1/audio/speech endpoint and NAudio WAV playback.
+        /// Historical configuration block name retained for compatibility. Local streaming TTS now
+        /// calls qwentts.cpp directly over HTTP; no WebSocket/Drogon gateway is required.
         /// </summary>
         public bool Enabled { get; set; } = true;
-        public string WebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
-        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        public string HttpBaseUrl { get; set; } = "http://localhost:8101";
+        public string Model { get; set; } = "qwen3-tts-base";
         public string DefaultLanguage { get; set; } = "English";
-        public string ResponseFormat { get; set; } = "wav";
+        public string ResponseFormat { get; set; } = "pcm";
+        public int PcmFirstChunkMilliseconds { get; set; } = 480;
+        public int PcmChunkMilliseconds { get; set; } = 960;
         public string TaskType { get; set; } = "VoiceClone";
         public int MaxWordsPerChunk { get; set; } = 30;
         public int MaxSentencesPerChunk { get; set; } = 2;
@@ -479,15 +481,15 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class ScreenLlmConfig
     {
-        public bool Enabled { get; set; } = true;
+        public bool Enabled { get; set; } = false;
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string Model { get; set; } = "local-model";
+        public string Model { get; set; } = "six-stars-gemma4";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
         public bool DisableReasoning { get; set; } = true;
         public int ReasoningBudget { get; set; } = 0;
         public string ReasoningFormat { get; set; } = "none";
-        public bool SendReasoningControlFields { get; set; } = true;
+        public bool SendReasoningControlFields { get; set; } = false;
         public int MaxTokens { get; set; } = 0;
         public int TimeoutSeconds { get; set; } = 120;
         public bool LogExchangesToDisk { get; set; } = true;

@@ -154,7 +154,7 @@ namespace Wds.SixStars.Api.Voice
             finally
             {
                 // GenerateStreamingAsync can fail before the server sends a completion event
-                // (for example while the Python TTS service is still starting). Always cancel
+                // (for example while qwentts.cpp is still starting). Always cancel
                 // and join the ordered consumer so an empty playback loop cannot survive forever.
                 try
                 {
@@ -320,7 +320,7 @@ namespace Wds.SixStars.Api.Voice
                                 WavAudio = CopyBytes(chunk.AudioData),
                                 MimeType = chunk.MimeType,
                                 Instructions = chunk.Text,
-                                Source = "streaming-websocket"
+                                Source = "streaming-qwentts-http"
                             };
 
                             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Consuming ordered chunk {chunk.ChunkIndex + 1}/{chunk.TotalChunks} ({chunk.AudioData.Length} bytes). Queue remaining after dequeue: {queueCountAfterDequeue}. Processed so far: {chunksProcessed}.");

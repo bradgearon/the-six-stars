@@ -65,12 +65,13 @@ final class StandaloneRuntime implements AutoCloseable {
         llm=new GoogleAiStudioClient(context,settings,trace);
         asr=new GroqAsrClient(settings);
         if (settings.useLocalTts()) {
-            // Prefer the .NET bridge because it resolves the canonical desktop Star profile and
-            // absolute voice-clone file path. Keep direct Python WebSocket TTS only as a legacy
-            // developer route when LocalServiceUrl is not configured.
-            tts = settings.localTtsServiceConfigured()
-                    ? new DesktopLocalTtsServiceClient(settings)
-                    : new LocalQwenTtsClient(settings);
+            // Local TTS is owned by the desktop .NET bridge. The bridge resolves the canonical
+            // Star profile / absolute clone WAV and calls qwentts.cpp over HTTP on the desktop.
+            // There is intentionally no direct Android WebSocket/native-gateway fallback.
+            if (!settings.localTtsServiceConfigured()) {
+                throw new IllegalStateException("Local TTS requires TTS.LocalServiceUrl for the desktop .NET bridge.");
+            }
+            tts = new DesktopLocalTtsServiceClient(settings);
         } else {
             tts = new AlibabaQwenTtsClient(context,settings,content);
         }

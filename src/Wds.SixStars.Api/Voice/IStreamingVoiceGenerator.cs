@@ -36,17 +36,17 @@ namespace Wds.SixStars.Api.Voice
         void CancelGeneration();
 
         /// <summary>
-        /// Check if the generator is currently connected and ready.
+        /// Check if the generator is currently connected/healthy and ready.
         /// </summary>
         bool IsConnected { get; }
 
         /// <summary>
-        /// Connect to the WebSocket endpoint. This is called automatically if needed.
+        /// Connect to or health-check the backing TTS service. This is called automatically if needed.
         /// </summary>
         Task ConnectAsync(CancellationToken cancellationToken);
 
         /// <summary>
-        /// Disconnect from the WebSocket endpoint.
+        /// Disconnect from or release the backing TTS service connection.
         /// </summary>
         Task DisconnectAsync();
     }

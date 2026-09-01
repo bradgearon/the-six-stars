@@ -6,8 +6,8 @@ namespace Wds.SixStars.Api.Speech
     /// </summary>
     public sealed class WhisperStreamEndpointOptions
     {
-        public string Provider { get; set; } = "mock";
-        public string EndpointUrl { get; set; } = "http://localhost:8080/inference";
+        public string Provider { get; set; } = "whispercpp";
+        public string EndpointUrl { get; set; } = "http://localhost:8000/inference";
         public string ModelPath { get; set; } = string.Empty;
         /// <summary>Remote API model ID, for example whisper-large-v3-turbo on Groq.</summary>
         public string Model { get; set; } = string.Empty;

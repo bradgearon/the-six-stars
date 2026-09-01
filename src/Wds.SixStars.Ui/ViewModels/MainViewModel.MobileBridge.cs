@@ -2344,6 +2344,7 @@ public sealed partial class MainViewModel
             // protected primary memory review immediately at that point; Android playback-start is
             // diagnostic only and no longer controls/cancels the durable update lifecycle.
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
+            livePhoneVoice?.MarkGemmaEos();
             _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
                 "mobile.gemma-eos",
                 backgroundAnalysisId,
@@ -2420,7 +2421,7 @@ public sealed partial class MainViewModel
                 response.VoiceBytesSent = livePhoneVoice.BytesSent;
                 response.VoiceError = livePhoneVoice.ErrorMessage;
                 response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
-                    ? "Voice chunks were buffered during Gemma and Qwen started only after LLM EOS; Android audio delivery begins after text transport."
+                    ? "The first complete sentence starts Qwen during Gemma streaming; native qwentts.cpp PCM is forwarded in short playable windows instead of waiting for a whole sentence WAV."
                     : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
             }
             response.GateWaitMs = gateWaitMs;
@@ -3001,6 +3002,19 @@ public sealed partial class MainViewModel
                     // wait for Gemma EOS just to begin audible speech.
                     run.TransportReady.Wait(stream.CancellationToken);
 
+                    if (run.TryMarkFirstAudioReady(out long firstAudioMs, out bool gemmaEosAlreadyReached))
+                    {
+                        _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                            "mobile.first-audio-ready",
+                            string.Empty,
+                            request.SessionId ?? string.Empty,
+                            request.StarId ?? string.Empty,
+                            "First playable Qwen audio became available " + firstAudioMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms after the first sentence was queued; gemmaEosAlreadyReached=" + gemmaEosAlreadyReached + ".");
+                        OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                            "First Qwen audio ready",
+                            firstAudioMs + " ms after first sentence queued; Gemma EOS already reached=" + gemmaEosAlreadyReached + "."));
+                    }
+
                     int chunkIndex = args.Sequence;
                     int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
                     MobileAudioFrameContext frameContext = new MobileAudioFrameContext
@@ -3263,10 +3277,11 @@ public sealed partial class MainViewModel
             }
 
             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
+            run.ExpectedChunks = Math.Max(run.ExpectedChunks, run.Pipeline.AudioChunksProduced);
             if (run.ExpectedChunks > 0 && run.ChunksSent != run.ExpectedChunks)
             {
                 throw new InvalidOperationException(
-                    "Live Android voice completed with " + run.ChunksSent + " sent WAV(s) for " + run.ExpectedChunks + " streamed speech chunk(s).");
+                    "Live Android voice completed with " + run.ChunksSent + " sent audio segment(s) for " + run.ExpectedChunks + " generated audio segment(s).");
             }
             if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
             {
@@ -3331,6 +3346,9 @@ public sealed partial class MainViewModel
         private readonly List<string> _deferredTextChunks = new List<string>();
         private bool _firstSpeechChunkAccepted;
         private bool _transportReleaseStarted;
+        private readonly System.Diagnostics.Stopwatch _firstSentenceTtsTimer = new System.Diagnostics.Stopwatch();
+        private bool _gemmaEosReached;
+        private bool _firstAudioReadyLogged;
 
         public bool HadTargets { get; set; }
         public int ChunksSent { get; set; }
@@ -3385,11 +3403,36 @@ public sealed partial class MainViewModel
 
             if (startNow)
             {
+                lock (_transportGate)
+                {
+                    _firstSentenceTtsTimer.Restart();
+                    _gemmaEosReached = false;
+                    _firstAudioReadyLogged = false;
+                }
                 Pipeline.EnqueueTextChunk(cleaned);
             }
             return startNow;
         }
 
+        public void MarkGemmaEos()
+        {
+            lock (_transportGate)
+            {
+                _gemmaEosReached = true;
+            }
+        }
+
+        public bool TryMarkFirstAudioReady(out long elapsedMilliseconds, out bool gemmaEosAlreadyReached)
+        {
+            lock (_transportGate)
+            {
+                elapsedMilliseconds = _firstSentenceTtsTimer.IsRunning ? _firstSentenceTtsTimer.ElapsedMilliseconds : -1L;
+                gemmaEosAlreadyReached = _gemmaEosReached;
+                if (_firstAudioReadyLogged) return false;
+                _firstAudioReadyLogged = true;
+                return true;
+            }
+        }
 
         public List<string> DrainDeferredTextChunks()
         {

@@ -1,96 +1,68 @@
-# Six Stars AI Runtime: llama.cpp + faster-whisper + Qwen3-TTS
+# Six Stars AI Runtime: llama.cpp + whisper.cpp + qwentts.cpp
 
-This update integrates the local AI stack into the companion app build instead of depending on LM Studio.
+The packaged local runtime keeps the existing llama.cpp `llama-server` for the
+LLM and replaces the Python ASR/TTS processes with `whisper.cpp` and
+`qwentts.cpp`. Networking/orchestration stays in .NET; no additional native
+HTTP/WebSocket gateway is required.
 
 ## Runtime stack
 
 ```text
 six-stars-launcher.exe
-  ├─ llama.cpp dynamic llama-server on http://127.0.0.1:8080/v1/chat/completions
-  ├─ faster-whisper OpenAI-compatible ASR server on http://127.0.0.1:8000/v1/audio/transcriptions
-  ├─ Qwen3/faster-qwen WebSocket TTS server on ws://127.0.0.1:8100/tts/stream
-  └─ WPF companion UI: six-stars.exe
+  ├─ llama-server.exe       http://127.0.0.1:8080/v1/chat/completions
+  ├─ whisper-server.exe     http://127.0.0.1:8000/inference
+  ├─ tts-server.exe         http://127.0.0.1:8101
+  └─ WPF/.NET companion     calls all three services directly
 ```
 
-The WPF app already uses OpenAI-compatible chat requests, so the LLM request now goes to llama.cpp's server endpoint. The launcher sets these variables before opening the UI:
+`Wds.SixStars.Launcher` owns the three native process lifetimes, keeps the
+engines hot, waits for readiness, forwards endpoint/model environment settings
+to the UI, and stops the local services when the UI exits.
 
-```text
-SIX_STARS_LLM_ENDPOINT=http://127.0.0.1:8080/v1/chat/completions
-SIX_STARS_LLM_MODEL=local-model
-SIX_STARS_SCREEN_LLM_ENDPOINT=http://127.0.0.1:8080/v1/chat/completions
-SIX_STARS_WHISPER_ENDPOINT=http://127.0.0.1:8000/v1/audio/transcriptions
-SIX_STARS_WEBSOCKET_TTS_URL=ws://127.0.0.1:8100/tts/stream
-```
+## LLM
 
-## First run/build commands
+The launcher starts the redistributed `llama-server.exe` directly. If
+`models.llm.localPath` exists it passes that GGUF with `-m`; otherwise the
+existing `hfSpecifier` fallback remains available. When the optional vision
+projector exists and vision is enabled, the launcher appends `--mmproj`.
 
-From the repo root:
+There is no Ollama daemon, model registry, model import, or Ollama model store in
+this path.
 
-```cmd
-setup.cmd
-launch.cmd
-```
+## ASR
 
-To build a redistributable folder and launcher exe:
+The launcher starts native `whisper-server.exe` and passes the configured
+Whisper model with `-m`. The C# speech adapter posts microphone WAV data directly
+to `/inference`.
 
-```cmd
-build-ai-redist.cmd -Profile auto
-```
+## TTS
 
-The final runtime folder is `redist/`, with a `six-stars-launcher.exe` and `Launch Six Stars AI Companion.cmd`.
-
-## Build scripts
-
-| Script | Purpose |
-|---|---|
-| `scripts/Install-AiRuntime.ps1` | Main installer/build coordinator. Detects NVIDIA when `-Profile auto` is used. |
-| `scripts/Build-LlamaCppDynamic.ps1` | Clones/builds llama.cpp with `GGML_BACKEND_DL=ON`, shared libraries, Vulkan, and optional CUDA. |
-| `scripts/Build-PythonRuntimePack.ps1` | Builds isolated PyInstaller `--onedir` packs for ASR and TTS. |
-| `scripts/Download-AiModels.ps1` | Prepares model folders and downloads Qwen TTS when configured. llama.cpp can download GGUF via `-hf`. |
-| `scripts/Build-AiRuntimeRedist.ps1` | Publishes UI + launcher and copies config/runtime packs into `redist/`. |
-| `scripts/Run-AiCompanionLauncher.ps1` | Runs the launcher from source using `dotnet run`. |
+The launcher starts native qwentts.cpp `tts-server.exe` with the configured
+Talker and codec GGUFs. `QwenCppHttpStreamingVoiceGenerator` in the .NET API
+registers clone voices through `/v1/audio/voices` and submits each existing
+Six Stars speech chunk to `/v1/audio/speech`. WAV results are raised through the
+existing `IStreamingVoiceGenerator` events, so playback, cancellation, story
+prefetch, and Android/mobile delivery stay in the .NET application.
 
 ## Runtime packs
 
 ```text
 engines/
   llm/llama-cpp-dynamic-win-x64/llama-server.exe
-  asr/faster-whisper-cpu-win-x64/faster_whisper_openai_server.exe
-  asr/faster-whisper-nvidia-cu12-win-x64/faster_whisper_openai_server.exe
-  tts/qwen3-tts-cpu-win-x64/websocket_tts_server.exe
-  tts/qwen3-tts-nvidia-cu12-win-x64/websocket_tts_server.exe
+  asr/whispercpp-nvidia-win-x64/whisper-server.exe
+  tts/qwenttscpp-nvidia-win-x64/tts-server.exe
 ```
 
-CPU and NVIDIA Python packs are intentionally isolated. Do not merge them. This avoids PyTorch/CUDA/CTranslate2 DLL conflicts.
+Stage the complete prebuilt folders, including the backend/CUDA runtime DLLs
+required by each exact build.
 
-## Model config
+## Installation requirement
 
-`config/models.json` controls the default local model set:
+For the NVIDIA-only packaged profile, the end-user machine needs a compatible
+NVIDIA GPU/display driver (`nvidia-smi` must work). The full CUDA Toolkit is
+normally a build-time dependency, not an end-user dependency, provided the
+redistribution includes the CUDA runtime/backend DLLs required by the prebuilt
+binaries.
 
-```json
-{
-  "llm": {
-    "id": "gemma-e4b-it-gguf",
-    "preferredMode": "llama-hf",
-    "hfSpecifier": "unsloth/gemma-3n-E4B-it-GGUF:UD-Q4_K_XL",
-    "localPath": "models/llm/gemma-e4b-it.gguf"
-  }
-}
-```
-
-If `models/llm/gemma-e4b-it.gguf` exists, the launcher starts llama.cpp with `-m`. Otherwise it starts llama.cpp with `-hf` using the configured Hugging Face specifier.
-
-## Qwen3-TTS backend note
-
-The committed TTS server already contains the current Qwen/faster-qwen adapter logic. Because the Qwen3-TTS Python ecosystem changes quickly, the runtime pack script supports this override before building the TTS pack:
-
-```powershell
-$env:SIX_STARS_QWEN_TTS_BACKEND_REQUIREMENT = "faster-qwen3-tts @ git+https://github.com/andimarafioti/faster-qwen3-tts.git"
-./scripts/Build-PythonRuntimePack.ps1 -Server tts -Profile nvidia-cu12 -Force
-```
-
-Use the exact package/version that is working in your dev environment.
-
-## Activation
-
-The redistributable core is hotkey/UI button first. Porcupine should stay optional unless you have redistribution rights for the wake-word runtime and model. The app can still use a button combination or UI buttons without any wake-word dependency.
+The production path does not need Python, pip, a virtual environment, PyTorch,
+Transformers, CTranslate2, Drogon, or Trantor.

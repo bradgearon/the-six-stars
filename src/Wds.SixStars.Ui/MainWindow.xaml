@@ -182,7 +182,7 @@
                     <TextBlock Text="Default is directsound. Use wasapi when Windows shared-mode audio is healthy and you want the modern output path; use waveout as the legacy fallback." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Button Content="Play Elusiaa Clone WAV" Command="{Binding PlayElusiaaCloneWavCommand}" Margin="0,0,0,8" Height="34" />
                     <TextBlock Text="This plays src\Wds.SixStars.Api\Content\VoiceClones\elusiaa_clone.wav directly through NAudio using the selected audio backend, bypassing LLM, Qwen, WebSocket TTS, and HTTP TTS." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
-                    <TextBlock Text="Default desktop mode uses WebSocket streaming TTS so Star replies can begin playing chunk-by-chunk. The old HTTP /v1/audio/speech generator is disabled in this desktop harness." TextWrapping="Wrap" Foreground="#666" />
+                    <TextBlock Text="Default desktop mode keeps TTS orchestration in .NET and calls the local qwentts.cpp HTTP server directly. Star replies are emitted as short WAV chunks while later chunks continue generating." TextWrapping="Wrap" Foreground="#666" />
                 </StackPanel>
                 </ScrollViewer>
             </GroupBox>

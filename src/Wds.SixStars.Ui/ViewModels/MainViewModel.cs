@@ -275,9 +275,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 Prompt = CreateWhisperNamePrompt()
             });
 
-        // Determine if we should use streaming TTS. WebSocket streaming is the default desktop voice path
-        // so spoken replies begin playing chunk-by-chunk. The old HTTP /v1/audio/speech path is
-        // intentionally disabled in this harness; non-streaming falls back to a mock generator.
+        // Determine if we should use streaming TTS. Local qwentts.cpp HTTP is the default desktop
+        // voice path. Six Stars keeps chunking/orchestration in .NET and calls tts-server.exe directly;
+        // there is no intermediate WebSocket/Drogon gateway.
         string? streamingOverride = Environment.GetEnvironmentVariable("SIX_STARS_USE_STREAMING_TTS");
         bool hostedTtsEnabled = IsHostedTtsEnabled();
         _useStreamingTts = hostedTtsEnabled
@@ -286,7 +286,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 : _appConfig.WebSocketTTS.Enabled);
         System.Diagnostics.Debug.WriteLine(hostedTtsEnabled
             ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
-            : $"[TTS] Using streaming WebSocket TTS: {_useStreamingTts}");
+            : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
 
         IWavePlaybackEndpoint playbackEndpoint = CreatePlaybackEndpoint();
         _playbackEndpoint = playbackEndpoint;
@@ -916,8 +916,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         options.Chat.Model = string.IsNullOrWhiteSpace(options.Chat.Model) ? _appConfig.LocalModels.LlmModel : options.Chat.Model;
         options.Whisper.EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT") ?? _appConfig.Whisper.EndpointUrl ?? _appConfig.LocalModels.WhisperEndpointUrl;
         options.Whisper.ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH") ?? _appConfig.Whisper.ModelPath ?? _appConfig.LocalModels.WhisperLocalPath;
-        options.Tts.WebSocketUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL") ?? _appConfig.WebSocketTTS.WebSocketUrl ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
-        options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL") ?? _appConfig.WebSocketTTS.Model ?? _appConfig.LocalModels.QwenTtsModel;
+        options.Tts.BaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
+            ?? _appConfig.WebSocketTTS.HttpBaseUrl
+            ?? _appConfig.LocalModels.QwenTtsHttpUrl;
+        options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
+            ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
+            ?? _appConfig.WebSocketTTS.Model
+            ?? _appConfig.LocalModels.QwenTtsModel;
         LocalModelPaths.ApplyEnvironment(options);
         return options;
     }
@@ -1362,7 +1367,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStarVoiceGenerator CreateVoiceGenerator()
     {
-        System.Diagnostics.Debug.WriteLine("[TTS] HTTP /v1/audio/speech generator disabled. Desktop uses WebSocket streaming TTS only; this mock fallback is used only if streaming is explicitly turned off.");
+        System.Diagnostics.Debug.WriteLine("[TTS] Streaming TTS is disabled; using the mock non-streaming fallback.");
         return new MockStarVoiceGenerator();
     }
 
@@ -1472,30 +1477,39 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Always creates the repository's local Qwen WebSocket generator, even when the desktop's
+    /// Always creates the repository's local qwentts.cpp HTTP adapter, even when the desktop's
     /// normal voice output is configured to use hosted Alibaba TTS. The standalone Android
-    /// local-TTS bridge calls this so a developer can keep phone TTS entirely on the desktop GPU.
+    /// local-TTS bridge calls this so phone TTS can remain entirely on the desktop GPU.
     /// </summary>
     private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator()
     {
-        string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
-            ?? _appConfig.WebSocketTTS.WebSocketUrl
-            ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
-        if (string.IsNullOrWhiteSpace(wsUrl))
+        string? httpBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
+            ?? _appConfig.WebSocketTTS.HttpBaseUrl
+            ?? _appConfig.LocalModels.QwenTtsHttpUrl;
+        if (string.IsNullOrWhiteSpace(httpBaseUrl))
         {
-            wsUrl = "ws://localhost:8100/tts/stream";
+            httpBaseUrl = "http://localhost:8101";
         }
-        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured local WebSocket URL: {wsUrl}");
+        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured qwentts.cpp HTTP URL: {httpBaseUrl}");
 
-        return new WebSocketTtsVoiceGenerator(new WebSocketTtsOptions
+        return new QwenCppHttpStreamingVoiceGenerator(new QwenCppHttpTtsOptions
         {
-            WebSocketUrl = wsUrl,
-            Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
+            BaseUrl = httpBaseUrl,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
+                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
                 ?? _appConfig.WebSocketTTS.Model
                 ?? _appConfig.LocalModels.QwenTtsModel,
-            DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE") ?? _appConfig.WebSocketTTS.DefaultLanguage,
-            ResponseFormat = _appConfig.WebSocketTTS.ResponseFormat,
-            TaskType = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE") ?? _appConfig.WebSocketTTS.TaskType,
+            DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_LANGUAGE")
+                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE")
+                ?? _appConfig.WebSocketTTS.DefaultLanguage,
+            ResponseFormat = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
+                ?? _appConfig.WebSocketTTS.ResponseFormat
+                ?? "pcm",
+            PcmFirstChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_FIRST_CHUNK_MS"), _appConfig.WebSocketTTS.PcmFirstChunkMilliseconds),
+            PcmChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_CHUNK_MS"), _appConfig.WebSocketTTS.PcmChunkMilliseconds),
+            TaskType = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_TASK_TYPE")
+                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE")
+                ?? _appConfig.WebSocketTTS.TaskType,
             MaxWordsPerChunk = _appConfig.WebSocketTTS.MaxWordsPerChunk,
             MaxSentencesPerChunk = _appConfig.WebSocketTTS.MaxSentencesPerChunk,
             ChunkGenerationMode = Environment.GetEnvironmentVariable("QWEN_TTS_CHUNK_GENERATION_MODE") ?? _appConfig.WebSocketTTS.ChunkGenerationMode,
@@ -2115,7 +2129,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     WavAudio = CopyBytes(e.AudioData),
                     MimeType = e.MimeType,
                     Instructions = e.Text,
-                    Source = "story-prefetch-streaming-websocket"
+                    Source = "story-prefetch-streaming-qwentts-http"
                 };
                 System.Diagnostics.Debug.WriteLine($"[StoryAutoplayPrefetch] Voice audio ready for story chunk {response.StoryPartIndex}, TTS chunk {e.ChunkIndex + 1}/{e.TotalChunks} ({e.AudioData.Length} bytes).");
                 TryComplete();

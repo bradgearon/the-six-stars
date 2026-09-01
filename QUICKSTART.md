@@ -1,311 +1,157 @@
-# Quick Setup Guide
+# Six Stars Native Runtime Quick Start
 
-This guide helps you get Six Stars running with all features enabled.
+The default local runtime is native. **Python, PyTorch, CTranslate2, and a
+virtual environment are not required to run the companion.**
 
-## Prerequisites
+The launcher owns the process tree and starts/stops three native inference
+services:
 
-- .NET 8 SDK
-- Python 3.8+ (for backend services)
-- Visual Studio 2022 or later
+1. **llama-server** on `127.0.0.1:8080` for the OpenAI-compatible LLM API.
+2. **whisper.cpp** (`whisper-server.exe`) on `127.0.0.1:8000` for ASR.
+3. **qwentts.cpp** (`tts-server.exe`) on `127.0.0.1:8101` for Qwen3-TTS.
 
-## Step 1: Clone and Build
+The WPF/.NET application talks directly to all three HTTP services. There is no
+Drogon/native WebSocket gateway. The existing .NET speech pipeline remains the
+orchestration layer: it registers Star clone voices with qwentts.cpp, submits
+short TTS chunks, receives WAVs, and feeds the existing ordered playback/mobile
+bridge pipeline.
 
-```bash
-cd U:\six-stars-solution
-dotnet build
-```
+Closing the desktop UI causes `Wds.SixStars.Launcher` to terminate the managed
+native service processes.
 
-## Step 2: Configure Services
+## End-user prerequisites
 
-Edit `src/Wds.SixStars.Ui/appsettings.json` with your service endpoints.
+For the prebuilt Windows redistribution:
 
-### Option A: Use Mock Services (No Setup Required)
+- Windows x64.
+- A compatible NVIDIA GPU and **NVIDIA display driver** (`nvidia-smi` must work).
+- The redistributed engine folders and model files.
 
-Leave all endpoint URLs empty in `appsettings.json`. The app will use mock implementations.
+A full CUDA Toolkit installation is **not inherently required**. If the
+whisper.cpp/qwentts.cpp/llama.cpp CUDA builds dynamically use CUDA runtime
+libraries, ship the redistributable CUDA DLLs beside the executables. In that
+packaging model the machine only needs the compatible NVIDIA driver.
 
-```json
-{
-  "LLM": { "EndpointUrl": "" },
-  "Whisper": { "EndpointUrl": "" },
-  "OpenWakeWord": { "EndpointUrl": "" },
-  "TTS": { "EndpointUrl": "" }
-}
-```
+The release build publishes the .NET launcher/UI self-contained, so the end-user
+redistribution does not need a separate .NET Desktop Runtime install.
 
-### Option B: Use Real LLM (Recommended First Step)
-
-1. Install and start Ollama:
-   ```bash
-   # Download from https://ollama.ai
-   ollama pull qwen2.5:7b-instruct
-   ollama serve
-   ```
-
-2. Update `appsettings.json`:
-   ```json
-   {
-     "LLM": {
-       "EndpointUrl": "http://localhost:11434/v1/chat/completions",
-       "Model": "qwen2.5:7b-instruct"
-     }
-   }
-   ```
-
-### Option C: Full Setup (All Services)
-
-#### Install Python Dependencies
-
-```bash
-pip install openwakeword flask numpy faster-whisper
-```
-
-#### Start OpenWakeWord Server
-
-```bash
-cd scripts
-python openwakeword_server.py
-```
-
-Or use the quick start script:
-
-```bash
-python scripts/start_services.py
-```
-
-#### Start Other Services
-
-See `docs/OpenWakeWord-Setup.md` for detailed setup instructions.
-
-## Step 3: Run Six Stars
-
-### From Visual Studio
-
-1. Open `six-stars-solution.sln`
-2. Set `Wds.SixStars.Ui` as startup project
-3. Press F5
-
-### From Command Line
-
-```bash
-cd src/Wds.SixStars.Ui
-dotnet run
-```
-
-## Step 4: Test Features
-
-### Test LLM Integration
-
-1. In the UI, type: "Elusiaa, tell me a story while I work."
-2. Click "Send"
-3. Watch the status bar for LLM communication messages
-4. Check the Debug JSON panel for detailed request/response
-5. Open Debug Output in Visual Studio to see state change totals
-
-**Expected Output in Debug Window:**
-```
-=== DETERMINISTIC STATE CHANGE ===
-Star: Elusiaa
-Heart Delta: +2 (Suggested: +3)
-Trust Delta: +1 (Suggested: +1)
-Romance Delta: +2 (Suggested: +2)
-Benaveil Delta: 0 (Suggested: 0)
-
-=== COMBINED SESSION TOTALS ===
-Total Interactions: 1
-Combined Heart: +2
-Combined Trust: +1
-Combined Romance: +2
-Combined Benaveil: 0
-
-=== PER-STAR BREAKDOWN ===
-Elusiaa Session Totals:
-  Interactions: 1
-  Heart: +2 (1+ / 0-)
-  Trust: +1 (1+ / 0-)
-  Romance: +2 (1+ / 0-)
-  Benaveil: 0
-  Last: 14:32:15
-================================
-```
-
-### Test State Tracking
-
-1. Send multiple messages to different Stars
-2. Watch the Debug JSON panel ? look for `sessionTotals` and `combinedTotals`
-3. Check Visual Studio Debug Output for running totals
-4. Verify positive/negative counts are accurate
-
-### Test Speech with OpenWakeWord
-
-1. Ensure OpenWakeWord server is running (see Step 2)
-2. Click "Start Listen" in the UI
-3. Say "Elusiaa, what are you doing?"
-4. The wake word should trigger detection
-5. Your speech will be transcribed and sent to the LLM
-
-### Test Requests and Quick Buttons
-
-Try a normal Chat request or one of the preset quick-test buttons:
-- Ask for stories directly in the normal message box (for example, “Tell me a one-page story”)
-- "Goblin / Harpy Discernment"
-- "Kind Company Test"
-
-Each should trigger an LLM request and update state totals.
-
-## Verification Checklist
-
-- [ ] Application builds without errors
-- [ ] `appsettings.json` is copied to output directory
-- [ ] Mock services work (with empty endpoints)
-- [ ] LLM requests show status messages
-- [ ] Debug JSON shows request and response data
-- [ ] Debug Output shows state change summaries
-- [ ] State totals accumulate across interactions
-- [ ] Combined totals show all Stars
-- [ ] Configuration is logged to Debug Output
-
-## Debug Output Locations
-
-### Visual Studio Debug Output
-- View ? Output
-- Show output from: Debug
-- See state changes after each interaction
-
-### UI Debug JSON Panel
-- Right side of the main window
-- Shows full request/response with state totals
-- Updates after each interaction
-
-### Status Bar
-- Bottom of the main window
-- Shows current operation and state deltas
-
-## Troubleshooting
-
-### Build Fails
-
-```bash
-# Clean and rebuild
-dotnet clean
-dotnet restore
-dotnet build
-```
-
-### appsettings.json Not Found
-
-Make sure the file is in `src/Wds.SixStars.Ui/appsettings.json` and the project file includes:
-
-```xml
-<ItemGroup>
-  <Content Include="appsettings.json">
-    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </Content>
-</ItemGroup>
-```
-
-### LLM Not Responding
-
-1. Check Debug Output for "[LLM] Configured endpoint: ..."
-2. Verify the endpoint is accessible: `curl http://localhost:11434/v1/models`
-3. Check firewall settings
-4. Try with empty endpoint to use mock
-
-### State Totals Not Showing
-
-1. Check Debug JSON panel for `sessionTotals` field
-2. Open View ? Output ? Debug to see console output
-3. Verify interactions are completing successfully
-
-### OpenWakeWord Not Working
-
-1. Check if server is running: `curl http://localhost:9000/health`
-2. Lower the threshold in appsettings.json (try 0.3)
-3. Check Debug Output for "[OpenWakeWord] Configured endpoint: ..."
-
-## Next Steps
-
-Once basic functionality works:
-
-1. **Train Custom Wake Words** - See `docs/OpenWakeWord-Setup.md`
-2. **Set Up Whisper** - For real speech-to-text
-3. **Configure TTS** - For voice output
-4. **Explore State Tracking** - Watch how relationships evolve
-
-## Configuration Reference
-
-All services can be configured via `appsettings.json` or environment variables.
-
-**Environment variable override examples:**
-
-```bash
-# Windows (PowerShell)
-$env:SIX_STARS_LLM_ENDPOINT="http://localhost:11434/v1/chat/completions"
-$env:SIX_STARS_LLM_MODEL="qwen2.5:7b-instruct"
-
-# Linux/Mac
-export SIX_STARS_LLM_ENDPOINT="http://localhost:11434/v1/chat/completions"
-export SIX_STARS_LLM_MODEL="qwen2.5:7b-instruct"
-```
-
-Environment variables take precedence over `appsettings.json`.
-
-## Documentation
-
-- **`docs/Enhanced-Features-Guide.md`** - Complete feature documentation
-- **`docs/OpenWakeWord-Setup.md`** - Wake word detection setup
-- **`scripts/openwakeword_server.py`** - OpenWakeWord server implementation
-- **`scripts/start_services.py`** - Service launcher helper
-
-## Support
-
-Check the documentation files in the `docs/` folder for detailed information on each feature.
-
-
-## Services launcher note
-
-`run-ai-companion.cmd` is the normal full companion launcher again: it uses the integrated/prebuilt engine launcher (`redist\six-stars-launcher.exe` when built, or the launcher project fallback) to start the local engine services and open the desktop app. Use `run-ai-services.cmd` when you want services-only with the prebuilt engine EXEs, then open the UI separately with `launch-ui-only.cmd`. Use `run-ai-source-services.cmd` or `python scripts\start_services.py` for the repo `.venv` Python debug flow.
-
-
-### Launcher split: prebuilt app vs venv services
-
-- `run-ai-companion.cmd` launches the normal integrated/prebuilt-engine companion app path. It calls `launch.cmd`, which prefers `redist\six-stars-launcher.exe` and falls back to the .NET launcher project for development builds.
-- `run-ai-services.cmd` is services-only and keeps the desktop app closed. It uses the prebuilt engine EXEs from `config/runtime-manifest.json` through `launch.cmd --skip-install --no-ui`.
-- `launch-ui-only.cmd` opens only the desktop UI after services are already running.
-- `run-ai-companion-with-ui.cmd` is the dev/source flow that starts `run-ai-source-services.cmd` in a second window and then opens the UI.
-
-
-## Launcher modes updated: prebuilt app vs source services
-
-- `run-ai-companion.cmd` is the normal full prebuilt companion launcher. It starts the integrated engine services and opens the desktop app.
-- `run-ai-services.cmd` is services-only for the prebuilt engine EXEs. It calls `launch.cmd --skip-install --no-ui` and does not launch the UI.
-- `launch-ui-only.cmd` opens the desktop UI after services are already running.
-- `run-ai-source-services.cmd` is the Python source/venv debug helper for ASR/TTS. It calls `start.cmd`, which activates `.venv` and then runs `python scripts\start_services.py`.
-- Manual Python debug flow is still supported: activate `.venv` yourself and run `python scripts\start_services.py`.
-
-### Android Star state controls
-
-The Android app now has a Star dropdown, met/ally toggles, and Clear History for the selected Star. Foreground requests and dispatcher updates use one persistent multiplexed WebSocket:
+## Runtime folder layout
 
 ```text
-ws://<desktop-host>:8066/api/mobile/socket
+engines/
+  llm/llama-cpp-dynamic-win-x64/
+    llama-server.exe
+    ...llama.cpp CUDA/runtime DLLs...
+  asr/whispercpp-nvidia-win-x64/
+    whisper-server.exe
+    ...ggml/CUDA runtime DLLs used by your build...
+  tts/qwenttscpp-nvidia-win-x64/
+    tts-server.exe
+    ...qwentts/ggml/CUDA runtime DLLs used by your build...
+
+models/
+  llm/gemma-4-E4B-it-Q6_K.gguf
+  llm/mmproj-gemma-4-E4B-it-Q8_0.gguf       (optional vision projector)
+  asr/ggml-large-v3-turbo.bin
+  tts/qwen-talker-0.6b-base-Q8_0.gguf
+  tts/qwen-tokenizer-12hz-Q8_0.gguf
 ```
 
-Use the voice journal/debug panel on Android to verify pushed `SelectedStarChanged`, `StarStateChanged`, and `StarHistoryCleared` events. The panel also shows Android queue time, WebSocket round-trip time, desktop runtime time, and estimated transport/UI overhead so remaining latency can be located precisely. The legacy HTTP dispatcher/event/state endpoints remain available for compatibility tools.
+The exact locations are controlled by `config/runtime-manifest.json` and
+`config/models.json`.
 
-## CUDA-only services
+## Development setup
 
-`config/runtime-manifest.json` now requires CUDA and disables CPU fallback for LLM, ASR, and TTS. Setup changes should be made in the JSON config; the environment variables you see in logs are only internal values passed from the launcher to child services.
+Put the complete prebuilt native folders under `runtime-packs/win-x64/` using
+the names above, then run:
 
-For Python source testing:
-
-```bat
-.venv\Scripts\activate
-python scripts\start_services.py
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/Install-AiRuntime.ps1
 ```
 
-This path also enforces CUDA for Qwen TTS and faster-whisper. If it would run on CPU, it exits with a hosted-service message instead.
+The installer copies/validates the three native packs. It does not construct a
+Python runtime.
 
+Build the solution normally:
 
-## LLM exchange logs
+```powershell
+dotnet build SixStars.sln
+```
 
-The desktop runtime now appends local LLM request/response/debug entries to one plain daily log file: `logs/llm-exchanges/YYYY-MM-DD.log`. Use **Open LLM Exchange Log Folder** in Quick Actions to inspect the day's `.log` file and trim unused prompt/context sections.
+Then launch everything with:
+
+```cmd
+launch.cmd
+```
+
+or run only the three native inference services without the WPF UI:
+
+```cmd
+launch.cmd --no-ui
+```
+
+## llama-server model loading
+
+The launcher passes `models.llm.localPath` directly to llama-server with `-m`.
+There is no Ollama daemon, model registry, or `ollama create` step. The .NET
+client uses `http://127.0.0.1:8080/v1/chat/completions`.
+
+When `models.vision.enabled` is true and the configured mmproj exists, the
+launcher also appends `--mmproj`.
+
+## whisper.cpp
+
+The launcher supplies the configured model path and starts approximately:
+
+```text
+whisper-server.exe -m models/asr/ggml-large-v3-turbo.bin \
+  --host 127.0.0.1 --port 8000 --language en --no-context --flash-attn
+```
+
+The C# adapter posts microphone WAV data directly to whisper.cpp's native
+`/inference` route and requests JSON output.
+
+## qwentts.cpp direct from .NET
+
+The launcher keeps qwentts.cpp hot on the GPU:
+
+```text
+tts-server.exe \
+  --model models/tts/qwen-talker-0.6b-base-Q8_0.gguf \
+  --codec models/tts/qwen-tokenizer-12hz-Q8_0.gguf \
+  --alias qwen3-tts-base --host 127.0.0.1 --port 8101
+```
+
+`QwenCppHttpStreamingVoiceGenerator` in `Wds.SixStars.Api` owns the local TTS
+protocol. For a Star clone it registers the reference WAV once with:
+
+```text
+POST http://127.0.0.1:8101/v1/audio/voices
+```
+
+and then sends each intentional `spokenText`/`TextParts` item directly to:
+
+```text
+POST http://127.0.0.1:8101/v1/audio/speech
+```
+
+using `response_format=wav`. Each returned WAV is raised through the existing
+`IStreamingVoiceGenerator.AudioChunkReady` event, so the current .NET ordered
+playback/mobile delivery code remains in place while the next chunk generates.
+
+## Build a redistribution
+
+Once `engines/` and `models/` contain the distributable native files:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/Build-AiRuntimeRedist.ps1 -SkipRuntimeInstall
+```
+
+The output is:
+
+`redist/six-stars-ai-companion-native-redist.zip`
+
+## Legacy Python services
+
+The older Python scripts remain in `scripts/` for benchmarking/regression
+comparison, but they are not part of the default native launcher/runtime path.

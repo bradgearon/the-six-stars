@@ -716,7 +716,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                         break;
                     }
                 }
-                if (playbackDrained && running && !drainInterrupted) {
+                // During a live desktop stream the next PCM window is normally already queued (or
+                // arriving shortly). Do not inject a 70 ms dead-air guard between streaming windows.
+                // Keep the old hardware-drain guard only when this really looks like the end of speech.
+                if (playbackDrained && running && !drainInterrupted && !desktopStreamActive && queue.isEmpty()) {
                     try { Thread.sleep(70L); } catch (InterruptedException interrupted) { drainInterrupted = true; }
                 }
                 completed = running && !drainInterrupted && playbackDrained && offset >= parsed.pcm.length;

@@ -2,50 +2,34 @@ param(
   [string]$ModelsConfig = "config/models.json",
   [switch]$SkipTts,
   [switch]$SkipAsr,
-  [switch]$SkipLlm
+  [switch]$SkipLlm,
+  [switch]$VerifyNative,
+  [switch]$AllowMissing
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-$config = Get-Content $ModelsConfig -Raw | ConvertFrom-Json
-New-Item -ItemType Directory -Force -Path "models/llm", "models/asr", "models/tts", "models/hf" | Out-Null
-
-function Have-Command($name) {
-  return [bool](Get-Command $name -ErrorAction SilentlyContinue)
+if ($SkipTts -or $SkipAsr -or $SkipLlm) {
+  Write-Warning "Per-model skip switches are legacy options and are ignored by the new manifest-driven downloader. Existing model files are never downloaded again."
 }
 
-if (!(Have-Command "huggingface-cli")) {
-  Write-Host "huggingface-cli was not found. Installing into current Python environment..."
-  python -m pip install -U "huggingface-hub[cli]"
+$launcher = Join-Path $Root "six-stars-launcher.exe"
+if (Test-Path $launcher) {
+  & $launcher --download-models-only --models $ModelsConfig
+  exit $LASTEXITCODE
 }
 
-if (!$SkipAsr) {
-  $asrName = $config.models.asr.modelName
-  if ($asrName) {
-    Write-Host "Preparing ASR model cache for faster-whisper: $asrName"
-    Write-Host "faster-whisper can also auto-download this on first use into models/asr."
-  }
+$releaseLauncher = Join-Path $Root "src/Wds.SixStars.Launcher/bin/Release/net8.0/six-stars-launcher.exe"
+if (Test-Path $releaseLauncher) {
+  & $releaseLauncher --download-models-only --models $ModelsConfig
+  exit $LASTEXITCODE
 }
 
-if (!$SkipTts) {
-  $ttsName = $config.models.tts.modelName
-  $ttsLocal = $config.models.tts.localPath
-  if ($ttsName -and $ttsLocal) {
-    Write-Host "Downloading TTS model $ttsName to $ttsLocal"
-    huggingface-cli download $ttsName --local-dir $ttsLocal --local-dir-use-symlinks False
-  }
+if (!(Get-Command dotnet -ErrorAction SilentlyContinue)) {
+  throw "six-stars-launcher.exe was not found and dotnet is not installed. Build/publish Wds.SixStars.Launcher first."
 }
 
-if (!$SkipLlm) {
-  $llm = $config.models.llm
-  if ($llm.preferredMode -eq "llama-hf") {
-    Write-Host "LLM is configured for llama.cpp -hf: $($llm.hfSpecifier)"
-    Write-Host "llama-server will download/cache it on first run. To force an offline local GGUF, place it at: $($llm.localPath)"
-  } elseif ($llm.localPath) {
-    Write-Host "LLM localPath configured: $($llm.localPath)"
-  }
-}
-
-Write-Host "Model preparation complete." -ForegroundColor Green
+& dotnet run --project "src/Wds.SixStars.Launcher/Wds.SixStars.Launcher.csproj" -- --download-models-only --models $ModelsConfig
+exit $LASTEXITCODE

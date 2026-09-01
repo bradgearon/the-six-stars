@@ -17,8 +17,8 @@ namespace Wds.SixStars.Ui.Networking;
 /// <summary>
 /// Lightweight persistent TCP socket for Android phone audio playback.
 ///
-/// This is intentionally not the Qwen TTS WebSocket. The desktop app still connects to
-/// Qwen over WebSocket and receives WAV chunks there. This host is the second hop:
+/// This is intentionally separate from qwentts.cpp. The desktop .NET speech layer calls
+/// qwentts.cpp over HTTP and receives WAV chunks there. This host is only the second hop:
 /// desktop -> Android. It sends ordered WAV chunks to the phone as small framed messages.
 /// </summary>
 public sealed class MobileBridgeAudioSocketHost : IDisposable

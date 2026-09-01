@@ -581,9 +581,9 @@ or simple plain text such as `Elusiaa`, `Kaelia`, or `none`.
 
 ## CUDA-only local AI policy
 
-This build is configured to use GPU/CUDA for local LLM, ASR, and TTS. CPU fallback is disabled in `config/runtime-manifest.json` under `gpuPolicy`. If CUDA is not available, services fail fast and tell you to configure NVIDIA CUDA engines or use a hosted service option.
+The normal packaged runtime is llama-server + whisper.cpp + qwentts.cpp, supervised by `Wds.SixStars.Launcher`. The .NET application calls whisper.cpp and qwentts.cpp directly over HTTP; there is no native Drogon/WebSocket gateway in the production path. CPU fallback is disabled in `config/runtime-manifest.json`. The launcher checks `nvidia-smi` so a missing/incompatible NVIDIA driver fails fast.
 
-The Qwen TTS server has been restored to the previous parallel streaming behavior. Android and desktop clients subscribe for WAV chunks; they do not receive GPU/model objects.
+A full CUDA Toolkit install is not required for the end-user redist when the prebuilt engine packs include the CUDA runtime DLLs they depend on. The Toolkit is a build-time requirement; the packaged runtime should carry permitted runtime dependencies beside the native executables. The .NET TTS adapter registers Star voices and calls qwentts.cpp on `http://127.0.0.1:8101`; GPU/model objects remain entirely server-side.
 
 ## Memory archive and information need vector
 

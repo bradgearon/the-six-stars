@@ -33,7 +33,7 @@ namespace Wds.SixStars.Api.Speech
 
         private static InvalidOperationException CreateException()
         {
-            return new InvalidOperationException("No real Whisper endpoint is configured. Start scripts\\faster_whisper_openai_server.py through start.cmd or set SIX_STARS_WHISPER_ENDPOINT, for example http://localhost:8000/v1/audio/transcriptions. Set SIX_STARS_USE_MOCK_WHISPER=true only for deliberate mock testing.");
+            return new InvalidOperationException("No real Whisper endpoint is configured. Start the native whisper.cpp whisper-server through Wds.SixStars.Launcher or set SIX_STARS_WHISPER_ENDPOINT, for example http://localhost:8000/inference. Set SIX_STARS_USE_MOCK_WHISPER=true only for deliberate mock testing.");
         }
     }
 }

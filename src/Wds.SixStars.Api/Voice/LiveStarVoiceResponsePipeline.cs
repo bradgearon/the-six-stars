@@ -11,7 +11,7 @@ namespace Wds.SixStars.Api.Voice
     /// <summary>
     /// Lightweight live speech queue for delimiter-streamed foreground replies.
     /// Text chunks may arrive while the LLM is still generating. TTS generation is serialized on
-    /// the persistent Qwen WebSocket, while audio consumption/playback runs independently, so the
+    /// the local qwentts.cpp HTTP service, while audio consumption/playback runs independently, so the
     /// next text chunk can be synthesized while the previous WAV is still playing.
     /// </summary>
     public sealed class LiveStarVoiceResponsePipeline : IDisposable
@@ -65,6 +65,7 @@ namespace Wds.SixStars.Api.Voice
 
         public bool IsStarted => _started;
         public int TextChunksEnqueued => Volatile.Read(ref _textChunksEnqueued);
+        public int AudioChunksProduced => Volatile.Read(ref _audioSequence);
 
         public void Start(string sessionId, StarInteractionResponse voiceTemplate, CancellationToken cancellationToken)
         {
@@ -203,8 +204,8 @@ namespace Wds.SixStars.Api.Voice
         {
             try
             {
-                // Open the local Qwen socket while the LLM is still working toward its first §.
-                // This hides the WebSocket handshake from first-speech latency without running any
+                // Health-check the local qwentts.cpp HTTP service while the LLM is still working toward its first §.
+                // This hides service connection/health-check latency without running any
                 // TTS generation until an immutable text chunk actually arrives.
                 if (!_generator.IsConnected)
                 {
@@ -282,10 +283,10 @@ namespace Wds.SixStars.Api.Voice
                 int emitted = Math.Max(0, Volatile.Read(ref _audioSequence) - audioBefore);
                 if (emitted >= pending.Count) return;
 
-                // The Qwen wire protocol sends text parts strictly in order. If a nominally complete
-                // request returned fewer WAVs than text parts, retry only the missing tail once. This
-                // avoids duplicating sentences that already reached Android while preventing a silent
-                // final sentence from being accepted as a successful live-voice run.
+                // A WAV response normally emits one audio chunk per text part. PCM streaming may emit
+                // several short WAV windows for one text part, so emitted can be greater than pending.
+                // A successful PCM request throws if a text part returns no audio, preserving the same
+                // missing-tail safety without delaying first playback for a whole sentence.
                 if (retriedMissingTail)
                 {
                     throw new InvalidOperationException(
@@ -324,7 +325,7 @@ namespace Wds.SixStars.Api.Voice
                         continue;
                     }
 
-                    // Surface ordered audio from a worker, never from the WebSocket receive loop.
+                    // Surface ordered audio from a worker, never from the qwentts.cpp HTTP request callback.
                     ChunkReadyForConsumer?.Invoke(this, ready);
 
                     if (AutoPlayChunks)
@@ -368,7 +369,7 @@ namespace Wds.SixStars.Api.Voice
                 WavAudio = copy,
                 MimeType = e.MimeType,
                 Instructions = e.Text,
-                Source = "live-streaming-websocket"
+                Source = "live-streaming-qwentts-http"
             };
             int sequence = Interlocked.Increment(ref _audioSequence) - 1;
             LiveVoiceChunkReadyEventArgs ready = new LiveVoiceChunkReadyEventArgs(sequence, e.Text, result);

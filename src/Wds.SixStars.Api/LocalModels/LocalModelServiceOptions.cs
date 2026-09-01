@@ -16,7 +16,7 @@ namespace Wds.SixStars.Api.LocalModels
         public LocalChatModelOptions Chat { get; set; } = new LocalChatModelOptions
         {
             EndpointUrl = "http://localhost:8080/v1/chat/completions",
-            Model = "local-model",
+            Model = "six-stars-gemma4",
             TimeoutSeconds = 600,
             MaxTokens = 0,
             Temperature = 0.65,
@@ -24,22 +24,24 @@ namespace Wds.SixStars.Api.LocalModels
             DisableReasoning = true,
             ReasoningBudget = 0,
             ReasoningFormat = "none",
-            SendReasoningControlFields = true
+            SendReasoningControlFields = false
         };
         public WhisperStreamEndpointOptions Whisper { get; set; } = new WhisperStreamEndpointOptions
         {
-            Provider = "faster-whisper",
-            EndpointUrl = "http://localhost:8000/v1/audio/transcriptions",
-            ModelPath = "models/asr/faster-whisper-tiny.en",
+            Provider = "whispercpp",
+            EndpointUrl = "http://localhost:8000/inference",
+            ModelPath = "models/asr/ggml-large-v3-turbo.bin",
             Language = "en",
             TimeoutSeconds = 60
         };
-        public WebSocketTtsOptions Tts { get; set; } = new WebSocketTtsOptions
+        public QwenCppHttpTtsOptions Tts { get; set; } = new QwenCppHttpTtsOptions
         {
-            WebSocketUrl = "ws://localhost:8100/tts/stream",
-            Model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            BaseUrl = "http://localhost:8101",
+            Model = "qwen3-tts-base",
             DefaultLanguage = "English",
-            ResponseFormat = "wav",
+            ResponseFormat = "pcm",
+            PcmFirstChunkMilliseconds = 480,
+            PcmChunkMilliseconds = 960,
             TaskType = "VoiceClone",
             ChunkGenerationMode = "first_then_prefetch",
             MaxParallelChunks = 1

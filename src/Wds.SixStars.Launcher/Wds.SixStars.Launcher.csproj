@@ -7,4 +7,7 @@
     <AssemblyName>six-stars-launcher</AssemblyName>
     <RootNamespace>Wds.SixStars.Launcher</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Downloader" Version="5.9.6" />
+  </ItemGroup>
 </Project>

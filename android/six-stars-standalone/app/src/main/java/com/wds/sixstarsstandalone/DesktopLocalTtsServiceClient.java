@@ -14,10 +14,10 @@ import java.util.concurrent.TimeUnit;
  *
  * Android sends only StarId + text to the desktop .NET bridge. The desktop runtime owns the
  * canonical Star profile/content lookup, resolves voiceCloneAudioFile to the same absolute path
- * used by normal desktop speech, and then invokes its local Qwen WebSocket TTS generator.
+ * used by normal desktop speech, and then invokes the local qwentts.cpp HTTP adapter.
  *
- * This deliberately avoids sending Android's copied relative voiceCloneAudioFile to the Python
- * websocket_tts_server.py process, which correctly rejects relative clone paths.
+ * Android never needs to know the qwentts.cpp port or clone-file path; the desktop .NET runtime
+ * owns both the voice registration and the native HTTP request.
  */
 final class DesktopLocalTtsServiceClient implements StarTtsClient {
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
