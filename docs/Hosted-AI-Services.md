@@ -25,7 +25,7 @@ Put secrets in `src/Wds.SixStars.Ui/appsettings.Local.json` rather than committi
 }
 ```
 
-Each switch is independent. For example, hosted LLM + Groq ASR can be enabled while continuing to use the local Qwen WebSocket TTS server.
+Each switch is independent. For example, hosted LLM + Groq ASR can be enabled while continuing to use the local qwentts.cpp HTTP server.
 
 Keys can also come from environment variables:
 
@@ -91,7 +91,7 @@ On the first hosted TTS request for a Star, the generator resolves the existing 
 
 The six bundled clone WAVs are already 16-bit, mono, 24 kHz samples in the roughly 12–16 second range, matching the published Qwen3-TTS VC format/rate/duration requirements.
 
-The existing sentence/chunk speech pipeline remains in charge. Each text part is synthesized in order, downloaded as hosted audio, and emitted through the same `IStreamingVoiceGenerator` events used by local WebSocket TTS.
+The existing sentence/chunk speech pipeline remains in charge. Each text part is synthesized in order, downloaded as hosted audio, and emitted through the same `IStreamingVoiceGenerator` events used by local qwentts.cpp TTS.
 
 Useful overrides:
 

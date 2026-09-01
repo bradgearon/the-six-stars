@@ -10,8 +10,7 @@ namespace Wds.SixStars.Ui.Configuration
         public LlmConfig LLM { get; set; } = new LlmConfig();
         public HostedServicesConfig HostedServices { get; set; } = new HostedServicesConfig();
         public WhisperConfig Whisper { get; set; } = new WhisperConfig();
-        public TtsConfig TTS { get; set; } = new TtsConfig();
-        public WebSocketTtsConfig WebSocketTTS { get; set; } = new WebSocketTtsConfig();
+        public QwenTtsConfig QwenTTS { get; set; } = new QwenTtsConfig();
         public VoiceOutputConfig VoiceOutput { get; set; } = new VoiceOutputConfig();
         public CompanionConfig Companion { get; set; } = new CompanionConfig();
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
@@ -256,9 +255,6 @@ namespace Wds.SixStars.Ui.Configuration
         public string WhisperModel { get; set; } = "large-v3-turbo";
         public string WhisperLocalPath { get; set; } = "models/asr/ggml-large-v3-turbo.bin";
 
-        public string QwenTtsHttpUrl { get; set; } = "http://localhost:8101";
-        public string QwenTtsModel { get; set; } = "qwen3-tts-base";
-        public string QwenTtsLocalPath { get; set; } = string.Empty;
     }
 
     public sealed class OpenWakeWordConfig
@@ -393,34 +389,18 @@ namespace Wds.SixStars.Ui.Configuration
         public string Language { get; set; } = "en";
     }
 
-    public sealed class TtsConfig
+    public sealed class QwenTtsConfig
     {
-        public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = "qwen3-tts-base";
-        public string? ApiKey { get; set; }
-        public string PayloadShape { get; set; } = "OpenAiSpeech";
-        public string TaskType { get; set; } = "VoiceClone";
-        public string DefaultLanguage { get; set; } = "English";
-    }
-
-    public sealed class WebSocketTtsConfig
-    {
-        /// <summary>
-        /// Historical configuration block name retained for compatibility. Local streaming TTS now
-        /// calls qwentts.cpp directly over HTTP; no WebSocket/Drogon gateway is required.
-        /// </summary>
+        /// <summary>Use the local qwentts.cpp HTTP server for Star speech.</summary>
         public bool Enabled { get; set; } = true;
         public string HttpBaseUrl { get; set; } = "http://localhost:8101";
         public string Model { get; set; } = "qwen3-tts-base";
         public string DefaultLanguage { get; set; } = "English";
+        /// <summary>pcm gives low-latency rolling playback on Android; wav keeps one-shot compatibility.</summary>
         public string ResponseFormat { get; set; } = "pcm";
-        public int PcmFirstChunkMilliseconds { get; set; } = 480;
-        public int PcmChunkMilliseconds { get; set; } = 960;
+        /// <summary>Transport packet size only. Android owns the adaptive rolling playback buffer.</summary>
+        public int PcmPacketMilliseconds { get; set; } = 240;
         public string TaskType { get; set; } = "VoiceClone";
-        public int MaxWordsPerChunk { get; set; } = 30;
-        public int MaxSentencesPerChunk { get; set; } = 2;
-        public string ChunkGenerationMode { get; set; } = "first_then_prefetch";
-        public int MaxParallelChunks { get; set; } = 1;
     }
 
     public sealed class VoiceOutputConfig

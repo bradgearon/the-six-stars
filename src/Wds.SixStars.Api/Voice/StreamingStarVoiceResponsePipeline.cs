@@ -319,6 +319,8 @@ namespace Wds.SixStars.Api.Voice
                                 VoiceId = chunk.VoiceId,
                                 WavAudio = CopyBytes(chunk.AudioData),
                                 MimeType = chunk.MimeType,
+                                DurationMs = chunk.DurationMs,
+                                IsStreamingPcmWindow = chunk.IsStreamingPcmWindow,
                                 Instructions = chunk.Text,
                                 Source = "streaming-qwentts-http"
                             };

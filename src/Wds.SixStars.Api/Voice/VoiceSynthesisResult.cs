@@ -11,6 +11,7 @@ namespace Wds.SixStars.Api.Voice
         public string MimeType { get; set; } = "audio/wav";
         public DateTimeOffset GeneratedAt { get; set; } = DateTimeOffset.UtcNow;
         public double DurationMs { get; set; }
+        public bool IsStreamingPcmWindow { get; set; }
         public string Source { get; set; } = "unknown";
     }
 }

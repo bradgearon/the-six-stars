@@ -60,6 +60,8 @@ namespace Wds.SixStars.Api.Voice
         public string Text { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
         public string VoiceId { get; set; } = string.Empty;
+        public double DurationMs { get; set; }
+        public bool IsStreamingPcmWindow { get; set; }
     }
 
     public sealed class GenerationCompleteEventArgs : EventArgs

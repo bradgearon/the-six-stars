@@ -368,6 +368,8 @@ namespace Wds.SixStars.Api.Voice
                 VoiceId = e.VoiceId,
                 WavAudio = copy,
                 MimeType = e.MimeType,
+                DurationMs = e.DurationMs,
+                IsStreamingPcmWindow = e.IsStreamingPcmWindow,
                 Instructions = e.Text,
                 Source = "live-streaming-qwentts-http"
             };

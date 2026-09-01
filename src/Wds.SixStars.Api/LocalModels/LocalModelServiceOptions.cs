@@ -40,11 +40,8 @@ namespace Wds.SixStars.Api.LocalModels
             Model = "qwen3-tts-base",
             DefaultLanguage = "English",
             ResponseFormat = "pcm",
-            PcmFirstChunkMilliseconds = 480,
-            PcmChunkMilliseconds = 960,
-            TaskType = "VoiceClone",
-            ChunkGenerationMode = "first_then_prefetch",
-            MaxParallelChunks = 1
+            PcmPacketMilliseconds = 240,
+            TaskType = "VoiceClone"
         };
     }
 }

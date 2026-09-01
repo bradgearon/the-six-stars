@@ -2421,7 +2421,7 @@ public sealed partial class MainViewModel
                 response.VoiceBytesSent = livePhoneVoice.BytesSent;
                 response.VoiceError = livePhoneVoice.ErrorMessage;
                 response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
-                    ? "The first complete sentence starts Qwen during Gemma streaming; native qwentts.cpp PCM is forwarded in short playable windows instead of waiting for a whole sentence WAV."
+                    ? "The first complete sentence starts Qwen during Gemma streaming; qwentts.cpp returns one smooth WAV for that sentence while Gemma can continue generating later text."
                     : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
             }
             response.GateWaitMs = gateWaitMs;
@@ -2513,7 +2513,7 @@ public sealed partial class MainViewModel
                 MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
                 string exactAnalysisId = backgroundAnalysisId;
                 response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
-                response.VoiceMessage = "Android text is split into complete streamed sentences; the first sentence starts Qwen immediately and may begin playing before Gemma EOS, while later sentences batch after EOS.";
+                response.VoiceMessage = "Android text is split into complete streamed sentences; the first sentence starts Qwen immediately and may begin playing before Gemma EOS. PCM packets for the whole logical reply feed one rolling AudioTrack, with adaptive startup buffering and refill protection.";
                 response.AfterTransportResponseAsync = async () =>
                 {
                     await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);

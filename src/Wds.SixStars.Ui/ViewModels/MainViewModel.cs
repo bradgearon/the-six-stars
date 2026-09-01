@@ -283,7 +283,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _useStreamingTts = hostedTtsEnabled
             || (!string.IsNullOrWhiteSpace(streamingOverride)
                 ? IsTruthy(streamingOverride)
-                : _appConfig.WebSocketTTS.Enabled);
+                : _appConfig.QwenTTS.Enabled);
         System.Diagnostics.Debug.WriteLine(hostedTtsEnabled
             ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
             : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
@@ -917,12 +917,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         options.Whisper.EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT") ?? _appConfig.Whisper.EndpointUrl ?? _appConfig.LocalModels.WhisperEndpointUrl;
         options.Whisper.ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH") ?? _appConfig.Whisper.ModelPath ?? _appConfig.LocalModels.WhisperLocalPath;
         options.Tts.BaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
-            ?? _appConfig.WebSocketTTS.HttpBaseUrl
-            ?? _appConfig.LocalModels.QwenTtsHttpUrl;
+            ?? _appConfig.QwenTTS.HttpBaseUrl;
         options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
-            ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
-            ?? _appConfig.WebSocketTTS.Model
-            ?? _appConfig.LocalModels.QwenTtsModel;
+            ?? _appConfig.QwenTTS.Model;
         LocalModelPaths.ApplyEnvironment(options);
         return options;
     }
@@ -1484,8 +1481,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator()
     {
         string? httpBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
-            ?? _appConfig.WebSocketTTS.HttpBaseUrl
-            ?? _appConfig.LocalModels.QwenTtsHttpUrl;
+            ?? _appConfig.QwenTTS.HttpBaseUrl;
         if (string.IsNullOrWhiteSpace(httpBaseUrl))
         {
             httpBaseUrl = "http://localhost:8101";
@@ -1496,24 +1492,15 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             BaseUrl = httpBaseUrl,
             Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
-                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
-                ?? _appConfig.WebSocketTTS.Model
-                ?? _appConfig.LocalModels.QwenTtsModel,
+                ?? _appConfig.QwenTTS.Model,
             DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_LANGUAGE")
-                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE")
-                ?? _appConfig.WebSocketTTS.DefaultLanguage,
+                ?? _appConfig.QwenTTS.DefaultLanguage,
             ResponseFormat = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
-                ?? _appConfig.WebSocketTTS.ResponseFormat
+                ?? _appConfig.QwenTTS.ResponseFormat
                 ?? "pcm",
-            PcmFirstChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_FIRST_CHUNK_MS"), _appConfig.WebSocketTTS.PcmFirstChunkMilliseconds),
-            PcmChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_CHUNK_MS"), _appConfig.WebSocketTTS.PcmChunkMilliseconds),
+            PcmPacketMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_PACKET_MS"), _appConfig.QwenTTS.PcmPacketMilliseconds),
             TaskType = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_TASK_TYPE")
-                ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE")
-                ?? _appConfig.WebSocketTTS.TaskType,
-            MaxWordsPerChunk = _appConfig.WebSocketTTS.MaxWordsPerChunk,
-            MaxSentencesPerChunk = _appConfig.WebSocketTTS.MaxSentencesPerChunk,
-            ChunkGenerationMode = Environment.GetEnvironmentVariable("QWEN_TTS_CHUNK_GENERATION_MODE") ?? _appConfig.WebSocketTTS.ChunkGenerationMode,
-            MaxParallelChunks = GetIntSetting(Environment.GetEnvironmentVariable("QWEN_TTS_MAX_PARALLEL_CHUNKS"), _appConfig.WebSocketTTS.MaxParallelChunks)
+                ?? _appConfig.QwenTTS.TaskType,
         });
     }
 
@@ -2129,6 +2116,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     WavAudio = CopyBytes(e.AudioData),
                     MimeType = e.MimeType,
                     Instructions = e.Text,
+                    DurationMs = e.DurationMs,
+                    IsStreamingPcmWindow = e.IsStreamingPcmWindow,
                     Source = "story-prefetch-streaming-qwentts-http"
                 };
                 System.Diagnostics.Debug.WriteLine($"[StoryAutoplayPrefetch] Voice audio ready for story chunk {response.StoryPartIndex}, TTS chunk {e.ChunkIndex + 1}/{e.TotalChunks} ({e.AudioData.Length} bytes).");
@@ -2419,7 +2408,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     bytes = wavBytes.Length,
                     appBaseDirectory,
                     currentDirectory,
-                    note = "This bypasses LLM, Qwen, WebSocket TTS, HTTP TTS, and generated WAV saving."
+                    note = "This bypasses LLM, Qwen synthesis, the local TTS HTTP service, and generated-audio saving."
                 }, _jsonOptions);
             });
 

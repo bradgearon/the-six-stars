@@ -21,9 +21,9 @@ namespace Wds.SixStars.Api.Voice
     /// raises the existing IStreamingVoiceGenerator events directly. There is no intermediate
     /// WebSocket or native gateway process.
     ///
-    /// qwentts.cpp streams raw 24 kHz mono PCM while response_format=pcm. Six Stars wraps short
-    /// PCM windows into ordinary WAV chunks so existing desktop/Android playback stays compatible,
-    /// but the first audible chunk no longer waits for the entire sentence to finish synthesizing.
+    /// qwentts.cpp streams raw 24 kHz mono PCM while response_format=pcm. Six Stars wraps small
+    /// transport packets as WAV for compatibility, while Android joins every packet from one logical
+    /// response into a single rolling AudioTrack with adaptive prebuffering.
     /// </summary>
     public sealed class QwenCppHttpStreamingVoiceGenerator : IStreamingVoiceGenerator
     {
@@ -152,7 +152,9 @@ namespace Wds.SixStars.Api.Voice
                                 MimeType = "audio/wav",
                                 Text = text,
                                 StarId = starId,
-                                VoiceId = voiceId
+                                VoiceId = voiceId,
+                                DurationMs = durationMs,
+                                IsStreamingPcmWindow = true
                             });
                             return true;
                         };
@@ -198,7 +200,9 @@ namespace Wds.SixStars.Api.Voice
                             MimeType = "audio/wav",
                             Text = text,
                             StarId = starId,
-                            VoiceId = voiceId
+                            VoiceId = voiceId,
+                            DurationMs = durationMs,
+                            IsStreamingPcmWindow = false
                         });
                     }
                 }
@@ -362,12 +366,11 @@ namespace Wds.SixStars.Api.Voice
                     using (MemoryStream pending = new MemoryStream())
                     {
                         byte[] readBuffer = new byte[32 * 1024];
-                        int firstTargetBytes = PcmBytesForMilliseconds(_options.PcmFirstChunkMilliseconds);
-                        int steadyTargetBytes = PcmBytesForMilliseconds(_options.PcmChunkMilliseconds);
-                        bool firstWindow = true;
+                        int packetTargetBytes = PcmBytesForMilliseconds(_options.PcmPacketMilliseconds);
+                        bool firstPacket = true;
                         bool firstBytesLogged = false;
                         int totalPcmBytes = 0;
-                        int emittedWindows = 0;
+                        int emittedPackets = 0;
 
                         while (true)
                         {
@@ -385,21 +388,20 @@ namespace Wds.SixStars.Api.Voice
                             pending.Write(readBuffer, 0, read);
                             totalPcmBytes += read;
 
-                            while (pending.Length >= (firstWindow ? firstTargetBytes : steadyTargetBytes))
+                            while (pending.Length >= packetTargetBytes)
                             {
-                                int targetBytes = firstWindow ? firstTargetBytes : steadyTargetBytes;
-                                byte[] pcm = TakePrefix(pending, targetBytes);
+                                byte[] pcm = TakePrefix(pending, packetTargetBytes);
                                 byte[] wav = WaveFileUtilities.WrapPcm16InWav(pcm, Pcm24KhzMono());
                                 double durationMs = PcmDurationMs(pcm.Length);
                                 if (!onWavChunk(wav, durationMs))
                                 {
                                     throw new OperationCanceledException("qwentts.cpp PCM consumer stopped the current synthesis.", cancellationToken);
                                 }
-                                emittedWindows++;
-                                if (firstWindow)
+                                emittedPackets++;
+                                if (firstPacket)
                                 {
-                                    firstWindow = false;
-                                    Debug.WriteLine($"[QwenCppHttpTTS] First playable PCM/WAV window emitted after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
+                                    firstPacket = false;
+                                    Debug.WriteLine($"[QwenCppHttpTTS] First PCM transport packet emitted after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
                                 }
                             }
                         }
@@ -417,19 +419,19 @@ namespace Wds.SixStars.Api.Voice
                             {
                                 throw new OperationCanceledException("qwentts.cpp PCM consumer stopped the current synthesis.", cancellationToken);
                             }
-                            emittedWindows++;
-                            if (firstWindow)
+                            emittedPackets++;
+                            if (firstPacket)
                             {
-                                firstWindow = false;
-                                Debug.WriteLine($"[QwenCppHttpTTS] First playable PCM/WAV window emitted at EOS after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
+                                firstPacket = false;
+                                Debug.WriteLine($"[QwenCppHttpTTS] First PCM transport packet emitted at EOS after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
                             }
                         }
 
-                        if (totalPcmBytes <= 0 || emittedWindows <= 0)
+                        if (totalPcmBytes <= 0 || emittedPackets <= 0)
                         {
                             throw new EmptyPcmStreamException("qwentts.cpp returned an empty PCM stream; the cloned voice may need to be re-registered after a server restart.");
                         }
-                        Debug.WriteLine($"[QwenCppHttpTTS] PCM stream complete after {timer.ElapsedMilliseconds} ms; audio={PcmDurationMs(totalPcmBytes):0} ms; windows={emittedWindows}.");
+                        Debug.WriteLine($"[QwenCppHttpTTS] PCM stream complete after {timer.ElapsedMilliseconds} ms; audio={PcmDurationMs(totalPcmBytes):0} ms; packets={emittedPackets}.");
                     }
                 }
             }

@@ -4,7 +4,7 @@ The standalone app can mix hosted LLM/ASR with either hosted or local TTS. This 
 
 ## Preferred local TTS + direct Google/Groq development mode
 
-Use the existing desktop application's mobile bridge as the local TTS boundary. Android sends only `starId` and the sentence. The .NET host loads the canonical Star profile, resolves `voiceCloneAudioFile` with the same desktop path resolver used by normal speech, and then invokes the normal local Qwen WebSocket TTS generator.
+Use the existing desktop application's mobile bridge as the local TTS boundary. Android sends only `starId` and the sentence. The .NET host loads the canonical Star profile, resolves `voiceCloneAudioFile` with the same desktop path resolver used by normal speech, and then invokes the normal local qwentts.cpp HTTP TTS generator.
 
 1. Start the desktop Last Cat/Six Stars application and its normal local Qwen3-TTS service.
 2. Start the desktop Mobile Bridge (normally port `8066`).
