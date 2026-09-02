@@ -20,7 +20,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -49,6 +48,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         void onError(String title, Throwable error);
         void onStreamState(boolean active, String starId, String action);
         void onPlaybackStarted(PhoneVoiceClip clip, long durationMs, long playbackElapsedMs);
+        void onLipSyncState(boolean speaking);
         void onPlaybackFinished(PhoneVoiceClip clip, boolean completedNormally);
         void onQueueIdle();
     }
@@ -153,6 +153,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         @Override public void onError(String title, Throwable error) { }
         @Override public void onStreamState(boolean active, String starId, String action) { }
         @Override public void onPlaybackStarted(PhoneVoiceClip clip, long durationMs, long playbackElapsedMs) { }
+        @Override public void onLipSyncState(boolean speaking) { }
         @Override public void onPlaybackFinished(PhoneVoiceClip clip, boolean completedNormally) { }
         @Override public void onQueueIdle() { }
     };
@@ -846,32 +847,21 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
 
     /**
-     * Continuous qwentts.cpp PCM playback. Desktop packets are still WAV-wrapped so old clients can
-     * understand them, but every packet for one logical stream is decoded to PCM and written into one
-     * AudioTrack. The startup lead is adaptive: fast generation starts with a small lead, while
-     * near-real-time generation, observed jitter, and long predicted text increase the safety buffer.
+     * Routes logical qwentts.cpp PCM streams into one self-contained SmartPcmPlaybackWriter per
+     * response. This class owns only stream ordering/identity; buffering, AudioTrack writes,
+     * emergency refill, and live lip-sync timing all live in the writer.
      */
     private final class PcmStreamAudioQueue {
-        private static final int DEFAULT_STARTUP_MS = 900;
-        private static final int MIN_STARTUP_MS = 500;
-        private static final int MAX_STARTUP_MS = 2200;
-        private static final int EMERGENCY_LEAD_MS = 180;
-        private static final int MIN_REFILL_MS = 550;
-        private static final int AUDIO_TRACK_CAPACITY_MS = 3200;
-        private static final double RATE_ALPHA = 0.25;
-        private static final double JITTER_ALPHA = 0.25;
-
         private final Object gate = new Object();
         private final Object pauseLock = new Object();
         private final LinkedBlockingDeque<DesktopPcmStream> streams = new LinkedBlockingDeque<>();
         private final Map<String, DesktopPcmStream> byKey = new HashMap<>();
+        private final SmartPcmPlaybackWriter.AdaptiveProfile adaptiveProfile = new SmartPcmPlaybackWriter.AdaptiveProfile();
         private volatile boolean running;
         private volatile boolean paused;
         private volatile DesktopPcmStream activeStream;
-        private volatile AudioTrack activeTrack;
+        private volatile SmartPcmPlaybackWriter activeWriter;
         private Thread thread;
-        private double learnedStartupMs = DEFAULT_STARTUP_MS;
-        private double learnedMsPerChar = 68.0;
 
         void start() {
             if (running) return;
@@ -896,15 +886,15 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
         void pausePlayback() {
             paused = true;
-            AudioTrack track = activeTrack;
-            if (track != null) try { track.pause(); } catch (Exception ignored) { }
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.pause();
         }
 
         void resumePlayback() {
             paused = false;
             synchronized (pauseLock) { pauseLock.notifyAll(); }
-            AudioTrack track = activeTrack;
-            if (track != null) try { track.play(); } catch (Exception ignored) { }
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.resume();
         }
 
         void enqueue(PhoneVoiceClip clip) {
@@ -918,6 +908,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     byKey.put(key, stream);
                     streams.offerLast(stream);
                 }
+                if (stream.firstClip == null) stream.firstClip = clip;
             }
             stream.chunks.offerLast(clip);
         }
@@ -933,7 +924,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             synchronized (gate) { stream = byKey.get(streamKey(streamId, ordinal)); }
             if (stream != null) {
                 stream.cancelled = true;
-                if (stream == activeStream) stopTrack(activeTrack);
+                if (stream == activeStream) {
+                    SmartPcmPlaybackWriter writer = activeWriter;
+                    if (writer != null) writer.cancel();
+                }
             }
         }
 
@@ -944,7 +938,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 streams.clear();
                 byKey.clear();
             }
-            stopTrack(activeTrack);
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.cancel();
         }
 
         private void loop() {
@@ -952,8 +947,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 try {
                     DesktopPcmStream stream = streams.takeFirst();
                     synchronized (gate) { activeStream = stream; }
-                    // Prepared/local WAV playback keeps priority. This preserves the old rule that a
-                    // prepared prefix finishes before a newly arriving desktop response speaks.
+                    // Prepared/local WAV playback keeps priority. A single live writer starts only
+                    // after an already-playing prepared prefix has naturally finished.
                     while (running && !stream.cancelled && !playbackQueue.isIdle()) Thread.sleep(20L);
                     if (running && !stream.cancelled) playStream(stream);
                     synchronized (gate) {
@@ -974,284 +969,94 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
 
         private void playStream(DesktopPcmStream stream) throws Exception {
-            AdaptivePcmStats stats = new AdaptivePcmStats();
-            ArrayList<ParsedPcmPacket> startup = new ArrayList<>();
-            long startupAudioMs = 0L;
-            long targetMs = Math.round(learnedStartupMs);
+            ArrayList<PhoneVoiceClip> receivedClips = new ArrayList<>();
+            AtomicBoolean playbackStarted = new AtomicBoolean(false);
+            AtomicBoolean completionDelivered = new AtomicBoolean(false);
 
-            while (running && !stream.cancelled) {
-                PhoneVoiceClip clip = stream.chunks.poll(50L, TimeUnit.MILLISECONDS);
-                if (clip != null) {
-                    ParsedPcmPacket packet = parsePacket(clip);
-                    stats.observe(packet, packet.clip.receivedAtElapsedMs);
-                    startup.add(packet);
-                    startupAudioMs += packet.durationMs;
-                    targetMs = calculateTargetMs(stats);
+            SmartPcmPlaybackWriter writer = new SmartPcmPlaybackWriter(adaptiveProfile, new SmartPcmPlaybackWriter.Listener() {
+                @Override public void onDebug(String title, String details) {
+                    post(() -> listener.onDebug(title, "stream=" + stream.ordinal + ", " + details));
                 }
-                if (startupAudioMs >= targetMs) break;
-                if (stream.ended && stream.chunks.isEmpty()) break;
-            }
-            if (!running || stream.cancelled || startup.isEmpty()) return;
 
-            ParsedPcmPacket first = startup.get(0);
-            int sampleRate = first.parsed.sampleRate;
-            int channels = first.parsed.channels;
-            int channelConfig = channels == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
-            int minBuffer = AudioTrack.getMinBufferSize(sampleRate, channelConfig, AudioFormat.ENCODING_PCM_16BIT);
-            if (minBuffer <= 0) minBuffer = bytesForMs(sampleRate, channels, 400);
-            int bufferSize = Math.max(minBuffer, bytesForMs(sampleRate, channels, AUDIO_TRACK_CAPACITY_MS));
-            AudioTrack track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                    .setAudioFormat(new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(channelConfig).build())
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(bufferSize)
-                    .build();
-            activeTrack = track;
+                @Override public void onPlaybackStarted(long playbackFrame) {
+                    PhoneVoiceClip first = stream.firstClip;
+                    if (first == null || !playbackStarted.compareAndSet(false, true)) return;
+                    post(() -> listener.onPlaybackStarted(first, 0L, 0L));
+                }
 
-            ArrayDeque<ClipBoundary> boundaries = new ArrayDeque<>();
-            ArrayList<PhoneVoiceClip> writtenClips = new ArrayList<>();
-            long writtenFrames = 0L;
-            for (ParsedPcmPacket packet : startup) {
-                validateFormat(packet, sampleRate, channels);
-                writtenFrames = writePacket(track, packet, writtenFrames, boundaries, writtenClips);
-            }
+                @Override public void onLipSyncDataCommitted(SmartPcmPlaybackWriter.LipSyncCommit commit) {
+                    // Marker data intentionally stays inside the writer. It is append-only and tied
+                    // to absolute AudioTrack frames; the observer below emits only actual mouth-state
+                    // transitions when those frames reach the speaker.
+                }
 
-            int initialUnderruns = track.getUnderrunCount();
-            int lastUnderruns = initialUnderruns;
-            int emergencyRefills = 0;
-            boolean completed = false;
+                @Override public void onSpeechStateChanged(boolean speaking, long playbackFrame) {
+                    post(() -> listener.onLipSyncState(speaking));
+                }
+
+                @Override public void onBufferingChanged(boolean buffering, long leadMs, long targetMs) {
+                    if (buffering) {
+                        post(() -> listener.onDebug("Smart PCM buffering",
+                                "stream=" + stream.ordinal + ", lead=" + leadMs + "ms, target=" + targetMs + "ms."));
+                    }
+                }
+
+                @Override public void onCompleted(SmartPcmPlaybackWriter.Result result) {
+                    if (result.completed) appendContinuousPcmToSavedVoice(receivedClips);
+                    PhoneVoiceClip first = stream.firstClip;
+                    if (first != null && playbackStarted.get() && completionDelivered.compareAndSet(false, true)) {
+                        post(() -> listener.onPlaybackFinished(first, result.completed));
+                    }
+                    post(() -> listener.onDebug("Smart PCM stream complete",
+                            "stream=" + stream.ordinal + ", completed=" + result.completed
+                                    + ", generation=" + String.format(Locale.US, "%.2f", Math.max(0.0, result.generationRate)) + "x realtime"
+                                    + ", underruns=" + result.underruns
+                                    + ", emergencyRefills=" + result.emergencyRefills
+                                    + ", learnedStartup=" + result.learnedStartupMs + "ms."));
+                }
+
+                @Override public void onError(Throwable error) {
+                    post(() -> listener.onError("Smart PCM writer failed", error));
+                }
+            });
+
+            activeWriter = writer;
+            if (paused) writer.pause();
+            writer.start();
             try {
-                track.play();
-                long startupAudioForLog = startupAudioMs;
-                long startupTargetForLog = targetMs;
-                post(() -> listener.onDebug("Smart PCM buffer",
-                        "stream=" + stream.ordinal + ", startup=" + startupAudioForLog + "ms, target=" + startupTargetForLog
-                                + "ms, rate=" + formatRate(stats.rate) + "x, jitter=" + Math.round(stats.jitterMs) + "ms."));
-
                 while (running && !stream.cancelled) {
-                    waitWhilePaused(track);
-                    PhoneVoiceClip clip = stream.chunks.poll(24L, TimeUnit.MILLISECONDS);
+                    PhoneVoiceClip clip = stream.chunks.poll(50L, TimeUnit.MILLISECONDS);
                     if (clip != null) {
-                        ParsedPcmPacket packet = parsePacket(clip);
-                        validateFormat(packet, sampleRate, channels);
-                        stats.observe(packet, packet.clip.receivedAtElapsedMs);
-                        writtenFrames = writePacket(track, packet, writtenFrames, boundaries, writtenClips);
-                    }
-
-                    long playedFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
-                    dispatchBoundaries(boundaries, playedFrames, sampleRate);
-                    long leadMs = Math.max(0L, (writtenFrames - playedFrames) * 1000L / Math.max(1, sampleRate));
-                    long liveTargetMs = calculateTargetMs(stats);
-                    long lowWaterMs = Math.max(EMERGENCY_LEAD_MS, Math.min(650L, Math.round(liveTargetMs * 0.30)));
-                    int underruns = track.getUnderrunCount();
-                    if (underruns > lastUnderruns) {
-                        learnedStartupMs = Math.min(MAX_STARTUP_MS, Math.max(learnedStartupMs + 250.0, liveTargetMs));
-                        lastUnderruns = underruns;
-                    }
-
-                    if (!stream.ended && stream.chunks.isEmpty() && leadMs < lowWaterMs) {
-                        emergencyRefills++;
-                        learnedStartupMs = Math.min(MAX_STARTUP_MS, Math.max(learnedStartupMs + 180.0, liveTargetMs));
-                        try { track.pause(); } catch (Exception ignored) { }
-                        long refillTarget = Math.max(MIN_REFILL_MS, Math.min(1400L, Math.round(liveTargetMs * 0.70)));
-                        long refilledMs = 0L;
-                        while (running && !stream.cancelled && refilledMs < refillTarget) {
-                            PhoneVoiceClip refill = stream.chunks.poll(50L, TimeUnit.MILLISECONDS);
-                            if (refill != null) {
-                                ParsedPcmPacket packet = parsePacket(refill);
-                                validateFormat(packet, sampleRate, channels);
-                                stats.observe(packet, packet.clip.receivedAtElapsedMs);
-                                writtenFrames = writePacket(track, packet, writtenFrames, boundaries, writtenClips);
-                                refilledMs += packet.durationMs;
-                            }
-                            if (stream.ended && stream.chunks.isEmpty()) break;
-                        }
-                        if (running && !stream.cancelled) try { track.play(); } catch (Exception ignored) { }
-                        long finalRefilledMs = refilledMs;
-                        long finalLeadMs = leadMs;
-                        post(() -> listener.onDebug("Smart PCM refill",
-                                "lead fell to " + finalLeadMs + "ms; paused before underrun and refilled " + finalRefilledMs
-                                        + "ms. Live target=" + liveTargetMs + "ms, next startup target=" + Math.round(learnedStartupMs) + "ms."));
+                        ParsedWav parsed = ParsedWav.parse(clip.wav);
+                        receivedClips.add(clip);
+                        writer.write(new SmartPcmPlaybackWriter.PcmChunk(
+                                parsed.pcm,
+                                parsed.sampleRate,
+                                parsed.channels,
+                                clip.textChars,
+                                clip.textKey,
+                                clip.receivedAtElapsedMs,
+                                clip));
                     }
 
                     if (stream.ended && stream.chunks.isEmpty()) {
-                        long head = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
-                        dispatchBoundaries(boundaries, head, sampleRate);
-                        if (head >= writtenFrames) {
-                            completed = true;
-                            break;
-                        }
+                        writer.endInput();
+                        break;
                     }
+                    if (writer.isFinished()) break;
                 }
 
-                if (completed) {
-                    // Let callback state settle at the exact logical end without inserting a fake
-                    // silence between PCM packets. There is one AudioTrack for the whole response.
-                    dispatchBoundaries(boundaries, writtenFrames, sampleRate);
-                    appendContinuousPcmToSavedVoice(writtenClips);
-                    stats.finishTextEstimate();
-                    if (lastUnderruns == initialUnderruns && emergencyRefills == 0 && stats.rate > 1.45) {
-                        learnedStartupMs = Math.max(MIN_STARTUP_MS, learnedStartupMs - 40.0);
-                    }
-                }
+                if (stream.cancelled || !running) writer.cancel();
+                else if (stream.ended) writer.endInput();
+                writer.awaitCompletion();
             } finally {
-                // Any boundary not naturally crossed is closed as interrupted so the animation/UI
-                // cannot remain stuck in a talking state.
-                boolean completedNormally = completed;
-                while (!boundaries.isEmpty()) {
-                    ClipBoundary boundary = boundaries.removeFirst();
-                    if (boundary.started && !boundary.finished) post(() -> listener.onPlaybackFinished(boundary.clip, completedNormally));
-                }
-                stopTrack(track);
-                track.release();
-                activeTrack = null;
-                boolean clean = completed;
-                double rate = stats.rate;
-                int underrunDelta = Math.max(0, lastUnderruns - initialUnderruns);
-                int refills = emergencyRefills;
-                long learned = Math.round(learnedStartupMs);
-                post(() -> listener.onDebug("Smart PCM stream complete",
-                        "stream=" + stream.ordinal + ", completed=" + clean + ", generation=" + formatRate(rate)
-                                + "x realtime, underruns=" + underrunDelta + ", emergencyRefills=" + refills
-                                + ", learnedStartup=" + learned + "ms."));
+                if (activeWriter == writer) activeWriter = null;
+                writer.close();
             }
         }
 
-        private ParsedPcmPacket parsePacket(PhoneVoiceClip clip) {
-            ParsedWav parsed = ParsedWav.parse(clip.wav);
-            long frames = parsed.pcm.length / Math.max(1, parsed.channels * 2);
-            long durationMs = frames * 1000L / Math.max(1, parsed.sampleRate);
-            if (durationMs <= 0L) durationMs = clip.declaredDurationMs;
-            return new ParsedPcmPacket(clip, parsed, Math.max(1L, durationMs));
-        }
-
-        private void validateFormat(ParsedPcmPacket packet, int sampleRate, int channels) {
-            if (packet.parsed.sampleRate != sampleRate || packet.parsed.channels != channels) {
-                throw new IllegalStateException("PCM stream format changed mid-response: "
-                        + packet.parsed.sampleRate + "Hz/" + packet.parsed.channels + "ch after "
-                        + sampleRate + "Hz/" + channels + "ch.");
-            }
-        }
-
-        private long writePacket(AudioTrack track, ParsedPcmPacket packet, long writtenFrames,
-                                 ArrayDeque<ClipBoundary> boundaries, ArrayList<PhoneVoiceClip> writtenClips) {
-            int offset = 0;
-            byte[] pcm = packet.parsed.pcm;
-            while (offset < pcm.length && running) {
-                int written = track.write(pcm, offset, pcm.length - offset, AudioTrack.WRITE_BLOCKING);
-                if (written <= 0) throw new IllegalStateException("AudioTrack rejected PCM write: " + written);
-                offset += written;
-            }
-            long frames = pcm.length / Math.max(1, packet.parsed.channels * 2);
-            boundaries.addLast(new ClipBoundary(packet.clip, writtenFrames, writtenFrames + frames, packet.durationMs));
-            writtenClips.add(packet.clip);
-            return writtenFrames + frames;
-        }
-
-        private void dispatchBoundaries(ArrayDeque<ClipBoundary> boundaries, long playedFrames, int sampleRate) {
-            while (!boundaries.isEmpty()) {
-                ClipBoundary boundary = boundaries.peekFirst();
-                if (!boundary.started && playedFrames > boundary.startFrame) {
-                    boundary.started = true;
-                    long elapsedMs = Math.max(0L, (playedFrames - boundary.startFrame) * 1000L / Math.max(1, sampleRate));
-                    post(() -> listener.onPlaybackStarted(boundary.clip, boundary.durationMs, Math.min(boundary.durationMs, elapsedMs)));
-                }
-                if (playedFrames < boundary.endFrame) break;
-                boundaries.removeFirst();
-                if (!boundary.started) {
-                    boundary.started = true;
-                    post(() -> listener.onPlaybackStarted(boundary.clip, boundary.durationMs, boundary.durationMs));
-                }
-                boundary.finished = true;
-                post(() -> listener.onPlaybackFinished(boundary.clip, true));
-            }
-        }
-
-        private void waitWhilePaused(AudioTrack track) {
-            while (running && paused) {
-                try { if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.pause(); } catch (Exception ignored) { }
-                synchronized (pauseLock) { try { if (paused && running) pauseLock.wait(250L); } catch (InterruptedException ignored) { } }
-            }
-            try { if (running && track.getPlayState() == AudioTrack.PLAYSTATE_PAUSED) track.play(); } catch (Exception ignored) { }
-        }
-
-        private long calculateTargetMs(AdaptivePcmStats stats) {
-            if (stats.rate <= 0.0) return Math.round(Math.max(MIN_STARTUP_MS, Math.min(MAX_STARTUP_MS, learnedStartupMs)));
-            double rate = stats.rate;
-            double rateReserve;
-            if (rate >= 2.5) rateReserve = 0.0;
-            else if (rate >= 1.8) rateReserve = 100.0;
-            else if (rate >= 1.4) rateReserve = 260.0;
-            else if (rate >= 1.15) rateReserve = 460.0;
-            else if (rate >= 1.0) rateReserve = 720.0;
-            else rateReserve = 950.0 + Math.min(500.0, (1.0 - rate) * 1400.0);
-
-            double jitterReserve = Math.min(550.0, stats.jitterMs * 2.2 + Math.max(0.0, stats.maxGapMs - stats.averageGapMs) * 0.55);
-            double predictedLead = 0.0;
-            if (rate < 1.0) {
-                double remainingAudioMs = stats.predictedRemainingAudioMs(learnedMsPerChar);
-                predictedLead = Math.min(900.0, remainingAudioMs * (1.0 - rate));
-            }
-            double dynamic = MIN_STARTUP_MS + rateReserve + jitterReserve + predictedLead;
-            return Math.round(Math.max(MIN_STARTUP_MS, Math.min(MAX_STARTUP_MS, Math.max(learnedStartupMs, dynamic))));
-        }
-
-        private int bytesForMs(int sampleRate, int channels, int milliseconds) {
-            long bytes = (long) sampleRate * Math.max(1, channels) * 2L * Math.max(1, milliseconds) / 1000L;
-            bytes &= ~1L;
-            return (int) Math.min(Integer.MAX_VALUE, Math.max(2048L, bytes));
-        }
-
-        private String streamKey(String streamId, long ordinal) { return ordinal + ":" + (streamId == null ? "" : streamId); }
-        private String formatRate(double value) { return String.format(Locale.US, "%.2f", Math.max(0.0, value)); }
-
-        private final class AdaptivePcmStats {
-            long lastArrivalMs;
-            double rate;
-            double averageGapMs;
-            double jitterMs;
-            double maxGapMs;
-            String textKey = "";
-            int textChars;
-            long textAudioMs;
-
-            void observe(ParsedPcmPacket packet, long nowMs) {
-                if (lastArrivalMs > 0L) {
-                    double gap = Math.max(1.0, nowMs - lastArrivalMs);
-                    double instantRate = Math.max(0.05, Math.min(12.0, packet.durationMs / gap));
-                    rate = rate <= 0.0 ? instantRate : rate * (1.0 - RATE_ALPHA) + instantRate * RATE_ALPHA;
-                    if (averageGapMs <= 0.0) averageGapMs = gap;
-                    double deviation = Math.abs(gap - averageGapMs);
-                    averageGapMs = averageGapMs * (1.0 - JITTER_ALPHA) + gap * JITTER_ALPHA;
-                    jitterMs = jitterMs * (1.0 - JITTER_ALPHA) + deviation * JITTER_ALPHA;
-                    maxGapMs = Math.max(maxGapMs * 0.94, gap);
-                }
-                lastArrivalMs = nowMs;
-
-                String incomingKey = packet.clip.textKey == null ? "" : packet.clip.textKey;
-                if (!incomingKey.equals(textKey)) {
-                    finishTextEstimate();
-                    textKey = incomingKey;
-                    textChars = packet.clip.textChars;
-                    textAudioMs = 0L;
-                }
-                textAudioMs += packet.durationMs;
-            }
-
-            void finishTextEstimate() {
-                if (textChars >= 12 && textAudioMs >= 400L) {
-                    double sample = Math.max(35.0, Math.min(130.0, textAudioMs / (double) textChars));
-                    learnedMsPerChar = learnedMsPerChar * 0.85 + sample * 0.15;
-                }
-                textKey = "";
-                textChars = 0;
-                textAudioMs = 0L;
-            }
-
-            double predictedRemainingAudioMs(double msPerChar) {
-                if (textChars <= 0) return 0.0;
-                return Math.max(0.0, textChars * msPerChar - textAudioMs);
-            }
+        private String streamKey(String streamId, long ordinal) {
+            return ordinal + ":" + (streamId == null ? "" : streamId);
         }
 
         private final class DesktopPcmStream {
@@ -1261,36 +1066,12 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             final LinkedBlockingDeque<PhoneVoiceClip> chunks = new LinkedBlockingDeque<>();
             volatile boolean ended;
             volatile boolean cancelled;
+            volatile PhoneVoiceClip firstClip;
+
             DesktopPcmStream(String streamId, long ordinal, String label) {
                 this.streamId = streamId == null ? "" : streamId;
                 this.ordinal = ordinal;
                 this.label = label == null ? "Star PCM stream" : label;
-            }
-        }
-
-        private final class ParsedPcmPacket {
-            final PhoneVoiceClip clip;
-            final ParsedWav parsed;
-            final long durationMs;
-            ParsedPcmPacket(PhoneVoiceClip clip, ParsedWav parsed, long durationMs) {
-                this.clip = clip;
-                this.parsed = parsed;
-                this.durationMs = durationMs;
-            }
-        }
-
-        private final class ClipBoundary {
-            final PhoneVoiceClip clip;
-            final long startFrame;
-            final long endFrame;
-            final long durationMs;
-            boolean started;
-            boolean finished;
-            ClipBoundary(PhoneVoiceClip clip, long startFrame, long endFrame, long durationMs) {
-                this.clip = clip;
-                this.startFrame = startFrame;
-                this.endFrame = endFrame;
-                this.durationMs = durationMs;
             }
         }
     }

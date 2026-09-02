@@ -397,6 +397,13 @@ public final class MainActivity extends ComponentActivity {
                 });
             }
 
+            @Override public void onLipSyncState(boolean speaking) {
+                runOnUiThread(() -> {
+                    if (!starVoicePlaybackActive || activeAnimatedVoiceClip == null || !activeAnimatedVoiceClip.continuousPcm) return;
+                    starAnimationCoordinator.voiceSpeechActivity(speaking);
+                });
+            }
+
             @Override public void onPlaybackFinished(PhoneVoicePlaybackService.PhoneVoiceClip clip, boolean completedNormally) {
                 runOnUiThread(() -> {
                     finishStarVoiceAnimationMarkers(clip);
@@ -1436,7 +1443,15 @@ public final class MainActivity extends ComponentActivity {
         // fallback, so local/test WAVs never regress to silent-looking idle playback.
         activeAnimatedVoiceClip = clip;
         starVoicePlaybackActive = true;
-        starAnimationCoordinator.beginVoice(fallbackDurationMs, clip.speechActivitySegmentsMs, playbackElapsedMs);
+        if (clip.continuousPcm) {
+            // Live PCM owns its lip timeline inside SmartPcmPlaybackWriter. The writer analyzes each
+            // committed forward-only PCM block, then emits mouth state from AudioTrack's actual
+            // playback head. Do not schedule the desktop packet markers for this path.
+            starAnimationCoordinator.beginStreamingVoice();
+        } else {
+            // Prepared/cached WAVs still have a complete immutable marker timeline available up front.
+            starAnimationCoordinator.beginVoice(fallbackDurationMs, clip.speechActivitySegmentsMs, playbackElapsedMs);
+        }
     }
 
     private void appendProdConversationLine(String speaker, String text) {

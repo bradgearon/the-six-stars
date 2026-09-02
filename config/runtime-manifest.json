@@ -41,7 +41,7 @@
       "vendor": "nvidia",
       "path": "engines/asr/whispercpp-nvidia-win-x64/whisper-server.exe",
       "workingDirectory": "engines/asr/whispercpp-nvidia-win-x64",
-      "args": "--host 127.0.0.1 --port 8000 --language en --no-context --flash-attn",
+      "args": "--host 127.0.0.1 --port 8000 --language en",
       "healthTcpHost": "127.0.0.1",
       "healthTcpPort": 8000,
       "asrUrl": "http://127.0.0.1:8000/inference"

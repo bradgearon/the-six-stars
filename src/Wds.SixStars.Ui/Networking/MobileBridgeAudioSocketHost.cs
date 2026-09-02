@@ -163,7 +163,12 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
         string spokenText = result.Instructions ?? string.Empty;
         string textHash = string.IsNullOrEmpty(spokenText) ? string.Empty : Sha256Hex(Encoding.UTF8.GetBytes(spokenText));
         if (textHash.Length > 12) textHash = textHash.Substring(0, 12);
-        MobileSpeechActivityResult speechMarkers = MobileAudioSpeechActivityMarkers.AnalyzeWav(wavCopy);
+        // Live continuous PCM now owns lip analysis on Android inside SmartPcmPlaybackWriter,
+        // where marker timing is tied to the actual AudioTrack playback head. Keep desktop markers
+        // only for ordinary complete WAVs/cached speech.
+        MobileSpeechActivityResult speechMarkers = result.IsStreamingPcmWindow
+            ? MobileSpeechActivityResult.Empty
+            : MobileAudioSpeechActivityMarkers.AnalyzeWav(wavCopy);
         int audioSequence = streamSession?.NextAudioSequence() ?? chunkIndex;
         string header = JsonSerializer.Serialize(new
         {

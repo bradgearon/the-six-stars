@@ -39,6 +39,7 @@ namespace Wds.SixStars.Api.Engine
         private readonly object _backgroundGate = new object();
         private CancellationTokenSource? _backgroundStoryGenerationCts;
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
+        private long _nextPrimaryBackgroundOrderSequence;
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
         private readonly object _primaryBackgroundSettlementGate = new object();
         private readonly Dictionary<string, PrimaryBackgroundSettlement> _primaryBackgroundSettlements = new Dictionary<string, PrimaryBackgroundSettlement>(StringComparer.OrdinalIgnoreCase);
@@ -760,15 +761,16 @@ namespace Wds.SixStars.Api.Engine
                 }
             }
 
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Player activity suppressed ordinary background AI for " + quietWindow.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s; protected primary memory review bypasses this suppression: " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Player activity suppressed ordinary background AI for " + quietWindow.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s; durable primary memory review bypasses this suppression: " + reason);
         }
 
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
-            // Ordinary background stacks are foreground-preemptible. The primary interaction
-            // memory review explicitly opts out in BackgroundAiRequestDispatcher, so this command
-            // can still cancel stories/interstar/writing-style work without touching the durable
-            // review that must settle before the next foreground turn.
+            // Ordinary background stacks are cancellable. Primary interaction review compute is
+            // also foreground-preemptible now, but its immutable job is immediately requeued rather
+            // than discarded, so a player reply never waits on background memory work and the
+            // durable review still settles afterward. Lightweight PlayerActivity pings do not
+            // preempt primary review compute; only an actual foreground/cancel operation does.
             bool cancelledDispatcherRequest = _backgroundDispatcher.CancelActiveRequest(reason);
             lock (_backgroundGate)
             {
@@ -782,7 +784,7 @@ namespace Wds.SixStars.Api.Engine
                 }
                 _backgroundStoryGenerationCts = new CancellationTokenSource();
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] CancelBackgroundAnalysis requested cancellable background work only; protected primary memory review is never preempted. dispatcherCancelled=" + cancelledDispatcherRequest + "; " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] CancelBackgroundAnalysis requested foreground-priority cancellation; durable primary review compute may be preempted but its immutable job is requeued. dispatcherCancelled=" + cancelledDispatcherRequest + "; " + reason);
         }
 
         public async Task<StarInteractionResponse> ProcessWhenForegroundIdleAsync(
@@ -846,14 +848,11 @@ namespace Wds.SixStars.Api.Engine
             bool isBackgroundWorkerRequest = (isStarInitiativeRequest && !isManualStarInitiativeRequest)
                 || (request != null && (IsStoryGenerationWorkerRequest(request) || IsGirlfriendProposalWorkerRequest(request) || IsInterstarMicroRequest(request)));
 
-            // A primary memory review is part of the previous conversational turn. It is normally
-            // sub-second, but if the player presses Talk immediately after speech begins we must not
-            // let the next foreground cancel or overtake that durable update. Wait BEFORE taking a
-            // foreground dispatcher lease so the protected review is free to finish.
-            if (request != null && request.RequestType != RequestType.Debug && !isBackgroundWorkerRequest)
-            {
-                await WaitForPriorPrimaryBackgroundAnalysisAsync(request, cancellationToken).ConfigureAwait(false);
-            }
+            // Primary memory reviews are durable background jobs, not a foreground gate. A new
+            // player turn takes the foreground dispatcher lease immediately; if a primary review
+            // is currently using the model, the dispatcher preempts that compute and the review
+            // requeues from its immutable turn snapshot. This prevents a 10-30 second background
+            // memory pass (including one for a different Star) from delaying the next reply.
 
             IDisposable? foregroundLease = request != null && request.RequestType != RequestType.Debug && !isBackgroundWorkerRequest
                 ? _backgroundDispatcher.EnterForegroundRequest("Foreground reply request for " + request.StarId + " (" + request.RequestType + ")")
@@ -933,10 +932,10 @@ namespace Wds.SixStars.Api.Engine
                     { "starId", request.StarId ?? string.Empty },
                     { "requestType", request.RequestType.ToString() },
                     { "spokenParts", response.SpokenParts.Count.ToString() },
-                    { "note", "Foreground conversation reply finished; the protected primary emotion/memory review queues immediately at Gemma completion while speech continues." }
+                    { "note", "Foreground conversation reply finished; the durable primary emotion/memory review queues immediately at Gemma completion while speech continues and may be preempted/requeued by the next foreground turn." }
                 }
             });
-            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; the protected primary review will queue immediately and settle before the next foreground turn.", 0, 0);
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; the durable primary review will queue immediately and settle in the background without gating the next foreground turn.", 0, 0);
 
             if (request.RequestType == RequestType.StarInitiative)
             {
@@ -960,7 +959,7 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "speechParts", response.SpokenParts.Count.ToString() },
-                        { "note", "Fast spoken response returned immediately; protected emotion/memory update queues at complete Gemma response and is not cancelled by player activity/next foreground." }
+                        { "note", "Fast spoken response returned immediately; durable emotion/memory update queues at complete Gemma response. Player activity alone does not cancel it, while a real next foreground turn may preempt/requeue its compute." }
                     }
                 });
                 string backgroundAnalysisId = Guid.NewGuid().ToString("N");
@@ -975,7 +974,7 @@ namespace Wds.SixStars.Api.Engine
                         { "note", "Primary memory review is queued immediately when the complete foreground Gemma response is available. Streaming speech may continue independently." }
                     }
                 });
-                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. The protected primary review was queued immediately at foreground completion and must settle before the next foreground turn.");
+                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. The primary review was queued immediately at foreground completion; it remains durable, may be preempted/requeued by a later foreground turn, and never gates that foreground turn.");
                 StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, request, state, response, enableFallback: false);
                 StartBackgroundAnalysisAfterVoiceReady(backgroundAnalysisId, "Complete foreground Gemma response is available; primary review queues immediately while speech continues.");
                 return response;
@@ -3180,13 +3179,21 @@ namespace Wds.SixStars.Api.Engine
                 pending.Request.SessionId,
                 pending.Request.StarId,
                 "Primary review released to dispatcher. reason=" + (reason ?? string.Empty));
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting protected primary background analysis " + analysisId + ": " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting durable primary background analysis " + analysisId + ": " + reason);
             QueueBackgroundAnalysis(analysisId, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }
 
-        private void QueueBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void QueueBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse, int retryAttempt = 0, long durableOrderSequence = 0L)
         {
+            // Reserve the durable ordering key before the dispatcher can start this callback. This
+            // avoids a race where a foreground preemption occurs before Enqueue() returns and the
+            // retry would otherwise receive a newer ordering key.
+            if (durableOrderSequence <= 0L)
+            {
+                durableOrderSequence = Interlocked.Increment(ref _nextPrimaryBackgroundOrderSequence);
+            }
+
             BackgroundAiRequestReceipt receipt = _backgroundDispatcher.Enqueue(
                 "PrimaryBackgroundAnalysis",
                 "Analyze emotion vectors and update durable Star state for " + request.StarId + "; analysis=" + analysisId,
@@ -3197,7 +3204,7 @@ namespace Wds.SixStars.Api.Engine
                     bool queueHeld = false;
                     try
                     {
-                        TraceBackgroundAnalysis("primary.started", analysisId, request.SessionId, request.StarId, "Protected primary review callback started.");
+                        TraceBackgroundAnalysis("primary.started", analysisId, request.SessionId, request.StarId, "Durable primary review callback started; foreground may preempt and requeue this compute.");
                         TraceBackgroundAnalysis("primary.order-wait", analysisId, request.SessionId, request.StarId, "Waiting for the primary durable-update ordering semaphore.");
                         await _backgroundAnalysisQueue.WaitAsync(workToken).ConfigureAwait(false);
                         queueHeld = true;
@@ -3233,12 +3240,15 @@ namespace Wds.SixStars.Api.Engine
                         ApplyVoiceDefaults(profile, analyzed);
 
                         System.Diagnostics.Stopwatch commitTimer = System.Diagnostics.Stopwatch.StartNew();
-                        TraceBackgroundAnalysis("primary.commit-start", analysisId, request.SessionId, request.StarId, "Applying deterministic state and durable memory update.");
-                        await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, workToken).ConfigureAwait(false);
+                        TraceBackgroundAnalysis("primary.commit-start", analysisId, request.SessionId, request.StarId, "Applying deterministic state and durable memory update. Model compute is finished, so foreground cancellation no longer aborts this short durable commit.");
+                        // Foreground preemption exists to free the shared LLM immediately. Once the review
+                        // result exists, do not let a cancellation land halfway through durable state writes
+                        // and then requeue the whole review, which could duplicate a partially committed turn.
+                        await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, CancellationToken.None).ConfigureAwait(false);
                         TraceBackgroundAnalysis("primary.commit-complete", analysisId, request.SessionId, request.StarId, "Durable memory/state update completed in " + commitTimer.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms; total=" + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
 
-                        // This is the exact barrier the next foreground cares about. Optional information
-                        // continuations and interstar ripple work remain independently cancellable.
+                        // This settles the durable review tracker. Foreground never waits on it; optional
+                        // information continuations and interstar ripple work remain independently cancellable.
                         SettlePrimaryBackgroundAnalysis(analysisId, request, true, "Durable primary review committed successfully.");
 
                         analyzed.UnityEvents.Add(CreateBackgroundReviewMetadataEvent(request));
@@ -3253,12 +3263,24 @@ namespace Wds.SixStars.Api.Engine
                     }
                     catch (OperationCanceledException ex)
                     {
-                        // Foreground and PlayerActivity are not allowed to cancel this stack anymore.
-                        // Cancellation here therefore means shutdown or an external terminal token and
-                        // should be visible in tracing instead of silently entering the old retry loop.
-                        TraceBackgroundAnalysis("primary.cancelled-unexpected", analysisId, request.SessionId, request.StarId, "Protected primary review received cancellation after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms: " + ex.Message);
-                        SettlePrimaryBackgroundAnalysis(analysisId, request, false, "Protected primary review was cancelled by a terminal/shutdown token.");
-                        BackgroundAnalysisFailed?.Invoke(this, ex);
+                        if (!_backgroundDispatcher.IsShuttingDown)
+                        {
+                            int nextAttempt = retryAttempt + 1;
+                            TraceBackgroundAnalysis(
+                                "primary.preempted-requeue",
+                                analysisId,
+                                request.SessionId,
+                                request.StarId,
+                                "Foreground work preempted primary review attempt " + retryAttempt.ToString(CultureInfo.InvariantCulture)
+                                    + " after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)
+                                    + " ms. The immutable review job remains durable and is requeued as attempt "
+                                    + nextAttempt.ToString(CultureInfo.InvariantCulture) + ".");
+                            QueueBackgroundAnalysis(analysisId, profile, request, state, foregroundResponse, nextAttempt, durableOrderSequence);
+                            throw;
+                        }
+
+                        TraceBackgroundAnalysis("primary.cancelled-shutdown", analysisId, request.SessionId, request.StarId, "Primary review was cancelled during runtime shutdown after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms: " + ex.Message);
+                        SettlePrimaryBackgroundAnalysis(analysisId, request, false, "Primary review was cancelled by runtime shutdown.");
                     }
                     catch (Exception ex)
                     {
@@ -3275,17 +3297,22 @@ namespace Wds.SixStars.Api.Engine
                         }
                     }
                 },
-                delay: TimeSpan.Zero,
+                delay: retryAttempt > 0 ? TimeSpan.FromMilliseconds(500) : TimeSpan.Zero,
                 bypassPostForegroundQuiet: true,
-                allowForegroundPreemption: false,
-                bypassPlayerActivitySuppression: true);
+                allowForegroundPreemption: true,
+                bypassPlayerActivitySuppression: true,
+                allowPlayerActivityPreemption: false,
+                orderingSequence: durableOrderSequence > 0L ? durableOrderSequence : (long?)null);
 
             TraceBackgroundAnalysis(
                 "primary.enqueued",
                 analysisId,
                 request.SessionId,
                 request.StarId,
-                "Protected dispatcher request=" + receipt.RequestId + "; sequence=" + receipt.Sequence.ToString(CultureInfo.InvariantCulture) + "; bypassPlayerActivitySuppression=true; allowForegroundPreemption=false.");
+                "Durable dispatcher request=" + receipt.RequestId + "; sequence=" + receipt.Sequence.ToString(CultureInfo.InvariantCulture)
+                    + "; durableOrderSequence=" + receipt.OrderSequence.ToString(CultureInfo.InvariantCulture)
+                    + "; retryAttempt=" + retryAttempt.ToString(CultureInfo.InvariantCulture)
+                    + "; bypassPlayerActivitySuppression=true; allowForegroundPreemption=true; allowPlayerActivityPreemption=false.");
         }
 
         private void QueueBackgroundInformationFollowup(StarProfile profile, StarInteractionRequest request, StarInteractionResponse analyzed)
@@ -3340,7 +3367,7 @@ namespace Wds.SixStars.Api.Engine
                     };
                 }
             }
-            TraceBackgroundAnalysis("barrier.registered", analysisId, request.SessionId, request.StarId, "Registered protected primary-review settlement barrier for next foreground. turnStartedAt=" + request.TurnStartedAt.ToString("O"));
+            TraceBackgroundAnalysis("settlement.registered", analysisId, request.SessionId, request.StarId, "Registered durable primary-review settlement tracker. Foreground does not wait on this tracker. turnStartedAt=" + request.TurnStartedAt.ToString("O"));
         }
 
         private void SettlePrimaryBackgroundAnalysis(string analysisId, StarInteractionRequest request, bool succeeded, string message)
@@ -3356,45 +3383,7 @@ namespace Wds.SixStars.Api.Engine
 
             if (settlement == null) return;
             settlement.Completion.TrySetResult(succeeded);
-            TraceBackgroundAnalysis(succeeded ? "barrier.settled" : "barrier.settled-failed", analysisId, request.SessionId, request.StarId, message);
-        }
-
-        private async Task WaitForPriorPrimaryBackgroundAnalysisAsync(StarInteractionRequest request, CancellationToken cancellationToken)
-        {
-            if (request == null || _forgeInteractionReviewService == null) return;
-            List<PrimaryBackgroundSettlement> pending;
-            lock (_primaryBackgroundSettlementGate)
-            {
-                pending = _primaryBackgroundSettlements.Values
-                    .Where(x => !x.Completion.Task.IsCompleted)
-                    .OrderBy(x => x.RegisteredAtUtc)
-                    .ToList();
-            }
-
-            if (pending.Count == 0) return;
-
-            string ids = string.Join(",", pending.Select(x => x.AnalysisId));
-            System.Diagnostics.Stopwatch waitTimer = System.Diagnostics.Stopwatch.StartNew();
-            TraceBackgroundAnalysis("foreground.wait-start", ids, request.SessionId, request.StarId, "Next foreground is waiting globally for " + pending.Count.ToString(CultureInfo.InvariantCulture) + " prior protected primary review(s) before it acquires a foreground lease.");
-            await WaitWithCancellationAsync(Task.WhenAll(pending.Select(x => x.Completion.Task)), cancellationToken).ConfigureAwait(false);
-            TraceBackgroundAnalysis("foreground.wait-complete", ids, request.SessionId, request.StarId, "Prior primary review barrier cleared after " + waitTimer.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms; foreground may proceed.");
-        }
-
-        private static async Task WaitWithCancellationAsync(Task task, CancellationToken cancellationToken)
-        {
-            if (!cancellationToken.CanBeCanceled)
-            {
-                await task.ConfigureAwait(false);
-                return;
-            }
-
-            Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
-            Task completed = await Task.WhenAny(task, cancellationTask).ConfigureAwait(false);
-            if (!ReferenceEquals(completed, task))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-            }
-            await task.ConfigureAwait(false);
+            TraceBackgroundAnalysis(succeeded ? "settlement.completed" : "settlement.failed", analysisId, request.SessionId, request.StarId, message);
         }
 
         /// <summary>
