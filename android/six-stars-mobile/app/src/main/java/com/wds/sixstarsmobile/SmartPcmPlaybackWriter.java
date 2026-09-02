@@ -164,6 +164,8 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
     private volatile long committedFrames;
     private volatile long lastInputArrivalElapsedMs;
     private volatile long startRequestedElapsedMs;
+    private volatile long firstInputObservedElapsedMs;
+    private volatile long firstInputAudioMs;
     private volatile long firstUnderlyingWriteElapsedMs;
     private volatile long firstPlaybackFrameElapsedMs;
     private volatile boolean speechState;
@@ -185,6 +187,18 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
 
     void write(PcmChunk chunk) {
         if (chunk == null || chunk.pcm.length == 0 || cancelled || inputEnded) return;
+
+        // This is the production-speed signal that is available before a second packet exists:
+        // how long this writer actually waited after start() for playable PCM to be handed to it.
+        if (firstInputObservedElapsedMs <= 0L) {
+            synchronized (this) {
+                if (firstInputObservedElapsedMs <= 0L) {
+                    firstInputObservedElapsedMs = SystemClock.elapsedRealtime();
+                    firstInputAudioMs = Math.max(1L, chunk.durationMs());
+                }
+            }
+        }
+
         lastInputArrivalElapsedMs = Math.max(lastInputArrivalElapsedMs, chunk.receivedAtElapsedMs);
         input.offerLast(chunk);
     }
@@ -290,7 +304,10 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
                     "reason=" + reasonForLog
                             + ", startup=" + startupForLog + "ms"
                             + ", target=" + targetForLog + "ms"
-                            + ", rate=" + formatRate(stats.rate) + "x"
+                            + ", rate=" + formatRate(effectiveGenerationRate(stats)) + "x"
+                            + ", packetRate=" + formatRate(stats.rate) + "x"
+                            + ", firstChunkWait=" + firstChunkWaitMs() + "ms"
+                            + ", firstChunkRate=" + formatRate(firstChunkGenerationRate()) + "x"
                             + ", jitter=" + Math.round(stats.jitterMs) + "ms"
                             + ", start->firstWrite=" + Math.max(0L, firstUnderlyingWriteElapsedMs - startRequestedElapsedMs) + "ms.");
 
@@ -332,7 +349,9 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
             }
 
             stats.finishTextEstimate(profile);
-            if (completed && lastUnderruns == initialUnderruns && emergencyRefills == 0 && stats.rate > 1.45) {
+            double completedGenerationRate = effectiveGenerationRate(stats);
+            if (completed && lastUnderruns == initialUnderruns && emergencyRefills == 0
+                    && completedGenerationRate > 1.45) {
                 profile.decreaseStartup(40.0);
             }
         } catch (InterruptedException ignored) {
@@ -355,7 +374,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
 
             Result result = new Result(
                     completed,
-                    stats.rate,
+                    effectiveGenerationRate(stats),
                     Math.max(0, lastUnderruns - initialUnderruns),
                     emergencyRefills,
                     Math.round(profile.startupMs()),
@@ -470,35 +489,46 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
     private int[] appendLipData(long batchStartFrame, long batchEndFrame, int sampleRate,
                                 PcmSpeechActivityAnalyzer.Analysis analysis) {
         int[] local = analysis == null ? new int[0] : analysis.segmentsMs;
-        int[] absolute;
 
         if (local.length < 2) {
-            // Preserve the old Android fallback: when the RMS analyzer cannot find a stable marker
-            // in a real speech block, treat that committed block as talking rather than leaving a
-            // visibly silent mouth over audible TTS.
+            // Empty RMS markers on a genuinely quiet tail mean mouth closed. The old fallback made
+            // every such trailing transport block count as speech and kept talking.gif alive after
+            // the audible phoneme had ended. Retain the whole-block fallback only for a clearly
+            // audible block whose threshold envelope was too unstable to form a segment.
+            double peak = analysis == null ? 0.0 : analysis.peak;
+            if (peak < 0.008) return new int[0];
+
             long startMs = framesToMs(batchStartFrame, sampleRate);
             long durationMs = Math.max(1L, framesToMs(batchEndFrame - batchStartFrame, sampleRate));
-            absolute = new int[] { clampInt(startMs), clampInt(durationMs) };
-            synchronized (lipGate) { lipTimeline.addLast(new LipSegment(batchStartFrame, batchEndFrame)); }
-            return absolute;
+            synchronized (lipGate) {
+                lipTimeline.addLast(new LipSegment(batchStartFrame, batchEndFrame));
+            }
+            return new int[] { clampInt(startMs), clampInt(durationMs) };
         }
 
-        absolute = new int[local.length];
-        long batchStartMs = framesToMs(batchStartFrame, sampleRate);
+        ArrayList<Integer> absolute = new ArrayList<>(local.length);
         synchronized (lipGate) {
             for (int i = 0; i + 1 < local.length; i += 2) {
                 long localStartMs = Math.max(0L, local[i]);
                 long durationMs = Math.max(1L, local[i + 1]);
-                long segmentStartFrame = batchStartFrame + msToFrames(localStartMs, sampleRate);
-                long segmentEndFrame = segmentStartFrame + msToFrames(durationMs, sampleRate);
-                // Padding is allowed to reach slightly into the next committed block, just like the
-                // desktop marker algorithm. Completion still terminates the mouth state exactly.
+                long segmentStartFrame = Math.min(
+                        batchEndFrame,
+                        batchStartFrame + msToFrames(localStartMs, sampleRate));
+                long requestedEndFrame = segmentStartFrame + msToFrames(durationMs, sampleRate);
+                long segmentEndFrame = Math.min(batchEndFrame, requestedEndFrame);
+                if (segmentEndFrame <= segmentStartFrame) continue;
+
+                // A live marker cannot claim frames that are outside the PCM block that produced it.
                 lipTimeline.addLast(new LipSegment(segmentStartFrame, segmentEndFrame));
-                absolute[i] = clampInt(batchStartMs + localStartMs);
-                absolute[i + 1] = clampInt(durationMs);
+                absolute.add(clampInt(framesToMs(segmentStartFrame, sampleRate)));
+                absolute.add(clampInt(Math.max(
+                        1L, framesToMs(segmentEndFrame - segmentStartFrame, sampleRate))));
             }
         }
-        return absolute;
+
+        int[] result = new int[absolute.size()];
+        for (int i = 0; i < absolute.size(); i++) result[i] = absolute.get(i);
+        return result;
     }
 
     private void startPlaybackObserver(AudioTrack localTrack, int sampleRate) {
@@ -562,29 +592,58 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
     }
 
     private long calculateTargetMs(AdaptiveStats stats) {
-        if (stats.rate <= 0.0) {
+        double rate = effectiveGenerationRate(stats);
+        if (rate <= 0.0) {
             return Math.round(Math.max(MIN_STARTUP_MS, Math.min(MAX_STARTUP_MS, profile.startupMs())));
         }
 
         double rateReserve;
-        if (stats.rate >= 2.5) rateReserve = 0.0;
-        else if (stats.rate >= 1.8) rateReserve = 100.0;
-        else if (stats.rate >= 1.4) rateReserve = 260.0;
-        else if (stats.rate >= 1.15) rateReserve = 460.0;
-        else if (stats.rate >= 1.0) rateReserve = 720.0;
-        else rateReserve = 950.0 + Math.min(500.0, (1.0 - stats.rate) * 1400.0);
+        if (rate >= 2.5) rateReserve = 0.0;
+        else if (rate >= 1.8) rateReserve = 100.0;
+        else if (rate >= 1.4) rateReserve = 260.0;
+        else if (rate >= 1.15) rateReserve = 460.0;
+        else if (rate >= 1.0) rateReserve = 720.0;
+        else rateReserve = 950.0 + Math.min(500.0, (1.0 - rate) * 1400.0);
 
         double jitterReserve = Math.min(550.0,
                 stats.jitterMs * 2.2 + Math.max(0.0, stats.maxGapMs - stats.averageGapMs) * 0.55);
         double predictedLead = 0.0;
-        if (stats.rate < 1.0) {
+        if (rate < 1.0) {
             double remainingAudioMs = stats.predictedRemainingAudioMs(profile.msPerChar());
-            predictedLead = Math.min(900.0, remainingAudioMs * (1.0 - stats.rate));
+            predictedLead = Math.min(900.0, remainingAudioMs * (1.0 - rate));
         }
 
         double dynamic = MIN_STARTUP_MS + rateReserve + jitterReserve + predictedLead;
         return Math.round(Math.max(MIN_STARTUP_MS,
                 Math.min(MAX_STARTUP_MS, Math.max(profile.startupMs(), dynamic))));
+    }
+
+    private long firstChunkWaitMs() {
+        long start = startRequestedElapsedMs;
+        long first = firstInputObservedElapsedMs;
+        if (start <= 0L || first <= 0L) return 0L;
+        return Math.max(1L, first - start);
+    }
+
+    private double firstChunkGenerationRate() {
+        long waitMs = firstChunkWaitMs();
+        long audioMs = firstInputAudioMs;
+        if (waitMs <= 0L || audioMs <= 0L) return 0.0;
+        return Math.max(0.05, Math.min(12.0, audioMs / (double) waitMs));
+    }
+
+    private double effectiveGenerationRate(AdaptiveStats stats) {
+        double firstRate = firstChunkGenerationRate();
+        double sustainedRate = stats == null ? 0.0 : stats.rate;
+
+        if (sustainedRate <= 0.0) return firstRate;
+        if (firstRate <= 0.0) return sustainedRate;
+
+        // Fade the cold-start estimate out quickly once packet-to-packet production timing exists.
+        int chunks = stats == null ? 0 : stats.observedChunks;
+        if (chunks <= 2) return sustainedRate * 0.65 + firstRate * 0.35;
+        if (chunks == 3) return sustainedRate * 0.85 + firstRate * 0.15;
+        return sustainedRate;
     }
 
     private long calculateProducerIdleReleaseMs(AdaptiveStats stats) {
@@ -679,6 +738,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
 
     private static final class AdaptiveStats {
         long lastArrivalMs;
+        int observedChunks;
         double rate;
         double averageGapMs;
         double jitterMs;
@@ -688,6 +748,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
         long textAudioMs;
 
         void observe(PcmChunk chunk, AdaptiveProfile profile) {
+            observedChunks++;
             long nowMs = chunk.receivedAtElapsedMs;
             long durationMs = Math.max(1L, chunk.durationMs());
             if (lastArrivalMs > 0L) {

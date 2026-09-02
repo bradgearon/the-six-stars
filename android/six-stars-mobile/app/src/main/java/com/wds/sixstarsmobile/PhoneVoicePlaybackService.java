@@ -616,7 +616,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
     }
 
-
     private void appendContinuousPcmToSavedVoice(ArrayList<PhoneVoiceClip> clips) {
         if (clips == null || clips.isEmpty()) return;
         try {
@@ -640,6 +639,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     }
 
     private final class WavAudioQueue {
+        private static final long LOCAL_BURST_COALESCE_MS = 18L;
+        private static final int MAX_LOCAL_BURST_CLIPS = 64;
+
         private final LinkedBlockingDeque<PhoneVoiceClip> queue = new LinkedBlockingDeque<>();
         private final Object pauseLock = new Object();
         private final Object preparedLock = new Object();
@@ -711,12 +713,96 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                         synchronized (preparedLock) { if (preparedPrefixPending && running) preparedLock.wait(100L); }
                         continue;
                     }
+
+                    // Prepared Listen and other cached Android speech is often queued as several
+                    // complete WAV fragments in one tight burst. Playing each fragment through a new
+                    // AudioTrack creates audible seams and sends finished/started lifecycle edges to
+                    // the Activity between chunks (which also toggles FLAG_KEEP_SCREEN_ON). Join the
+                    // burst into one PCM/WAV clip before playback so it is one continuous speaker and
+                    // animation lifecycle.
+                    clip = coalesceLocalBurst(clip);
                     playWav(clip);
                 } catch (InterruptedException ignored) {
                 } catch (Throwable error) {
                     post(() -> listener.onError("Audio playback failed", error));
                 }
             }
+        }
+
+        private PhoneVoiceClip coalesceLocalBurst(PhoneVoiceClip first) throws InterruptedException {
+            if (first == null || first.fromDesktop || first.continuousPcm || first.wav.length == 0) return first;
+
+            // Give a synchronous cache-enqueue loop one small scheduling window to put the rest of
+            // its chunks into this queue. This replaces much larger inter-clip AudioTrack gaps with a
+            // single negligible startup wait and does not affect live desktop PCM.
+            if (queue.isEmpty() && running) Thread.sleep(LOCAL_BURST_COALESCE_MS);
+
+            ParsedWav format = ParsedWav.parse(first.wav);
+            ArrayList<PhoneVoiceClip> clips = new ArrayList<>();
+            clips.add(first);
+            ByteArrayOutputStream pcm = new ByteArrayOutputStream();
+            pcm.write(format.pcm, 0, format.pcm.length);
+
+            while (clips.size() < MAX_LOCAL_BURST_CLIPS) {
+                PhoneVoiceClip next = queue.peekFirst();
+                if (next == null || next.fromDesktop || next.continuousPcm || next.wav.length == 0) break;
+
+                ParsedWav parsed;
+                try {
+                    parsed = ParsedWav.parse(next.wav);
+                } catch (Throwable invalid) {
+                    break;
+                }
+                if (parsed.sampleRate != format.sampleRate || parsed.channels != format.channels) break;
+
+                next = queue.pollFirst();
+                if (next == null) break;
+                clips.add(next);
+                pcm.write(parsed.pcm, 0, parsed.pcm.length);
+            }
+
+            if (clips.size() == 1) return first;
+
+            byte[] combinedPcm = pcm.toByteArray();
+            byte[] combinedWav = VoiceCaptureService.wavFromPcm16(
+                    combinedPcm, format.sampleRate, format.channels);
+            PcmSpeechActivityAnalyzer.Analysis activity =
+                    PcmSpeechActivityAnalyzer.analyzePcm16(
+                            combinedPcm, format.sampleRate, format.channels);
+            long frames = combinedPcm.length / Math.max(1L, format.channels * 2L);
+            long durationMs = frames * 1000L / Math.max(1, format.sampleRate);
+
+            ArrayList<Runnable> completions = new ArrayList<>();
+            for (PhoneVoiceClip clip : clips) {
+                if (clip.onCompleted != null) completions.add(clip.onCompleted);
+            }
+            Runnable completion = completions.isEmpty() ? null : () -> {
+                for (Runnable callback : completions) {
+                    try { callback.run(); } catch (Throwable ignored) { }
+                }
+            };
+
+            PhoneVoiceClip merged = new PhoneVoiceClip(
+                    combinedWav,
+                    first.label + " + " + (clips.size() - 1) + " cached chunk(s)",
+                    sha256Hex(combinedWav),
+                    false,
+                    "",
+                    0L,
+                    first.audioSequence,
+                    activity.segmentsMs,
+                    false,
+                    0,
+                    "",
+                    durationMs,
+                    completion);
+
+            int mergedCount = clips.size();
+            post(() -> listener.onDebug(
+                    "Cached voice coalesced",
+                    "Joined " + mergedCount + " local WAV fragments into one "
+                            + durationMs + "ms AudioTrack playback."));
+            return merged;
         }
 
         private void playWav(PhoneVoiceClip clip) {
@@ -844,7 +930,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             return watcher;
         }
     }
-
 
     /**
      * Routes logical qwentts.cpp PCM streams into one self-contained SmartPcmPlaybackWriter per

@@ -90,9 +90,9 @@ final class PcmSpeechActivityAnalyzer {
                 sum += valueRms;
             }
 
-            // Keep the desktop behavior: callers can use an empty marker set as a whole-block
-            // talking fallback. That is useful for very quiet/breathy TTS where thresholding does
-            // not find a stable segment.
+            // Very quiet transport tails intentionally return no marker. SmartPcmPlaybackWriter
+            // distinguishes a genuinely quiet block from an audible block whose envelope was too
+            // unstable to segment, so silence no longer forces a whole-block talking fallback.
             if (peak < 0.004) return new Analysis(new int[0], peak, 0.0, 0.0);
 
             double mean = sum / rms.length;
@@ -131,12 +131,20 @@ final class PcmSpeechActivityAnalyzer {
 
             if (active) addSegment(raw, startWindow * FRAME_MS, (rms.length - startWindow) * FRAME_MS);
 
+            // Padding may make the mouth open a little before/after the detected syllable, but it
+            // must never extend beyond the PCM that was actually analyzed.
+            int analyzedDurationMs = (int) Math.max(1L,
+                    (totalSamplesPerChannel * 1000L + sampleRate - 1L) / sampleRate);
             ArrayList<Segment> padded = new ArrayList<>();
             for (Segment segment : raw) {
-                Segment value = new Segment(
-                        Math.max(0, segment.startMs - PAD_BEFORE_MS),
-                        segment.durationMs + PAD_BEFORE_MS + PAD_AFTER_MS);
-                if (value.durationMs >= MIN_SEGMENT_MS) padded.add(value);
+                int paddedStartMs = Math.max(0, segment.startMs - PAD_BEFORE_MS);
+                int paddedEndMs = Math.min(
+                        analyzedDurationMs,
+                        segment.startMs + segment.durationMs + PAD_AFTER_MS);
+                int paddedDurationMs = Math.max(0, paddedEndMs - paddedStartMs);
+                if (paddedDurationMs >= MIN_SEGMENT_MS) {
+                    padded.add(new Segment(paddedStartMs, paddedDurationMs));
+                }
             }
             padded.sort(Comparator.comparingInt(x -> x.startMs));
 
