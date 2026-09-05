@@ -3936,7 +3936,7 @@ public sealed partial class MainViewModel
                 };
 
                 int chunksSent = 0;
-                int bytesSent = 0;
+                int bytesSent = 0; 
                 bool backgroundReleasedAfterFirstChunk = false;
                 mobilePipeline.ChunkReadyForConsumer += (sender, args) =>
                 {
