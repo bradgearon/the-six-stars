@@ -30,6 +30,24 @@
             android:textColor="#B6E6F2"
             android:textSize="12sp" />
 
+        <CheckBox
+            android:id="@+id/console_echo_mic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:text="Echo microphone while recording"
+            android:textColor="#EAF7FF"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="Low-latency mic monitoring is only active during Talk recording. It is useful for device/screen capture; headphones or low speaker volume help avoid feedback."
+            android:textColor="#B6E6F2"
+            android:textSize="11sp" />
+
         <TextView
             android:id="@+id/console_summary"
             android:layout_width="match_parent"

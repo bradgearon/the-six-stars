@@ -44,6 +44,12 @@
                     <TextBlock DockPanel.Dock="Top"
                                Text="Type any request here, including long answers or stories. Everything is handled as normal Chat, displayed in full, and spoken in order. This box clears after the request is queued."
                                TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
+                    <Button DockPanel.Dock="Bottom"
+                            Content="Speak as Star"
+                            Command="{Binding SpeakPlayerTextAsStarCommand}"
+                            ToolTip="Clear the main text box and speak its text directly in the selected Star's voice without sending it to the LLM."
+                            Height="34"
+                            Margin="0,8,0,0" />
                     <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
                              AcceptsReturn="True" TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
@@ -156,11 +162,21 @@
                             <TextBox Text="{Binding LastTranscript}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="90" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <Button Content="{Binding RecordButtonText}" Command="{Binding ToggleRecordingCommand}" Width="210" Height="34" Margin="0,0,6,0" />
                         <Button Content="{Binding CancelStopButtonText}" Command="{Binding CancelOrStopRuntimeCommand}" Width="82" Height="34" />
                     </StackPanel>
-                    <TextBlock Text="Push-to-talk is still available for testing. Start Listen is now the normal hands-free voice mode." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <Button Content="{Binding SpeakAsStarRecordButtonText}"
+                                Command="{Binding ToggleSpeakAsStarRecordingCommand}"
+                                ToolTip="Record your voice, send it to Whisper, then replay the transcript directly with the selected Star's TTS voice. It does not create a conversation turn."
+                                Width="210" Height="34" Margin="0,0,6,0" />
+                        <Button Content="Cancel"
+                                Command="{Binding CancelSpeakAsStarRecordingCommand}"
+                                ToolTip="Discard the current Speak as Star recording without transcribing or speaking it."
+                                Width="82" Height="34" />
+                    </StackPanel>
+                    <TextBlock Text="The normal recorder sends your transcript to the Star conversation. Speak as Star instead sends the recording only to Whisper and TTS, so you can perform a line and hear it in the selected Star's voice. Start Listen remains the normal hands-free conversation mode." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <TextBlock Text="Speech Status" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding SpeechStatus}" TextWrapping="Wrap" Foreground="#666" Margin="0,2,0,8" />
                     <Separator Margin="0,8,0,8" />

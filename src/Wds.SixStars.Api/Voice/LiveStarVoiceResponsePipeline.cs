@@ -95,7 +95,9 @@ namespace Wds.SixStars.Api.Voice
             }
 
             _playbackObserver?.NotifyStarSpeechStarted();
-            if (AutoPlayChunks && _playbackEndpoint is IAudioOutputKeepAliveEndpoint keepAliveEndpoint)
+            if (AutoPlayChunks
+                && _playbackEndpoint is IAudioOutputKeepAliveEndpoint keepAliveEndpoint
+                && _playbackEndpoint is not IStreamingWavePlaybackEndpoint)
             {
                 _outputKeepAlive = keepAliveEndpoint.StartOutputKeepAlive("live LLM speech streaming", _runCts.Token);
             }
@@ -302,6 +304,7 @@ namespace Wds.SixStars.Api.Voice
 
         private async Task ConsumerLoopAsync(CancellationToken cancellationToken)
         {
+            IStreamingWavePlaybackSession? continuousPlayback = null;
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -330,29 +333,68 @@ namespace Wds.SixStars.Api.Voice
 
                     if (AutoPlayChunks)
                     {
-                        CancellationToken playbackToken = cancellationToken;
-                        CancellationTokenSource? playbackLinked = null;
-                        CancellationToken interruptionToken = _interruptionManager?.StartSpeechPlayback() ?? CancellationToken.None;
-                        if (interruptionToken != CancellationToken.None)
+                        if (_playbackEndpoint is IStreamingWavePlaybackEndpoint streamingPlaybackEndpoint)
                         {
-                            playbackLinked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, interruptionToken);
-                            playbackToken = playbackLinked.Token;
+                            continuousPlayback ??= streamingPlaybackEndpoint.CreateStreamingSession("live desktop Star speech");
+                            await continuousPlayback.EnqueueAsync(ready.Result, cancellationToken).ConfigureAwait(false);
                         }
+                        else
+                        {
+                            if (continuousPlayback != null)
+                            {
+                                await continuousPlayback.CompleteAsync(cancellationToken).ConfigureAwait(false);
+                                continuousPlayback.Dispose();
+                                continuousPlayback = null;
+                            }
 
-                        try
-                        {
-                            await _playbackEndpoint.PlayWavAsync(ready.Result, playbackToken).ConfigureAwait(false);
-                        }
-                        finally
-                        {
-                            playbackLinked?.Dispose();
-                            _interruptionManager?.SpeechPlaybackCompleted();
+                            CancellationToken playbackToken = cancellationToken;
+                            CancellationTokenSource? playbackLinked = null;
+                            CancellationToken interruptionToken = _interruptionManager?.StartSpeechPlayback() ?? CancellationToken.None;
+                            if (interruptionToken != CancellationToken.None)
+                            {
+                                playbackLinked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, interruptionToken);
+                                playbackToken = playbackLinked.Token;
+                            }
+
+                            try
+                            {
+                                await _playbackEndpoint.PlayWavAsync(ready.Result, playbackToken).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                playbackLinked?.Dispose();
+                                _interruptionManager?.SpeechPlaybackCompleted();
+                            }
                         }
                     }
                 }
             }
             finally
             {
+                if (continuousPlayback != null)
+                {
+                    try
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            continuousPlayback.Cancel();
+                        }
+                        else
+                        {
+                            Debug.WriteLine("[LiveStarVoiceResponsePipeline] Text/TTS queue is done; draining one continuous desktop PCM output.");
+                            await continuousPlayback.CompleteAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        continuousPlayback.Cancel();
+                    }
+                    finally
+                    {
+                        continuousPlayback.Dispose();
+                    }
+                }
+
                 Debug.WriteLine("[LiveStarVoiceResponsePipeline] Audio consumer queue drained.");
             }
         }

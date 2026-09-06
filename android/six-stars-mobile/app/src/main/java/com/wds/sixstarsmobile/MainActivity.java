@@ -325,6 +325,7 @@ public final class MainActivity extends ComponentActivity {
         bridgeConnectionService = viewModel.bridge();
         conversationService = viewModel.conversations();
         voiceCaptureService = viewModel.voiceCapture();
+        if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(settingsService.echoMicWhileRecording());
         photoAttachmentService = viewModel.photos();
         preparedSpeechCoordinator = viewModel.preparedSpeech();
         starInitiativeCoordinator = viewModel.initiatives();
@@ -1026,6 +1027,15 @@ public final class MainActivity extends ComponentActivity {
         playPhone.setChecked(playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
         controls.addView(playPhone);
 
+        CheckBox micEcho = new CheckBox(this);
+        micEcho.setText("Echo microphone while recording");
+        micEcho.setTextColor(0xFFEAF7FF);
+        micEcho.setChecked(settingsService != null && settingsService.echoMicWhileRecording());
+        controls.addView(micEcho);
+
+        TextView micEchoHint = prodText("Dry low-latency mic monitoring plays your live microphone into Android device audio only while Talk is recording. For screen capture, use Device/Internal audio only; if the recorder also captures the microphone, it records your voice twice a few milliseconds apart and sounds hollow or \"in space.\" Headphones also prevent speaker feedback.", 11, 0xFFB6E6F2, false);
+        controls.addView(micEchoHint);
+
         CheckBox romance = new CheckBox(this);
         romance.setText("Romance Mode");
         romance.setTextColor(0xFFEAF7FF);
@@ -1113,6 +1123,11 @@ public final class MainActivity extends ComponentActivity {
         dialog.setOnShowListener(d -> {
             dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            micEcho.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (settingsService != null) settingsService.setEchoMicWhileRecording(isChecked);
+                if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(isChecked);
+                status.setText(buildProdMenuStatusText());
+            });
             prodBackgroundWritingLoopCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 if (suppressBackgroundWritingLoopToggleDispatch) return;
                 dispatchBackgroundWritingLoopToggle(isChecked, prodBackgroundWritingLoopCheck, status);
@@ -1128,6 +1143,8 @@ public final class MainActivity extends ComponentActivity {
                 baseUrl(); // Persist the manually editable IPv4/hostname bridge before reconnecting.
                 if (viewModel != null) viewModel.updatePreferredIpv6Settings("", false);
                 if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
+                if (settingsService != null) settingsService.setEchoMicWhileRecording(micEcho.isChecked());
+                if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(micEcho.isChecked());
                 if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
                 starInitiativeEnabled = initiative.isChecked();
                 starInitiativeBackgroundEnabled = starInitiativeEnabled;
@@ -1166,6 +1183,7 @@ public final class MainActivity extends ComponentActivity {
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
         sb.append("Desktop auto writing: ").append(desktopBackgroundWritingLoopEnabled ? "enabled" : "disabled").append('\n');
+        sb.append("Microphone echo while recording: ").append(settingsService != null && settingsService.echoMicWhileRecording() ? "enabled" : "disabled").append('\n');
         sb.append("Automatic X posting: ").append(desktopXPostingEnabled ? "enabled" : "disabled").append('\n');
         sb.append("X status: ").append(desktopXPostingStatus == null ? "unknown" : desktopXPostingStatus).append('\n');
         sb.append("Writing shelf: ").append(Math.max(0, selectedStarPendingWritingCount)).append(" new, ")

@@ -21,6 +21,7 @@ final class MobileSettingsService {
     static final String PREF_SELECTED_STAR_ID = "selectedStarId";
     static final String PREF_ROMANCE_MODE = "romanceMode";
     static final String PREF_PLAY_ON_PHONE = "playOnPhone";
+    static final String PREF_ECHO_MIC_WHILE_RECORDING = "echoMicWhileRecording";
     static final String PREF_PREPARED_LISTEN_GENERATION = "preparedListenGeneration";
     static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
     static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
@@ -96,6 +97,8 @@ final class MobileSettingsService {
     void setRomanceMode(boolean value) { prefs.edit().putBoolean(PREF_ROMANCE_MODE, value).apply(); }
     boolean playOnPhone() { return prefs.getBoolean(PREF_PLAY_ON_PHONE, true); }
     void setPlayOnPhone(boolean value) { prefs.edit().putBoolean(PREF_PLAY_ON_PHONE, value).apply(); }
+    boolean echoMicWhileRecording() { return prefs.getBoolean(PREF_ECHO_MIC_WHILE_RECORDING, false); }
+    void setEchoMicWhileRecording(boolean value) { prefs.edit().putBoolean(PREF_ECHO_MIC_WHILE_RECORDING, value).apply(); }
     String area() { return nonEmpty(prefs.getString(PREF_AREA, "VirethornCaves"), "VirethornCaves"); }
     void setArea(String value) { prefs.edit().putString(PREF_AREA, nonEmpty(value, "VirethornCaves")).apply(); }
     String quest() { return nonEmpty(prefs.getString(PREF_QUEST, "AndroidMobileBridge"), "AndroidMobileBridge"); }

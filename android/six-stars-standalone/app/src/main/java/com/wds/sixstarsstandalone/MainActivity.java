@@ -3,6 +3,8 @@ package com.wds.sixstarsstandalone;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
@@ -12,6 +14,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.ScrollView;
@@ -33,6 +36,8 @@ import java.util.concurrent.Executors;
  */
 public final class MainActivity extends Activity {
     private static final int RECORD_AUDIO_REQUEST = 41;
+    private static final String PREFS_NAME = "SixStarsStandalonePrefs";
+    private static final String PREF_ECHO_MIC_WHILE_RECORDING = "echoMicWhileRecording";
     private final ExecutorService initExecutor = Executors.newSingleThreadExecutor();
 
     private StandaloneRuntime runtime;
@@ -184,6 +189,7 @@ public final class MainActivity extends Activity {
         try {
             StandaloneRuntime r = new StandaloneRuntime(this);
             VoiceCaptureService capture = new VoiceCaptureService(this);
+            capture.setMonitorEnabled(getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_ECHO_MIC_WHILE_RECORDING, false));
             runtime = r;
             voiceCapture = capture;
             r.setPlaybackObserver(new StandaloneRuntime.PlaybackObserver() {
@@ -389,6 +395,14 @@ public final class MainActivity extends Activity {
         TextView summary = view.findViewById(R.id.console_summary);
         TextView log = view.findViewById(R.id.console_log);
         ScrollView logScroll = view.findViewById(R.id.console_log_scroll);
+        CheckBox echoMic = view.findViewById(R.id.console_echo_mic);
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        echoMic.setChecked(prefs.getBoolean(PREF_ECHO_MIC_WHILE_RECORDING, false));
+        echoMic.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            prefs.edit().putBoolean(PREF_ECHO_MIC_WHILE_RECORDING, isChecked).apply();
+            if (voiceCapture != null) voiceCapture.setMonitorEnabled(isChecked);
+            refreshConsole(summary, log, logScroll);
+        });
         Runnable refresh = () -> refreshConsole(summary, log, logScroll);
         view.findViewById(R.id.console_refresh).setOnClickListener(v -> refresh.run());
         view.findViewById(R.id.console_retry_review).setOnClickListener(v -> {
@@ -413,7 +427,8 @@ public final class MainActivity extends Activity {
                 + "State: " + runtime.stateStore().file().getAbsolutePath() + "\n"
                 + "Content: " + runtime.content().root().getAbsolutePath() + "\n"
                 + "Trace: " + runtime.trace().fileForStar(selectedStarId).getAbsolutePath() + "\n"
-                + "Pending primary review: " + runtime.hasPendingPrimaryReview();
+                + "Pending primary review: " + runtime.hasPendingPrimaryReview() + "\n"
+                + "Microphone echo while recording: " + (getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).getBoolean(PREF_ECHO_MIC_WHILE_RECORDING, false) ? "enabled" : "disabled");
         summary.setText(text);
         log.setText(runtime.trace().readTailForStar(selectedStarId, 96 * 1024));
         scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));

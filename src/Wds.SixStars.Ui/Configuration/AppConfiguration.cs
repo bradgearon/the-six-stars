@@ -423,7 +423,7 @@ namespace Wds.SixStars.Ui.Configuration
         /// forgiving game-style playback. WASAPI and WaveOut remain selectable fallbacks.
         /// Valid values: wasapi, waveout, directsound, auto. Override with SIX_STARS_AUDIO_BACKEND.
         /// </summary>
-        public string AudioBackend { get; set; } = "directsound";
+        public string AudioBackend { get; set; } = "wasapi";
 
         public bool SaveMetadataText { get; set; } = true;
     }

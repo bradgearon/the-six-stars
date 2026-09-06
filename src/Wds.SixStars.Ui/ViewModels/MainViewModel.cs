@@ -109,10 +109,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _speechRequireWakeWord = false;
     private string _screenStatus = "Screen awareness stopped. It will capture and summarize the desktop every 5 minutes when started.";
     private double _screenCaptureIntervalMinutes = 5;
-    private string _selectedAudioBackend = "directsound";
+    private string _selectedAudioBackend = "wasapi";
     private string _recordButtonText = "Start Recording (Win+Ctrl+E)";
+    private string _speakAsStarRecordButtonText = "Speak as Star (Record)";
     private string _cancelStopButtonText = "Cancel";
     private bool _isRecording;
+
+    private enum ManualRecordingPurpose
+    {
+        None,
+        Conversation,
+        SpeakAsStar
+    }
+
+    private ManualRecordingPurpose _manualRecordingPurpose = ManualRecordingPurpose.None;
+    private string _speakAsStarRecordingStarId = string.Empty;
+    private bool _speakAsStarTranscriptDispatched;
     private bool _isProcessingRuntime;
     private bool _voiceConversationLoopActive;
     private bool _savedRequireWakeWordBeforeManualRecording = true;
@@ -294,7 +306,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         if (_useStreamingTts)
         {
             _streamingVoiceResponsePipeline = new StreamingStarVoiceResponsePipeline(
-                CreateStreamingVoiceGenerator(),
+                CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true),
                 playbackEndpoint,
                 _speechPipeline,
                 _interruptionManager);
@@ -302,7 +314,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             // Dedicated generator for story autoplay prefetch. It must be separate from
             // the active streaming pipeline so it can generate the next story chunk while
             // the current one is still playing.
-            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator();
+            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true);
         }
         else
         {
@@ -326,7 +338,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             IsProcessingRuntime = false;
             _voiceConversationLoopActive = false;
             _pendingBackgroundAnalysisId = string.Empty;
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
             RecordButtonText = "Start Recording (Win+Ctrl+E)";
+            SpeakAsStarRecordButtonText = "Speak as Star (Record)";
             CancelStopButtonText = "Cancel";
             Status = "Runtime operations cancelled: " + args.Reason;
             SpeechStatus = "Cancelled input/LLM/TTS runtime operation.";
@@ -501,6 +517,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         StartListeningCommand = new RelayCommand(async _ => await StartListeningAsync());
         StopListeningCommand = new RelayCommand(async _ => await StopListeningAsync());
         ToggleRecordingCommand = new RelayCommand(async _ => await ToggleRecordingAsync());
+        ToggleSpeakAsStarRecordingCommand = new RelayCommand(async _ => await ToggleSpeakAsStarRecordingAsync());
+        CancelSpeakAsStarRecordingCommand = new RelayCommand(async _ => await CancelSpeakAsStarRecordingAsync());
+        SpeakPlayerTextAsStarCommand = new RelayCommand(async _ => await SpeakPlayerTextAsStarAsync());
         CancelOrStopRuntimeCommand = new RelayCommand(_ => CancelAllRuntimeOperations("User clicked cancel/stop."));
         ClearSelectedStarHistoryCommand = new RelayCommand(async _ => await ClearSelectedStarHistoryAsync());
         ClearAllStarDataCommand = new RelayCommand(async _ => await ClearAllStarDataAsync());
@@ -543,6 +562,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand StartListeningCommand { get; }
     public ICommand StopListeningCommand { get; }
     public ICommand ToggleRecordingCommand { get; }
+    public ICommand ToggleSpeakAsStarRecordingCommand { get; }
+    public ICommand CancelSpeakAsStarRecordingCommand { get; }
+    public ICommand SpeakPlayerTextAsStarCommand { get; }
     public ICommand CancelOrStopRuntimeCommand { get; }
     public ICommand ClearSelectedStarHistoryCommand { get; }
     public ICommand ClearAllStarDataCommand { get; }
@@ -735,6 +757,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _recordButtonText;
         set => SetProperty(ref _recordButtonText, value);
+    }
+
+    public string SpeakAsStarRecordButtonText
+    {
+        get => _speakAsStarRecordButtonText;
+        set => SetProperty(ref _speakAsStarRecordButtonText, value);
     }
 
     public string CancelStopButtonText
@@ -1443,7 +1471,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             && requestType != RequestType.StarInitiative;
     }
 
-    private IStreamingVoiceGenerator CreateStreamingVoiceGenerator()
+    private IStreamingVoiceGenerator CreateStreamingVoiceGenerator(bool preferSmoothDesktopWav = false)
     {
         if (IsHostedTtsEnabled())
         {
@@ -1470,7 +1498,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             });
         }
 
-        return CreateLocalStreamingVoiceGenerator();
+        if (preferSmoothDesktopWav)
+        {
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop smooth mode: requesting complete WAV speech parts from qwentts.cpp; Android/mobile remains on rolling PCM.");
+        }
+
+        return CreateLocalStreamingVoiceGenerator(preferSmoothDesktopWav ? "wav" : null);
     }
 
     /// <summary>
@@ -1478,7 +1511,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     /// normal voice output is configured to use hosted Alibaba TTS. The standalone Android
     /// local-TTS bridge calls this so phone TTS can remain entirely on the desktop GPU.
     /// </summary>
-    private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator()
+    private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator(string? responseFormatOverride = null)
     {
         string? httpBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
             ?? _appConfig.QwenTTS.HttpBaseUrl;
@@ -1495,7 +1528,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 ?? _appConfig.QwenTTS.Model,
             DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_LANGUAGE")
                 ?? _appConfig.QwenTTS.DefaultLanguage,
-            ResponseFormat = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
+            ResponseFormat = responseFormatOverride
+                ?? Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
                 ?? _appConfig.QwenTTS.ResponseFormat
                 ?? "pcm",
             PcmPacketMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_PACKET_MS"), _appConfig.QwenTTS.PcmPacketMilliseconds),
@@ -1615,7 +1649,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             VoiceInputStatus = "Captured audio ignored after transcription/wake filtering.";
             LastVoiceSegmentDetails = $"Ignored segment {args.Segment.SegmentId}: {args.Segment.DurationMs:0} ms, peak RMS={args.Segment.PeakRms:0.0000}. Reason: {args.Reason}";
         });
-        _speechPipeline.TranscriptReady += async (_, args) => await ProcessTranscriptFromSpeechPipelineAsync(args.Transcript);
+        _speechPipeline.TranscriptReady += async (_, args) =>
+        {
+            if (_manualRecordingPurpose == ManualRecordingPurpose.SpeakAsStar)
+            {
+                await SpeakTranscriptAsSelectedStarAsync(args.Transcript).ConfigureAwait(false);
+                return;
+            }
+
+            await ProcessTranscriptFromSpeechPipelineAsync(args.Transcript).ConfigureAwait(false);
+        };
         _speechCoordinator.SpeechRecognized += (_, args) => OnUiThread(() =>
         {
             LastTranscript = args.RecognizedSpeech.Transcript.Text;
@@ -1937,6 +1980,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 if (!IsRecording)
                 {
                     RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                    SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                     CancelStopButtonText = "Cancel";
                 }
             });
@@ -2174,6 +2218,47 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _speechPipeline.NotifyStarSpeechStarted();
         try
         {
+            bool canUseContinuousOutput = _playbackEndpoint is IStreamingWavePlaybackEndpoint;
+
+            if (canUseContinuousOutput)
+            {
+                IStreamingWavePlaybackEndpoint streamingEndpoint = (IStreamingWavePlaybackEndpoint)_playbackEndpoint;
+                using IStreamingWavePlaybackSession playbackSession = streamingEndpoint.CreateStreamingSession("prefetched story desktop speech");
+                CancellationToken playbackInterruptionToken = _interruptionManager.StartSpeechPlayback();
+                CancellationTokenSource? linkedCts = null;
+                try
+                {
+                    CancellationToken effectiveToken = cancellationToken;
+                    if (playbackInterruptionToken != CancellationToken.None)
+                    {
+                        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, playbackInterruptionToken);
+                        effectiveToken = linkedCts.Token;
+                    }
+
+                    for (int i = 0; i < voiceChunks.Count; i++)
+                    {
+                        effectiveToken.ThrowIfCancellationRequested();
+                        VoiceSynthesisResult chunk = voiceChunks[i];
+                        OnUiThread(() => Status = $"Streaming story chunk {response.StoryPartIndex + 1} ({i + 1}/{voiceChunks.Count}) through one continuous audio output.");
+                        await playbackSession.EnqueueAsync(chunk, effectiveToken).ConfigureAwait(false);
+                    }
+
+                    await playbackSession.CompleteAsync(effectiveToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    playbackSession.Cancel();
+                    throw;
+                }
+                finally
+                {
+                    linkedCts?.Dispose();
+                    _interruptionManager.SpeechPlaybackCompleted();
+                }
+
+                return;
+            }
+
             for (int i = 0; i < voiceChunks.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -2197,11 +2282,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     linkedCts?.Dispose();
                     _interruptionManager.SpeechPlaybackCompleted();
-                }
-
-                if (i + 1 < voiceChunks.Count)
-                {
-                    await Task.Delay(35, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -2604,11 +2684,301 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (IsRecording)
         {
+            if (_manualRecordingPurpose != ManualRecordingPurpose.Conversation)
+            {
+                OnUiThread(() => Status = "A Speak as Star recording is already active. Use its Send or Cancel button.");
+                return;
+            }
+
             await SubmitManualRecordingAsync().ConfigureAwait(false);
             return;
         }
 
         await StartManualRecordingAsync(loopContinuation: false).ConfigureAwait(false);
+    }
+
+    private async Task ToggleSpeakAsStarRecordingAsync()
+    {
+        if (IsRecording)
+        {
+            if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+            {
+                OnUiThread(() => Status = "A normal conversation recording is already active. Submit or cancel it before recording as the Star.");
+                return;
+            }
+
+            await SubmitSpeakAsStarRecordingAsync().ConfigureAwait(false);
+            return;
+        }
+
+        await StartSpeakAsStarRecordingAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartSpeakAsStarRecordingAsync()
+    {
+        NotifyBackgroundWritingLoopForegroundActivity("manual speak-as-star recording");
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        try
+        {
+            _operationController.BeginNewOperation("manual speak-as-star recording");
+            _voiceConversationLoopActive = false;
+            _savedRequireWakeWordBeforeManualRecording = SpeechRequireWakeWord;
+            _savedSilenceEndMs = _voiceCaptureSettings.SilenceEndMs;
+            _manualRecordingPurpose = ManualRecordingPurpose.SpeakAsStar;
+            _speakAsStarRecordingStarId = starId;
+            _speakAsStarTranscriptDispatched = false;
+
+            SpeechRequireWakeWord = false;
+            _voiceCaptureSettings.RequireHotwordWhenIdle = false;
+            _voiceCaptureSettings.SilenceEndMs = 60 * 60 * 1000;
+            UpdateSpeechOptions();
+            await _services.SpeechInput
+                .StartConversationCaptureAsync(starId, _operationController.CurrentToken)
+                .ConfigureAwait(false);
+
+            OnUiThread(() =>
+            {
+                IsRecording = true;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Recording as Star...";
+                SpeakAsStarRecordButtonText = "Send / Speak as Star";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Recording a line to transcribe and replay in " + starId + "'s voice. Press Send / Speak as Star when finished.";
+                Status = "Recording a direct " + starId + " voice line. This will not be sent to the LLM or added as a conversation turn.";
+            });
+        }
+        catch (Exception ex)
+        {
+            RestoreSpeechSettingsAfterSpeakAsStarRecording();
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Could not start Speak as Star recording: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
+    private async Task SubmitSpeakAsStarRecordingAsync()
+    {
+        if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+        {
+            return;
+        }
+
+        string starId = string.IsNullOrWhiteSpace(_speakAsStarRecordingStarId)
+            ? ResolveDefaultStarId(SelectedStarId)
+            : _speakAsStarRecordingStarId;
+
+        try
+        {
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = true;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Stop";
+                SpeechStatus = "Submitting the recorded line to Whisper. The transcript will be spoken directly as " + starId + ".";
+                Status = "Transcribing direct Star voice line...";
+            });
+
+            _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
+            _voiceCaptureSettings.RequireHotwordWhenIdle = false;
+            UpdateSpeechOptions();
+
+            // Keep the purpose and target Star set through StopAsync. The speech pipeline awaits
+            // final transcription before returning, and TranscriptReady enters its handler immediately,
+            // so the transcript is routed to direct Star TTS rather than to the conversation runtime.
+            await _services.SpeechInput.StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+            if (!_speakAsStarTranscriptDispatched)
+            {
+                OnUiThread(() =>
+                {
+                    IsProcessingRuntime = false;
+                    CancelStopButtonText = "Cancel";
+                    SpeechStatus = "No speech segment was transcribed, so nothing was spoken as " + starId + ".";
+                    Status = SpeechStatus;
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Speak as Star recording cancelled.";
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Could not submit Speak as Star recording: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+        finally
+        {
+            RestoreSpeechSettingsAfterSpeakAsStarRecording();
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+        }
+    }
+
+    private async Task CancelSpeakAsStarRecordingAsync()
+    {
+        if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+        {
+            OnUiThread(() => Status = "No Speak as Star recording is active.");
+            return;
+        }
+
+        _voiceConversationLoopActive = false;
+        RestoreSpeechSettingsAfterSpeakAsStarRecording();
+
+        try
+        {
+            await _services.SpeechInput.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[SpeakAsStar] Cancel cleanup failed: " + ex.Message);
+        }
+        finally
+        {
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Direct Star voice recording cancelled.";
+                Status = "Speak as Star recording cancelled.";
+            });
+        }
+    }
+
+    private async Task SpeakPlayerTextAsStarAsync()
+    {
+        string text = (PlayerText ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Status = "Type text in the main message box first, then click Speak as Star.";
+            return;
+        }
+
+        if (IsRecording)
+        {
+            Status = "Finish or cancel the active recording before speaking typed text as the Star.";
+            return;
+        }
+
+        string starId = SelectedStarId;
+        PlayerText = string.Empty;
+        NotifyBackgroundWritingLoopForegroundActivity("direct typed speak-as-star playback");
+        CancellationToken token = _operationController.BeginNewOperation("typed speak-as-star playback for " + starId);
+        await SpeakTextAsStarAsync(text, starId, "typed text", token).ConfigureAwait(false);
+    }
+
+    private async Task SpeakTranscriptAsSelectedStarAsync(SpeechTranscript transcript)
+    {
+        _speakAsStarTranscriptDispatched = true;
+        string text = transcript?.Text?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                SpeechStatus = "Whisper returned an empty transcript, so nothing was spoken as the Star.";
+                Status = SpeechStatus;
+            });
+            return;
+        }
+
+        string starId = string.IsNullOrWhiteSpace(_speakAsStarRecordingStarId)
+            ? ResolveDefaultStarId(SelectedStarId)
+            : _speakAsStarRecordingStarId;
+        OnUiThread(() =>
+        {
+            LastTranscript = text;
+            SpeechStatus = "Whisper transcript ready. Speaking it directly as " + starId + ".";
+        });
+
+        await SpeakTextAsStarAsync(text, starId, "recorded speech", _operationController.CurrentToken).ConfigureAwait(false);
+    }
+
+    private void RestoreSpeechSettingsAfterSpeakAsStarRecording()
+    {
+        SpeechRequireWakeWord = _savedRequireWakeWordBeforeManualRecording;
+        _voiceCaptureSettings.RequireHotwordWhenIdle = _savedRequireWakeWordBeforeManualRecording;
+        _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
+        UpdateSpeechOptions();
+    }
+
+    private async Task SpeakTextAsStarAsync(string text, string starId, string sourceLabel, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string normalizedStarId = ResolveDefaultStarId(starId);
+            StarInteractionResponse response = CreateLiveVoiceTemplateResponse(normalizedStarId);
+            response.SetSpokenParts(new[] { text.Trim() });
+
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = true;
+                Status = "Speaking " + sourceLabel + " directly in " + normalizedStarId + "'s voice...";
+            });
+
+            DesktopVoiceOutputService.Result result = await _services.VoiceOutput
+                .SpeakAsync(DefaultSessionId, response, cancellationToken)
+                .ConfigureAwait(false);
+
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = !result.Configured
+                    ? "No voice pipeline is configured for direct Speak as Star playback."
+                    : "Direct Speak as Star playback complete for " + normalizedStarId + ".";
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = "Direct Speak as Star playback cancelled.";
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = "Direct Speak as Star playback failed: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
     }
 
     private async Task StartManualRecordingAsync(bool loopContinuation)
@@ -2624,6 +2994,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 _savedSilenceEndMs = _voiceCaptureSettings.SilenceEndMs;
             }
 
+            _manualRecordingPurpose = ManualRecordingPurpose.Conversation;
             SpeechRequireWakeWord = false;
             SelectedRequestType = RequestType.Chat;
             _voiceCaptureSettings.RequireHotwordWhenIdle = false;
@@ -2638,6 +3009,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 IsRecording = true;
                 IsProcessingRuntime = false;
                 RecordButtonText = "Done / Submit Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Cancel";
                 SpeechStatus = (loopContinuation ? "Reply finished. Listening again for " : "Recording voice for ") + SelectedStarId + ". Press Done/Submit when finished.";
                 Status = "Recording voice input for " + SelectedStarId + ".";
@@ -2648,7 +3020,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             OnUiThread(() =>
             {
                 IsRecording = false;
+                _manualRecordingPurpose = ManualRecordingPurpose.None;
                 RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Cancel";
                 SpeechStatus = "Could not start recording: " + ex.Message;
                 DebugJson = ex.ToString();
@@ -2665,6 +3039,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 IsRecording = false;
                 IsProcessingRuntime = true;
                 RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Stop";
                 SpeechStatus = "Submitting recorded voice to Whisper, then LLM, then TTS.";
                 Status = "Processing voice input for " + SelectedStarId + ".";
@@ -2675,6 +3050,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateSpeechOptions();
 
             await _services.SpeechInput.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
         }
         catch (OperationCanceledException)
         {
@@ -2863,6 +3239,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
         _voiceCaptureSettings.RequireHotwordWhenIdle = _savedRequireWakeWordBeforeManualRecording;
         SpeechRequireWakeWord = _savedRequireWakeWordBeforeManualRecording;
+        _manualRecordingPurpose = ManualRecordingPurpose.None;
         _operationController.CancelAllRuntimeOperations(reason);
     }
 
@@ -3186,7 +3563,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 StarInteractionResponse liveVoiceTemplate = CreateLiveVoiceTemplateResponse(request.StarId);
                 liveSpeech = new LiveStarVoiceResponsePipeline(
-                    CreateStreamingVoiceGenerator(),
+                    CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true),
                     _playbackEndpoint,
                     _speechPipeline,
                     _interruptionManager)

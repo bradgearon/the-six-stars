@@ -11,7 +11,7 @@ namespace Wds.SixStars.Ui.Audio;
 /// Playback endpoint decorator that saves every generated voice payload before sending it to the real playback endpoint.
 /// This is intentionally in the WPF project because it is a desktop-dev-harness convenience, not a Unity requirement.
 /// </summary>
-public sealed class VoiceWavArchivePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint
+public sealed class VoiceWavArchivePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint, IStreamingWavePlaybackEndpoint
 {
     private readonly IWavePlaybackEndpoint _inner;
     private readonly string _outputDirectory;
@@ -45,6 +45,16 @@ public sealed class VoiceWavArchivePlaybackEndpoint : IWavePlaybackEndpoint, IAu
     {
         SaveGeneratedAudio(voiceAudio);
         await _inner.PlayWavAsync(voiceAudio, cancellationToken).ConfigureAwait(false);
+    }
+
+    public IStreamingWavePlaybackSession CreateStreamingSession(string reason)
+    {
+        if (_inner is IStreamingWavePlaybackEndpoint streamingEndpoint)
+        {
+            return new ArchiveStreamingSession(this, streamingEndpoint.CreateStreamingSession(reason));
+        }
+
+        return new LegacyArchiveStreamingSession(this);
     }
 
     private void SaveGeneratedAudio(VoiceSynthesisResult voiceAudio)
@@ -125,6 +135,55 @@ public sealed class VoiceWavArchivePlaybackEndpoint : IWavePlaybackEndpoint, IAu
 
         value = value.Trim();
         return string.IsNullOrWhiteSpace(value) ? "unknown" : value;
+    }
+
+    private sealed class ArchiveStreamingSession : IStreamingWavePlaybackSession
+    {
+        private readonly VoiceWavArchivePlaybackEndpoint _owner;
+        private readonly IStreamingWavePlaybackSession _inner;
+
+        public ArchiveStreamingSession(VoiceWavArchivePlaybackEndpoint owner, IStreamingWavePlaybackSession inner)
+        {
+            _owner = owner;
+            _inner = inner;
+        }
+
+        public Task EnqueueAsync(VoiceSynthesisResult voiceAudio, CancellationToken cancellationToken)
+        {
+            _owner.SaveGeneratedAudio(voiceAudio);
+            return _inner.EnqueueAsync(voiceAudio, cancellationToken);
+        }
+
+        public Task CompleteAsync(CancellationToken cancellationToken)
+            => _inner.CompleteAsync(cancellationToken);
+
+        public void Cancel() => _inner.Cancel();
+
+        public void Dispose() => _inner.Dispose();
+    }
+
+    private sealed class LegacyArchiveStreamingSession : IStreamingWavePlaybackSession
+    {
+        private readonly VoiceWavArchivePlaybackEndpoint _owner;
+
+        public LegacyArchiveStreamingSession(VoiceWavArchivePlaybackEndpoint owner)
+        {
+            _owner = owner;
+        }
+
+        public Task EnqueueAsync(VoiceSynthesisResult voiceAudio, CancellationToken cancellationToken)
+            => _owner.PlayWavAsync(voiceAudio, cancellationToken);
+
+        public Task CompleteAsync(CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public void Cancel()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     private sealed class NoopDisposable : IDisposable

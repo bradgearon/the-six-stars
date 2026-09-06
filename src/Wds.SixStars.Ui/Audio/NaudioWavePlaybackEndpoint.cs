@@ -10,13 +10,15 @@ namespace Wds.SixStars.Ui.Audio;
 
 /// <summary>
 /// Standard desktop WAV playback endpoint. Unity will provide its own endpoint later, but WPF uses NAudio.
-/// DirectSound is the desktop harness default because it behaves like a forgiving game-style output path.
-/// If DirectSound fails on a given Windows 11/.NET/driver combination, playback falls back to WASAPI
-/// and then WaveOut instead of crashing.
+/// WASAPI shared mode is the desktop harness default for smooth long-running speech.
+/// DirectSound and WaveOut remain available as compatibility fallbacks.
 /// Set SIX_STARS_AUDIO_BACKEND=wasapi, waveout, directsound, or auto to override.
 /// </summary>
-public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint
+public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint, IStreamingWavePlaybackEndpoint
 {
+    private const int ContinuousStartupPrebufferMs = 420;
+    private const int ContinuousOutputLatencyMs = 100;
+    private const double SentenceEdgeFadeMs = 4.0;
     private readonly string? _configuredBackend;
     private readonly object _keepAliveGate = new object();
     private KeepAlivePlayback? _keepAlivePlayback;
@@ -25,6 +27,11 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
     public NaudioWavePlaybackEndpoint(string? configuredBackend = null)
     {
         _configuredBackend = configuredBackend;
+    }
+
+    public IStreamingWavePlaybackSession CreateStreamingSession(string reason)
+    {
+        return new ContinuousWavePlaybackSession(_configuredBackend, reason);
     }
 
     public IDisposable StartOutputKeepAlive(string reason, CancellationToken cancellationToken)
@@ -394,6 +401,279 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
                 _keepAlivePlayback.Dispose();
                 _keepAlivePlayback = null;
             }
+        }
+    }
+
+    private sealed class ContinuousWavePlaybackSession : IStreamingWavePlaybackSession
+    {
+        private readonly string? _configuredBackend;
+        private readonly string _reason;
+        private readonly object _gate = new object();
+        private OutputPlayerBundle? _bundle;
+        private BufferedWaveProvider? _provider;
+        private WaveFormat? _format;
+        private bool _started;
+        private bool _completed;
+        private bool _cancelled;
+        private int _disposed;
+
+        public ContinuousWavePlaybackSession(string? configuredBackend, string reason)
+        {
+            _configuredBackend = configuredBackend;
+            _reason = string.IsNullOrWhiteSpace(reason) ? "continuous streaming speech" : reason;
+        }
+
+        public Task EnqueueAsync(VoiceSynthesisResult voiceAudio, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (voiceAudio == null) throw new ArgumentNullException(nameof(voiceAudio));
+            byte[] wav = voiceAudio.WavAudio ?? Array.Empty<byte>();
+            if (wav.Length == 0) return Task.CompletedTask;
+
+            byte[] pcm;
+            WaveFormat waveFormat;
+            using (MemoryStream memoryStream = new MemoryStream(wav, writable: false))
+            using (WaveStream reader = CreateReader(memoryStream, voiceAudio.MimeType))
+            {
+                waveFormat = reader.WaveFormat;
+                pcm = ReadAllPcmBytes(reader);
+            }
+
+            if (pcm.Length == 0) return Task.CompletedTask;
+
+            // Full WAV chunks are intentional speech parts (normally a complete sentence). A tiny
+            // edge ramp removes any non-zero start/end sample from the synthesizer so a natural
+            // pause between separately synthesized sentences cannot turn into a click. Never ramp
+            // the rolling PCM transport windows, because doing that to every packet would amplitude-
+            // modulate the voice at the packet cadence.
+            if (!voiceAudio.IsStreamingPcmWindow)
+            {
+                ApplyPcm16EdgeFadeInPlace(pcm, waveFormat, SentenceEdgeFadeMs);
+            }
+
+            lock (_gate)
+            {
+                if (_cancelled) throw new OperationCanceledException("Continuous desktop speech playback was cancelled.", cancellationToken);
+                if (_completed) throw new InvalidOperationException("Cannot enqueue audio after continuous desktop playback has completed.");
+
+                if (_provider == null)
+                {
+                    _format = waveFormat;
+                    _provider = new BufferedWaveProvider(waveFormat)
+                    {
+                        // Keep the device alive if generation momentarily falls behind. qwentts.cpp normally
+                        // produces packets faster than real time, so this avoids reopen/click gaps without
+                        // manufacturing a separate output stream for every transport packet.
+                        ReadFully = true,
+                        DiscardOnBufferOverflow = false,
+                        BufferDuration = TimeSpan.FromMinutes(2)
+                    };
+                    _provider.AddSamples(pcm, 0, pcm.Length);
+                    StartOutputLocked(force: false);
+                }
+                else
+                {
+                    if (!SameWaveFormat(_format!, waveFormat))
+                    {
+                        throw new InvalidOperationException(
+                            "Streaming TTS changed audio format mid-response. Expected " + DescribeWaveFormat(_format!) +
+                            " but received " + DescribeWaveFormat(waveFormat) + ".");
+                    }
+
+                    _provider.AddSamples(pcm, 0, pcm.Length);
+                    StartOutputLocked(force: false);
+                }
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"[NaudioPlayback] Continuous stream queued {pcm.Length} PCM bytes; buffered={_provider.BufferedDuration.TotalMilliseconds:0} ms; reason={_reason}.");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public async Task CompleteAsync(CancellationToken cancellationToken)
+        {
+            BufferedWaveProvider? provider;
+            lock (_gate)
+            {
+                if (_completed) return;
+                _completed = true;
+                provider = _provider;
+            }
+
+            if (provider == null) return;
+
+            lock (_gate)
+            {
+                // Short utterances may contain less than the normal startup prebuffer. Completion means
+                // no more input is coming, so start whatever is available and let it drain cleanly.
+                StartOutputLocked(force: true);
+            }
+
+            // BufferedWaveProvider uses ReadFully=true so the output remains alive rather than stopping
+            // at a momentary packet underrun. Completion therefore waits explicitly for queued PCM to
+            // drain, then gives the device one latency window to render its final sample before stopping.
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_cancelled) throw new OperationCanceledException("Continuous desktop speech playback was cancelled.", cancellationToken);
+
+                int bufferedBytes;
+                lock (_gate)
+                {
+                    bufferedBytes = provider.BufferedBytes;
+                }
+
+                if (bufferedBytes <= 0) break;
+                await Task.Delay(8, cancellationToken).ConfigureAwait(false);
+            }
+
+            await Task.Delay(120, cancellationToken).ConfigureAwait(false);
+            StopOutput();
+        }
+
+        public void Cancel()
+        {
+            lock (_gate)
+            {
+                _cancelled = true;
+                _provider?.ClearBuffer();
+            }
+            StopOutput();
+        }
+
+        private void StartOutputLocked(bool force)
+        {
+            if (_started || _provider == null) return;
+
+            if (!force && _provider.BufferedDuration.TotalMilliseconds < ContinuousStartupPrebufferMs)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[NaudioPlayback] Waiting for desktop speech prebuffer: {_provider.BufferedDuration.TotalMilliseconds:0} / {ContinuousStartupPrebufferMs} ms.");
+                return;
+            }
+
+            string backend = NormalizeBackend(_configuredBackend ?? Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND") ?? "wasapi");
+            string[] candidates = backend switch
+            {
+                "wasapi" => new[] { "wasapi", "waveout", "directsound" },
+                "waveout" => new[] { "waveout", "wasapi", "directsound" },
+                // DirectSound is fine for one-shot compatibility, but its small circular buffers can
+                // produce periodic crackles on some Windows drivers during long rolling speech. For
+                // continuous Star speech prefer WASAPI shared mode first even when the legacy desktop
+                // setting still says directsound.
+                "directsound" => new[] { "wasapi", "directsound", "waveout" },
+                _ => new[] { "wasapi", "waveout", "directsound" }
+            };
+
+            Exception? lastException = null;
+            foreach (string candidate in candidates)
+            {
+                OutputPlayerBundle? candidateBundle = null;
+                try
+                {
+                    candidateBundle = CreateOutputPlayerBundle(candidate, latencyMs: ContinuousOutputLatencyMs);
+                    candidateBundle.Player.Init(_provider);
+                    candidateBundle.Player.Play();
+                    _bundle = candidateBundle;
+                    candidateBundle = null;
+                    _started = true;
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[NaudioPlayback] Continuous streaming output started with {candidate} at {DescribeWaveFormat(_format!)}. Reason: {_reason}");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastException = ex;
+                    candidateBundle?.Dispose();
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[NaudioPlayback] Continuous streaming output failed for {candidate}: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            throw new InvalidOperationException("All configured NAudio backends failed to start continuous streaming playback.", lastException);
+        }
+
+        private void StopOutput()
+        {
+            OutputPlayerBundle? bundle;
+            lock (_gate)
+            {
+                bundle = _bundle;
+                _bundle = null;
+                _started = false;
+            }
+
+            if (bundle == null) return;
+            try
+            {
+                bundle.Player.Stop();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[NaudioPlayback] Continuous streaming stop ignored: " + ex.Message);
+            }
+            finally
+            {
+                bundle.Dispose();
+            }
+        }
+
+        private static void ApplyPcm16EdgeFadeInPlace(byte[] pcm, WaveFormat format, double fadeMilliseconds)
+        {
+            if (pcm == null || pcm.Length < 4 || format == null) return;
+            if (format.BitsPerSample != 16 || format.Encoding != WaveFormatEncoding.Pcm) return;
+            if (format.Channels <= 0 || format.SampleRate <= 0) return;
+
+            int bytesPerFrame = format.Channels * 2;
+            int totalFrames = pcm.Length / bytesPerFrame;
+            if (totalFrames < 4) return;
+
+            int fadeFrames = (int)Math.Round(format.SampleRate * Math.Max(0.0, fadeMilliseconds) / 1000.0);
+            fadeFrames = Math.Min(fadeFrames, totalFrames / 4);
+            if (fadeFrames <= 1) return;
+
+            for (int frame = 0; frame < fadeFrames; frame++)
+            {
+                double gainIn = frame / (double)(fadeFrames - 1);
+                double gainOut = (fadeFrames - 1 - frame) / (double)(fadeFrames - 1);
+
+                ScalePcm16Frame(pcm, frame * bytesPerFrame, format.Channels, gainIn);
+                ScalePcm16Frame(pcm, (totalFrames - fadeFrames + frame) * bytesPerFrame, format.Channels, gainOut);
+            }
+        }
+
+        private static void ScalePcm16Frame(byte[] pcm, int offset, int channels, double gain)
+        {
+            for (int channel = 0; channel < channels; channel++)
+            {
+                int sampleOffset = offset + channel * 2;
+                short sample = (short)(pcm[sampleOffset] | (pcm[sampleOffset + 1] << 8));
+                int scaled = (int)Math.Round(sample * gain);
+                scaled = Math.Max(short.MinValue, Math.Min(short.MaxValue, scaled));
+                pcm[sampleOffset] = (byte)(scaled & 0xFF);
+                pcm[sampleOffset + 1] = (byte)((scaled >> 8) & 0xFF);
+            }
+        }
+
+        private static bool SameWaveFormat(WaveFormat left, WaveFormat right)
+        {
+            return left.SampleRate == right.SampleRate
+                && left.BitsPerSample == right.BitsPerSample
+                && left.Channels == right.Channels
+                && left.Encoding == right.Encoding
+                && left.BlockAlign == right.BlockAlign;
+        }
+
+        private static string DescribeWaveFormat(WaveFormat format)
+        {
+            return format.SampleRate + "Hz/" + format.BitsPerSample + "bit/" + format.Channels + "ch/" + format.Encoding;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            Cancel();
         }
     }
 
