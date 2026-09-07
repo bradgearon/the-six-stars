@@ -300,7 +300,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
             : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
 
-        IWavePlaybackEndpoint playbackEndpoint = CreatePlaybackEndpoint();
+        IWavePlaybackEndpoint playbackEndpoint = new SpeakAsStarPlaybackEndpoint(CreatePlaybackEndpoint());
         _playbackEndpoint = playbackEndpoint;
 
         if (_useStreamingTts)
@@ -757,6 +757,47 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _recordButtonText;
         set => SetProperty(ref _recordButtonText, value);
+    }
+
+    public bool EnableMicrophoneOutput
+    {
+        get => _appConfig.VoiceOutput.EnableMicrophoneOutput;
+        set => SaveSpeakAsStarOption(nameof(EnableMicrophoneOutput), value);
+    }
+
+    public bool AuthoringMode
+    {
+        get => _appConfig.VoiceOutput.AuthoringMode;
+        set => SaveSpeakAsStarOption(nameof(AuthoringMode), value);
+    }
+
+    private void SaveSpeakAsStarOption(string name, bool value)
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            JsonObject root = File.Exists(path)
+                ? JsonNode.Parse(File.ReadAllText(path), documentOptions: new JsonDocumentOptions
+                    { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject()
+                : new JsonObject();
+            JsonObject? output = root["VoiceOutput"] as JsonObject;
+            if (output == null)
+            {
+                output = new JsonObject();
+                root["VoiceOutput"] = output;
+            }
+            output[name] = value;
+            string temporary = path + ".tmp";
+            File.WriteAllText(temporary, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporary, path, overwrite: true);
+            if (name == nameof(EnableMicrophoneOutput)) _appConfig.VoiceOutput.EnableMicrophoneOutput = value;
+            else _appConfig.VoiceOutput.AuthoringMode = value;
+        }
+        catch (Exception ex)
+        {
+            Status = "Could not save Speak as Star setting: " + ex.Message;
+        }
+        OnPropertyChanged(name);
     }
 
     public string SpeakAsStarRecordButtonText
@@ -2951,9 +2992,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 Status = "Speaking " + sourceLabel + " directly in " + normalizedStarId + "'s voice...";
             });
 
+            using SpeakAsStarPlaybackEndpoint.OutputScope outputScope =
+                ((SpeakAsStarPlaybackEndpoint)_playbackEndpoint).Begin(
+                    normalizedStarId, text, EnableMicrophoneOutput, AuthoringMode,
+                    _appConfig.VoiceOutput.MicrophoneOutputDeviceId, cancellationToken);
+
             DesktopVoiceOutputService.Result result = await _services.VoiceOutput
                 .SpeakAsync(DefaultSessionId, response, cancellationToken)
                 .ConfigureAwait(false);
+
+            string? authoredPath = await outputScope.FinishAsync(cancellationToken).ConfigureAwait(false);
 
             OnUiThread(() =>
             {
@@ -2961,7 +3009,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 CancelStopButtonText = "Cancel";
                 Status = !result.Configured
                     ? "No voice pipeline is configured for direct Speak as Star playback."
-                    : "Direct Speak as Star playback complete for " + normalizedStarId + ".";
+                    : "Direct Speak as Star playback complete for " + normalizedStarId + "."
+                        + (authoredPath == null ? "" : " Saved: " + authoredPath);
             });
         }
         catch (OperationCanceledException)
@@ -4494,6 +4543,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 System.Diagnostics.Debug.WriteLine($"[Config] appsettings.json not found at {configPath}. Using defaults/local overrides.");
             }
 
+            // These two UI-owned switches persist in appsettings.json, even when local
+            // configuration contains an older copy of their values.
+            JsonNode? savedMicrophoneOutput = mergedRoot?["VoiceOutput"]?["EnableMicrophoneOutput"]?.DeepClone();
+            JsonNode? savedAuthoringMode = mergedRoot?["VoiceOutput"]?["AuthoringMode"]?.DeepClone();
             if (File.Exists(localConfigPath))
             {
                 JsonNode? localRoot = JsonNode.Parse(File.ReadAllText(localConfigPath));
@@ -4506,6 +4559,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 return new AppConfiguration();
             }
 
+            if (mergedRoot["VoiceOutput"] is JsonObject voiceOutput)
+            {
+                if (savedMicrophoneOutput != null) voiceOutput["EnableMicrophoneOutput"] = savedMicrophoneOutput;
+                if (savedAuthoringMode != null) voiceOutput["AuthoringMode"] = savedAuthoringMode;
+            }
             AppConfiguration? config = mergedRoot.Deserialize<AppConfiguration>(jsonOptions);
             return config ?? new AppConfiguration();
         }

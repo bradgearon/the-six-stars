@@ -44,6 +44,12 @@
                     <TextBlock DockPanel.Dock="Top"
                                Text="Type any request here, including long answers or stories. Everything is handled as normal Chat, displayed in full, and spoken in order. This box clears after the request is queued."
                                TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0">
+                        <CheckBox Content="Enable microphone output" IsChecked="{Binding EnableMicrophoneOutput}"
+                                  ToolTip="Speak as Star only. Requires a virtual microphone/cable; physical microphones cannot accept playback." />
+                        <CheckBox Content="Authoring mode (save WAV)" IsChecked="{Binding AuthoringMode}"
+                                  ToolTip="Save typed and recorded Speak as Star lines under Authoring\StarName beside the executable." />
+                    </StackPanel>
                     <Button DockPanel.Dock="Bottom"
                             Content="Speak as Star"
                             Command="{Binding SpeakPlayerTextAsStarCommand}"

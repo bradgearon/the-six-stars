@@ -405,6 +405,10 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class VoiceOutputConfig
     {
+        public bool EnableMicrophoneOutput { get; set; } = false;
+        public bool AuthoringMode { get; set; } = false;
+        // Optional render endpoint ID for a virtual mixer/cable. Never a capture endpoint ID.
+        public string MicrophoneOutputDeviceId { get; set; } = string.Empty;
         /// <summary>
         /// Master switch for writing generated Star voice WAVs to disk. Set false to play
         /// generated audio without archiving every spoken line. Override with

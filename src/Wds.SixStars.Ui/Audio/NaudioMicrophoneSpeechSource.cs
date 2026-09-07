@@ -205,6 +205,7 @@ public sealed class NaudioMicrophoneSpeechSource : IDisposable
 
         WaveInEvent wave = new WaveInEvent
         {
+            DeviceNumber = -1,
             WaveFormat = new WaveFormat(_format.SampleRateHz, _format.BitsPerSample, _format.Channels),
             BufferMilliseconds = 100,
             NumberOfBuffers = 3
