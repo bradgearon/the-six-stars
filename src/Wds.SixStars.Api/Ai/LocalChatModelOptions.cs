@@ -2,8 +2,8 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class LocalChatModelOptions
     {
-        public string EndpointUrl { get; set; } = "http://localhost:1234/v1/chat/completions";
-        public string Model { get; set; } = "local-model";
+        public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
+        public string Model { get; set; } = "six-stars-gemma4";
         public string? ApiKey { get; set; }
         public double Temperature { get; set; } = 0.65;
         /// <summary>Default max_tokens to send to the backend. 0 means do not send max_tokens; let the backend stop on EOS/context.</summary>
@@ -26,9 +26,9 @@ namespace Wds.SixStars.Api.Ai
 
         /// <summary>
         /// Send request-level reasoning controls. The launcher also disables reasoning through
-        /// llama-server CLI args; this guards externally-started local llama-server instances.
+        /// llama-server accepts these reasoning-control fields and the launcher disables reasoning explicitly for the local model.
         /// </summary>
-        public bool SendReasoningControlFields { get; set; } = true;
+        public bool SendReasoningControlFields { get; set; } = false;
 
         public int TimeoutSeconds { get; set; } = 120;
 

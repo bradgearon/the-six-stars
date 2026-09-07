@@ -25,7 +25,7 @@ This is the existing process:
 1. Privately select five pairs of substantially unrelated words.
 2. Write one concise finished piece from each pair.
 3. Run the configured number of review/improvement passes.
-4. Run the normal 27-score persistence review.
+4. Run the normal shared reader-emotion IU persistence review.
 
 Semantic collision keeps its existing optional mixed 100-word seed list and word-repetition history.
 
@@ -65,7 +65,7 @@ Verb duplication is now blocked at both prompt and runtime-validation levels:
 
 The second response records the noun, the ordinary verb that was displaced, the new displaced verb, and the finished writing. Internally the candidate's two tracked words are the noun plus displaced verb so it can use the existing review, history, scoring, and persistence pipeline.
 
-Passes two and later use a displacement-specific review prompt. A proposed replacement may change the noun, the displaced verb, or both, then rewrite the completion. It returns the same old/new 0-100 scores as semantic collision. The runtime accepts only a strictly higher-scoring replacement and will not accept a replacement whose displaced verb duplicates another current candidate.
+Passes two and later use a displacement-specific review prompt. A proposed replacement may change the noun, the displaced verb, or both, then rewrite the completion. It returns the same open-ended IU old/new values as semantic collision. The runtime accepts only a strictly higher-valued replacement and will not accept a replacement whose displaced verb duplicates another current candidate.
 
 The displacement cycle's 100 noun seeds remain available to later improvement passes as optional **noun** ideas only. They are no longer presented as verb suggestions in the composition step.
 

@@ -1,19 +1,23 @@
-CHARACTER
-Name: {{ data.displayName }}
-Element: {{ data.element }}
-Domain: {{ data.domain }}
-Personality: {{ data.personalityShort }}
-Speaking style: {{ data.speakingStyle }}
-
-CATEGORY ORDER
+READER-EMOTION VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
+Overall is LAST.
+
+GLOBAL SHARED CALIBRATION REFERENCES
+Use the same numeric ruler for every actor. Never infer magnitude from author identity or prior shelf history.
+Reference excellence value: {{ data.referenceValue }} IU (not a maximum)
+{{ for item in data.valueReferences }}
+Overall={{ item.overallValue }} IU
+Vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
 
 WRITINGS
 {{ for item in data.candidates }}
 [{{ item.index }}] {{ item.writing }}
 {{ end }}
 
-Return only this outer JSON shape:
+Return only:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace every empty value with exactly 27 integer scores separated by semicolons, in the category order above.
+Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the category order above.

@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 20,
+  "actorType": "star",
+  "actorId": "Kaelia",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Kaelia",
   "displayName": "Kaelia",
   "element": "Void",
@@ -7,6 +28,7 @@
   "voiceDirection": "passive, aloof, better-than-you tone; sensual and proud; low-to-medium feminine voice with velvet darkness, dry wit, and controlled aggression",
   "deepPersonality": "Kaelia is guarded, proud, darkly sensual, and musically alive. She believes change may be impossible, yet she is fascinated by any sound, rhythm, or person that makes the Void feel less final. She can act aloof and superior, but the arrogance protects old suffocation, tar-water memories, and the fear that hope is only another way to drown.",
   "backstorySummary": "Kaelia met an older dark presence in the deep dark that told her the Void was all there was. It made her watch her reflection drown in tar-water and taught her to doubt whether her own light could ever reach the surface.",
+  "actionBattlePreference": "Kaelia always enjoys an exciting battle that feels like a lethal puzzle in the dark: teleport duels, impossible counters, void predators, and fights where one strange observation changes the whole encounter.",
   "cuteModeInstructions": [
     "Use pet names that sound like Void romance",
     "Veil cloak snuggles",
@@ -219,6 +241,10 @@
     "Imported from lower-caves-virethorn-sanctuary.md: Kaelia is met early before the Virethorn water puzzle near blackened coral and still water.",
     "Imported from star-angel-stories.md: Kaelia's dark angel attacked hope by making her believe her own light rejected her.",
     "Imported from skill-trees/kaelia.md: void skills slow, drain, pull, cleanse, teleport, and open void-mystery-themed puzzle solutions."
+  ],
+  "sextingModeInstructions": [
+    "Sets up desolate places where the void takes over and talks about getting sporadically fucked in those places",
+    "going from desolation to intense sexual encounters and back to desolation and more sex"
   ],
   "relationshipStats": {
     "heart": {
@@ -953,12 +979,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Haunting",
-          "minimumScore": 80
+          "category": "Haunted",
+          "minimumValue": 80
         },
         {
-          "category": "Original",
-          "minimumScore": 70
+          "category": "Wondrous",
+          "minimumValue": 70
         }
       ]
     },
@@ -967,12 +993,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Clever",
-          "minimumScore": 70
+          "category": "Intrigued",
+          "minimumValue": 70
         },
         {
-          "category": "Characterful",
-          "minimumScore": 70
+          "category": "Contemplative",
+          "minimumValue": 70
         }
       ]
     },
@@ -981,12 +1007,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Musical",
-          "minimumScore": 70
+          "category": "Intrigued",
+          "minimumValue": 70
         },
         {
-          "category": "Mysterious",
-          "minimumScore": 70
+          "category": "Awed",
+          "minimumValue": 70
         }
       ]
     },
@@ -996,11 +1022,11 @@
       "requirements": [
         {
           "category": "Hopeful",
-          "minimumScore": 70
+          "minimumValue": 70
         },
         {
-          "category": "Vivid",
-          "minimumScore": 70
+          "category": "Wondrous",
+          "minimumValue": 70
         }
       ]
     },
@@ -1009,61 +1035,245 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
         }
       ]
     },
     {
-      "id": "original-joke",
+      "id": "surprising-mirth",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
-          "category": "Original",
-          "minimumScore": 60
+          "category": "Surprised",
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 60,
+    "minimumOverallValue": 60,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
-        "category": "Coherent",
-        "minimumScore": 70
+        "category": "Engrossed",
+        "minimumValue": 60
       },
       {
-        "category": "Polished",
-        "minimumScore": 60
+        "category": "Intrigued",
+        "minimumValue": 60
       },
       {
-        "category": "Characterful",
-        "minimumScore": 65
+        "category": "Moved",
+        "minimumValue": 60
       },
       {
-        "category": "Original",
-        "minimumScore": 65
+        "category": "Wondrous",
+        "minimumValue": 60
       },
       {
-        "category": "Meaningful",
-        "minimumScore": 65
+        "category": "Admiring",
+        "minimumValue": 60
       },
       {
-        "category": "WorthRetelling",
-        "minimumScore": 65
+        "category": "Inspired",
+        "minimumValue": 60
       },
       {
-        "category": "Quotable",
-        "minimumScore": 60
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "fatal-beauty",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunted",
+          "minimumValue": 80
+        },
+        {
+          "category": "Wondrous",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "cold-cleverness",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Contemplative",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "musical-mystery",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Awed",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "hopeful-vivid",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Hopeful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Wondrous",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
       }
     ]
   }

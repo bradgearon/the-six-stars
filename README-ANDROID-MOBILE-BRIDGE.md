@@ -53,7 +53,7 @@ The Android app now uses two long-lived connections:
 - Multiplexed control/API WebSocket: `ws://grasshoppah:8066/api/mobile/socket`
 - Phone voice socket: reported by the WebSocket `health` operation as `audioPort`, usually `8067`
 
-The desktop receives Qwen/WebSocket TTS chunks, orders them through the streaming voice pipeline with desktop autoplay disabled, and forwards each WAV chunk over the dedicated binary audio socket to Android. Android plays the queued PCM16 WAV chunks locally using `AudioTrack`. The Android debug window is intentionally compact and no longer stores full bridge request/response JSON.
+The desktop receives Qwen/qwentts.cpp audio packets, orders them through the streaming voice pipeline with desktop autoplay disabled, and forwards the ordered audio packets over the dedicated binary audio socket to Android. In PCM mode Android strips the compatibility WAV framing and feeds every packet in one logical reply into a single adaptively buffered `AudioTrack`. The Android debug window is intentionally compact and no longer stores full bridge request/response JSON.
 
 Open both TCP ports in Windows Firewall when testing from a real phone.
 

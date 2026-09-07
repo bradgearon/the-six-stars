@@ -54,7 +54,10 @@ namespace Wds.SixStars.Api.Ai
             // generation while new calls pile up behind it. Keep one HTTP generation in flight per
             // client. The background dispatcher already prevents new background work while a
             // foreground lease is active, so this gate mainly protects the handoff edge.
+            System.Diagnostics.Stopwatch requestGateStopwatch = System.Diagnostics.Stopwatch.StartNew();
             await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            requestGateStopwatch.Stop();
+            LogRequestGateWait(debugLabel, requestGateStopwatch.ElapsedMilliseconds);
             try
             {
                 List<Dictionary<string, string>> wireMessages = messages
@@ -120,6 +123,217 @@ namespace Wds.SixStars.Api.Ai
             {
                 _requestGate.Release();
             }
+        }
+
+        public async Task<string> CompleteTextStreamingAsync(IReadOnlyList<ChatMessage> messages, int? maxTokens, string debugLabel, Action<string>? onTextDelta, CancellationToken cancellationToken)
+        {
+            System.Diagnostics.Stopwatch requestGateStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            await _requestGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            requestGateStopwatch.Stop();
+            LogRequestGateWait(debugLabel, requestGateStopwatch.ElapsedMilliseconds);
+            try
+            {
+                System.Diagnostics.Stopwatch streamStopwatch = System.Diagnostics.Stopwatch.StartNew();
+                long firstDeltaMs = -1;
+                int streamedDeltaCount = 0;
+                List<Dictionary<string, string>> wireMessages = messages
+                    .Select(x => new Dictionary<string, string>
+                    {
+                        { "role", x.Role },
+                        { "content", x.Content }
+                    })
+                    .ToList();
+
+                int configuredMaxTokens = maxTokens.HasValue ? maxTokens.Value : _options.MaxTokens;
+                int? effectiveMaxTokens = configuredMaxTokens > 0 ? configuredMaxTokens : (int?)null;
+                string exchangeId = LlmExchangeFileLogger.CreateExchangeId(debugLabel);
+
+                Dictionary<string, object> payload = new Dictionary<string, object>
+                {
+                    { "model", _options.Model },
+                    { "messages", wireMessages },
+                    { "temperature", _options.Temperature },
+                    { "stream", true }
+                };
+
+                if (ShouldSendReasoningControlFields())
+                {
+                    payload["reasoning"] = "off";
+                    payload["reasoning_budget"] = Math.Max(0, _options.ReasoningBudget);
+                    payload["reasoning_format"] = string.IsNullOrWhiteSpace(_options.ReasoningFormat) ? "none" : _options.ReasoningFormat;
+                }
+
+                if (effectiveMaxTokens.HasValue)
+                {
+                    payload["max_tokens"] = effectiveMaxTokens.Value;
+                }
+
+                string json = JsonSerializer.Serialize(payload, _jsonOptions);
+                LogExchange(
+                    "LLM streaming text request before send",
+                    FormatRequestForDebug("stream_text / " + debugLabel, payload, null, effectiveMaxTokens),
+                    "request",
+                    exchangeId,
+                    debugLabel,
+                    "stream_text");
+
+                using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, _options.EndpointUrl))
+                {
+                    request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+                    if (!string.IsNullOrWhiteSpace(_options.ApiKey))
+                    {
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+                    }
+
+                    using (HttpResponseMessage response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
+                    {
+                        if (!response.IsSuccessStatusCode)
+                        {
+#if NET5_0_OR_GREATER
+                            string errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+                            string errorBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+#endif
+                            string preview = errorBody.Substring(0, Math.Min(500, errorBody.Length));
+                            throw new InvalidOperationException($"LLM streaming endpoint returned {(int)response.StatusCode} {response.StatusCode}: {preview}");
+                        }
+
+                        StringBuilder content = new StringBuilder();
+                        StringBuilder nonSseBody = new StringBuilder();
+                        bool sawSseData = false;
+
+#if NET5_0_OR_GREATER
+                        Stream responseStream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+#else
+                        Stream responseStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+#endif
+                        using (responseStream)
+                        using (StreamReader reader = new StreamReader(responseStream, Encoding.UTF8, true, 8192, leaveOpen: false))
+                        {
+                            while (!reader.EndOfStream)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                                if (line == null) break;
+
+                                if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    if (!string.IsNullOrWhiteSpace(line) && !line.StartsWith(":", StringComparison.Ordinal))
+                                    {
+                                        if (nonSseBody.Length > 0) nonSseBody.AppendLine();
+                                        nonSseBody.Append(line);
+                                    }
+                                    continue;
+                                }
+
+                                sawSseData = true;
+                                string data = line.Substring(5).TrimStart();
+                                if (string.Equals(data, "[DONE]", StringComparison.OrdinalIgnoreCase)) break;
+                                if (string.IsNullOrWhiteSpace(data)) continue;
+
+                                string delta = ExtractStreamingContentDelta(data);
+                                if (string.IsNullOrEmpty(delta)) continue;
+
+                                if (firstDeltaMs < 0) firstDeltaMs = streamStopwatch.ElapsedMilliseconds;
+                                streamedDeltaCount++;
+                                content.Append(delta);
+                                if (onTextDelta != null)
+                                {
+                                    try
+                                    {
+                                        onTextDelta(delta);
+                                    }
+                                    catch (Exception callbackError)
+                                    {
+                                        System.Diagnostics.Debug.WriteLine("[OpenAiCompatibleChatModelClient] Streaming text callback failed: " + callbackError.Message);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!sawSseData && content.Length == 0 && nonSseBody.Length > 0)
+                        {
+                            string fallbackContent = ExtractContent(nonSseBody.ToString());
+                            content.Append(fallbackContent);
+                            if (!string.IsNullOrEmpty(fallbackContent) && onTextDelta != null)
+                            {
+                                try { onTextDelta(fallbackContent); }
+                                catch (Exception callbackError)
+                                {
+                                    System.Diagnostics.Debug.WriteLine("[OpenAiCompatibleChatModelClient] Non-SSE streaming callback failed: " + callbackError.Message);
+                                }
+                            }
+                        }
+
+                        string finalContent = content.ToString();
+                        streamStopwatch.Stop();
+                        LogExchange(
+                            "LLM streaming timing",
+                            "FirstDeltaMs: " + firstDeltaMs + "\nTotalStreamMs: " + streamStopwatch.ElapsedMilliseconds + "\nDeltaCount: " + streamedDeltaCount + "\nFinalChars: " + finalContent.Length,
+                            "stream_timing",
+                            exchangeId,
+                            debugLabel,
+                            "stream_text");
+                        LogExchange(
+                            "LLM streamed extracted content before Star parsing",
+                            FormatExtractedContentForDebug("stream_text / " + debugLabel, finalContent),
+                            "extracted_content",
+                            exchangeId,
+                            debugLabel,
+                            "stream_text");
+
+                        if (string.IsNullOrWhiteSpace(finalContent))
+                        {
+                            throw new InvalidOperationException("Streaming LLM returned no text content.");
+                        }
+
+                        return finalContent;
+                    }
+                }
+            }
+            finally
+            {
+                _requestGate.Release();
+            }
+        }
+
+        private static string ExtractStreamingContentDelta(string data)
+        {
+            try
+            {
+                using (JsonDocument doc = JsonDocument.Parse(data))
+                {
+                    JsonElement root = doc.RootElement;
+                    if (!root.TryGetProperty("choices", out JsonElement choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+                    {
+                        return string.Empty;
+                    }
+
+                    JsonElement choice = choices[0];
+                    if (choice.TryGetProperty("delta", out JsonElement delta)
+                        && delta.ValueKind == JsonValueKind.Object
+                        && delta.TryGetProperty("content", out JsonElement deltaContent)
+                        && deltaContent.ValueKind == JsonValueKind.String)
+                    {
+                        return deltaContent.GetString() ?? string.Empty;
+                    }
+
+                    if (choice.TryGetProperty("message", out JsonElement message)
+                        && message.ValueKind == JsonValueKind.Object
+                        && message.TryGetProperty("content", out JsonElement messageContent)
+                        && messageContent.ValueKind == JsonValueKind.String)
+                    {
+                        return messageContent.GetString() ?? string.Empty;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Ignore malformed/non-content streaming frames; later frames can still complete the response.
+            }
+
+            return string.Empty;
         }
 
         private List<string> BuildResponseFormatModeFallbacks()
@@ -256,6 +470,21 @@ namespace Wds.SixStars.Api.Ai
             return maxTokens.HasValue && maxTokens.Value > 0
                 ? maxTokens.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : "not sent; backend/model default";
+        }
+
+        private void LogRequestGateWait(string debugLabel, long waitMs)
+        {
+            if (waitMs < 25) return;
+            string exchangeId = LlmExchangeFileLogger.CreateExchangeId((debugLabel ?? "llm") + "-gate-wait");
+            LogExchange(
+                "LLM request waited for local model gate",
+                "WaitMs: " + waitMs + Environment.NewLine
+                    + "DebugLabel: " + (debugLabel ?? string.Empty) + Environment.NewLine
+                    + "Meaning: another local-model generation already owned the single request gate before this request could be logged/sent.",
+                "gate_wait",
+                exchangeId,
+                debugLabel ?? string.Empty,
+                "gate_wait");
         }
 
         private string FormatRequestForDebug(string responseFormatMode, Dictionary<string, object> payload, object? requestedResponseFormat, int? effectiveMaxTokens)

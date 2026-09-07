@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Wds.SixStars.Api.Models;
+using Wds.SixStars.Api.Ai;
 using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.GirlfriendState;
 using Wds.SixStars.Api.DailyState;
@@ -18,6 +19,9 @@ using Wds.SixStars.Api.State;
 using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Forge.Contracts;
+using Wds.SixStars.Api.Forge.Context;
+using Wds.SixStars.Api.Forge.Review;
 
 namespace Wds.SixStars.Api.Engine
 {
@@ -27,13 +31,20 @@ namespace Wds.SixStars.Api.Engine
         private readonly IStarAgent _agent;
         private readonly IRelationshipDeltaCalculator _deltaCalculator;
         private readonly IStarMemoryApi _memoryApi;
+        private readonly IForgeInteractionReviewService? _forgeInteractionReviewService;
+        private readonly IForgeContextCardFactory _forgeContextCardFactory;
         private readonly IScreenContextStore? _screenContextStore;
         private readonly int _recentScreenCount;
         private readonly int _recentHistoryCount;
         private readonly object _backgroundGate = new object();
         private CancellationTokenSource? _backgroundStoryGenerationCts;
         private readonly SemaphoreSlim _backgroundAnalysisQueue = new SemaphoreSlim(1, 1);
+        private long _nextPrimaryBackgroundOrderSequence;
         private readonly Dictionary<string, PendingBackgroundAnalysis> _pendingBackgroundAnalysis = new Dictionary<string, PendingBackgroundAnalysis>(StringComparer.OrdinalIgnoreCase);
+        private readonly object _primaryBackgroundSettlementGate = new object();
+        private readonly Dictionary<string, PrimaryBackgroundSettlement> _primaryBackgroundSettlements = new Dictionary<string, PrimaryBackgroundSettlement>(StringComparer.OrdinalIgnoreCase);
+        private readonly BackgroundAnalysisTraceOptions _backgroundAnalysisTraceOptions;
+        private readonly object _backgroundAnalysisTraceGate = new object();
         private readonly StarDailyStateService? _dailyStateService;
         private readonly WorldEventService _worldEventService;
         private readonly StarSpeechIntentService _speechIntentService;
@@ -60,6 +71,7 @@ namespace Wds.SixStars.Api.Engine
         private readonly ConversationDebugLogRecorder _conversationDebugLogRecorder = new ConversationDebugLogRecorder();
 
         public event EventHandler<StarInteractionResponse>? BackgroundAnalysisCompleted;
+        public event EventHandler<StarInteractionResponse>? BackgroundInformationFollowupCompleted;
         public event EventHandler<Exception>? BackgroundAnalysisFailed;
         public event EventHandler<StarInteractionResponse>? StoryGenerationCompleted;
         public event EventHandler<Exception>? StoryGenerationFailed;
@@ -103,11 +115,15 @@ namespace Wds.SixStars.Api.Engine
             int maxMemoryLogEntries = 160,
             int maxImportantQuotes = 80,
             int maxMemoryNotes = 160,
+            int shortTermMemoryWindowMs = 1800000,
             DailyStarStateOptions? dailyStateOptions = null,
             WorldEventOptions? worldEventOptions = null,
             StarSpeechIntentOptions? speechIntentOptions = null,
             PreparedSpeechOptions? preparedSpeechOptions = null,
-            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null,
+            IForgeInteractionReviewService? forgeInteractionReviewService = null,
+            IForgeContextCardFactory? forgeContextCardFactory = null,
+            BackgroundAnalysisTraceOptions? backgroundAnalysisTraceOptions = null)
             : this(
                 profileProvider,
                 agent,
@@ -117,6 +133,7 @@ namespace Wds.SixStars.Api.Engine
                     MaxMemoryLogEntries = maxMemoryLogEntries,
                     MaxImportantQuotes = maxImportantQuotes,
                     MaxMemoryNotes = maxMemoryNotes,
+                    ShortTermMemoryWindowMs = Math.Max(1000, shortTermMemoryWindowMs),
                     MaxThingsLearnedOrSuggestedByPlayer = 256,
                     MaxRecentHistoryForPrompt = recentHistoryCount
                 }),
@@ -127,7 +144,10 @@ namespace Wds.SixStars.Api.Engine
                 worldEventOptions,
                 speechIntentOptions,
                 preparedSpeechOptions,
-                foregroundSpeechStyleOptions)
+                foregroundSpeechStyleOptions,
+                forgeInteractionReviewService,
+                forgeContextCardFactory,
+                backgroundAnalysisTraceOptions)
         {
         }
 
@@ -143,16 +163,32 @@ namespace Wds.SixStars.Api.Engine
             WorldEventOptions? worldEventOptions = null,
             StarSpeechIntentOptions? speechIntentOptions = null,
             PreparedSpeechOptions? preparedSpeechOptions = null,
-            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null)
+            ForegroundSpeechStyleOptions? foregroundSpeechStyleOptions = null,
+            IForgeInteractionReviewService? forgeInteractionReviewService = null,
+            IForgeContextCardFactory? forgeContextCardFactory = null,
+            BackgroundAnalysisTraceOptions? backgroundAnalysisTraceOptions = null)
         {
             _profileProvider = profileProvider;
             _agent = agent;
             _deltaCalculator = deltaCalculator;
             _memoryApi = memoryApi;
+            _forgeContextCardFactory = forgeContextCardFactory ?? new SixStarsForgeContextCardFactory();
+            _forgeInteractionReviewService = forgeInteractionReviewService
+                ?? (agent is IStarTurnAnalyzer analyzer ? new StarTurnAnalyzerForgeInteractionReviewService(analyzer) : null);
             _screenContextStore = screenContextStore;
             _recentScreenCount = Math.Max(1, recentScreenCount);
             _recentHistoryCount = Math.Max(1, recentHistoryCount);
-            _backgroundDispatcher.StatusChanged += (_, args) => BackgroundAiRequestStatusChanged?.Invoke(this, args);
+            _backgroundAnalysisTraceOptions = backgroundAnalysisTraceOptions ?? new BackgroundAnalysisTraceOptions();
+            _backgroundDispatcher.StatusChanged += (_, args) =>
+            {
+                TraceBackgroundAnalysis(
+                    "dispatcher." + (args.Phase ?? string.Empty),
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    "stack=" + (args.StackName ?? string.Empty) + "; dispatcherRequest=" + (args.RequestId ?? string.Empty) + "; queued=" + args.QueuedCount.ToString(CultureInfo.InvariantCulture) + "; " + (args.Message ?? string.Empty));
+                BackgroundAiRequestStatusChanged?.Invoke(this, args);
+            };
             _worldEventService = new WorldEventService(worldEventOptions ?? new WorldEventOptions());
             _speechIntentService = new StarSpeechIntentService(speechIntentOptions ?? new StarSpeechIntentOptions());
             _preparedSpeechStore = new PreparedSpeechArtifactStore(preparedSpeechOptions ?? new PreparedSpeechOptions());
@@ -322,6 +358,9 @@ namespace Wds.SixStars.Api.Engine
         public Task<StarSpeechIntent?> MarkSpeechIntentFailedAsync(string intentId, string error, CancellationToken cancellationToken)
             => _speechIntentService.MarkFailedAsync(intentId, error, cancellationToken);
 
+        public Task<StarSpeechIntent?> MarkSpeechIntentDeferredAsync(string intentId, string reason, CancellationToken cancellationToken)
+            => _speechIntentService.MarkDeferredAsync(intentId, reason, cancellationToken);
+
         public Task<StarSpeechIntent?> LeaseSpeechIntentAsync(string intentId, CancellationToken cancellationToken)
             => _speechIntentService.LeaseAsync(intentId, cancellationToken);
 
@@ -358,6 +397,10 @@ namespace Wds.SixStars.Api.Engine
         {
             get
             {
+                lock (_primaryBackgroundSettlementGate)
+                {
+                    if (_primaryBackgroundSettlements.Count > 0) return true;
+                }
                 lock (_backgroundGate)
                 {
                     return _pendingBackgroundAnalysis.Count > 0 || _backgroundAnalysisQueue.CurrentCount == 0;
@@ -696,12 +739,39 @@ namespace Wds.SixStars.Api.Engine
             await _screenContextStore.AddAsync(sessionId, capture, cancellationToken).ConfigureAwait(false);
         }
 
+        public void SuppressBackgroundAnalysisForPlayerActivity(TimeSpan quietWindow, string reason = "Player activity")
+        {
+            if (quietWindow < TimeSpan.Zero) quietWindow = TimeSpan.Zero;
+            _backgroundDispatcher.SuppressBackgroundFor(quietWindow, reason);
+
+            // Story-generation workers have their own CTS outside the dispatcher. Cancel an active
+            // one without replacing the CTS on every touch; the next real story worker creates a
+            // fresh CTS when it actually starts. This keeps repeated PlayerActivity pings cheap.
+            lock (_backgroundGate)
+            {
+                try
+                {
+                    if (_backgroundStoryGenerationCts != null && !_backgroundStoryGenerationCts.IsCancellationRequested)
+                    {
+                        _backgroundStoryGenerationCts.Cancel();
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Player activity suppressed ordinary background AI for " + quietWindow.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s; durable primary memory review bypasses this suppression: " + reason);
+        }
+
         public void CancelBackgroundAnalysis(string reason = "Cancel background Star analysis")
         {
-            // Pending durable analyses must survive. Do not abort an LLM HTTP request already in
-            // flight: several local servers continue generating after a disconnected client, which
-            // can leave the next foreground request waiting behind invisible abandoned work. Queued
-            // background work is already held while a foreground lease is active.
+            // Ordinary background stacks are cancellable. Primary interaction review compute is
+            // also foreground-preemptible now, but its immutable job is immediately requeued rather
+            // than discarded, so a player reply never waits on background memory work and the
+            // durable review still settles afterward. Lightweight PlayerActivity pings do not
+            // preempt primary review compute; only an actual foreground/cancel operation does.
+            bool cancelledDispatcherRequest = _backgroundDispatcher.CancelActiveRequest(reason);
             lock (_backgroundGate)
             {
                 try
@@ -714,7 +784,7 @@ namespace Wds.SixStars.Api.Engine
                 }
                 _backgroundStoryGenerationCts = new CancellationTokenSource();
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Active background work preempted without discarding pending state analysis: " + reason);
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] CancelBackgroundAnalysis requested foreground-priority cancellation; durable primary review compute may be preempted but its immutable job is requeued. dispatcherCancelled=" + cancelledDispatcherRequest + "; " + reason);
         }
 
         public async Task<StarInteractionResponse> ProcessWhenForegroundIdleAsync(
@@ -777,6 +847,13 @@ namespace Wds.SixStars.Api.Engine
                 && IsTruthy(GetGameContextFlag(request.GameContext, "starInitiativeForce", "false"));
             bool isBackgroundWorkerRequest = (isStarInitiativeRequest && !isManualStarInitiativeRequest)
                 || (request != null && (IsStoryGenerationWorkerRequest(request) || IsGirlfriendProposalWorkerRequest(request) || IsInterstarMicroRequest(request)));
+
+            // Primary memory reviews are durable background jobs, not a foreground gate. A new
+            // player turn takes the foreground dispatcher lease immediately; if a primary review
+            // is currently using the model, the dispatcher preempts that compute and the review
+            // requeues from its immutable turn snapshot. This prevents a 10-30 second background
+            // memory pass (including one for a different Star) from delaying the next reply.
+
             IDisposable? foregroundLease = request != null && request.RequestType != RequestType.Debug && !isBackgroundWorkerRequest
                 ? _backgroundDispatcher.EnterForegroundRequest("Foreground reply request for " + request.StarId + " (" + request.RequestType + ")")
                 : null;
@@ -837,7 +914,13 @@ namespace Wds.SixStars.Api.Engine
             }
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
-            response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
+            // Fast streaming Chat/Photo returns speech only. Questions, emotion animation, and
+            // missing-reference requests are decided by the private background review. Structured
+            // Story paths may still use their existing immediate information contract.
+            if (request.RequestType == RequestType.Story)
+            {
+                response = await TryResolveInformationNeedAsync(profile, request, state, response, cancellationToken).ConfigureAwait(false);
+            }
             ApplyVoiceDefaults(profile, response);
             response.UnityEvents.Add(new UnityEventEnvelope
             {
@@ -849,10 +932,10 @@ namespace Wds.SixStars.Api.Engine
                     { "starId", request.StarId ?? string.Empty },
                     { "requestType", request.RequestType.ToString() },
                     { "spokenParts", response.SpokenParts.Count.ToString() },
-                    { "note", "Foreground conversation reply finished; background emotion/memory review will settle after voice is ready." }
+                    { "note", "Foreground conversation reply finished; the durable primary emotion/memory review queues immediately at Gemma completion while speech continues and may be preempted/requeued by the next foreground turn." }
                 }
             });
-            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; waiting for voice-ready background review before interstar updates can queue.", 0, 0);
+            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "ForegroundCompleted", "Foreground conversation with " + request.StarId + " finished; the durable primary review will queue immediately and settle in the background without gating the next foreground turn.", 0, 0);
 
             if (request.RequestType == RequestType.StarInitiative)
             {
@@ -866,7 +949,7 @@ namespace Wds.SixStars.Api.Engine
                 return response;
             }
 
-            if (_agent is IStarTurnAnalyzer analyzer)
+            if (_forgeInteractionReviewService != null)
             {
                 response.StateDeltas = RelationshipDelta.Zero();
                 response.UnityEvents.Add(new UnityEventEnvelope
@@ -876,23 +959,24 @@ namespace Wds.SixStars.Api.Engine
                     Data =
                     {
                         { "speechParts", response.SpokenParts.Count.ToString() },
-                        { "note", "Fast spoken response returned immediately; emotion/memory update will wait until voice generation reports ready." }
+                        { "note", "Fast spoken response returned immediately; durable emotion/memory update queues at complete Gemma response. Player activity alone does not cancel it, while a real next foreground turn may preempt/requeue its compute." }
                     }
                 });
                 string backgroundAnalysisId = Guid.NewGuid().ToString("N");
                 response.BackgroundAnalysisId = backgroundAnalysisId;
                 response.UnityEvents.Add(new UnityEventEnvelope
                 {
-                    Type = "BackgroundStarAnalysisWaitingForVoice",
+                    Type = "BackgroundStarAnalysisQueuedAtForegroundCompletion",
                     Target = request.StarId,
                     Data =
                     {
                         { "backgroundAnalysisId", backgroundAnalysisId },
-                        { "note", "Call StartBackgroundAnalysisAfterVoiceReady after foreground voice generation completes." }
+                        { "note", "Primary memory review is queued immediately when the complete foreground Gemma response is available. Streaming speech may continue independently." }
                     }
                 });
-                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. Background review is waiting for voice generation to finish.");
-                StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, request, state, response);
+                response.Debug.Notes.Add("Fast foreground response returned before durable memory/emotion update. The primary review was queued immediately at foreground completion; it remains durable, may be preempted/requeued by a later foreground turn, and never gates that foreground turn.");
+                StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, request, state, response, enableFallback: false);
+                StartBackgroundAnalysisAfterVoiceReady(backgroundAnalysisId, "Complete foreground Gemma response is available; primary review queues immediately while speech continues.");
                 return response;
             }
 
@@ -923,6 +1007,7 @@ namespace Wds.SixStars.Api.Engine
 
             StarInteractionResponse response = await _agent.GenerateAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             ApplyVoiceDefaults(profile, response);
+
             response.StateDeltas = RelationshipDelta.Zero();
             response.SuggestedStateDeltas = RelationshipDelta.Zero();
             response.EmotionalConnectionPercentBefore = state.EmotionalConnectionPercent;
@@ -955,7 +1040,9 @@ namespace Wds.SixStars.Api.Engine
             }
 
             response.Debug.Notes.Add("StarInitiative state gate allowed LLM check: score=" + gate.Score.ToString("0.00") + "; " + gate.Reason);
-            response.Debug.Notes.Add("No StarMemoryApi update, emotion vector scoring, relationship update, or interstar ripple is run for RequestType=StarInitiative.");
+            response.Debug.Notes.Add(IsTruthy(GetContextFlag(request, "starInitiativeForce"))
+                ? "Manual StarInitiative Thought skips emotion/relationship/interstar updates; a deliberate fast-stream unresolved marker may be persisted separately."
+                : "No StarMemoryApi update, emotion vector scoring, relationship update, or interstar ripple is run for RequestType=StarInitiative.");
             return response;
         }
 
@@ -1104,17 +1191,20 @@ namespace Wds.SixStars.Api.Engine
                 }
             }
 
-            string girlfriendJson = FirstNonEmpty(GetContextFlag(request, "girlfriendHourlyStateJson"), state.GirlfriendHourlyState?.Json);
-            if (!string.IsNullOrWhiteSpace(girlfriendJson))
+            if (state.IsGirlfriend)
             {
-                AddGirlfriendHourlyTopicsFromJson(girlfriendJson, topics);
-            }
-            if (state.GirlfriendHourlyState != null && state.GirlfriendHourlyState.IsAvailable)
-            {
-                topics.AddRange((state.GirlfriendHourlyState.ThingsSheWantsToSay ?? new List<string>()).Take(8));
-                topics.AddRange((state.GirlfriendHourlyState.CuteThingsSheWantsToSay ?? new List<string>()).Take(8));
-                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.NeedVector, topics, "girlfriend need");
-                AddGirlfriendVectorTopics(state.GirlfriendHourlyState.WantVector, topics, "girlfriend want");
+                string girlfriendJson = FirstNonEmpty(GetContextFlag(request, "girlfriendHourlyStateJson"), state.GirlfriendHourlyState?.Json);
+                if (!string.IsNullOrWhiteSpace(girlfriendJson))
+                {
+                    AddGirlfriendHourlyTopicsFromJson(girlfriendJson, topics);
+                }
+                if (state.GirlfriendHourlyState != null && state.GirlfriendHourlyState.IsAvailable)
+                {
+                    topics.AddRange((state.GirlfriendHourlyState.ThingsSheWantsToSay ?? new List<string>()).Take(8));
+                    topics.AddRange((state.GirlfriendHourlyState.CuteThingsSheWantsToSay ?? new List<string>()).Take(8));
+                    AddGirlfriendVectorTopics(state.GirlfriendHourlyState.NeedVector, topics, "girlfriend need");
+                    AddGirlfriendVectorTopics(state.GirlfriendHourlyState.WantVector, topics, "girlfriend want");
+                }
             }
 
             return topics;
@@ -1359,7 +1449,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static void AttachGirlfriendHourlyStateContextForRequest(StarInteractionRequest request, StarState state)
         {
-            if (request == null || request.GameContext == null || state == null) return;
+            if (request == null || request.GameContext == null || state == null || !state.IsGirlfriend) return;
             StarGirlfriendHourlyStateContext? context = state.GirlfriendHourlyState;
             if (context == null || !context.IsAvailable) return;
 
@@ -1429,14 +1519,11 @@ namespace Wds.SixStars.Api.Engine
                             Reason = reason ?? string.Empty,
                             State = context
                         });
-                        if (_dailyStateService != null)
-                        {
-                            await _dailyStateService.QueueForcedRefreshAsync(
-                                normalizedSessionId,
-                                normalizedStarId,
-                                "girlfriend wants-to-say state updated",
-                                workToken).ConfigureAwait(false);
-                        }
+                        // The foreground prompt consumes girlfriend hourly state directly, so do not
+                        // immediately force a second large daily-state LLM generation here. That old
+                        // chain could occupy the single local model for another 8-12 seconds after a
+                        // 20-30 second hourly refresh. Normal daily refresh scheduling will fold this
+                        // state in later without delaying live conversation.
                     }
                     catch (OperationCanceledException)
                     {
@@ -1506,7 +1593,7 @@ namespace Wds.SixStars.Api.Engine
 
         private static string GetGirlfriendCuteModeSignature(string starId)
         {
-            if (string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return "Light names + halo boops + tender blessings.";
+            if (string.Equals(starId, "Elusiaa", StringComparison.OrdinalIgnoreCase)) return "Sweet light-themed warmth + tender blessings + occasional halo/light gesture; the magical gesture is not an every-reply behavior.";
             if (string.Equals(starId, "Kaelia", StringComparison.OrdinalIgnoreCase)) return "Quiet whispers + void-cloak privacy + reluctant softness.";
             if (string.Equals(starId, "Khavia", StringComparison.OrdinalIgnoreCase)) return "Ocean sounds + explained touch + flowing pet names.";
             if (string.Equals(starId, "Maera", StringComparison.OrdinalIgnoreCase)) return "Sparse mine + heartbeat/red-thread affection + learned tenderness.";
@@ -1563,7 +1650,7 @@ namespace Wds.SixStars.Api.Engine
             };
         }
 
-        private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken)
+        private async Task<StarInteractionResponse> TryResolveInformationNeedAsync(StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse response, CancellationToken cancellationToken, bool allowStreamingCallbacks = true)
         {
             if (request == null || response == null) return response;
             if (request.GameContext.Flags.TryGetValue("informationFollowup", out string? already) && string.Equals(already, "true", StringComparison.OrdinalIgnoreCase))
@@ -1572,8 +1659,16 @@ namespace Wds.SixStars.Api.Engine
             }
 
             List<InformationNeedVectorItem> foregroundVector = NormalizeInformationNeeds(response);
+            if (foregroundVector.Count == 0 && request.RequestType != RequestType.Story && request.RequestType != RequestType.StarInitiative)
+            {
+                foregroundVector = InferInformationNeedsFromStreamingBridge(request, response);
+                if (foregroundVector.Count > 0)
+                {
+                    response.Debug.Notes.Add("Plain streaming speech contained an explicit lookup/checking bridge; runtime inferred a local information source without another selector LLM call.");
+                }
+            }
             response.InformationNeeds = foregroundVector;
-            response.Debug.Notes.Add("Normalized model informationNeeds: " + SummarizeNeedsForEvent(foregroundVector));
+            response.Debug.Notes.Add("Normalized/inferred informationNeeds: " + SummarizeNeedsForEvent(foregroundVector));
             if (foregroundVector.Count == 0) return response;
 
             List<InformationNeedAvailabilityItem> availability = BuildInformationNeedAvailability(profile, state, request);
@@ -1592,12 +1687,14 @@ namespace Wds.SixStars.Api.Engine
 
             if (!decision.ShouldRequestMoreInformation)
             {
+                StreamedResponseTraceLogger.AppendInformationRoutingDecision(profile, request, foregroundVector, availability, decision, 0);
                 response.Debug.Notes.Add("informationNeeds was present, but deterministic API selection did not request a deep second pass: " + decision.Reason);
                 return response;
             }
 
             List<InformationNeedVectorItem> selectedNeeds = BuildSelectedInformationNeeds(decision, foregroundVector);
             string context = BuildRequestedInformationContext(profile, state, selectedNeeds, request.PlayerText, 180000, request);
+            StreamedResponseTraceLogger.AppendInformationRoutingDecision(profile, request, foregroundVector, availability, decision, context.Length);
             response.InformationFollowupAttempted = true;
             response.InformationFollowupContextSummary = SummarizeInformationNeedDecision(decision, foregroundVector, availability, context.Length);
 
@@ -1618,7 +1715,7 @@ namespace Wds.SixStars.Api.Engine
                 return response;
             }
 
-            return await RequestStarDeepResponseWithDataAsync(profile, request, state, response, foregroundVector, selectedNeeds, decision, context, cancellationToken).ConfigureAwait(false);
+            return await RequestStarDeepResponseWithDataAsync(profile, request, state, response, foregroundVector, selectedNeeds, decision, context, cancellationToken, allowStreamingCallbacks).ConfigureAwait(false);
         }
 
         private async Task<StarInteractionResponse> RequestStarDeepResponseWithDataAsync(
@@ -1630,9 +1727,10 @@ namespace Wds.SixStars.Api.Engine
             List<InformationNeedVectorItem> selectedNeeds,
             InformationNeedSelectionResult decision,
             string context,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool allowStreamingCallbacks = true)
         {
-            StarInteractionRequest followupRequest = CloneRequestForInformationFollowup(request, context, selectedNeeds, fullVector, decision);
+            StarInteractionRequest followupRequest = CloneRequestForInformationFollowup(request, context, selectedNeeds, fullVector, decision, allowStreamingCallbacks);
             try
             {
                 StarInteractionResponse followup = await _agent.GenerateAsync(profile, followupRequest, state, cancellationToken).ConfigureAwait(false);
@@ -1691,7 +1789,7 @@ namespace Wds.SixStars.Api.Engine
             }
         }
 
-        private static StarInteractionRequest CloneRequestForInformationFollowup(StarInteractionRequest request, string context, List<InformationNeedVectorItem> selectedNeeds, List<InformationNeedVectorItem> fullVector, InformationNeedSelectionResult decision)
+        private static StarInteractionRequest CloneRequestForInformationFollowup(StarInteractionRequest request, string context, List<InformationNeedVectorItem> selectedNeeds, List<InformationNeedVectorItem> fullVector, InformationNeedSelectionResult decision, bool allowStreamingCallbacks = true)
         {
             StarInteractionRequest clone = new StarInteractionRequest
             {
@@ -1699,11 +1797,14 @@ namespace Wds.SixStars.Api.Engine
                 StarId = request.StarId,
                 Speaker = request.Speaker,
                 RequestType = request.RequestType,
+                TurnStartedAt = request.TurnStartedAt,
                 PlayerText = request.PlayerText,
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
                 AttachedPhoto = ClonePhotoAttachment(request.AttachedPhoto),
-                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList()
+                RecentScreenCaptures = request.RecentScreenCaptures.Select(CloneScreenCaptureSummary).ToList(),
+                SpokenChunkReady = allowStreamingCallbacks ? request.SpokenChunkReady : null,
+                StreamActionReady = allowStreamingCallbacks ? request.StreamActionReady : null
             };
             clone.GameContext.Flags["informationFollowup"] = "true";
             clone.GameContext.Flags["extraInformationContext"] = context;
@@ -1711,8 +1812,54 @@ namespace Wds.SixStars.Api.Engine
             clone.GameContext.Flags["informationNeedsSelected"] = SummarizeNeedsForEvent(selectedNeeds);
             clone.GameContext.Flags["informationNeedDecision"] = SummarizeSelection(decision);
             clone.GameContext.Flags["informationOriginalPlayerSpeech"] = request.PlayerText ?? string.Empty;
-            clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The fast response detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
+            clone.GameContext.RecentEvents.Add("This is the second response request for the same original player speech. The private background review detected that more information was needed. The API selected " + decision.SelectedDataType + " / " + decision.Subject + " and attached the matching source folder index. Read it and answer the exact detail the player asked for if it is present. Do not repeat the first uncertainty bridge; if the detail is absent, say the attached source did not contain it.");
             return clone;
+        }
+
+        private static List<InformationNeedVectorItem> InferInformationNeedsFromStreamingBridge(StarInteractionRequest request, StarInteractionResponse response)
+        {
+            string spoken = (response?.SpokenText ?? string.Empty).ToLowerInvariant();
+            // Compatibility fallback for older structured paths that may express a lookup/checking
+            // bridge in speech instead of returning an information vector. Normal fast Chat no
+            // longer uses this path; its private background review owns information needs.
+            bool soundsUncertain = spoken.Contains("need to check")
+                || spoken.Contains("need to look")
+                || spoken.Contains("need to remember")
+                || spoken.Contains("let me check")
+                || spoken.Contains("let me look")
+                || spoken.Contains("let me remember");
+            if (!soundsUncertain) return new List<InformationNeedVectorItem>();
+
+            string text = (request?.PlayerText ?? string.Empty).ToLowerInvariant();
+            string subject;
+            if (ContainsAny(text, "marker", "coordinate", "coordinates", "pin", "waypoint")) subject = "markers";
+            else if (ContainsAny(text, "quote", "exact words", "what did i say", "what i said", "exactly what i said")) subject = "quotes";
+            else if (ContainsAny(text, "screen", "screenshot", "what do you see", "on my screen")) subject = "screen";
+            else if (ContainsAny(text, "hp", "hit point", "hit points", "health points", "slime", "slimes", "drop", "drops", "loot", "monster", "enemy", "boss", "creature", "bestiary")) subject = "bestiary";
+            else if (ContainsAny(text, "skill", "skills", "spell", "spells", "ability", "abilities", "weapon", "mechanic", "mechanics")) subject = "lore";
+            else if (ContainsAny(text, "area", "location", "settlement", "where is", "where are", "quest", "ecology", "world")) subject = "world";
+            else if (ContainsAny(text, "scene", "story", "dialogue", "meeting", "met ", "meet ", "continuation")) subject = "story";
+            else if (ContainsAny(text, "star", "npc", "companion", "guardian", "character", "who is", "who was")) subject = "characters";
+            else subject = "history";
+
+            return new List<InformationNeedVectorItem>
+            {
+                new InformationNeedVectorItem
+                {
+                    Subject = subject,
+                    DataType = subject,
+                    Query = request?.PlayerText ?? string.Empty,
+                    Reason = "legacy spoken lookup bridge",
+                    Confidence = 0.72,
+                    Score = 72
+                }
+            };
+        }
+
+        private static bool ContainsAny(string text, params string[] values)
+        {
+            if (string.IsNullOrWhiteSpace(text) || values == null) return false;
+            return values.Any(value => !string.IsNullOrWhiteSpace(value) && text.Contains(value, StringComparison.OrdinalIgnoreCase));
         }
 
         private static List<InformationNeedVectorItem> NormalizeInformationNeeds(StarInteractionResponse response)
@@ -1725,6 +1872,8 @@ namespace Wds.SixStars.Api.Engine
                 {
                     Subject = NormalizeInformationDataType(x.Subject),
                     DataType = NormalizeInformationDataType(x.Subject),
+                    Query = FirstNonEmpty(x.Query, x.Reason),
+                    Reason = FirstNonEmpty(x.Reason, x.Query),
                     Confidence = Clamp01(x.Confidence),
                     Score = ClampScore(x.Score)
                 })
@@ -1748,6 +1897,11 @@ namespace Wds.SixStars.Api.Engine
             int oldArchives = state.OldConversationArchives == null ? 0 : state.OldConversationArchives.Count;
             int recentHistory = state.MemoryLog == null ? 0 : state.MemoryLog.Count;
             int learnedItems = state.ThingsLearnedOrSuggestedByPlayer == null ? 0 : state.ThingsLearnedOrSuggestedByPlayer.Count;
+            int memoryNotes = state.MemoryNotes == null ? 0 : state.MemoryNotes.Count;
+            int relationshipEvents = state.RelationshipEvents == null ? 0 : state.RelationshipEvents.Count;
+            int unresolvedMemory = (state.IncomingUnresolvedVectors == null ? 0 : state.IncomingUnresolvedVectors.Count)
+                + (state.OutgoingUnresolvedVectors == null ? 0 : state.OutgoingUnresolvedVectors.Count)
+                + (state.UnresolvedResolutionHistory == null ? 0 : state.UnresolvedResolutionHistory.Count);
             int quotes = state.AllImportantPlayerQuotes == null ? 0 : state.AllImportantPlayerQuotes.Count;
             int markers = state.RememberedMarkers == null ? 0 : state.RememberedMarkers.Count(x => x.IsActive);
             int stories = state.StoryHistory == null ? 0 : state.StoryHistory.Count;
@@ -1755,7 +1909,10 @@ namespace Wds.SixStars.Api.Engine
 
             List<InformationNeedAvailabilityItem> result = new List<InformationNeedAvailabilityItem>
             {
-                Availability("history", oldArchives + recentHistory + learnedItems, oldArchives > 0 ? oldArchives + " old archives plus " + recentHistory + " recent turns and " + learnedItems + " durable learned item(s)" : recentHistory + " recent turns plus " + learnedItems + " durable learned item(s); no old archive yet", state.ThingsLearnedOrSuggestedByPlayer?.Take(4)),
+                Availability("history", oldArchives + recentHistory + learnedItems + memoryNotes + relationshipEvents + unresolvedMemory, oldArchives > 0
+                    ? oldArchives + " old archives plus " + recentHistory + " recent turns, " + learnedItems + " learned item(s), " + memoryNotes + " memory note(s), and " + unresolvedMemory + " unresolved/resolution memory item(s)"
+                    : recentHistory + " recent turns plus " + learnedItems + " learned item(s), " + memoryNotes + " memory note(s), and " + unresolvedMemory + " unresolved/resolution memory item(s); no old archive yet",
+                    (state.ThingsLearnedOrSuggestedByPlayer ?? new List<string>()).Concat(state.MemoryNotes ?? new List<string>()).Take(6)),
                 Availability("quotes", quotes, quotes + " durable important player quote(s)", state.AllImportantPlayerQuotes?.Select(x => x.Quote).Take(4)),
                 Availability("markers", markers, markers + " active remembered marker(s)", state.RememberedMarkers?.Where(x => x.IsActive).Select(x => x.MarkerName).Take(6)),
                 BuildLoreIndexAvailability("lore"),
@@ -1825,6 +1982,8 @@ namespace Wds.SixStars.Api.Engine
                     {
                         DataType = normalizedSource,
                         Subject = normalizedSource,
+                        Query = FirstNonEmpty(x.Query, x.Reason),
+                        Reason = FirstNonEmpty(x.Reason, x.Query),
                         Confidence = Clamp01(x.Confidence),
                         Score = ClampScore(x.Score)
                     };
@@ -1844,6 +2003,7 @@ namespace Wds.SixStars.Api.Engine
                     {
                         DataType = aiType,
                         Subject = aiType,
+                        Query = FirstNonEmpty(aiSelection.Subject, aiSelection.Reason),
                         Confidence = Clamp01(aiSelection.Confidence),
                         Score = ClampScore(aiSelection.Score),
                         Reason = FirstNonEmpty(aiSelection.Reason, "AI selector chose this source.")
@@ -1914,6 +2074,7 @@ namespace Wds.SixStars.Api.Engine
                 {
                     DataType = selectedType,
                     Subject = selectedType,
+                    Query = FirstNonEmpty(decision.Subject, decision.Reason),
                     Confidence = Clamp01(decision.Confidence),
                     Score = ClampScore(decision.Score),
                     Reason = decision.Reason
@@ -1948,6 +2109,50 @@ namespace Wds.SixStars.Api.Engine
             bool wantsScreen = Wants(needs, "screen");
             bool wantsStory = Wants(needs, "story");
             bool attachedCanonicalIndex = AppendMatchedLoreIndexes(sb, needs);
+
+            if (wantsHistory)
+            {
+                if (!string.IsNullOrWhiteSpace(state.ConversationSummary))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("CURRENT DURABLE CONVERSATION SUMMARY:");
+                    sb.AppendLine(TruncateForInfo(state.ConversationSummary, 1400));
+                }
+
+                if (state.MemoryNotes != null && state.MemoryNotes.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("DURABLE MEMORY NOTES (selected slice):");
+                    foreach (string note in state.MemoryNotes.Where(x => !string.IsNullOrWhiteSpace(x)).OrderByDescending(x => RelevanceScore(x, needs, playerText)).Take(40))
+                    {
+                        sb.AppendLine("- " + TruncateForInfo(note, 600));
+                    }
+                }
+
+                if (state.RelationshipEvents != null && state.RelationshipEvents.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("RELATIONSHIP / CONTINUITY EVENTS (selected slice):");
+                    foreach (string item in state.RelationshipEvents.Where(x => !string.IsNullOrWhiteSpace(x)).OrderByDescending(x => RelevanceScore(x, needs, playerText)).Take(24))
+                    {
+                        sb.AppendLine("- " + TruncateForInfo(item, 520));
+                    }
+                }
+
+                List<string> unresolvedMemory = (state.IncomingUnresolvedVectors ?? new List<string>())
+                    .Concat(state.OutgoingUnresolvedVectors ?? new List<string>())
+                    .Concat(state.UnresolvedResolutionHistory ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .OrderByDescending(x => RelevanceScore(x, needs, playerText))
+                    .Take(20)
+                    .ToList();
+                if (unresolvedMemory.Count > 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("UNRESOLVED / RECENTLY RESOLVED CONTINUITY MEMORY (compact host vectors):");
+                    foreach (string item in unresolvedMemory) sb.AppendLine("- " + TruncateForInfo(item, 700));
+                }
+            }
 
             if (wantsQuotes && state.AllImportantPlayerQuotes != null && state.AllImportantPlayerQuotes.Count > 0)
             {
@@ -2005,7 +2210,6 @@ namespace Wds.SixStars.Api.Engine
                 foreach (ConversationLogEntry entry in state.MemoryLog.Where(x => x != null).Take(24))
                 {
                     sb.AppendLine("- " + entry.CreatedAt.ToString("u") + ": player=" + QuoteForInfo(TruncateForInfo(entry.PlayerText, 260)) + " star=" + QuoteForInfo(TruncateForInfo(entry.StarResponse, 260)));
-                    if (!string.IsNullOrWhiteSpace(entry.Summary)) sb.AppendLine("  summary: " + TruncateForInfo(entry.Summary, 320));
                 }
             }
 
@@ -2103,6 +2307,7 @@ namespace Wds.SixStars.Api.Engine
             List<string> raw = new List<string>();
             raw.Add(playerText ?? string.Empty);
             raw.AddRange(needs.Select(x => x.Subject ?? string.Empty));
+            raw.AddRange(needs.Select(x => x.Query ?? string.Empty));
             raw.AddRange(needs.Select(x => x.Reason ?? string.Empty));
             return Regex.Split(string.Join(" ", raw).ToLowerInvariant(), @"[^a-z0-9_]+")
                 .Where(x => x.Length >= 3 && !IsStopToken(x))
@@ -2155,7 +2360,12 @@ namespace Wds.SixStars.Api.Engine
 
         private static string SummarizeNeedsForEvent(List<InformationNeedVectorItem> needs)
         {
-            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x => (string.IsNullOrWhiteSpace(x.Subject) ? NormalizeInformationDataType(x.DataType) : x.Subject) + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0")));
+            return string.Join(", ", (needs ?? new List<InformationNeedVectorItem>()).Select(x =>
+            {
+                string source = string.IsNullOrWhiteSpace(x.Subject) ? NormalizeInformationDataType(x.DataType) : x.Subject;
+                string query = FirstNonEmpty(x.Query, x.Reason);
+                return source + (string.IsNullOrWhiteSpace(query) ? string.Empty : "[" + TruncateForInfo(query, 100) + "]") + "@" + x.Confidence.ToString("0.00") + "/" + x.Score.ToString("0");
+            }));
         }
 
         private static double Clamp01(double value)
@@ -2447,6 +2657,7 @@ namespace Wds.SixStars.Api.Engine
                 StarId = request.StarId,
                 Speaker = request.Speaker,
                 RequestType = RequestType.Chat,
+                TurnStartedAt = request.TurnStartedAt,
                 PlayerText = request.PlayerText,
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
@@ -2514,22 +2725,22 @@ namespace Wds.SixStars.Api.Engine
                         proposalResponse.IsGirlfriendReadyAfter = true;
                     }
 
-                    if (_agent is IStarTurnAnalyzer analyzer)
+                    if (_forgeInteractionReviewService != null)
                     {
                         proposalResponse.StateDeltas = RelationshipDelta.Zero();
                         string backgroundAnalysisId = Guid.NewGuid().ToString("N");
                         proposalResponse.BackgroundAnalysisId = backgroundAnalysisId;
                         proposalResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
-                            Type = "BackgroundStarAnalysisWaitingForVoice",
+                            Type = "BackgroundStarAnalysisWaitingForFirstSentence",
                             Target = workerRequest.StarId,
                             Data =
                             {
                                 { "backgroundAnalysisId", backgroundAnalysisId },
-                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated girlfriend proposal voice playback completes." }
+                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady as soon as the first generated girlfriend-proposal sentence is voice-ready." }
                             }
                         });
-                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, latestState, proposalResponse);
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, latestState, proposalResponse);
                     }
 
                     proposalResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2581,6 +2792,7 @@ namespace Wds.SixStars.Api.Engine
                 StarId = request.StarId,
                 Speaker = request.Speaker,
                 RequestType = RequestType.Story,
+                TurnStartedAt = request.TurnStartedAt,
                 PlayerText = request.PlayerText,
                 GameContext = CloneGameContext(request.GameContext),
                 StoryOptions = CloneStoryOptions(request.StoryOptions),
@@ -2710,7 +2922,7 @@ namespace Wds.SixStars.Api.Engine
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background story generation started for " + profile.StarId + ". This is detached from the quick-thinking TTS operation token so the placeholder voice cannot cancel the story LLM call.");
                     StarInteractionResponse storyResponse = await _agent.GenerateAsync(profile, workerRequest, state, workToken).ConfigureAwait(false);
                     ApplyVoiceDefaults(profile, storyResponse);
-                    if (_agent is IStarTurnAnalyzer analyzer)
+                    if (_forgeInteractionReviewService != null)
                     {
                         storyResponse.StateDeltas = RelationshipDelta.Zero();
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2720,7 +2932,7 @@ namespace Wds.SixStars.Api.Engine
                             Data =
                             {
                                 { "speechParts", storyResponse.SpokenParts.Count.ToString() },
-                                { "note", "Full story foreground response generated. Background memory review will wait until story voice generation reports ready." }
+                                { "note", "Full story foreground response generated. Background memory review may start after the first story sentence is voice-ready." }
                             }
                         });
 
@@ -2728,17 +2940,17 @@ namespace Wds.SixStars.Api.Engine
                         storyResponse.BackgroundAnalysisId = backgroundAnalysisId;
                         storyResponse.UnityEvents.Add(new UnityEventEnvelope
                         {
-                            Type = "BackgroundStarAnalysisWaitingForVoice",
+                            Type = "BackgroundStarAnalysisWaitingForFirstSentence",
                             Target = workerRequest.StarId,
                             Data =
                             {
                                 { "backgroundAnalysisId", backgroundAnalysisId },
-                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady after generated story voice playback completes." }
+                                { "note", "Call StartBackgroundAnalysisAfterVoiceReady as soon as the first generated story sentence is voice-ready." }
                             }
                         });
-                        storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting for story voice completion.");
+                        storyResponse.Debug.Notes.Add("Generated story foreground response after quick thinking phrase. Background review is waiting only for the first story sentence to become voice-ready.");
                         storyResponse.Debug.Notes.Add(BuildStoryLengthDebugNote(workerRequest.StoryOptions));
-                        StorePendingBackgroundAnalysis(backgroundAnalysisId, analyzer, profile, workerRequest, state, storyResponse);
+                        StorePendingBackgroundAnalysis(backgroundAnalysisId, profile, workerRequest, state, storyResponse);
                     }
 
                     storyResponse.UnityEvents.Add(new UnityEventEnvelope
@@ -2902,25 +3114,29 @@ namespace Wds.SixStars.Api.Engine
                 + " sentence(s) per chunk. Flexible target: complete story is more important than exact duration.";
         }
 
-        private void StorePendingBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void StorePendingBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse, bool enableFallback = true)
         {
             lock (_backgroundGate)
             {
                 _pendingBackgroundAnalysis[analysisId] = new PendingBackgroundAnalysis
                 {
                     AnalysisId = analysisId,
-                    Analyzer = analyzer,
                     Profile = profile,
                     Request = request,
                     StateBeforeTurn = state,
                     ForegroundResponse = foregroundResponse
                 };
             }
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis " + analysisId + " is waiting for foreground voice generation to complete.");
+            TraceBackgroundAnalysis("pending.stored", analysisId, request.SessionId, request.StarId, enableFallback
+                ? "Primary analysis stored pending an explicit speech-path release; fallback timer is armed."
+                : "Primary analysis stored and will be released immediately at foreground completion; no fallback timer is needed.");
+            if (!enableFallback) return;
 
-            // A transport disconnect or replaced Android voice stream must never leave this update
-            // waiting forever. Normal voice completion removes it first, so this fallback is a no-op
-            // in the healthy path. Keep the delay long enough that a one-page story can finish TTS.
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background analysis " + analysisId + " is waiting for an explicit speech-path release.");
+
+            // A transport disconnect or replaced voice stream must never leave a generated story/proposal update waiting
+            // forever. The healthy Android fast-speech path releases after the FIRST sentence actually begins device playback;
+            // this long timeout is only a last-resort fallback for paths that never report one.
             _ = Task.Run(async () =>
             {
                 try
@@ -2929,7 +3145,7 @@ namespace Wds.SixStars.Api.Engine
                     string? configured = Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_FALLBACK_SECONDS");
                     if (int.TryParse(configured, out int parsed)) fallbackSeconds = Math.Max(30, Math.Min(900, parsed));
                     await Task.Delay(TimeSpan.FromSeconds(fallbackSeconds)).ConfigureAwait(false);
-                    StartBackgroundAnalysisAfterVoiceReady(analysisId, "Voice-ready callback fallback after " + fallbackSeconds + " seconds.");
+                    StartBackgroundAnalysisAfterVoiceReady(analysisId, "First-speech checkpoint fallback after " + fallbackSeconds + " seconds.");
                 }
                 catch
                 {
@@ -2937,7 +3153,7 @@ namespace Wds.SixStars.Api.Engine
             });
         }
 
-        public bool StartBackgroundAnalysisAfterVoiceReady(string analysisId, string reason = "Foreground voice generation completed")
+        public bool StartBackgroundAnalysisAfterVoiceReady(string analysisId, string reason = "First foreground speech checkpoint reached")
         {
             if (string.IsNullOrWhiteSpace(analysisId))
             {
@@ -2949,80 +3165,292 @@ namespace Wds.SixStars.Api.Engine
             {
                 if (!_pendingBackgroundAnalysis.TryGetValue(analysisId, out pending))
                 {
+                    TraceBackgroundAnalysis("release.ignored", analysisId, string.Empty, string.Empty, "No pending primary analysis remained for this release signal. reason=" + (reason ?? string.Empty));
                     return false;
                 }
 
                 _pendingBackgroundAnalysis.Remove(analysisId);
             }
 
-            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting background analysis " + analysisId + " after voice ready: " + reason);
-            QueueBackgroundAnalysis(analysisId, pending.Analyzer, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
+            RegisterPrimaryBackgroundSettlement(analysisId, pending.Request);
+            TraceBackgroundAnalysis(
+                "release.queue",
+                analysisId,
+                pending.Request.SessionId,
+                pending.Request.StarId,
+                "Primary review released to dispatcher. reason=" + (reason ?? string.Empty));
+            System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Starting durable primary background analysis " + analysisId + ": " + reason);
+            QueueBackgroundAnalysis(analysisId, pending.Profile, pending.Request, pending.StateBeforeTurn, pending.ForegroundResponse);
             return true;
         }
 
-        private void QueueBackgroundAnalysis(string analysisId, IStarTurnAnalyzer analyzer, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse)
+        private void QueueBackgroundAnalysis(string analysisId, StarProfile profile, StarInteractionRequest request, StarState state, StarInteractionResponse foregroundResponse, int retryAttempt = 0, long durableOrderSequence = 0L)
+        {
+            // Reserve the durable ordering key before the dispatcher can start this callback. This
+            // avoids a race where a foreground preemption occurs before Enqueue() returns and the
+            // retry would otherwise receive a newer ordering key.
+            if (durableOrderSequence <= 0L)
+            {
+                durableOrderSequence = Interlocked.Increment(ref _nextPrimaryBackgroundOrderSequence);
+            }
+
+            BackgroundAiRequestReceipt receipt = _backgroundDispatcher.Enqueue(
+                "PrimaryBackgroundAnalysis",
+                "Analyze emotion vectors and update durable Star state for " + request.StarId + "; analysis=" + analysisId,
+                BackgroundAiRequestPriority.Critical,
+                async workToken =>
+                {
+                    System.Diagnostics.Stopwatch total = System.Diagnostics.Stopwatch.StartNew();
+                    bool queueHeld = false;
+                    try
+                    {
+                        TraceBackgroundAnalysis("primary.started", analysisId, request.SessionId, request.StarId, "Durable primary review callback started; foreground may preempt and requeue this compute.");
+                        TraceBackgroundAnalysis("primary.order-wait", analysisId, request.SessionId, request.StarId, "Waiting for the primary durable-update ordering semaphore.");
+                        await _backgroundAnalysisQueue.WaitAsync(workToken).ConfigureAwait(false);
+                        queueHeld = true;
+                        TraceBackgroundAnalysis("primary.order-acquired", analysisId, request.SessionId, request.StarId, "Primary durable-update ordering semaphore acquired after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
+
+                        if (_forgeInteractionReviewService == null)
+                        {
+                            throw new InvalidOperationException("Forge interaction review service is not configured.");
+                        }
+
+                        System.Diagnostics.Stopwatch reviewTimer = System.Diagnostics.Stopwatch.StartNew();
+                        TraceBackgroundAnalysis("primary.llm-start", analysisId, request.SessionId, request.StarId, "Calling background memory-review model.");
+                        ForgeInteractionReviewResult reviewResult = await _forgeInteractionReviewService.ReviewInteractionAsync(
+                            new ForgeInteractionReviewRequest
+                            {
+                                ReviewId = analysisId,
+                                Actor = new ForgeActorReference
+                                {
+                                    ForgeId = "six-stars",
+                                    ActorId = string.IsNullOrWhiteSpace(profile.ActorId) ? profile.StarId : profile.ActorId,
+                                    ActorType = string.IsNullOrWhiteSpace(profile.ActorType) ? "star" : profile.ActorType
+                                },
+                                Context = _forgeContextCardFactory.CreateInteractionReviewBundle(profile, request, state, foregroundResponse),
+                                Profile = profile,
+                                Interaction = request,
+                                StateBeforeTurn = state,
+                                ForegroundResponse = foregroundResponse
+                            },
+                            workToken).ConfigureAwait(false);
+                        TraceBackgroundAnalysis("primary.llm-complete", analysisId, request.SessionId, request.StarId, "Background memory-review model returned in " + reviewTimer.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
+
+                        StarInteractionResponse analyzed = reviewResult.Analysis;
+                        ApplyVoiceDefaults(profile, analyzed);
+
+                        System.Diagnostics.Stopwatch commitTimer = System.Diagnostics.Stopwatch.StartNew();
+                        TraceBackgroundAnalysis("primary.commit-start", analysisId, request.SessionId, request.StarId, "Applying deterministic state and durable memory update. Model compute is finished, so foreground cancellation no longer aborts this short durable commit.");
+                        // Foreground preemption exists to free the shared LLM immediately. Once the review
+                        // result exists, do not let a cancellation land halfway through durable state writes
+                        // and then requeue the whole review, which could duplicate a partially committed turn.
+                        await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, CancellationToken.None).ConfigureAwait(false);
+                        TraceBackgroundAnalysis("primary.commit-complete", analysisId, request.SessionId, request.StarId, "Durable memory/state update completed in " + commitTimer.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms; total=" + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms.");
+
+                        // This settles the durable review tracker. Foreground never waits on it; optional
+                        // information continuations and interstar ripple work remain independently cancellable.
+                        SettlePrimaryBackgroundAnalysis(analysisId, request, true, "Durable primary review committed successfully.");
+
+                        analyzed.UnityEvents.Add(CreateBackgroundReviewMetadataEvent(request));
+                        BackgroundAnalysisCompleted?.Invoke(this, analyzed);
+                        NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
+                        ScheduleInterstarCycleAfterSettlement(request, analyzed);
+
+                        if (analyzed.InformationNeeds != null && analyzed.InformationNeeds.Count > 0)
+                        {
+                            QueueBackgroundInformationFollowup(profile, request, analyzed);
+                        }
+                    }
+                    catch (OperationCanceledException ex)
+                    {
+                        if (!_backgroundDispatcher.IsShuttingDown)
+                        {
+                            int nextAttempt = retryAttempt + 1;
+                            TraceBackgroundAnalysis(
+                                "primary.preempted-requeue",
+                                analysisId,
+                                request.SessionId,
+                                request.StarId,
+                                "Foreground work preempted primary review attempt " + retryAttempt.ToString(CultureInfo.InvariantCulture)
+                                    + " after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)
+                                    + " ms. The immutable review job remains durable and is requeued as attempt "
+                                    + nextAttempt.ToString(CultureInfo.InvariantCulture) + ".");
+                            QueueBackgroundAnalysis(analysisId, profile, request, state, foregroundResponse, nextAttempt, durableOrderSequence);
+                            throw;
+                        }
+
+                        TraceBackgroundAnalysis("primary.cancelled-shutdown", analysisId, request.SessionId, request.StarId, "Primary review was cancelled during runtime shutdown after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms: " + ex.Message);
+                        SettlePrimaryBackgroundAnalysis(analysisId, request, false, "Primary review was cancelled by runtime shutdown.");
+                    }
+                    catch (Exception ex)
+                    {
+                        TraceBackgroundAnalysis("primary.failed", analysisId, request.SessionId, request.StarId, "Primary review failed after " + total.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms: " + ex);
+                        SettlePrimaryBackgroundAnalysis(analysisId, request, false, "Primary review failed: " + ex.Message);
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
+                        BackgroundAnalysisFailed?.Invoke(this, ex);
+                    }
+                    finally
+                    {
+                        if (queueHeld)
+                        {
+                            _backgroundAnalysisQueue.Release();
+                        }
+                    }
+                },
+                delay: retryAttempt > 0 ? TimeSpan.FromMilliseconds(500) : TimeSpan.Zero,
+                bypassPostForegroundQuiet: true,
+                allowForegroundPreemption: true,
+                bypassPlayerActivitySuppression: true,
+                allowPlayerActivityPreemption: false,
+                orderingSequence: durableOrderSequence > 0L ? durableOrderSequence : (long?)null);
+
+            TraceBackgroundAnalysis(
+                "primary.enqueued",
+                analysisId,
+                request.SessionId,
+                request.StarId,
+                "Durable dispatcher request=" + receipt.RequestId + "; sequence=" + receipt.Sequence.ToString(CultureInfo.InvariantCulture)
+                    + "; durableOrderSequence=" + receipt.OrderSequence.ToString(CultureInfo.InvariantCulture)
+                    + "; retryAttempt=" + retryAttempt.ToString(CultureInfo.InvariantCulture)
+                    + "; bypassPlayerActivitySuppression=true; allowForegroundPreemption=true; allowPlayerActivityPreemption=false.");
+        }
+
+        private void QueueBackgroundInformationFollowup(StarProfile profile, StarInteractionRequest request, StarInteractionResponse analyzed)
         {
             _backgroundDispatcher.Enqueue(
-                "PrimaryBackgroundAnalysis",
-                "Analyze emotion vectors and update durable Star state for " + request.StarId,
+                "BackgroundInformationFollowup",
+                "Resolve optional information needs after durable review for " + request.StarId,
                 BackgroundAiRequestPriority.High,
                 async workToken =>
                 {
                     try
                     {
-                        // Keep background state writes ordered. A later Unity/UI host can choose to wait on this
-                        // semaphore before accepting the next speech turn if it needs fully settled state.
-                        await _backgroundAnalysisQueue.WaitAsync(workToken).ConfigureAwait(false);
-                        try
+                        StarState latestState = await _memoryApi.GetStarStateAsync(request.SessionId, request.StarId, workToken).ConfigureAwait(false);
+                        StarInteractionResponse followup = await TryResolveInformationNeedAsync(
+                            profile, request, latestState, analyzed, workToken, allowStreamingCallbacks: false).ConfigureAwait(false);
+                        if (followup.InformationFollowupSucceeded && !string.IsNullOrWhiteSpace(followup.SpokenText))
                         {
-                            StarInteractionResponse analyzed = await analyzer.AnalyzeTurnAsync(profile, request, state, foregroundResponse, workToken).ConfigureAwait(false);
-                            ApplyVoiceDefaults(profile, analyzed);
-                            await ApplyAnalysisAndMemoryUpdateAsync(request, analyzed, workToken).ConfigureAwait(false);
-                            BackgroundAnalysisCompleted?.Invoke(this, analyzed);
-                            NotifyInterstarStatus(request.SessionId, request.StarId, string.Empty, "PrimaryBackgroundCompleted", "Primary background emotion/memory review settled for " + request.StarId + "; checking interstar ripple eligibility.", 0, 0);
-                            ScheduleInterstarCycleAfterSettlement(request, analyzed);
-                        }
-                        finally
-                        {
-                            _backgroundAnalysisQueue.Release();
+                            followup.UnityEvents.Add(CreateBackgroundInformationFollowupMetadataEvent(request));
+                            ApplyVoiceDefaults(profile, followup);
+                            BackgroundInformationFollowupCompleted?.Invoke(this, followup);
                         }
                     }
                     catch (OperationCanceledException)
                     {
-                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis was preempted and will be retried after foreground work: " + analysisId);
-                        // Reinsert the exact analysis rather than dropping it. The dispatcher will not
-                        // run the retry until all foreground leases have completed.
-                        lock (_backgroundGate)
-                        {
-                            _pendingBackgroundAnalysis[analysisId] = new PendingBackgroundAnalysis
-                            {
-                                AnalysisId = analysisId,
-                                Analyzer = analyzer,
-                                Profile = profile,
-                                Request = request,
-                                StateBeforeTurn = state,
-                                ForegroundResponse = foregroundResponse
-                            };
-                        }
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await Task.Delay(500).ConfigureAwait(false);
-                                StartBackgroundAnalysisAfterVoiceReady(analysisId, "Retry after foreground preempted the background model call.");
-                            }
-                            catch
-                            {
-                            }
-                        });
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background information follow-up was preempted by new foreground work.");
                     }
-                    catch (Exception ex)
+                    catch (Exception infoEx)
                     {
-                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background emotion/memory analysis failed: " + ex);
-                        BackgroundAnalysisFailed?.Invoke(this, ex);
+                        System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Background information follow-up failed: " + infoEx);
                     }
                 },
-                delay: TimeSpan.FromSeconds(5));
+                delay: TimeSpan.Zero,
+                bypassPostForegroundQuiet: true,
+                allowForegroundPreemption: true,
+                bypassPlayerActivitySuppression: false);
+        }
+
+        private void RegisterPrimaryBackgroundSettlement(string analysisId, StarInteractionRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(analysisId) || request == null) return;
+            lock (_primaryBackgroundSettlementGate)
+            {
+                if (!_primaryBackgroundSettlements.ContainsKey(analysisId))
+                {
+                    _primaryBackgroundSettlements[analysisId] = new PrimaryBackgroundSettlement
+                    {
+                        AnalysisId = analysisId,
+                        SessionId = request.SessionId ?? string.Empty,
+                        StarId = request.StarId ?? string.Empty,
+                        RegisteredAtUtc = DateTimeOffset.UtcNow,
+                        Completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)
+                    };
+                }
+            }
+            TraceBackgroundAnalysis("settlement.registered", analysisId, request.SessionId, request.StarId, "Registered durable primary-review settlement tracker. Foreground does not wait on this tracker. turnStartedAt=" + request.TurnStartedAt.ToString("O"));
+        }
+
+        private void SettlePrimaryBackgroundAnalysis(string analysisId, StarInteractionRequest request, bool succeeded, string message)
+        {
+            PrimaryBackgroundSettlement? settlement = null;
+            lock (_primaryBackgroundSettlementGate)
+            {
+                if (_primaryBackgroundSettlements.TryGetValue(analysisId, out settlement))
+                {
+                    _primaryBackgroundSettlements.Remove(analysisId);
+                }
+            }
+
+            if (settlement == null) return;
+            settlement.Completion.TrySetResult(succeeded);
+            TraceBackgroundAnalysis(succeeded ? "settlement.completed" : "settlement.failed", analysisId, request.SessionId, request.StarId, message);
+        }
+
+        /// <summary>
+        /// Adds a host/transport coordination marker to the same optional background-analysis trace.
+        /// This is intentionally diagnostic-only and does not change dispatcher state.
+        /// </summary>
+        public void TraceBackgroundAnalysisHostEvent(string phase, string analysisId, string? sessionId, string? starId, string message)
+        {
+            TraceBackgroundAnalysis("host." + (phase ?? string.Empty), analysisId, sessionId, starId, message);
+        }
+
+        private void TraceBackgroundAnalysis(string phase, string analysisId, string? sessionId, string? starId, string message)
+        {
+            string line = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture)
+                + " | " + (phase ?? string.Empty)
+                + " | analysis=" + (analysisId ?? string.Empty)
+                + " | session=" + (sessionId ?? string.Empty)
+                + " | star=" + (starId ?? string.Empty)
+                + " | thread=" + Thread.CurrentThread.ManagedThreadId.ToString(CultureInfo.InvariantCulture)
+                + " | " + (message ?? string.Empty);
+
+            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysisTrace] " + line);
+            if (!_backgroundAnalysisTraceOptions.Enabled) return;
+
+            try
+            {
+                string configuredPath = string.IsNullOrWhiteSpace(_backgroundAnalysisTraceOptions.LogFilePath)
+                    ? "logs/background-analysis-trace.log"
+                    : _backgroundAnalysisTraceOptions.LogFilePath.Trim();
+                string path = Path.IsPathRooted(configuredPath)
+                    ? configuredPath
+                    : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, configuredPath);
+                string? directory = Path.GetDirectoryName(path);
+                if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+                lock (_backgroundAnalysisTraceGate)
+                {
+                    File.AppendAllText(path, line + Environment.NewLine, Encoding.UTF8);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("[BackgroundAnalysisTrace] Could not append trace file: " + ex.Message);
+            }
+        }
+
+        private static UnityEventEnvelope CreateBackgroundReviewMetadataEvent(StarInteractionRequest request)
+        {
+            UnityEventEnvelope evt = new UnityEventEnvelope
+            {
+                Type = "BackgroundReviewMetadata",
+                Target = request?.StarId ?? string.Empty
+            };
+            evt.Data["sessionId"] = request?.SessionId ?? string.Empty;
+            evt.Data["requestType"] = request?.RequestType.ToString() ?? RequestType.Chat.ToString();
+            evt.Data["mobileBridge"] = request?.GameContext?.Flags != null
+                && request.GameContext.Flags.TryGetValue("mobileBridge", out string? mobile)
+                && string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase)
+                    ? "true"
+                    : "false";
+            return evt;
+        }
+
+        private static UnityEventEnvelope CreateBackgroundInformationFollowupMetadataEvent(StarInteractionRequest request)
+        {
+            UnityEventEnvelope evt = CreateBackgroundReviewMetadataEvent(request);
+            evt.Type = "BackgroundInformationFollowupReady";
+            return evt;
         }
 
         private async Task ApplyAnalysisAndMemoryUpdateAsync(StarInteractionRequest request, StarInteractionResponse response, CancellationToken cancellationToken)
@@ -3039,10 +3467,13 @@ namespace Wds.SixStars.Api.Engine
                 SessionId = request.SessionId,
                 StarId = request.StarId,
                 RequestType = request.RequestType.ToString(),
+                TurnStartedAt = request.TurnStartedAt,
                 PlayerText = request.PlayerText ?? string.Empty,
                 StarResponse = response.SpokenText,
                 ConversationSummary = response.ConversationSummary,
                 ChangesSummary = response.ChangesSummary,
+                TenTurnConversationSummary = response.TenTurnConversationSummary,
+                HundredTurnConversationSummary = response.HundredTurnConversationSummary,
                 ActualDelta = delta,
                 SuggestedDelta = response.SuggestedStateDeltas,
                 EmotionalEffectVector = response.EmotionalEffectVector,
@@ -3054,7 +3485,12 @@ namespace Wds.SixStars.Api.Engine
                 EmotionScores = response.EmotionScores,
                 ImportantPlayerQuotes = response.ImportantPlayerQuotes,
                 MemoryNotes = response.MemoryNotes,
+                ShortTermMemoryItems = response.ShortTermMemoryItems,
+                SextingDetected = response.SextingDetected,
                 ThingsLearnedOrSuggestedByPlayer = response.ThingsLearnedOrSuggestedByPlayer,
+                IncomingUnresolvedVector = response.IncomingUnresolvedVector,
+                OutgoingUnresolvedVector = response.OutgoingUnresolvedVector,
+                UnresolvedResolutionVector = response.UnresolvedResolutionVector,
                 RememberedMarkers = response.RememberedMarkers,
                 ReferencedMemoryMarkerIds = response.ReferencedMemoryMarkerIds,
                 SecretsUnlocked = response.SecretsUnlocked,
@@ -3756,6 +4192,7 @@ namespace Wds.SixStars.Api.Engine
                 StarId = source.StarId,
                 Speaker = source.Speaker,
                 RequestType = source.RequestType,
+                TurnStartedAt = source.TurnStartedAt,
                 PlayerText = source.PlayerText,
                 GameContext = CloneGameContext(source.GameContext ?? new GameContext()),
                 StoryOptions = CloneStoryOptions(source.StoryOptions),
@@ -3888,10 +4325,18 @@ namespace Wds.SixStars.Api.Engine
             return sb.ToString().Trim();
         }
 
+        private sealed class PrimaryBackgroundSettlement
+        {
+            public string AnalysisId { get; set; } = string.Empty;
+            public string SessionId { get; set; } = string.Empty;
+            public string StarId { get; set; } = string.Empty;
+            public DateTimeOffset RegisteredAtUtc { get; set; }
+            public TaskCompletionSource<bool> Completion { get; set; } = default!;
+        }
+
         private sealed class PendingBackgroundAnalysis
         {
             public string AnalysisId { get; set; } = string.Empty;
-            public IStarTurnAnalyzer Analyzer { get; set; } = default!;
             public StarProfile Profile { get; set; } = default!;
             public StarInteractionRequest Request { get; set; } = default!;
             public StarState StateBeforeTurn { get; set; } = default!;

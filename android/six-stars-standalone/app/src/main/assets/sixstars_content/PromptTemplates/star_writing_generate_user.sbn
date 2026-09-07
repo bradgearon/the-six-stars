@@ -1,0 +1,78 @@
+CREATE FIVE NEW WRITINGS FROM THE SUPPLIED PAIRS
+
+CHARACTER IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY AND INNER WORLD
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Backstory summary: {{ data.backstorySummary }}
+Relevant background: {{ data.completeBackgroundStory }}
+
+WRITING VOICE
+Voice archetype: {{ data.voiceArchetype }}
+Speaking style: {{ data.speakingStyle }}
+Writing delivery: {{ data.voiceDirection }}
+Character attributes: {{ data.characterAttributes }}
+{{ for note in data.characterAttributeNotes }}
+- {{ note }}
+{{ end }}
+
+SIGNATURE IMAGERY AND BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+STORY / POETRY INSTINCTS
+{{ for item in data.storytellingRules }}
+- {{ item }}
+{{ end }}
+
+REPRESENTATIVE LINES
+{{ for quote in data.quotes }}
+- {{ quote }}
+{{ end }}
+
+RELEVANT PRIVATE OR CANON DETAILS
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+LAST TEN SAVED WRITINGS
+Use these only to avoid repeating old sentence shapes, images, or conclusions.
+{{ if data.recentWritings.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.recentWritings }}
+[{{ item.generatedAt }}] Words: {{ item.words }}
+Writing: {{ item.writing }}
+{{ end }}
+{{ end }}
+
+VALUE-CALIBRATED REFERENCE SPARKS
+These are quality anchors, not templates. Do not copy their wording, imagery, premise, sentence shape, or conclusion.
+The value scale is measured in information units (IU), not dollars or percentages, and is open-ended. {{ data.referenceValue }} IU is the current reference point for excellent known work, not a ceiling. A new work can be worth more.
+Vector order: {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued reference works are available yet; create the strongest work you can)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+{{ if item.title != "" }}Title: {{ item.title }}
+{{ end }}Value vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
+
+PRESELECTED WORD PAIRS
+Write exactly one finished piece for each pair, preserving this order:
+{{ for pair in data.wordPairs }}
+{{ pair.index }}. {{ pair.first }} + {{ pair.second }}
+{{ end }}
+
+Privately explore several possible things to say about each pair, choose the strongest one, and return only JSON with starId and five jokes.

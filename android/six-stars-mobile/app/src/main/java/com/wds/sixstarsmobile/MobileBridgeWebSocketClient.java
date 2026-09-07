@@ -82,17 +82,25 @@ final class MobileBridgeWebSocketClient implements AutoCloseable {
         return pendingById.size();
     }
 
-    void connect(String baseUrl) {
+    void connect(String baseUrl) { connectInternal(baseUrl, false); }
+
+    /** Force a fresh socket even when the URL is unchanged, used after Android sleep/resume. */
+    void forceReconnect(String baseUrl) { connectInternal(baseUrl, true); }
+
+    private void connectInternal(String baseUrl, boolean force) {
         String target = toWebSocketUrl(baseUrl);
         WebSocket supersededSocket = null;
+        boolean replacedConnection = false;
         boolean changedTarget = false;
         int supersededGeneration = 0;
         int generation;
         synchronized (socketGate) {
             if (closed) return;
-            if (target.equals(websocketUrl) && (connected || connecting)) return;
-            if (!target.equals(websocketUrl)) {
-                changedTarget = websocketUrl.length() > 0;
+            if (!force && target.equals(websocketUrl) && (connected || connecting)) return;
+
+            changedTarget = websocketUrl.length() > 0 && !target.equals(websocketUrl);
+            if (force || !target.equals(websocketUrl)) {
+                replacedConnection = websocketUrl.length() > 0 || webSocket != null || connected || connecting;
                 supersededGeneration = connectionGeneration.get();
                 supersededSocket = webSocket;
                 webSocket = null;
@@ -106,8 +114,13 @@ final class MobileBridgeWebSocketClient implements AutoCloseable {
         }
 
         if (supersededSocket != null) supersededSocket.cancel();
-        if (changedTarget) {
-            failSentRequests(supersededGeneration, new IllegalStateException("The mobile bridge address changed while a request was in flight."));
+        if (replacedConnection) {
+            String reason = changedTarget
+                    ? "The mobile bridge address changed while a request was in flight."
+                    : "The mobile bridge socket was refreshed after Android resume while a request was in flight.";
+            // BridgeConnectionService only forces an idle resume refresh, but keep this guard here
+            // so a future caller can never silently duplicate a request that was already sent.
+            failSentRequests(supersededGeneration, new IllegalStateException(reason));
         }
 
         Request request = new Request.Builder().url(target).build();

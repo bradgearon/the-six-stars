@@ -1,0 +1,20 @@
+{
+  "LLM": {
+    "ApiKey": "PASTE_GEMINI_API_KEY_HERE",
+    "ThinkingLevel": "off"
+  },
+  "ASR": {
+    "ApiKey": "PASTE_GROQ_API_KEY_HERE"
+  },
+  "TTS": {
+    "Mode": "auto",
+    "ApiKey": "",
+    "LocalServiceUrl": "",
+    "LocalWebSocketUrl": ""
+  },
+  "Proxy": {
+    "Enabled": false,
+    "BaseUrl": "https://api.your-domain.example",
+    "AccessToken": "PASTE_PROXY_ACCESS_TOKEN_HERE"
+  }
+}

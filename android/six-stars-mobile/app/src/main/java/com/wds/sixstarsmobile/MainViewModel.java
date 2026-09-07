@@ -79,6 +79,8 @@ public final class MainViewModel extends AndroidViewModel {
     private boolean initialized;
     private boolean bridgeEventsPrimed;
     private long lastBridgeEventSequence;
+    private boolean hasHandledAppResume;
+    private volatile boolean refreshPhoneVoiceOnNextBridgeConnect;
 
     public MainViewModel(@NonNull Application application) {
         super(application);
@@ -135,15 +137,17 @@ public final class MainViewModel extends AndroidViewModel {
             }
 
             try {
-                boolean promoted = acceptHealthNetworkInfo(health, true);
-                if (promoted) return; // The IPv6 socket will request health again after it connects.
+                acceptHealthNetworkInfo(health, false);
 
                 String activeUrl = bridge.activeBaseUrl();
                 String host = BridgeAddressService.hostFromBaseUrl(activeUrl);
                 int audioPort = health == null
                         ? defaultAudioPort(activeUrl)
                         : health.optInt("audioPort", defaultAudioPort(activeUrl));
-                phoneVoice.connect(host, audioPort);
+                boolean refreshVoice = refreshPhoneVoiceOnNextBridgeConnect;
+                refreshPhoneVoiceOnNextBridgeConnect = false;
+                if (refreshVoice) phoneVoice.refreshConnection(host, audioPort);
+                else phoneVoice.connect(host, audioPort);
             } catch (Exception ex) {
                 protocolDebug.postValue("Phone voice bootstrap failed: " + ex.getMessage());
             }
@@ -154,55 +158,38 @@ public final class MainViewModel extends AndroidViewModel {
         return BridgeAddressService.audioPort(bridgeUrl);
     }
 
-    /** Saves the best IPv6 address advertised by the active desktop socket and optionally promotes it. */
+    /** IPv6 discovery/promotion is intentionally disabled; clear legacy learned routes if seen. */
     boolean acceptHealthNetworkInfo(JSONObject health, boolean promote) {
-        String discovered = localNetwork.choosePreferredIpv6(BridgeAddressService.discoveredIpv6Candidates(health));
-        if (discovered.isEmpty()) discovered = BridgeAddressService.discoveredIpv6(health);
-        if (discovered.isEmpty()) {
-            if (health != null && health.optBoolean("localConnection", false)
-                    && health.has("ipv6Available") && !health.optBoolean("ipv6Available", false)) {
-                boolean cleared = settings.setPreferredIpv6Address("");
-                if (cleared) protocolDebug.postValue("Cleared the saved desktop IPv6 because the active local adapter no longer exposes one.");
-            }
-            return false;
-        }
-        boolean changed = settings.rememberDiscoveredIpv6(discovered);
-        if (changed) {
-            protocolDebug.postValue("Saved desktop IPv6 from active local socket: " + discovered
-                    + " (adapter=" + health.optString("localAdapterName", "unknown") + ").");
-        }
-        return promote && settings.useIpv6Primary() && bridge.promoteToPreferredIpv6(changed);
+        settings.setUseIpv6Primary(false);
+        settings.setPreferredIpv6Address("");
+        return false;
     }
 
     CompletableFuture<String> refreshPreferredIpv6(boolean promote) {
         CompletableFuture<String> result = new CompletableFuture<>();
-        bridge.request("health", new JSONObject(), 10000L).whenComplete((health, error) -> {
-            if (error != null) {
-                result.completeExceptionally(error);
-                return;
-            }
-            String discovered = localNetwork.choosePreferredIpv6(BridgeAddressService.discoveredIpv6Candidates(health));
-            if (discovered.isEmpty()) discovered = BridgeAddressService.discoveredIpv6(health);
-            if (discovered.isEmpty()) {
-                result.completeExceptionally(new IllegalStateException(
-                        "The active desktop adapter did not expose a routable local IPv6 address."));
-                return;
-            }
-            boolean changed = settings.rememberDiscoveredIpv6(discovered);
-            if (promote && settings.useIpv6Primary()) bridge.promoteToPreferredIpv6(changed);
-            result.complete(discovered);
-        });
+        result.completeExceptionally(new IllegalStateException(
+                "IPv6 bridge routing is disabled. The Android companion uses the configured IPv4/hostname bridge."));
         return result;
     }
 
     boolean updatePreferredIpv6Settings(String address, boolean useAsPrimary) {
-        String raw = address == null ? "" : address.trim();
-        String normalized = BridgeAddressService.normalizeIpv6Address(raw);
-        if (!raw.isEmpty() && normalized.isEmpty()) return false;
-        settings.setPreferredIpv6Address(normalized);
-        settings.setUseIpv6Primary(useAsPrimary);
+        settings.setPreferredIpv6Address("");
+        settings.setUseIpv6Primary(false);
         bridge.reconnectPreferred();
         return true;
+    }
+
+    /** Refresh stale LAN sockets when the app returns from screen-off/background sleep. */
+    void onAppResumed() {
+        settings.setUseIpv6Primary(false);
+        settings.setPreferredIpv6Address("");
+        if (!hasHandledAppResume) {
+            hasHandledAppResume = true;
+            bridge.ensureConnected();
+            return;
+        }
+        refreshPhoneVoiceOnNextBridgeConnect = true;
+        bridge.refreshAfterResume();
     }
 
     String activeBridgeUrl() { return bridge.activeBaseUrl(); }
@@ -263,7 +250,12 @@ public final class MainViewModel extends AndroidViewModel {
             if (event.sequence > 0L && event.sequence <= lastBridgeEventSequence) return;
             if (event.sequence > lastBridgeEventSequence) lastBridgeEventSequence = event.sequence;
         }
-        bridgeEvents.postValue(event);
+        // MutableLiveData.postValue() coalesces pending values when several socket events arrive
+        // before the main thread drains them. That is unacceptable for a transport event stream:
+        // a MobileTranscriptReady event can otherwise be overwritten by the Star response/state
+        // event that follows it, making the user's spoken line appear to vanish. Queue setValue()
+        // onto the main looper instead so every bridge event is delivered in socket order.
+        mainHandler.post(() -> bridgeEvents.setValue(event));
     }
 
     LiveData<UiState> uiState() { return uiState; }
@@ -290,6 +282,10 @@ public final class MainViewModel extends AndroidViewModel {
     }
 
     void ensureConnected() { bridge.ensureConnected(); }
+    void refreshPhoneVoiceConnection() {
+        refreshPhoneVoiceOnNextBridgeConnect = true;
+        connectPhoneVoiceAfterBridgeConnected();
+    }
     void selectStar(String starId) {
         settings.setSelectedStarId(starId);
         postState(current().withStar(settings.selectedStarId()));

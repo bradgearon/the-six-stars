@@ -1,0 +1,17 @@
+{{ data.currentTimeContext }}
+
+TARGET STAR STATE / PERSONALITY
+{{ data.targetProfileContext }}
+
+WHAT {{ data.originStarId }} TOLD YOU
+{{ data.relayBlock }}
+Relay summary: {{ data.relaySummary }}
+
+ORIGINAL PLAYER MESSAGE TO {{ data.originStarId }}:
+{{ data.playerTextBlock }}
+Origin Star foreground reply:
+{{ data.originReplyBlock }}
+
+Return lastCatEmotionalEffectVector and lastCatNegativeEmotionVector as compact strings for your hidden feelings toward the Last Cat.
+{{ if data.sourceAlias != "" }}Return sourceStarEmotionalEffectVector/sourceStarNegativeEmotionVector and also {{ data.sourceAlias }}EmotionalEffectVector/{{ data.sourceAlias }}NegativeEmotionalEffectVector as compact strings for your hidden feelings toward {{ data.originStarId }}.
+{{ end }}Return replyToSourceStar as the one sentence you would say back to {{ data.originStarId }}. Do not use object-shaped vector values.

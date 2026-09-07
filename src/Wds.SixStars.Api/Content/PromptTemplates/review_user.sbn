@@ -4,7 +4,7 @@ RequestType: {{ data.requestType }}
 {{ data.currentTimeContext }}
 Player latest message:
 {{ data.playerTextBlock }}
-Exact foreground spokenText already sent to voice generation. Use this array only for conversationSummary context; do not copy spokenText into your response unless the schema explicitly asks for it:
+Foreground spokenText already sent to voice generation. Use it for conversationSummary, question matching/resolution, and the other review fields; do not copy it into your response:
 {{ data.foregroundSpokenPartsJson }}
 Relationship before this review:
 {{ data.relationshipContext }}
@@ -12,11 +12,25 @@ Relationship before this review:
 Recent history for continuity:
 {{ data.recentConversationHistory }}
 
-Durable memory / quote / marker context:
+Active short-term memory before this turn:
+{{ data.shortTermMemoryContext }}
+
+Durable long-term memory / quote / marker context:
 {{ data.durableMemoryContext }}
 
+QUESTION STATE BEFORE THIS TURN:
+{{ data.unresolvedStateContext }}
 {{ data.storyFieldsContext }}
 
-Return compact background review JSON. Include emotionalEffectVector, negativeEmotionVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector, and requestToShowBoobs. Set importantPlayerQuotes to [] because deterministic high-impact emotion scoring owns quote capture. Do not include emotionScores. Keep arrays short by using only the update slots that matter this turn.
-If this is a remember/marker request, output rememberedMarkers. If this is a recall/remind request, answer should already have used the marker, and referencedMemoryMarkerIds should list the used ids.
-No token cap is assumed. Be powerful by being selective: propose the important durable updates, not every possible observation.
+{{ if data.conversationSummaryCheckpointContext != "" }}{{ data.conversationSummaryCheckpointContext }}
+
+{{ end }}
+Return compact background review JSON using only primitive fields and arrays of primitive strings/numbers/booleans; never return nested JSON objects. 
+Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, {{ if data.isTenTurn }}tenTurnConversationSummary, {{ end }}{{ if data.isHundredTurn }}hundredTurnConversationSummary, {{ end }}shortTermMemoryItems, isSexting, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector{{ if data.isGirlfriend }}, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector{{ end }}, and requestToShowBoobs.
+Use importantPlayerQuotes only for rare, genuinely significant exact player wording under the system rule; otherwise return [] for it. 
+Do not include emotionScores. Keep updates selective. 
+Set tenTurnConversationSummary="" except on a ten-turn checkpoint and hundredTurnConversationSummary="" except on a hundred-turn checkpoint. 
+emotionAnimation must be empty unless this is clearly a high-emotion turn. 
+Question vectors must be empty unless the Last Cat really raised an unresolved question/topic or the foreground reply really left one for him.
+If this is a remember/marker request, output rememberedMarkers. 
+If this is a recall/remind request, referencedMemoryMarkerIds should list the marker ids used.

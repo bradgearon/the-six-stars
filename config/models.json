@@ -1,33 +1,50 @@
 {
-  "version": 1,
+  "version": 4,
   "models": {
     "llm": {
-      "id": "gemma-4-e4b-it-gguf",
-      "preferredMode": "local-gguf",
-      "hfSpecifier": "ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M",
+      "id": "gemma-4-e4b-it-llamacpp",
+      "preferredMode": "llama-local-gguf",
       "localPath": "models/llm/gemma-4-E4B-it-Q6_K.gguf",
+      "downloadUrls": [
+        "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf"
+      ],
+      "modelName": "local-model",
       "openAiModelName": "local-model",
-      "notes": "Gemma 4 E4B is the default local multimodal model. Put your LM Studio GGUF here, or update localPath. The launcher disables reasoning by default for fast companion replies."
+      "contextSize": 16384,
+      "notes": "Downloaded automatically by the .NET launcher with bezzad/Downloader when missing. The launcher starts the redistributed llama-server directly on port 8080 and passes this GGUF with -m."
     },
     "asr": {
-      "id": "faster-whisper-large-v3-turbo",
+      "id": "whispercpp-large-v3-turbo",
       "modelName": "large-v3-turbo",
-      "localPath": "models/asr/large-v3-turbo",
-      "liteModelName": "tiny.en",
-      "notes": "Use tiny/base/small for low-end machines; use large-v3-turbo for best quality on CUDA."
+      "localPath": "models/asr/ggml-large-v3-turbo.bin",
+      "downloadUrls": [
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+      ],
+      "notes": "Downloaded automatically by the .NET launcher with bezzad/Downloader when missing. Native whisper.cpp model; no Python or CTranslate2 runtime is required."
     },
     "tts": {
-      "id": "qwen3-tts-12hz-0.6b-base",
-      "modelName": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-      "localPath": "models/tts/qwen3-tts-0.6b-base",
-      "notes": "The WebSocket TTS server still uses your current faster-qwen3/Qwen adapter. CUDA pack uses faster-qwen3 when available."
+      "id": "qwen3-tts-12hz-0.6b-base-q8",
+      "modelName": "Qwen3-TTS-12Hz-0.6B-Base",
+      "alias": "qwen3-tts-base",
+      "localPath": "models/tts/qwen-talker-0.6b-base-Q8_0.gguf",
+      "downloadUrls": [
+        "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/main/qwen-talker-0.6b-base-Q8_0.gguf"
+      ],
+      "codecLocalPath": "models/tts/qwen-tokenizer-12hz-Q8_0.gguf",
+      "codecDownloadUrls": [
+        "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/main/qwen-tokenizer-12hz-Q8_0.gguf"
+      ],
+      "notes": "Both native qwentts.cpp GGUFs are downloaded automatically by the .NET launcher with bezzad/Downloader when missing. tts-server.exe listens on http://127.0.0.1:8101; the .NET application calls it directly."
     },
     "vision": {
       "enabled": true,
       "id": "gemma-4-e4b-it-mmproj",
       "localPath": "models/llm/mmproj-gemma-4-E4B-it-Q8_0.gguf",
+      "downloadUrls": [
+        "https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/2714b5519c6c3516b1000e7c5e1eba998dfe1fe8/mmproj-gemma-4-E4B-it-Q8_0.gguf"
+      ],
       "openAiModelName": "local-model",
-      "notes": "Optional Gemma 4 E4B multimodal projector for llama.cpp screen vision. Download the matching mmproj GGUF here, or set enabled=false to disable screen vision. The launcher appends --mmproj only when this file exists."
+      "notes": "Downloaded automatically when missing. The launcher appends --mmproj when this file exists; otherwise screen vision is disabled for that launch and normal chat still works."
     }
   }
 }

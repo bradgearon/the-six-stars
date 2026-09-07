@@ -3,6 +3,11 @@ package com.wds.sixstarsmobile;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.json.JSONArray;
+
+import java.util.ArrayList;
+import java.util.List;
+
 /** Centralizes all durable Android companion preferences and defaults. */
 final class MobileSettingsService {
     static final String PREFS_NAME = "SixStarsMobilePrefs";
@@ -16,11 +21,13 @@ final class MobileSettingsService {
     static final String PREF_SELECTED_STAR_ID = "selectedStarId";
     static final String PREF_ROMANCE_MODE = "romanceMode";
     static final String PREF_PLAY_ON_PHONE = "playOnPhone";
+    static final String PREF_ECHO_MIC_WHILE_RECORDING = "echoMicWhileRecording";
     static final String PREF_PREPARED_LISTEN_GENERATION = "preparedListenGeneration";
     static final String PREF_LAST_BACKGROUND_REQUEST_MS = "starInitiativeBackgroundLastRequestMs";
     static final String PREF_PREPARED_LISTEN_NOT_BEFORE_MS = "preparedListenNotBeforeMs";
     static final String PREF_AREA = "area";
     static final String PREF_QUEST = "quest";
+    static final String PREF_PROD_CONVERSATION_PREFIX = "prodConversation.";
     static final String DEFAULT_BRIDGE_URL = "http://192.168.1.179:8066";
     static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
 
@@ -28,6 +35,19 @@ final class MobileSettingsService {
 
     MobileSettingsService(Context context) {
         prefs = context.getApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // IPv6 bridge promotion caused route churn after Android sleep/resume and could replace a
+        // healthy IPv4 control/audio socket while a foreground request was starting. The mobile
+        // companion now intentionally uses the configured IPv4/hostname bridge only. Clear any
+        // previously learned IPv6 route so an older preference can never silently reactivate it.
+        if (prefs.getBoolean(PREF_USE_IPV6_PRIMARY, false)
+                || prefs.contains(PREF_PREFERRED_IPV6_ADDRESS)
+                || prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L) != 0L) {
+            prefs.edit()
+                    .putBoolean(PREF_USE_IPV6_PRIMARY, false)
+                    .remove(PREF_PREFERRED_IPV6_ADDRESS)
+                    .putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L)
+                    .apply();
+        }
     }
 
     SharedPreferences raw() { return prefs; }
@@ -42,7 +62,8 @@ final class MobileSettingsService {
     }
     String bridgeUrl() {
         String value = prefs.getString(PREF_BRIDGE_URL, DEFAULT_BRIDGE_URL);
-        if (value == null || value.trim().isEmpty() || LEGACY_BRIDGE_URL.equalsIgnoreCase(value.trim())) {
+        if (value == null || value.trim().isEmpty() || LEGACY_BRIDGE_URL.equalsIgnoreCase(value.trim())
+                || BridgeAddressService.isIpv6Url(value.trim())) {
             value = DEFAULT_BRIDGE_URL;
             prefs.edit().putString(PREF_BRIDGE_URL, value).apply();
         }
@@ -50,39 +71,34 @@ final class MobileSettingsService {
     }
     void setBridgeUrl(String value) {
         String normalized = value == null ? "" : value.trim();
-        prefs.edit().putString(PREF_BRIDGE_URL, normalized.isEmpty() ? DEFAULT_BRIDGE_URL : normalized).apply();
+        if (normalized.isEmpty() || BridgeAddressService.isIpv6Url(normalized)) normalized = DEFAULT_BRIDGE_URL;
+        prefs.edit().putString(PREF_BRIDGE_URL, normalized).apply();
     }
-    String preferredIpv6Address() {
-        return BridgeAddressService.normalizeIpv6Address(prefs.getString(PREF_PREFERRED_IPV6_ADDRESS, ""));
-    }
+    String preferredIpv6Address() { return ""; }
     boolean setPreferredIpv6Address(String value) {
-        String normalized = BridgeAddressService.normalizeIpv6Address(value);
-        String before = preferredIpv6Address();
-        SharedPreferences.Editor editor = prefs.edit().putString(PREF_PREFERRED_IPV6_ADDRESS, normalized);
-        if (!normalized.isEmpty()) editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, System.currentTimeMillis());
-        else editor.putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L);
-        editor.apply();
-        return !before.equalsIgnoreCase(normalized);
+        boolean hadValue = prefs.contains(PREF_PREFERRED_IPV6_ADDRESS)
+                || prefs.getBoolean(PREF_USE_IPV6_PRIMARY, false)
+                || prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L) != 0L;
+        prefs.edit()
+                .putBoolean(PREF_USE_IPV6_PRIMARY, false)
+                .remove(PREF_PREFERRED_IPV6_ADDRESS)
+                .putLong(PREF_IPV6_DISCOVERED_AT_MS, 0L)
+                .apply();
+        return hadValue;
     }
-    boolean rememberDiscoveredIpv6(String value) {
-        String normalized = BridgeAddressService.normalizeIpv6Address(value);
-        if (normalized.isEmpty()) return false;
-        return setPreferredIpv6Address(normalized);
-    }
-    boolean useIpv6Primary() { return prefs.getBoolean(PREF_USE_IPV6_PRIMARY, true); }
-    void setUseIpv6Primary(boolean value) { prefs.edit().putBoolean(PREF_USE_IPV6_PRIMARY, value).apply(); }
-    long ipv6DiscoveredAtMs() { return prefs.getLong(PREF_IPV6_DISCOVERED_AT_MS, 0L); }
-    String preferredBridgeUrl() {
-        if (!useIpv6Primary()) return bridgeUrl();
-        String value = BridgeAddressService.ipv6BridgeUrl(preferredIpv6Address(), BridgeAddressService.bridgePort(bridgeUrl()));
-        return value.isEmpty() ? bridgeUrl() : value;
-    }
+    boolean rememberDiscoveredIpv6(String value) { return false; }
+    boolean useIpv6Primary() { return false; }
+    void setUseIpv6Primary(boolean value) { prefs.edit().putBoolean(PREF_USE_IPV6_PRIMARY, false).apply(); }
+    long ipv6DiscoveredAtMs() { return 0L; }
+    String preferredBridgeUrl() { return bridgeUrl(); }
     String selectedStarId() { return nonEmpty(prefs.getString(PREF_SELECTED_STAR_ID, "Elusiaa"), "Elusiaa"); }
     void setSelectedStarId(String value) { prefs.edit().putString(PREF_SELECTED_STAR_ID, nonEmpty(value, "Elusiaa")).apply(); }
     boolean romanceMode() { return prefs.getBoolean(PREF_ROMANCE_MODE, true); }
     void setRomanceMode(boolean value) { prefs.edit().putBoolean(PREF_ROMANCE_MODE, value).apply(); }
     boolean playOnPhone() { return prefs.getBoolean(PREF_PLAY_ON_PHONE, true); }
     void setPlayOnPhone(boolean value) { prefs.edit().putBoolean(PREF_PLAY_ON_PHONE, value).apply(); }
+    boolean echoMicWhileRecording() { return prefs.getBoolean(PREF_ECHO_MIC_WHILE_RECORDING, false); }
+    void setEchoMicWhileRecording(boolean value) { prefs.edit().putBoolean(PREF_ECHO_MIC_WHILE_RECORDING, value).apply(); }
     String area() { return nonEmpty(prefs.getString(PREF_AREA, "VirethornCaves"), "VirethornCaves"); }
     void setArea(String value) { prefs.edit().putString(PREF_AREA, nonEmpty(value, "VirethornCaves")).apply(); }
     String quest() { return nonEmpty(prefs.getString(PREF_QUEST, "AndroidMobileBridge"), "AndroidMobileBridge"); }
@@ -93,6 +109,52 @@ final class MobileSettingsService {
     void setLastBackgroundRequestMs(long value) { prefs.edit().putLong(PREF_LAST_BACKGROUND_REQUEST_MS, Math.max(0L, value)).apply(); }
     long preparedListenNotBeforeMs() { return prefs.getLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, 0L); }
     void setPreparedListenNotBeforeMs(long value) { prefs.edit().putLong(PREF_PREPARED_LISTEN_NOT_BEFORE_MS, Math.max(0L, value)).apply(); }
+
+
+    List<String> prodConversationLines(String starId) {
+        String key = conversationKey(starId);
+        String raw = prefs.getString(key, "");
+        ArrayList<String> lines = new ArrayList<>();
+        if (raw == null || raw.trim().isEmpty()) return lines;
+        try {
+            JSONArray array = new JSONArray(raw);
+            for (int i = 0; i < array.length() && lines.size() < 12; i++) {
+                String line = array.optString(i, "").trim();
+                if (!line.isEmpty()) lines.add(line);
+            }
+        } catch (Exception ignored) {
+            // A malformed old cache should never block app startup. Replace it on the next save.
+        }
+        return lines;
+    }
+
+    void setProdConversationLines(String starId, List<String> lines) {
+        JSONArray array = new JSONArray();
+        if (lines != null) {
+            for (String line : lines) {
+                if (line == null || line.trim().isEmpty()) continue;
+                array.put(line.trim());
+                if (array.length() >= 12) break;
+            }
+        }
+        prefs.edit().putString(conversationKey(starId), array.toString()).apply();
+    }
+
+    void clearProdConversationLines(String starId) {
+        prefs.edit().remove(conversationKey(starId)).apply();
+    }
+
+    void clearAllProdConversationLines() {
+        SharedPreferences.Editor editor = prefs.edit();
+        for (String key : prefs.getAll().keySet()) {
+            if (key != null && key.startsWith(PREF_PROD_CONVERSATION_PREFIX)) editor.remove(key);
+        }
+        editor.apply();
+    }
+
+    private static String conversationKey(String starId) {
+        return PREF_PROD_CONVERSATION_PREFIX + nonEmpty(starId, "Elusiaa").toLowerCase(java.util.Locale.US);
+    }
 
     private static String nonEmpty(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();

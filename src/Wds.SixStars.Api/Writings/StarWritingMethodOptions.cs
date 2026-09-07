@@ -43,10 +43,10 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>Selects which creative writing method starts a batch.</summary>
     public sealed class StarWritingMethodOptions
     {
-        public double SemanticCollisionWeight { get; set; } = 0.70;
-        public double VerbNounDisplacementWeight { get; set; } = 0.30;
+        public double SemanticCollisionWeight { get; set; } = 0.00;
+        public double VerbNounDisplacementWeight { get; set; } = 0.00;
         /// <summary>Relative weight for the collaborative long-form Constellation Forge technique.</summary>
-        public double ConstellationForgeWeight { get; set; } = 0.10;
+        public double ConstellationForgeWeight { get; set; } = 1.00;
 
         public string SelectMethod(Random random)
         {

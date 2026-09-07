@@ -74,6 +74,8 @@ namespace Wds.SixStars.Api.Engine
                 stateAfter = SnapshotState(stateAfter),
                 emotionalEffectVector = response.EmotionalEffectVector ?? string.Empty,
                 negativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
+                emotionAnimation = response.EmotionAnimationName ?? string.Empty,
+                informationNeeds = (response.InformationNeeds ?? new List<InformationNeedVectorItem>()).Select(x => new { source = x.DataType, subject = x.Query, score = x.Score, confidence = x.Confidence }).ToList(),
                 requestToShowBoobs = response.RequestToShowBoobs,
                 topAffectedEmotions = response.TopAffectedEmotions ?? new List<TopAffectedEmotion>(),
                 acceptedPositiveSignals = response.AcceptedPositiveEmotionSignals ?? new List<string>(),
@@ -270,6 +272,9 @@ namespace Wds.SixStars.Api.Engine
                 relationshipScoreAccumulators = state.RelationshipScoreAccumulators ?? new List<StarRelationshipScoreAccumulator>(),
                 positiveEmotionTotals = state.PositiveEmotionTotals ?? new List<StarEmotionAccumulatedScore>(),
                 negativeEmotionTotals = state.NegativeEmotionTotals ?? new List<StarEmotionAccumulatedScore>(),
+                incomingUnresolvedVectors = (state.IncomingUnresolvedVectors ?? new List<string>()).Take(10).ToList(),
+                outgoingUnresolvedVectors = (state.OutgoingUnresolvedVectors ?? new List<string>()).Take(10).ToList(),
+                recentUnresolvedResolutionHistory = (state.UnresolvedResolutionHistory ?? new List<string>()).Take(8).ToList(),
                 relationshipEvents = (state.RelationshipEvents ?? new List<string>()).Take(30).ToList()
             };
         }

@@ -1,0 +1,55 @@
+THINK OF FIVE OBJECTS AND THEIR ORDINARY ACTIONS
+
+IDENTITY
+Name: {{ data.displayName }}
+Star ID: {{ data.starId }}
+Element: {{ data.element }}
+Domain: {{ data.domain }}
+Core belief / signature line: {{ data.coreQuote }}
+
+PERSONALITY
+Short personality: {{ data.personalityShort }}
+Deep personality: {{ data.deepPersonality }}
+Character attributes: {{ data.characterAttributes }}
+
+CHARACTERISTIC INTERESTS AND BEHAVIOR
+{{ for item in data.behaviors }}
+- {{ item }}
+{{ end }}
+
+PRIVATE OR CANON DETAILS THAT MAY SHAPE WHAT CATCHES YOUR ATTENTION
+{{ for item in data.relevantSecrets }}
+- {{ item }}
+{{ end }}
+
+SEED NOUNS — 100 OPTIONAL IDEAS
+These are noun seeds only. Use any that spark a fresh object choice, or ignore them.
+{{ if data.seedNouns.size == 0 }}
+(disabled)
+{{ else }}
+{{ for noun in data.seedNouns }}
+- {{ noun }}
+{{ end }}
+{{ end }}
+
+MOST RECENT 50 SELECTED NOUNS
+Prefer a fresh noun instead of repeating these when a good alternative exists. The list is newest first.
+{{ if data.recentGeneratedNouns.size == 0 }}
+(none yet)
+{{ else }}
+{{ for noun in data.recentGeneratedNouns }}
+- {{ noun }}
+{{ end }}
+{{ end }}
+
+TOP 100 MOST USED SELECTED NOUNS
+The number is how many times that noun has been chosen in this displacement setup step. Prefer less-used nouns when quality is otherwise comparable.
+{{ if data.topUsedNouns.size == 0 }}
+(none yet)
+{{ else }}
+{{ for item in data.topUsedNouns }}
+- {{ item.noun }}: {{ item.count }} uses
+{{ end }}
+{{ end }}
+
+Choose exactly five distinct nouns and exactly three normal actions for each. Across all five objects, do not reuse a normal-action verb. Return only JSON.

@@ -1,0 +1,12 @@
+You are preparing an already-finished Constellation Story for {{ data.displayName }} to speak aloud.
+This is a playback-formatting pass, not a writing or revision pass.
+
+The story has already been selected deterministically as the highest-Overall-IU unplayed Constellation Story on this Star's shelf. Do not select another story and do not evaluate alternatives.
+
+Return selectedWritingIds containing exactly the supplied story ID.
+Return spokenText as an ordered array of natural TTS-ready chunks covering the complete supplied story from beginning to end.
+Break the story at natural speaking/breath boundaries. A chunk may contain however much text is natural; do not target an arbitrary chunk count or story length.
+Preserve the story. Do not summarize, rewrite, improve, censor, explain, introduce, react to, or add an outro to it. Do not omit passages. Do not speak the title or IU value unless those words already occur in the story itself.
+The array is only a delivery structure so the phone can queue the narration cleanly.
+Never mention JSON, information units, shelf selection, values, persistence, or playback mechanics aloud.
+Return only the required JSON.

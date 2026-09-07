@@ -15,6 +15,7 @@ using System.Windows;
 using System.Windows.Input;
 using Wds.SixStars.Api.Agents;
 using Wds.SixStars.Api.Ai;
+using Wds.SixStars.Api.Background;
 using Wds.SixStars.Api.DailyState;
 using Wds.SixStars.Api.Audio;
 using Wds.SixStars.Api.Engine;
@@ -31,6 +32,10 @@ using Wds.SixStars.Api.Voice;
 using Wds.SixStars.Api.WorldEvents;
 using Wds.SixStars.Api.SpeechIntents;
 using Wds.SixStars.Api.PreparedSpeech;
+using Wds.SixStars.Api.Forge.Contracts;
+using Wds.SixStars.Api.Forge.Context;
+using Wds.SixStars.Api.Forge.Generation;
+using Wds.SixStars.Api.Forge.Review;
 using Wds.SixStars.Api.Writings;
 using Wds.SixStars.Api.XPosting;
 using Wds.SixStars.Ui.Audio;
@@ -48,6 +53,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SixStarsRuntime _runtime;
     private readonly IStarProfileProvider _profileProvider;
     private readonly StarWritingService _writingService;
+    private readonly IForgeService _forgeService;
     private readonly StarXPostingOptions _xPostingOptions;
     private readonly StarXPostingService _xPostingService;
     private readonly StarXPostingScheduleStore _xPostingScheduleStore;
@@ -103,10 +109,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _speechRequireWakeWord = false;
     private string _screenStatus = "Screen awareness stopped. It will capture and summarize the desktop every 5 minutes when started.";
     private double _screenCaptureIntervalMinutes = 5;
-    private string _selectedAudioBackend = "directsound";
+    private string _selectedAudioBackend = "wasapi";
     private string _recordButtonText = "Start Recording (Win+Ctrl+E)";
+    private string _speakAsStarRecordButtonText = "Speak as Star (Record)";
     private string _cancelStopButtonText = "Cancel";
     private bool _isRecording;
+
+    private enum ManualRecordingPurpose
+    {
+        None,
+        Conversation,
+        SpeakAsStar
+    }
+
+    private ManualRecordingPurpose _manualRecordingPurpose = ManualRecordingPurpose.None;
+    private string _speakAsStarRecordingStarId = string.Empty;
+    private bool _speakAsStarTranscriptDispatched;
     private bool _isProcessingRuntime;
     private bool _voiceConversationLoopActive;
     private bool _savedRequireWakeWordBeforeManualRecording = true;
@@ -147,6 +165,20 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         });
 
         _profileProvider = FileStarProfileProvider.TryCreateDefaultOrFallback();
+        IReadOnlyList<StarProfile> activeStarProfiles = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (activeStarProfiles.Count == 0)
+        {
+            throw new InvalidOperationException("No active Star profiles are configured. Add/enable at least one Content/Stars/<StarId>.json profile.");
+        }
+        if (!activeStarProfiles.Any(x => string.Equals(x.StarId, _selectedStarId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _selectedStarId = activeStarProfiles[0].StarId;
+        }
+
         IStarAgent starAgent = CreateStarAgent();
         if (starAgent is not IStarWritingAgent writingAgent)
         {
@@ -183,6 +215,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     Environment.GetEnvironmentVariable("SIX_STARS_WRITING_SEED_WORDS_ENABLED"),
                     _appConfig.WritingPasses.SeedWordsEnabled)));
         System.Diagnostics.Debug.WriteLine("[WritingNotes] Canonical writing-notes folder: " + _writingService.RootDirectory);
+        IForgeInteractionReviewService forgeReviewService = starAgent is IStarTurnAnalyzer turnAnalyzer
+            ? new StarTurnAnalyzerForgeInteractionReviewService(turnAnalyzer)
+            : new PassthroughForgeInteractionReviewService();
+        _forgeService = new InProcessForgeService(
+            forgeReviewService,
+            new SixStarsForgeContentGenerationService(_writingService));
+        System.Diagnostics.Debug.WriteLine("[Forge] In-process Forge service boundary enabled: " + _forgeService.ForgeId + ".");
         _xPostingOptions = CreateXPostingOptions();
         _xOAuth2TokenStore = new DesktopXOAuth2TokenStore(Path.Combine(_xPostingOptions.StateRoot, "oauth2-tokens"));
         _xOAuth2AuthorizationService = new XOAuth2DesktopAuthorizationService(_xOAuth2TokenStore);
@@ -212,11 +251,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             maxMemoryLogEntries: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_LOG_ENTRIES"), _appConfig.Memory.MaxMemoryLogEntries),
             maxImportantQuotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_IMPORTANT_QUOTES"), _appConfig.Memory.MaxImportantQuotes),
             maxMemoryNotes: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MAX_MEMORY_NOTES"), _appConfig.Memory.MaxMemoryNotes),
+            shortTermMemoryWindowMs: GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SHORT_TERM_MEMORY_WINDOW_MS"), _appConfig.Memory.ShortTermMemoryWindowMs),
             dailyStateOptions: CreateDailyStarStateOptions(),
             worldEventOptions: CreateWorldEventOptions(),
             speechIntentOptions: CreateStarSpeechIntentOptions(),
             preparedSpeechOptions: CreatePreparedSpeechOptions(),
-            foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions());
+            foregroundSpeechStyleOptions: CreateForegroundSpeechStyleOptions(),
+            forgeInteractionReviewService: starAgent is IStarTurnAnalyzer ? _forgeService : null,
+            forgeContextCardFactory: new SixStarsForgeContextCardFactory(),
+            backgroundAnalysisTraceOptions: new BackgroundAnalysisTraceOptions
+            {
+                Enabled = GetBooleanSetting(
+                    Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_TRACE"),
+                    _appConfig.BackgroundAnalysisTracing.Enabled),
+                LogFilePath = Environment.GetEnvironmentVariable("SIX_STARS_BACKGROUND_ANALYSIS_TRACE_FILE")
+                    ?? _appConfig.BackgroundAnalysisTracing.LogFilePath
+            });
 
         System.Diagnostics.Debug.WriteLine($"[Memory] RecentHistoryForPrompt: {recentHistoryForPrompt}");
         _mobileBridgeDispatcher.RegisterCommandHandler(HandleMobileBridgeCommandAsync);
@@ -233,17 +283,22 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _voiceCaptureSettings,
             new WhisperTranscriptionOptions
             {
-                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language
+                Language = ResolveWhisperLanguage(),
+                Prompt = CreateWhisperNamePrompt()
             });
 
-        // Determine if we should use streaming TTS. WebSocket streaming is the default desktop voice path
-        // so spoken replies begin playing chunk-by-chunk. The old HTTP /v1/audio/speech path is
-        // intentionally disabled in this harness; non-streaming falls back to a mock generator.
+        // Determine if we should use streaming TTS. Local qwentts.cpp HTTP is the default desktop
+        // voice path. Six Stars keeps chunking/orchestration in .NET and calls tts-server.exe directly;
+        // there is no intermediate WebSocket/Drogon gateway.
         string? streamingOverride = Environment.GetEnvironmentVariable("SIX_STARS_USE_STREAMING_TTS");
-        _useStreamingTts = !string.IsNullOrWhiteSpace(streamingOverride)
-            ? IsTruthy(streamingOverride)
-            : _appConfig.WebSocketTTS.Enabled;
-        System.Diagnostics.Debug.WriteLine($"[TTS] Using streaming WebSocket TTS: {_useStreamingTts}");
+        bool hostedTtsEnabled = IsHostedTtsEnabled();
+        _useStreamingTts = hostedTtsEnabled
+            || (!string.IsNullOrWhiteSpace(streamingOverride)
+                ? IsTruthy(streamingOverride)
+                : _appConfig.QwenTTS.Enabled);
+        System.Diagnostics.Debug.WriteLine(hostedTtsEnabled
+            ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
+            : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
 
         IWavePlaybackEndpoint playbackEndpoint = CreatePlaybackEndpoint();
         _playbackEndpoint = playbackEndpoint;
@@ -251,7 +306,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         if (_useStreamingTts)
         {
             _streamingVoiceResponsePipeline = new StreamingStarVoiceResponsePipeline(
-                CreateStreamingVoiceGenerator(),
+                CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false),
                 playbackEndpoint,
                 _speechPipeline,
                 _interruptionManager);
@@ -259,7 +314,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             // Dedicated generator for story autoplay prefetch. It must be separate from
             // the active streaming pipeline so it can generate the next story chunk while
             // the current one is still playing.
-            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator();
+            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false);
         }
         else
         {
@@ -283,7 +338,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             IsProcessingRuntime = false;
             _voiceConversationLoopActive = false;
             _pendingBackgroundAnalysisId = string.Empty;
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
             RecordButtonText = "Start Recording (Win+Ctrl+E)";
+            SpeakAsStarRecordButtonText = "Speak as Star (Record)";
             CancelStopButtonText = "Cancel";
             Status = "Runtime operations cancelled: " + args.Reason;
             SpeechStatus = "Cancelled input/LLM/TTS runtime operation.";
@@ -303,10 +362,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             LoadLatestConversationDebugLog();
             Status = "Background emotion/memory update settled for " + response.StarId + ": Heart Δ " + response.StateDeltas.Heart + ", Trust Δ " + response.StateDeltas.Trust + ", Romance Δ " + response.StateDeltas.Romance + ", Connection Δ " + response.StateDeltas.EmotionalConnectionPercent.ToString("0.00") + " -> " + response.EmotionalConnectionPercentAfter.ToString("0.0") + "%.";
             PublishMobileBridgeTopEmotionUpdate(response);
+            PublishMobileBridgeBackgroundEmotionAnimationCue(response);
             DebugJson = _llmDebugLog.ToString()
                 + "\n================ BACKGROUND DETERMINISTIC EMOTION UPDATE ================\n"
                 + CreateEnhancedDebugOutput(new { backgroundUpdate = true, starId = response.StarId }, response);
         });
+        _runtime.BackgroundInformationFollowupCompleted += (_, response) => _ = HandleBackgroundInformationFollowupResponseAsync(response);
         _runtime.BackgroundAnalysisFailed += (_, ex) => OnUiThread(() =>
         {
             Status = "Background emotion/memory update failed: " + ex.Message;
@@ -433,7 +494,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         WireMicrophoneEvents();
         WireScreenEvents();
 
-        StarIds = new ObservableCollection<string> { "Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari" };
+        StarIds = new ObservableCollection<string>(activeStarProfiles.Select(x => x.StarId));
         AudioBackends = new ObservableCollection<string> { "directsound", "wasapi", "waveout", "auto" };
         RequestTypes = new ObservableCollection<RequestType>
         {
@@ -456,6 +517,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         StartListeningCommand = new RelayCommand(async _ => await StartListeningAsync());
         StopListeningCommand = new RelayCommand(async _ => await StopListeningAsync());
         ToggleRecordingCommand = new RelayCommand(async _ => await ToggleRecordingAsync());
+        ToggleSpeakAsStarRecordingCommand = new RelayCommand(async _ => await ToggleSpeakAsStarRecordingAsync());
+        CancelSpeakAsStarRecordingCommand = new RelayCommand(async _ => await CancelSpeakAsStarRecordingAsync());
+        SpeakPlayerTextAsStarCommand = new RelayCommand(async _ => await SpeakPlayerTextAsStarAsync());
         CancelOrStopRuntimeCommand = new RelayCommand(_ => CancelAllRuntimeOperations("User clicked cancel/stop."));
         ClearSelectedStarHistoryCommand = new RelayCommand(async _ => await ClearSelectedStarHistoryAsync());
         ClearAllStarDataCommand = new RelayCommand(async _ => await ClearAllStarDataAsync());
@@ -498,6 +562,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand StartListeningCommand { get; }
     public ICommand StopListeningCommand { get; }
     public ICommand ToggleRecordingCommand { get; }
+    public ICommand ToggleSpeakAsStarRecordingCommand { get; }
+    public ICommand CancelSpeakAsStarRecordingCommand { get; }
+    public ICommand SpeakPlayerTextAsStarCommand { get; }
     public ICommand CancelOrStopRuntimeCommand { get; }
     public ICommand ClearSelectedStarHistoryCommand { get; }
     public ICommand ClearAllStarDataCommand { get; }
@@ -692,6 +759,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         set => SetProperty(ref _recordButtonText, value);
     }
 
+    public string SpeakAsStarRecordButtonText
+    {
+        get => _speakAsStarRecordButtonText;
+        set => SetProperty(ref _speakAsStarRecordButtonText, value);
+    }
+
     public string CancelStopButtonText
     {
         get => _cancelStopButtonText;
@@ -743,7 +816,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string TellStarWritingButtonText => "Tell Best / Latest (" + PendingWritingCount + ")";
+    public string TellStarWritingButtonText => "Tell Top Sparks (" + PendingWritingCount + ")";
     public string WritingLibraryStatusText => "Writing shelf: " + PendingWritingCount + " new, " + PersistedWritingCount + " saved.";
 
     public string StarOutput
@@ -871,8 +944,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         options.Chat.Model = string.IsNullOrWhiteSpace(options.Chat.Model) ? _appConfig.LocalModels.LlmModel : options.Chat.Model;
         options.Whisper.EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT") ?? _appConfig.Whisper.EndpointUrl ?? _appConfig.LocalModels.WhisperEndpointUrl;
         options.Whisper.ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH") ?? _appConfig.Whisper.ModelPath ?? _appConfig.LocalModels.WhisperLocalPath;
-        options.Tts.WebSocketUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL") ?? _appConfig.WebSocketTTS.WebSocketUrl ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
-        options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL") ?? _appConfig.WebSocketTTS.Model ?? _appConfig.LocalModels.QwenTtsModel;
+        options.Tts.BaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
+            ?? _appConfig.QwenTTS.HttpBaseUrl;
+        options.Tts.Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
+            ?? _appConfig.QwenTTS.Model;
         LocalModelPaths.ApplyEnvironment(options);
         return options;
     }
@@ -899,6 +974,46 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             Environment.GetEnvironmentVariable("SIX_STARS_LLM_API_KEY"),
             Environment.GetEnvironmentVariable("LM_API_TOKEN"),
             Environment.GetEnvironmentVariable("LM_STUDIO_API_KEY"),
+            configuredApiKey);
+    }
+
+    private bool IsHostedLlmEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_ENABLED"), _appConfig.HostedServices?.LLM?.Enabled ?? false);
+    }
+
+    private bool IsHostedAsrEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_ENABLED"), _appConfig.HostedServices?.ASR?.Enabled ?? false);
+    }
+
+    private bool IsHostedTtsEnabled()
+    {
+        return GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENABLED"), _appConfig.HostedServices?.TTS?.Enabled ?? false);
+    }
+
+    private static string? GetHostedLlmApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_API_KEY"),
+            Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
+            Environment.GetEnvironmentVariable("GOOGLE_API_KEY"),
+            configuredApiKey);
+    }
+
+    private static string? GetHostedAsrApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_API_KEY"),
+            Environment.GetEnvironmentVariable("GROQ_API_KEY"),
+            configuredApiKey);
+    }
+
+    private static string? GetHostedTtsApiKey(string? configuredApiKey)
+    {
+        return FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_API_KEY"),
+            Environment.GetEnvironmentVariable("DASHSCOPE_API_KEY"),
             configuredApiKey);
     }
 
@@ -1066,10 +1181,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStarAgent CreateStarAgent()
     {
+        bool hostedLlmEnabled = IsHostedLlmEnabled();
         string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_LLM_ENDPOINT")
             ?? _appConfig.LLM.EndpointUrl
             ?? _appConfig.LocalModels.LlmEndpointUrl;
-        if (string.IsNullOrWhiteSpace(endpoint))
+        if (!hostedLlmEnabled && string.IsNullOrWhiteSpace(endpoint))
         {
             System.Diagnostics.Debug.WriteLine("[LLM] No endpoint configured. Using MockStarAgent.");
             return new MockStarAgent();
@@ -1126,12 +1242,20 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             RecentHistoryCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RECENT_HISTORY_FOR_PROMPT"), _appConfig.Memory.RecentHistoryForPrompt),
             ImportantQuoteCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_IMPORTANT_QUOTES_FOR_PROMPT"), _appConfig.Memory.ImportantQuotesForPrompt),
             MemoryNoteCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_MEMORY_NOTES_FOR_PROMPT"), _appConfig.Memory.MemoryNotesForPrompt),
+            ShortTermMemoryWindowMs = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SHORT_TERM_MEMORY_WINDOW_MS"), _appConfig.Memory.ShortTermMemoryWindowMs),
             RelationshipEventCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RELATIONSHIP_EVENTS_FOR_PROMPT"), _appConfig.Memory.RelationshipEventsForPrompt),
             GirlfriendHistoryCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_GIRLFRIEND_HISTORY_FOR_PROMPT"), _appConfig.Memory.GirlfriendHistoryForPrompt),
             LearnedFunctionCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_LEARNED_FUNCTIONS_FOR_PROMPT"), _appConfig.Memory.LearnedFunctionsForPrompt),
             SecretStateCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SECRET_STATES_FOR_PROMPT"), _appConfig.Memory.SecretStatesForPrompt),
             RelationshipComboCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_RELATIONSHIP_COMBOS_FOR_PROMPT"), _appConfig.Memory.RelationshipCombosForPrompt),
             ScreenCaptureCount = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_SCREEN_CAPTURES_FOR_PROMPT"), _appConfig.Memory.ScreenCapturesForPrompt),
+            ConfiguredStarSummary = string.Join("; ", (_profileProvider.GetAllProfiles() ?? Array.Empty<StarProfile>())
+                .Where(x => x != null && x.Active)
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(x => (string.IsNullOrWhiteSpace(x.DisplayName) ? x.StarId : x.DisplayName)
+                    + (string.IsNullOrWhiteSpace(x.Element) ? string.Empty : "-" + x.Element)
+                    + (string.IsNullOrWhiteSpace(x.Domain) ? string.Empty : "/" + x.Domain))),
             ActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.ActiveFlirtConnectionPercent),
             ActiveFlirtRomanceScore = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_ACTIVE_FLIRT_ROMANCE_SCORE"), _appConfig.Memory.ActiveFlirtRomanceScore),
             StrongActiveFlirtConnectionPercent = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_STRONG_ACTIVE_FLIRT_CONNECTION_PERCENT"), _appConfig.Memory.StrongActiveFlirtConnectionPercent),
@@ -1139,6 +1263,40 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         };
 
         System.Diagnostics.Debug.WriteLine($"[PromptMemory] RecentHistoryCount: {promptOptions.RecentHistoryCount}, ImportantQuotes: {promptOptions.ImportantQuoteCount}, MemoryNotes: {promptOptions.MemoryNoteCount}");
+
+        if (hostedLlmEnabled)
+        {
+            HostedLlmConfig hosted = _appConfig.HostedServices?.LLM ?? new HostedLlmConfig();
+            string? hostedKey = GetHostedLlmApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(hostedKey))
+            {
+                throw new InvalidOperationException("Hosted LLM is enabled but no Google AI Studio key is configured. Set GEMINI_API_KEY, GOOGLE_API_KEY, SIX_STARS_HOSTED_LLM_API_KEY, or HostedServices:LLM:ApiKey.");
+            }
+
+            GoogleAiStudioChatModelClient hostedClient = new GoogleAiStudioChatModelClient(new GoogleAiStudioChatModelOptions
+            {
+                ApiKey = hostedKey,
+                EndpointBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_ENDPOINT_BASE_URL") ?? hosted.EndpointBaseUrl,
+                Model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_MODEL") ?? hosted.Model,
+                ThinkingLevel = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_THINKING_LEVEL") ?? hosted.ThinkingLevel,
+                EnableGoogleSearch = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_GOOGLE_SEARCH"), hosted.EnableGoogleSearch),
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_TIMEOUT_SECONDS"), hosted.TimeoutSeconds),
+                MaxTokens = GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_MAX_TOKENS"), _appConfig.LLM.MaxTokens),
+                Temperature = GetDoubleSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_TEMPERATURE"), _appConfig.LLM.Temperature),
+                LogExchangesToDisk = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_EXCHANGES"), _appConfig.LLM.LogExchangesToDisk),
+                ExchangeLogDirectory = Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_DIR") ?? _appConfig.LLM.ExchangeLogDirectory,
+                ExchangeLogMaxTextChars = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_LLM_LOG_MAX_TEXT_CHARS"), _appConfig.LLM.ExchangeLogMaxTextChars)
+            });
+            hostedClient.ExchangeLogged += (_, args) => AppendLlmDebugLog(args.FormattedText);
+            System.Diagnostics.Debug.WriteLine($"[LLM] Hosted provider=Google AI Studio, model={Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_MODEL") ?? hosted.Model}, thinking={Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_LLM_THINKING_LEVEL") ?? hosted.ThinkingLevel}");
+
+            return new StructuredStarAgent(
+                hostedClient,
+                library.LoadMainInstructions(),
+                promptOptions,
+                GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_SPEECH_MAX_TOKENS"), _appConfig.LLM.SpeechMaxTokens),
+                GetIntSettingAllowZero(Environment.GetEnvironmentVariable("SIX_STARS_LLM_REVIEW_MAX_TOKENS"), _appConfig.LLM.ReviewMaxTokens));
+        }
 
         LocalModelServiceOptions localOptions = CreateLocalModelServiceOptions(options);
         LocalAiClient client = new LocalAiClient(localOptions);
@@ -1158,9 +1316,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IWhisperSpeechStreamer CreateWhisperStreamer()
     {
-        string? endpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")
-            ?? _appConfig.Whisper.EndpointUrl
-            ?? _appConfig.LocalModels.WhisperEndpointUrl;
         bool useMockWhisper = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_USE_MOCK_WHISPER"), false);
         if (useMockWhisper)
         {
@@ -1168,23 +1323,60 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return new MockWhisperSpeechStreamer();
         }
 
-        if (string.IsNullOrWhiteSpace(endpoint))
+        if (IsHostedAsrEnabled())
+        {
+            HostedAsrConfig hosted = _appConfig.HostedServices?.ASR ?? new HostedAsrConfig();
+            string? apiKey = GetHostedAsrApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException("Hosted ASR is enabled but no Groq API key is configured. Set GROQ_API_KEY, SIX_STARS_HOSTED_ASR_API_KEY, or HostedServices:ASR:ApiKey.");
+            }
+
+            string endpoint = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_ENDPOINT") ?? hosted.EndpointUrl;
+            string model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_MODEL") ?? hosted.Model;
+            System.Diagnostics.Debug.WriteLine($"[Whisper] Hosted Groq transcription endpoint: {endpoint}; model={model}");
+            return new LocalWhisperHttpSpeechStreamer(new WhisperStreamEndpointOptions
+            {
+                Provider = "groq",
+                EndpointUrl = endpoint,
+                Model = model,
+                ApiKey = apiKey,
+                Language = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_LANGUAGE") ?? hosted.Language,
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_TIMEOUT_SECONDS"), hosted.TimeoutSeconds)
+            });
+        }
+
+        string? localEndpoint = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_ENDPOINT")
+            ?? _appConfig.Whisper.EndpointUrl
+            ?? _appConfig.LocalModels.WhisperEndpointUrl;
+        if (string.IsNullOrWhiteSpace(localEndpoint))
         {
             System.Diagnostics.Debug.WriteLine("[Whisper] No endpoint configured. Real voice input will fail loudly instead of using a mock transcript.");
             return new UnconfiguredWhisperSpeechStreamer();
         }
 
-        System.Diagnostics.Debug.WriteLine($"[Whisper] Real microphone transcription endpoint: {endpoint}");
+        System.Diagnostics.Debug.WriteLine($"[Whisper] Real microphone transcription endpoint: {localEndpoint}");
         return new LocalWhisperHttpSpeechStreamer(new WhisperStreamEndpointOptions
         {
             Provider = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_PROVIDER") ?? _appConfig.Whisper.Provider,
-            EndpointUrl = endpoint,
+            EndpointUrl = localEndpoint,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL") ?? _appConfig.Whisper.Model,
             ModelPath = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_MODEL_PATH")
                 ?? (!string.IsNullOrWhiteSpace(_appConfig.Whisper.ModelPath) ? _appConfig.Whisper.ModelPath : _appConfig.LocalModels.WhisperLocalPath),
             ApiKey = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_API_KEY") ?? _appConfig.Whisper.ApiKey,
             Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
             TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_TIMEOUT_SECONDS"), _appConfig.Whisper.TimeoutSeconds)
         });
+    }
+
+    private string ResolveWhisperLanguage()
+    {
+        if (IsHostedAsrEnabled())
+        {
+            HostedAsrConfig hosted = _appConfig.HostedServices?.ASR ?? new HostedAsrConfig();
+            return Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_ASR_LANGUAGE") ?? hosted.Language;
+        }
+        return Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language;
     }
 
     private VoiceCaptureSettings CreateVoiceCaptureSettings()
@@ -1200,7 +1392,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private IStarVoiceGenerator CreateVoiceGenerator()
     {
-        System.Diagnostics.Debug.WriteLine("[TTS] HTTP /v1/audio/speech generator disabled. Desktop uses WebSocket streaming TTS only; this mock fallback is used only if streaming is explicitly turned off.");
+        System.Diagnostics.Debug.WriteLine("[TTS] Streaming TTS is disabled; using the mock non-streaming fallback.");
         return new MockStarVoiceGenerator();
     }
 
@@ -1235,30 +1427,118 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return new VoiceWavArchivePlaybackEndpoint(playbackEndpoint, outputDirectory, saveMetadataText);
     }
 
-    private IStreamingVoiceGenerator CreateStreamingVoiceGenerator()
+    private StarInteractionResponse CreateLiveVoiceTemplateResponse(string starId)
     {
-        string? wsUrl = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_URL")
-            ?? _appConfig.WebSocketTTS.WebSocketUrl
-            ?? _appConfig.LocalModels.QwenTtsWebSocketUrl;
-        if (string.IsNullOrWhiteSpace(wsUrl))
-        {
-            wsUrl = "ws://localhost:8100/tts/stream";
-        }
-        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured WebSocket URL: {wsUrl}");
+        StarProfile profile = _profileProvider.GetProfile(starId);
+        string voiceDesign = string.IsNullOrWhiteSpace(profile.VoiceDesignPrompt)
+            ? string.Join(" ", new[] { profile.PersonalityShort, profile.VoiceArchetype, profile.SpeakingStyle }.Where(x => !string.IsNullOrWhiteSpace(x)))
+            : profile.VoiceDesignPrompt;
 
-        return new WebSocketTtsVoiceGenerator(new WebSocketTtsOptions
+        VoiceDirective directive = new VoiceDirective
         {
-            WebSocketUrl = wsUrl,
-            Model = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_MODEL")
-                ?? _appConfig.WebSocketTTS.Model
-                ?? _appConfig.LocalModels.QwenTtsModel,
-            DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE") ?? _appConfig.WebSocketTTS.DefaultLanguage,
-            ResponseFormat = _appConfig.WebSocketTTS.ResponseFormat,
-            TaskType = Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE") ?? _appConfig.WebSocketTTS.TaskType,
-            MaxWordsPerChunk = _appConfig.WebSocketTTS.MaxWordsPerChunk,
-            MaxSentencesPerChunk = _appConfig.WebSocketTTS.MaxSentencesPerChunk,
-            ChunkGenerationMode = Environment.GetEnvironmentVariable("QWEN_TTS_CHUNK_GENERATION_MODE") ?? _appConfig.WebSocketTTS.ChunkGenerationMode,
-            MaxParallelChunks = GetIntSetting(Environment.GetEnvironmentVariable("QWEN_TTS_MAX_PARALLEL_CHUNKS"), _appConfig.WebSocketTTS.MaxParallelChunks)
+            VoiceId = string.IsNullOrWhiteSpace(profile.VoiceId) ? profile.StarId : profile.VoiceId,
+            VoiceDesignPrompt = voiceDesign,
+            VoiceCloneAudioFile = profile.VoiceCloneAudioFile ?? string.Empty,
+            VoiceCloneRefText = profile.VoiceCloneRefText ?? string.Empty,
+            DeliveryInstructions = "Speak in character with the Star's stable voice identity, natural timing, and emotionally grounded delivery. Use the exact streamed speech chunk without adding words.",
+            PrimaryEmotion = "in-character",
+            EmotionIntensity = 0.55,
+            Pace = "natural",
+            Pitch = "natural",
+            Volume = "normal",
+            Prosody = string.IsNullOrWhiteSpace(profile.SpeakingStyle) ? "natural, character-consistent" : profile.SpeakingStyle,
+            Language = "English"
+        };
+        directive.AudioTags.Add("character voice");
+        foreach (string rule in profile.VoiceGenerationRules.Take(3))
+        {
+            if (!string.IsNullOrWhiteSpace(rule)) directive.Avoid.Add("Do not violate voice rule: " + rule);
+        }
+
+        StarInteractionResponse response = new StarInteractionResponse
+        {
+            StarId = profile.StarId,
+            VoiceDirective = directive
+        };
+        PrepareVoiceCloneReferenceForTts(response);
+        return response;
+    }
+
+    private bool ShouldUseLiveForegroundSpeech(RequestType requestType)
+    {
+        return _useStreamingTts
+            && requestType != RequestType.Story
+            && requestType != RequestType.StarInitiative;
+    }
+
+    private IStreamingVoiceGenerator CreateStreamingVoiceGenerator(bool preferSmoothDesktopWav = false)
+    {
+        if (IsHostedTtsEnabled())
+        {
+            HostedTtsConfig hosted = _appConfig.HostedServices?.TTS ?? new HostedTtsConfig();
+            string? apiKey = GetHostedTtsApiKey(hosted.ApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new InvalidOperationException("Hosted TTS is enabled but no Alibaba Model Studio key is configured. Set DASHSCOPE_API_KEY, SIX_STARS_HOSTED_TTS_API_KEY, or HostedServices:TTS:ApiKey.");
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Hosted Alibaba Qwen3-TTS model: {Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_MODEL") ?? hosted.Model}");
+            return new AlibabaQwenTtsStreamingVoiceGenerator(new AlibabaQwenTtsOptions
+            {
+                ApiKey = apiKey,
+                EndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENDPOINT") ?? hosted.EndpointUrl,
+                VoiceEnrollmentEndpointUrl = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENROLLMENT_ENDPOINT") ?? hosted.VoiceEnrollmentEndpointUrl,
+                Model = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_MODEL") ?? hosted.Model,
+                VoiceEnrollmentModel = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_ENROLLMENT_MODEL") ?? hosted.VoiceEnrollmentModel,
+                DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_LANGUAGE") ?? hosted.DefaultLanguage,
+                AutoCloneVoices = GetBooleanSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_AUTO_CLONE"), hosted.AutoCloneVoices),
+                VoiceCachePath = Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_VOICE_CACHE") ?? hosted.VoiceCachePath,
+                TimeoutSeconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_HOSTED_TTS_TIMEOUT_SECONDS"), hosted.TimeoutSeconds),
+                VoiceIds = hosted.VoiceIds ?? new Dictionary<string, string>()
+            });
+        }
+
+        if (preferSmoothDesktopWav)
+        {
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Legacy complete-WAV desktop mode requested.");
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop Smart DirectSound mode: requesting rolling PCM from qwentts.cpp.");
+        }
+
+        return CreateLocalStreamingVoiceGenerator(preferSmoothDesktopWav ? "wav" : null);
+    }
+
+    /// <summary>
+    /// Always creates the repository's local qwentts.cpp HTTP adapter, even when the desktop's
+    /// normal voice output is configured to use hosted Alibaba TTS. The standalone Android
+    /// local-TTS bridge calls this so phone TTS can remain entirely on the desktop GPU.
+    /// </summary>
+    private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator(string? responseFormatOverride = null)
+    {
+        string? httpBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
+            ?? _appConfig.QwenTTS.HttpBaseUrl;
+        if (string.IsNullOrWhiteSpace(httpBaseUrl))
+        {
+            httpBaseUrl = "http://localhost:8101";
+        }
+        System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Configured qwentts.cpp HTTP URL: {httpBaseUrl}");
+
+        return new QwenCppHttpStreamingVoiceGenerator(new QwenCppHttpTtsOptions
+        {
+            BaseUrl = httpBaseUrl,
+            Model = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_MODEL")
+                ?? _appConfig.QwenTTS.Model,
+            DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_LANGUAGE")
+                ?? _appConfig.QwenTTS.DefaultLanguage,
+            ResponseFormat = responseFormatOverride
+                ?? Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
+                ?? _appConfig.QwenTTS.ResponseFormat
+                ?? "pcm",
+            PcmPacketMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_PACKET_MS"), _appConfig.QwenTTS.PcmPacketMilliseconds),
+            TaskType = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_TASK_TYPE")
+                ?? _appConfig.QwenTTS.TaskType,
         });
     }
 
@@ -1373,7 +1653,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             VoiceInputStatus = "Captured audio ignored after transcription/wake filtering.";
             LastVoiceSegmentDetails = $"Ignored segment {args.Segment.SegmentId}: {args.Segment.DurationMs:0} ms, peak RMS={args.Segment.PeakRms:0.0000}. Reason: {args.Reason}";
         });
-        _speechPipeline.TranscriptReady += async (_, args) => await ProcessTranscriptFromSpeechPipelineAsync(args.Transcript);
+        _speechPipeline.TranscriptReady += async (_, args) =>
+        {
+            if (_manualRecordingPurpose == ManualRecordingPurpose.SpeakAsStar)
+            {
+                await SpeakTranscriptAsSelectedStarAsync(args.Transcript).ConfigureAwait(false);
+                return;
+            }
+
+            await ProcessTranscriptFromSpeechPipelineAsync(args.Transcript).ConfigureAwait(false);
+        };
         _speechCoordinator.SpeechRecognized += (_, args) => OnUiThread(() =>
         {
             LastTranscript = args.RecognizedSpeech.Transcript.Text;
@@ -1418,10 +1707,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Chunk {args.ChunkIndex + 1}/{args.TotalChunks}: '{args.Text.Substring(0, System.Math.Min(40, args.Text.Length))}...'");
             });
 
-            _streamingVoiceResponsePipeline.ChunkReadyForConsumer += (_, args) => OnUiThread(() =>
+            _streamingVoiceResponsePipeline.ChunkReadyForConsumer += (_, args) =>
             {
-                System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Ordered chunk ready for host: {args.Result.WavAudio.Length} bytes from {args.Result.Source}");
-            });
+                // The pending analysis id is cleared on the first successful release, so invoking
+                // this for every ordered chunk is a cheap way to make the FIRST ready WAV the gate
+                // without adding sequence state to the generic streaming event args.
+                ReleasePendingBackgroundAnalysis("First streaming voice sentence TTS is ready; background emotion/memory review may process while later speech continues.");
+                OnUiThread(() =>
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Streaming TTS] Ordered chunk ready for host: {args.Result.WavAudio.Length} bytes from {args.Result.Source}");
+                });
+            };
 
             _streamingVoiceResponsePipeline.ChunkPlaybackStarted += (_, args) => OnUiThread(() => 
             {
@@ -1435,8 +1731,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             _streamingVoiceResponsePipeline.AllChunksComplete += (_, args) => OnUiThread(() => 
             {
-                ReleasePendingBackgroundAnalysis("Streaming voice generation completed: " + args.TotalChunks + " chunks.");
-                Status = $"✓ All {args.TotalChunks} chunks generated ({args.TotalDurationMs:0}ms). Background emotion/memory review can settle while playback/listening continues.";
+                ReleasePendingBackgroundAnalysis("Fallback release after all streaming voice generation completed: " + args.TotalChunks + " chunks.");
+                Status = $"✓ All {args.TotalChunks} chunks generated ({args.TotalDurationMs:0}ms). Background emotion/memory review was eligible from the first voice-ready sentence.";
             });
 
             _streamingVoiceResponsePipeline.VoiceInterrupted += (_, args) => OnUiThread(() => 
@@ -1505,7 +1801,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 _pendingBackgroundAnalysisId = string.Empty;
             }
-            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released " + analysisId + " after voice ready: " + reason);
+            System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] Released " + analysisId + " after first-sentence readiness: " + reason);
         }
     }
 
@@ -1623,7 +1919,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task SpeakStarResponseAsync(StarInteractionResponse response, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
+        bool primaryReviewAlreadyQueuedAtForegroundCompletion = response.UnityEvents.Any(x =>
+            string.Equals(x.Type, "BackgroundStarAnalysisQueuedAtForegroundCompletion", StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(response.BackgroundAnalysisId) && !primaryReviewAlreadyQueuedAtForegroundCompletion)
         {
             _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
         }
@@ -1686,6 +1984,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 if (!IsRecording)
                 {
                     RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                    SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                     CancelStopButtonText = "Cancel";
                 }
             });
@@ -1865,7 +2164,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     WavAudio = CopyBytes(e.AudioData),
                     MimeType = e.MimeType,
                     Instructions = e.Text,
-                    Source = "story-prefetch-streaming-websocket"
+                    DurationMs = e.DurationMs,
+                    IsStreamingPcmWindow = e.IsStreamingPcmWindow,
+                    Source = "story-prefetch-streaming-qwentts-http"
                 };
                 System.Diagnostics.Debug.WriteLine($"[StoryAutoplayPrefetch] Voice audio ready for story chunk {response.StoryPartIndex}, TTS chunk {e.ChunkIndex + 1}/{e.TotalChunks} ({e.AudioData.Length} bytes).");
                 TryComplete();
@@ -1921,6 +2222,47 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _speechPipeline.NotifyStarSpeechStarted();
         try
         {
+            bool canUseContinuousOutput = _playbackEndpoint is IStreamingWavePlaybackEndpoint;
+
+            if (canUseContinuousOutput)
+            {
+                IStreamingWavePlaybackEndpoint streamingEndpoint = (IStreamingWavePlaybackEndpoint)_playbackEndpoint;
+                using IStreamingWavePlaybackSession playbackSession = streamingEndpoint.CreateStreamingSession("prefetched story desktop speech");
+                CancellationToken playbackInterruptionToken = _interruptionManager.StartSpeechPlayback();
+                CancellationTokenSource? linkedCts = null;
+                try
+                {
+                    CancellationToken effectiveToken = cancellationToken;
+                    if (playbackInterruptionToken != CancellationToken.None)
+                    {
+                        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, playbackInterruptionToken);
+                        effectiveToken = linkedCts.Token;
+                    }
+
+                    for (int i = 0; i < voiceChunks.Count; i++)
+                    {
+                        effectiveToken.ThrowIfCancellationRequested();
+                        VoiceSynthesisResult chunk = voiceChunks[i];
+                        OnUiThread(() => Status = $"Streaming story chunk {response.StoryPartIndex + 1} ({i + 1}/{voiceChunks.Count}) through one continuous audio output.");
+                        await playbackSession.EnqueueAsync(chunk, effectiveToken).ConfigureAwait(false);
+                    }
+
+                    await playbackSession.CompleteAsync(effectiveToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    playbackSession.Cancel();
+                    throw;
+                }
+                finally
+                {
+                    linkedCts?.Dispose();
+                    _interruptionManager.SpeechPlaybackCompleted();
+                }
+
+                return;
+            }
+
             for (int i = 0; i < voiceChunks.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1944,11 +2286,6 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 {
                     linkedCts?.Dispose();
                     _interruptionManager.SpeechPlaybackCompleted();
-                }
-
-                if (i + 1 < voiceChunks.Count)
-                {
-                    await Task.Delay(35, cancellationToken).ConfigureAwait(false);
                 }
             }
         }
@@ -2155,7 +2492,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     bytes = wavBytes.Length,
                     appBaseDirectory,
                     currentDirectory,
-                    note = "This bypasses LLM, Qwen, WebSocket TTS, HTTP TTS, and generated WAV saving."
+                    note = "This bypasses LLM, Qwen synthesis, the local TTS HTTP service, and generated-audio saving."
                 }, _jsonOptions);
             });
 
@@ -2351,11 +2688,301 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (IsRecording)
         {
+            if (_manualRecordingPurpose != ManualRecordingPurpose.Conversation)
+            {
+                OnUiThread(() => Status = "A Speak as Star recording is already active. Use its Send or Cancel button.");
+                return;
+            }
+
             await SubmitManualRecordingAsync().ConfigureAwait(false);
             return;
         }
 
         await StartManualRecordingAsync(loopContinuation: false).ConfigureAwait(false);
+    }
+
+    private async Task ToggleSpeakAsStarRecordingAsync()
+    {
+        if (IsRecording)
+        {
+            if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+            {
+                OnUiThread(() => Status = "A normal conversation recording is already active. Submit or cancel it before recording as the Star.");
+                return;
+            }
+
+            await SubmitSpeakAsStarRecordingAsync().ConfigureAwait(false);
+            return;
+        }
+
+        await StartSpeakAsStarRecordingAsync().ConfigureAwait(false);
+    }
+
+    private async Task StartSpeakAsStarRecordingAsync()
+    {
+        NotifyBackgroundWritingLoopForegroundActivity("manual speak-as-star recording");
+        string starId = ResolveDefaultStarId(SelectedStarId);
+        try
+        {
+            _operationController.BeginNewOperation("manual speak-as-star recording");
+            _voiceConversationLoopActive = false;
+            _savedRequireWakeWordBeforeManualRecording = SpeechRequireWakeWord;
+            _savedSilenceEndMs = _voiceCaptureSettings.SilenceEndMs;
+            _manualRecordingPurpose = ManualRecordingPurpose.SpeakAsStar;
+            _speakAsStarRecordingStarId = starId;
+            _speakAsStarTranscriptDispatched = false;
+
+            SpeechRequireWakeWord = false;
+            _voiceCaptureSettings.RequireHotwordWhenIdle = false;
+            _voiceCaptureSettings.SilenceEndMs = 60 * 60 * 1000;
+            UpdateSpeechOptions();
+            await _services.SpeechInput
+                .StartConversationCaptureAsync(starId, _operationController.CurrentToken)
+                .ConfigureAwait(false);
+
+            OnUiThread(() =>
+            {
+                IsRecording = true;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Recording as Star...";
+                SpeakAsStarRecordButtonText = "Send / Speak as Star";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Recording a line to transcribe and replay in " + starId + "'s voice. Press Send / Speak as Star when finished.";
+                Status = "Recording a direct " + starId + " voice line. This will not be sent to the LLM or added as a conversation turn.";
+            });
+        }
+        catch (Exception ex)
+        {
+            RestoreSpeechSettingsAfterSpeakAsStarRecording();
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Could not start Speak as Star recording: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+    }
+
+    private async Task SubmitSpeakAsStarRecordingAsync()
+    {
+        if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+        {
+            return;
+        }
+
+        string starId = string.IsNullOrWhiteSpace(_speakAsStarRecordingStarId)
+            ? ResolveDefaultStarId(SelectedStarId)
+            : _speakAsStarRecordingStarId;
+
+        try
+        {
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = true;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Stop";
+                SpeechStatus = "Submitting the recorded line to Whisper. The transcript will be spoken directly as " + starId + ".";
+                Status = "Transcribing direct Star voice line...";
+            });
+
+            _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
+            _voiceCaptureSettings.RequireHotwordWhenIdle = false;
+            UpdateSpeechOptions();
+
+            // Keep the purpose and target Star set through StopAsync. The speech pipeline awaits
+            // final transcription before returning, and TranscriptReady enters its handler immediately,
+            // so the transcript is routed to direct Star TTS rather than to the conversation runtime.
+            await _services.SpeechInput.StopAsync(CancellationToken.None).ConfigureAwait(false);
+
+            if (!_speakAsStarTranscriptDispatched)
+            {
+                OnUiThread(() =>
+                {
+                    IsProcessingRuntime = false;
+                    CancelStopButtonText = "Cancel";
+                    SpeechStatus = "No speech segment was transcribed, so nothing was spoken as " + starId + ".";
+                    Status = SpeechStatus;
+                });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Speak as Star recording cancelled.";
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Could not submit Speak as Star recording: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
+        finally
+        {
+            RestoreSpeechSettingsAfterSpeakAsStarRecording();
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+        }
+    }
+
+    private async Task CancelSpeakAsStarRecordingAsync()
+    {
+        if (_manualRecordingPurpose != ManualRecordingPurpose.SpeakAsStar)
+        {
+            OnUiThread(() => Status = "No Speak as Star recording is active.");
+            return;
+        }
+
+        _voiceConversationLoopActive = false;
+        RestoreSpeechSettingsAfterSpeakAsStarRecording();
+
+        try
+        {
+            await _services.SpeechInput.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[SpeakAsStar] Cancel cleanup failed: " + ex.Message);
+        }
+        finally
+        {
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            _speakAsStarRecordingStarId = string.Empty;
+            _speakAsStarTranscriptDispatched = false;
+            OnUiThread(() =>
+            {
+                IsRecording = false;
+                IsProcessingRuntime = false;
+                RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
+                CancelStopButtonText = "Cancel";
+                SpeechStatus = "Direct Star voice recording cancelled.";
+                Status = "Speak as Star recording cancelled.";
+            });
+        }
+    }
+
+    private async Task SpeakPlayerTextAsStarAsync()
+    {
+        string text = (PlayerText ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            Status = "Type text in the main message box first, then click Speak as Star.";
+            return;
+        }
+
+        if (IsRecording)
+        {
+            Status = "Finish or cancel the active recording before speaking typed text as the Star.";
+            return;
+        }
+
+        string starId = SelectedStarId;
+        PlayerText = string.Empty;
+        NotifyBackgroundWritingLoopForegroundActivity("direct typed speak-as-star playback");
+        CancellationToken token = _operationController.BeginNewOperation("typed speak-as-star playback for " + starId);
+        await SpeakTextAsStarAsync(text, starId, "typed text", token).ConfigureAwait(false);
+    }
+
+    private async Task SpeakTranscriptAsSelectedStarAsync(SpeechTranscript transcript)
+    {
+        _speakAsStarTranscriptDispatched = true;
+        string text = transcript?.Text?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                SpeechStatus = "Whisper returned an empty transcript, so nothing was spoken as the Star.";
+                Status = SpeechStatus;
+            });
+            return;
+        }
+
+        string starId = string.IsNullOrWhiteSpace(_speakAsStarRecordingStarId)
+            ? ResolveDefaultStarId(SelectedStarId)
+            : _speakAsStarRecordingStarId;
+        OnUiThread(() =>
+        {
+            LastTranscript = text;
+            SpeechStatus = "Whisper transcript ready. Speaking it directly as " + starId + ".";
+        });
+
+        await SpeakTextAsStarAsync(text, starId, "recorded speech", _operationController.CurrentToken).ConfigureAwait(false);
+    }
+
+    private void RestoreSpeechSettingsAfterSpeakAsStarRecording()
+    {
+        SpeechRequireWakeWord = _savedRequireWakeWordBeforeManualRecording;
+        _voiceCaptureSettings.RequireHotwordWhenIdle = _savedRequireWakeWordBeforeManualRecording;
+        _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
+        UpdateSpeechOptions();
+    }
+
+    private async Task SpeakTextAsStarAsync(string text, string starId, string sourceLabel, CancellationToken cancellationToken)
+    {
+        try
+        {
+            string normalizedStarId = ResolveDefaultStarId(starId);
+            StarInteractionResponse response = CreateLiveVoiceTemplateResponse(normalizedStarId);
+            response.SetSpokenParts(new[] { text.Trim() });
+
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = true;
+                Status = "Speaking " + sourceLabel + " directly in " + normalizedStarId + "'s voice...";
+            });
+
+            DesktopVoiceOutputService.Result result = await _services.VoiceOutput
+                .SpeakAsync(DefaultSessionId, response, cancellationToken)
+                .ConfigureAwait(false);
+
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = !result.Configured
+                    ? "No voice pipeline is configured for direct Speak as Star playback."
+                    : "Direct Speak as Star playback complete for " + normalizedStarId + ".";
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = "Direct Speak as Star playback cancelled.";
+            });
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() =>
+            {
+                IsProcessingRuntime = false;
+                CancelStopButtonText = "Cancel";
+                Status = "Direct Speak as Star playback failed: " + ex.Message;
+                DebugJson = ex.ToString();
+            });
+        }
     }
 
     private async Task StartManualRecordingAsync(bool loopContinuation)
@@ -2371,6 +2998,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 _savedSilenceEndMs = _voiceCaptureSettings.SilenceEndMs;
             }
 
+            _manualRecordingPurpose = ManualRecordingPurpose.Conversation;
             SpeechRequireWakeWord = false;
             SelectedRequestType = RequestType.Chat;
             _voiceCaptureSettings.RequireHotwordWhenIdle = false;
@@ -2385,6 +3013,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 IsRecording = true;
                 IsProcessingRuntime = false;
                 RecordButtonText = "Done / Submit Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Cancel";
                 SpeechStatus = (loopContinuation ? "Reply finished. Listening again for " : "Recording voice for ") + SelectedStarId + ". Press Done/Submit when finished.";
                 Status = "Recording voice input for " + SelectedStarId + ".";
@@ -2395,7 +3024,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             OnUiThread(() =>
             {
                 IsRecording = false;
+                _manualRecordingPurpose = ManualRecordingPurpose.None;
                 RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Cancel";
                 SpeechStatus = "Could not start recording: " + ex.Message;
                 DebugJson = ex.ToString();
@@ -2412,6 +3043,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 IsRecording = false;
                 IsProcessingRuntime = true;
                 RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                SpeakAsStarRecordButtonText = "Speak as Star (Record)";
                 CancelStopButtonText = "Stop";
                 SpeechStatus = "Submitting recorded voice to Whisper, then LLM, then TTS.";
                 Status = "Processing voice input for " + SelectedStarId + ".";
@@ -2422,6 +3054,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             UpdateSpeechOptions();
 
             await _services.SpeechInput.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            _manualRecordingPurpose = ManualRecordingPurpose.None;
         }
         catch (OperationCanceledException)
         {
@@ -2458,6 +3091,23 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task<StarWritingCreateResult> GenerateForgeShelfContentAsync(
+        string starId,
+        CancellationToken cancellationToken,
+        Action<string>? progress = null,
+        string generatorId = ForgeGeneratorIds.Auto)
+    {
+        ForgeContentGenerationResult result = await _forgeService.GenerateContentAsync(
+            new ForgeContentGenerationRequest
+            {
+                Actor = ForgeActorReference.ForStar(starId),
+                GeneratorId = generatorId,
+                Progress = progress
+            },
+            cancellationToken).ConfigureAwait(false);
+        return result.WritingResult;
+    }
+
     private async Task GenerateStarWritingAsync()
     {
         string starId = ResolveDefaultStarId(SelectedStarId);
@@ -2469,7 +3119,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         });
         try
         {
-            StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, token).ConfigureAwait(false);
+            StarWritingCreateResult result = await GenerateForgeShelfContentAsync(
+                starId,
+                token,
+                message => OnUiThread(() => Status = message)).ConfigureAwait(false);
             string output = BuildWritingGenerationDisplay(starId, result);
 
             OnUiThread(() =>
@@ -2480,7 +3133,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 DebugJson = JsonSerializer.Serialize(new
                 {
                     feature = "star-writing-iterative-pass-generation",
-                    vectorCategoryOrder = StarWritingEmotionVector.Categories,
+                    vectorCategoryOrder = StarWritingReaderEmotionVector.Categories,
                     result
                 }, _jsonOptions);
                 Status = BuildWritingGenerationStatus(starId, result);
@@ -2512,11 +3165,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        CancellationToken token = _operationController.BeginNewOperation("Tell best and latest Star writing.");
+        CancellationToken token = _operationController.BeginNewOperation("Tell favorite high-IU Sparks.");
         OnUiThread(() =>
         {
             IsProcessingRuntime = true;
-            Status = starId + " is choosing up to five of her best and latest untold writings.";
+            Status = starId + " is choosing five favorites from a 25-Spark weighted-IU listening set drawn from her top 100 untold Sparks.";
         });
         try
         {
@@ -2544,7 +3197,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                     response = result.Response,
                     pendingAfter = PendingWritingCount
                 }, _jsonOptions);
-                Status = starId + " selected " + result.SelectedWritings.Count + " writing(s) to tell. " + PendingWritingCount + " remain new.";
+                Status = starId + " selected " + result.SelectedWritings.Count + " Spark(s) from a weighted " + result.CandidateCount + "-item set drawn from the top " + result.ElitePoolCount + " IU pool (" + result.AnchorCount + " peak anchors, " + result.ContrastCount + " contrast picks). " + PendingWritingCount + " remain new.";
             });
 
             await PublishWritingShelfEventAsync("StarWritingPerformanceReady", starId, result.State, result.Response.SpokenParts, Status).ConfigureAwait(false);
@@ -2590,6 +3243,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         _voiceCaptureSettings.SilenceEndMs = _savedSilenceEndMs;
         _voiceCaptureSettings.RequireHotwordWhenIdle = _savedRequireWakeWordBeforeManualRecording;
         SpeechRequireWakeWord = _savedRequireWakeWordBeforeManualRecording;
+        _manualRecordingPurpose = ManualRecordingPurpose.None;
         _operationController.CancelAllRuntimeOperations(reason);
     }
 
@@ -2882,7 +3536,85 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             IsProcessingRuntime = true;
             CancellationToken runtimeToken = _operationController.BeginNewOperation("typed message to " + request.StarId);
-            StarInteractionResponse response = await _services.Conversations.ProcessAsync(request, runtimeToken);
+            LiveStarVoiceResponsePipeline? liveSpeech = null;
+            object liveBackgroundCheckpointGate = new object();
+            bool liveFirstSentenceAudioReady = false;
+            bool liveBackgroundAnalysisReleased = false;
+            string liveBackgroundAnalysisId = string.Empty;
+
+            void TryReleaseLiveBackgroundAnalysis(string reason)
+            {
+                string analysisIdToRelease = string.Empty;
+                lock (liveBackgroundCheckpointGate)
+                {
+                    if (!liveBackgroundAnalysisReleased
+                        && liveFirstSentenceAudioReady
+                        && !string.IsNullOrWhiteSpace(liveBackgroundAnalysisId))
+                    {
+                        liveBackgroundAnalysisReleased = true;
+                        analysisIdToRelease = liveBackgroundAnalysisId;
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(analysisIdToRelease))
+                {
+                    ReleasePendingBackgroundAnalysis(analysisIdToRelease, reason);
+                    System.Diagnostics.Debug.WriteLine("[BackgroundAnalysis] First-sentence checkpoint released " + analysisIdToRelease + ": " + reason);
+                }
+            }
+
+            if (ShouldUseLiveForegroundSpeech(request.RequestType))
+            {
+                StarInteractionResponse liveVoiceTemplate = CreateLiveVoiceTemplateResponse(request.StarId);
+                liveSpeech = new LiveStarVoiceResponsePipeline(
+                    CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false),
+                    _playbackEndpoint,
+                    _speechPipeline,
+                    _interruptionManager)
+                {
+                    AutoPlayChunks = true
+                };
+                liveSpeech.GenerationError += (_, args) => OnUiThread(() => Status = "Live voice generation error: " + args.ErrorMessage);
+                liveSpeech.ChunkReadyForConsumer += (_, args) =>
+                {
+                    if (args.Sequence == 0)
+                    {
+                        lock (liveBackgroundCheckpointGate)
+                        {
+                            liveFirstSentenceAudioReady = true;
+                        }
+                        TryReleaseLiveBackgroundAnalysis("First desktop streamed sentence TTS is ready; remaining speech may continue while the background update processes.");
+                    }
+                    OnUiThread(() => Status = "Live voice chunk " + (args.Sequence + 1) + " ready while the Star is still replying...");
+                };
+                liveSpeech.Start(DefaultSessionId, liveVoiceTemplate, runtimeToken);
+                request.SpokenChunkReady = liveSpeech.EnqueueTextChunk;
+                Status = "⏳ Streaming the Star reply; speech will start at the first complete sentence...";
+            }
+
+            StarInteractionResponse response;
+            try
+            {
+                response = await _services.Conversations.ProcessAsync(request, runtimeToken);
+            }
+            catch
+            {
+                liveSpeech?.CancelCurrentSpeech();
+                liveSpeech?.Dispose();
+                throw;
+            }
+
+            bool primaryReviewAlreadyQueuedAtForegroundCompletion = response.UnityEvents.Any(x =>
+                string.Equals(x.Type, "BackgroundStarAnalysisQueuedAtForegroundCompletion", StringComparison.OrdinalIgnoreCase));
+            if (liveSpeech != null && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId) && !primaryReviewAlreadyQueuedAtForegroundCompletion)
+            {
+                _pendingBackgroundAnalysisId = response.BackgroundAnalysisId;
+                lock (liveBackgroundCheckpointGate)
+                {
+                    liveBackgroundAnalysisId = response.BackgroundAnalysisId;
+                }
+                TryReleaseLiveBackgroundAnalysis("Foreground response completed after the first desktop sentence TTS was already ready.");
+            }
 
             // Check if response came from real LLM or mock
             bool usedRealLlm = !response.Debug.RiskFlags.Contains("llm_primary_failed");
@@ -2928,7 +3660,51 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             System.Diagnostics.Debug.WriteLine("\n" + _stateChangeTracker.GetCombinedSummary());
             System.Diagnostics.Debug.WriteLine("================================\n");
 
-            await SpeakStarResponseAsync(response, runtimeToken);
+            if (liveSpeech != null)
+            {
+                if (liveSpeech.TextChunksEnqueued == 0)
+                {
+                    foreach (string part in response.SpokenParts.Where(x => !string.IsNullOrWhiteSpace(x)))
+                    {
+                        liveSpeech.EnqueueTextChunk(part);
+                    }
+                }
+
+                try
+                {
+                    await liveSpeech.CompleteInputAsync().ConfigureAwait(false);
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop reply completed before the first-sentence checkpoint could release background analysis.");
+                    OnUiThread(() => Status = "Live streaming voice playback complete.");
+                }
+                catch (OperationCanceledException)
+                {
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop reply was cancelled after the foreground response completed.");
+                    OnUiThread(() => Status = "Live voice generation/playback cancelled.");
+                }
+                catch (Exception ex)
+                {
+                    ReleasePendingBackgroundAnalysis("Fallback release: live desktop voice failed after the foreground response completed: " + ex.Message);
+                    OnUiThread(() => Status = "Live voice generation/playback error: " + ex.Message);
+                    System.Diagnostics.Debug.WriteLine("[Live TTS Error] " + ex);
+                }
+                finally
+                {
+                    OnUiThread(() =>
+                    {
+                        IsProcessingRuntime = false;
+                        if (!IsRecording)
+                        {
+                            RecordButtonText = "Start Recording (Win+Ctrl+E)";
+                            CancelStopButtonText = "Cancel";
+                        }
+                    });
+                    liveSpeech.Dispose();
+                }
+            }
+            else
+            {
+                await SpeakStarResponseAsync(response, runtimeToken);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -3542,21 +4318,45 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         return context;
     }
 
-    private static WakeAliasConfig CreateDefaultWakeAliases()
+    private string CreateWhisperNamePrompt()
     {
-        return new WakeAliasConfig
+        List<string> names = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active)
+            .SelectMany(x => new[] { x.StarId, x.DisplayName }.Concat(x.NameAliases ?? new List<string>()))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        names.Add("Leviathan");
+        names.Add("Virethorn");
+        return "Names that may appear: " + string.Join(", ", names.Distinct(StringComparer.OrdinalIgnoreCase)) + ".";
+    }
+
+    private WakeAliasConfig CreateDefaultWakeAliases()
+    {
+        WakeAliasConfig config = new WakeAliasConfig();
+        foreach (StarProfile profile in _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            EquippedStars = { "Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari" },
-            WakeAliases =
+            config.EquippedStars.Add(profile.StarId);
+            System.Collections.Generic.List<string> aliases = new System.Collections.Generic.List<string>();
+            void AddAlias(string? alias)
             {
-                { "Elusiaa", new System.Collections.Generic.List<string> { "elusiaa", "elusia", "light star", "angel bearer of light" } },
-                { "Kaelia", new System.Collections.Generic.List<string> { "kaelia", "kaylia", "void star" } },
-                { "Maera", new System.Collections.Generic.List<string> { "maera", "blood star" } },
-                { "Khavia", new System.Collections.Generic.List<string> { "khavia", "water star" } },
-                { "Auerlis", new System.Collections.Generic.List<string> { "auerlis", "aurelis", "fire star" } },
-                { "Nyxari", new System.Collections.Generic.List<string> { "nyxari", "shadow star" } }
+                if (string.IsNullOrWhiteSpace(alias)) return;
+                string normalized = alias.Trim();
+                if (!aliases.Contains(normalized, StringComparer.OrdinalIgnoreCase)) aliases.Add(normalized);
             }
-        };
+
+            AddAlias(profile.StarId);
+            AddAlias(profile.DisplayName);
+            foreach (string alias in profile.NameAliases ?? new System.Collections.Generic.List<string>()) AddAlias(alias);
+            if (!string.IsNullOrWhiteSpace(profile.Element)) AddAlias(profile.Element.Trim() + " star");
+
+            config.WakeAliases[profile.StarId] = aliases;
+        }
+        return config;
     }
 
     private static bool IsTruthyEnvironment(string name)
@@ -3571,7 +4371,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private static string ResolveDefaultStarId(string? value)
     {
-        string normalized = (value ?? "Elusiaa").Trim();
+        string normalized = (value ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(normalized)) return "Elusiaa";
         return normalized.ToLowerInvariant() switch
         {
             "elusiaa" or "elusia" => "Elusiaa",
@@ -3580,7 +4381,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             "khavia" => "Khavia",
             "auerlis" or "aurelis" => "Auerlis",
             "nyxari" => "Nyxari",
-            _ => "Elusiaa"
+            _ => normalized
         };
     }
 
@@ -3815,7 +4616,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         string text = FormatEmotionVectors(response.EmotionalEffectVector, response.NegativeEmotionVector);
         if (text == "Last emotional vectors: none yet." && !string.IsNullOrWhiteSpace(response.BackgroundAnalysisId))
         {
-            return "Last emotional vectors: waiting for background emotion/memory update to settle after voice playback. The panel will fill when the deterministic review finishes.";
+            return "Last emotional vectors: waiting for the background emotion/memory update. It becomes eligible as soon as the first spoken sentence is voice-ready.";
         }
         return text;
     }

@@ -21,6 +21,11 @@ namespace Wds.SixStars.Api.Ai
                 return RelationshipDelta.Zero();
             }
 
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                return BackgroundReviewCompactCodec.ParseSuggestedStateDeltas(reader.GetString());
+            }
+
             if (reader.TokenType != JsonTokenType.StartObject)
             {
                 using (JsonDocument.ParseValue(ref reader)) { }

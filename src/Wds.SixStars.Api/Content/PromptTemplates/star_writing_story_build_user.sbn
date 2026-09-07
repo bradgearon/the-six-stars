@@ -1,11 +1,16 @@
-CONSTELLATION FORGE — BUILD PHASE {{ data.phaseNumber }}
+CONSTELLATION FORGE — {{ if data.isViewpointInitialDraft }}VIEWPOINT FIRST DRAFT{{ else }}BUILD PHASE {{ data.phaseNumber }}{{ end }}
 
 VIEWPOINT STAR
 {{ data.viewpointDisplayName }} — {{ data.viewpointElement }} / {{ data.viewpointDomain }}
 Core line: {{ data.viewpointCoreQuote }}
 Viewpoint personality: {{ data.viewpointPersonality }}
+Viewpoint action/battle appetite: {{ data.viewpointActionBattlePreference }}
 
+{{ if data.isViewpointInitialDraft }}
+ORIGINAL VIEWPOINT AUTHOR WRITING THE FIRST DRAFT
+{{ else }}
 CURRENT CONTRIBUTING STAR
+{{ end }}
 Name: {{ data.displayName }}
 Star ID: {{ data.starId }}
 Element: {{ data.element }}
@@ -13,6 +18,7 @@ Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Personality: {{ data.personalityShort }}
 Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
 Backstory: {{ data.backstorySummary }}
 Speaking / writing style: {{ data.speakingStyle }}
 Character attributes: {{ data.characterAttributes }}
@@ -27,9 +33,27 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
-RELEVANT CANON
+CHARACTER / WORLD REFERENCE — INSPIRATION, NOT AUTOMATIC STORY CANON
 {{ for item in data.relevantSecrets }}
 - {{ item }}
+{{ end }}
+
+VALUED CONSTELLATION REFERENCES
+Quality anchors only; invent a meaningfully different story.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Reader-emotion IU vector order (Overall last): {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued Constellation references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Review discipline={{ item.reviewDiscipline }}
+Review values: {{ item.valueVector }}
+FULL REFERENCE STORY:
+{{ item.writing }}
+--- END REFERENCE ---
+{{ end }}
 {{ end }}
 
 TITLE
@@ -37,6 +61,24 @@ TITLE
 
 PREMISE
 {{ data.premise }}
+
+CURRENT CAST — collaborative and editable
+{{ if data.characters.size == 0 }}
+(no named cast yet; establish memorable named characters now)
+{{ else }}
+{{ for character in data.characters }}
+- {{ character }}
+{{ end }}
+{{ end }}
+
+CURRENT STORY SUBJECTS — collaborative and editable
+{{ if data.storySubjects.size == 0 }}
+(no explicit story subjects yet; establish them now)
+{{ else }}
+{{ for subject in data.storySubjects }}
+- {{ subject }}
+{{ end }}
+{{ end }}
 
 CURRENT OUTLINE
 {{ for beat in data.beats }}
@@ -60,9 +102,23 @@ TEAM VERBS
 - {{ word }}
 {{ end }}
 
+TEAM STORY WISHES — OPTIONAL
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 FRESH WORD SEEDS FOR THIS PHASE
 {{ for word in data.seedWords }}
 - {{ word }}
+{{ end }}
+
+ELIGIBLE ACTIVE BUILD COLLABORATORS
+{{ for id in data.eligibleContributorStarIds }}
+- {{ id }}
 {{ end }}
 
 PRIOR BUILD CONTRIBUTORS
@@ -78,3 +134,4 @@ Pending finish: {{ data.pendingFinish }}
 Finish requested by: {{ data.finishRequestedByStarId }}
 
 Return the fully revised story and required phase metadata as JSON only.
+Return the complete updated `characters` and `storySubjects` arrays along with `revisedBeats`, not only the entries you personally changed.

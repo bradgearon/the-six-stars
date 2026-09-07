@@ -6,11 +6,13 @@ rem Launch only the WPF desktop UI. Use this after run-ai-companion.cmd has alre
 rem started the local LLM, Whisper, and Qwen TTS services in another window.
 set SIX_STARS_LLM_ENDPOINT=http://127.0.0.1:8080/v1/chat/completions
 set SIX_STARS_SCREEN_LLM_ENDPOINT=http://127.0.0.1:8080/v1/chat/completions
-set SIX_STARS_LLM_MODEL=local-model
-set SIX_STARS_SCREEN_LLM_MODEL=local-model
-set SIX_STARS_SCREEN_LLM_ENABLED=true
-set SIX_STARS_WHISPER_ENDPOINT=http://127.0.0.1:8000/v1/audio/transcriptions
-set SIX_STARS_WEBSOCKET_TTS_URL=ws://127.0.0.1:8100/tts/stream
+set SIX_STARS_LLM_MODEL=six-stars-gemma4
+set SIX_STARS_SCREEN_LLM_MODEL=six-stars-gemma4
+set SIX_STARS_SCREEN_LLM_ENABLED=false
+set SIX_STARS_WHISPER_PROVIDER=whispercpp
+set SIX_STARS_WHISPER_ENDPOINT=http://127.0.0.1:8000/inference
+set SIX_STARS_QWENTTS_HTTP_URL=http://127.0.0.1:8101
+set SIX_STARS_QWENTTS_MODEL=qwen3-tts-base
 set SIX_STARS_USE_STREAMING_TTS=true
 set SIX_STARS_MOBILE_BRIDGE_ENABLED=true
 

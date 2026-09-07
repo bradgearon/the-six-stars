@@ -23,6 +23,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> _messageHandler;
     private readonly Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> _audioHandler;
     private readonly Func<CancellationToken, Task<object>> _testAudioHandler;
+    private readonly Func<string, string, CancellationToken, Task<byte[]>> _standaloneLocalTtsHandler;
     private readonly Func<object> _healthFactory;
     private readonly Func<object> _starsFactory;
     private readonly Func<string, CancellationToken, Task<object>> _stateFactory;
@@ -54,6 +55,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> messageHandler,
         Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> audioHandler,
         Func<CancellationToken, Task<object>> testAudioHandler,
+        Func<string, string, CancellationToken, Task<byte[]>> standaloneLocalTtsHandler,
         Func<object> healthFactory,
         Func<object> starsFactory,
         Func<string, CancellationToken, Task<object>> stateFactory,
@@ -69,6 +71,7 @@ public sealed class MobileBridgeHttpServer : IDisposable
         _messageHandler = messageHandler;
         _audioHandler = audioHandler;
         _testAudioHandler = testAudioHandler;
+        _standaloneLocalTtsHandler = standaloneLocalTtsHandler;
         _healthFactory = healthFactory;
         _starsFactory = starsFactory;
         _stateFactory = stateFactory;
@@ -196,6 +199,22 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 if (_conversationArchiveEnabled && request.Method == "GET" && IsConversationArchivePath(request.Path))
                 {
                     await WriteConversationArchiveFileAsync(stream, request.Path, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "POST" && request.Path == "/api/mobile/local-tts")
+                {
+                    using JsonDocument body = JsonDocument.Parse(request.Body);
+                    string starId = GetJsonString(body.RootElement, "starId");
+                    string text = GetJsonString(body.RootElement, "text");
+                    if (string.IsNullOrWhiteSpace(starId)) starId = "Elusiaa";
+                    if (string.IsNullOrWhiteSpace(text))
+                    {
+                        await WriteJsonAsync(stream, 400, new { ok = false, error = "text is required" }, serverToken).ConfigureAwait(false);
+                        return;
+                    }
+                    byte[] wav = await _standaloneLocalTtsHandler(starId, text, serverToken).ConfigureAwait(false);
+                    await WriteBytesAsync(stream, 200, "audio/wav", wav, serverToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -592,12 +611,14 @@ public sealed class MobileBridgeHttpServer : IDisposable
             case "message":
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                request.DeferConversationResponseEventUntilTransportFailure = true;
                 MobileBridgeResponse response = await _messageHandler(request, cancellationToken).ConfigureAwait(false);
                 return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }
             case "audio":
             {
                 MobileBridgeRequest request = JsonSerializer.Deserialize<MobileBridgeRequest>(payload.GetRawText(), _jsonOptions) ?? new MobileBridgeRequest();
+                request.DeferConversationResponseEventUntilTransportFailure = true;
                 MobileBridgeResponse response = await _audioHandler(request, cancellationToken).ConfigureAwait(false);
                 return new SocketOperationResult(response.Ok, response, response.Ok ? string.Empty : GetMobileResponseError(response), response);
             }

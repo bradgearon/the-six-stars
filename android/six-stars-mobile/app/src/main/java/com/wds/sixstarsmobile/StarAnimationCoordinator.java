@@ -26,6 +26,17 @@ final class StarAnimationCoordinator {
     void thinking() { set("thinking"); }
     void idle() { if (!voiceActive) set("idle"); }
 
+    void beginStreamingVoice() {
+        voiceActive = true;
+        generation++;
+        set("idle");
+    }
+
+    void voiceSpeechActivity(boolean speaking) {
+        if (!voiceActive) return;
+        set(speaking ? "talking" : "idle");
+    }
+
     int beginVoice(long durationMs, int[] speechSegmentsMs, long playbackElapsedMs) {
         voiceActive = true;
         int token = ++generation;

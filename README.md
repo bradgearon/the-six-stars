@@ -73,11 +73,13 @@ The writing shelf now distinguishes the artifact from the technique that produce
 - **Spark** (`spark`) — the existing compact joke, aphorism, tiny poem, or poetic fragment. Semantic Collision and Verb/Noun Displacement produce Sparks.
 - **Constellation Story** (`constellation-story`) — a larger collaborative story produced by **Constellation Forge** (`constellation-forge`).
 
-Constellation Forge runs in deliberate phases. All six Stars first perform a light vocabulary pass using separate deterministic noun and verb seed pools; the viewpoint Star then makes the outline. The other five Stars take rotating build passes with fresh seeds and are explicitly encouraged to all contribute before completion. A finish request becomes `pendingFinish` and must be approved by a different tail Star. After approval, the viewpoint Star performs the final funny/beautiful/deep/interesting revision and must return `finalStep=true`. The completed story is reviewed with the same 27-score vector and the same persistence rules used by Sparks. Story noun/verb recency and cumulative usage totals are persisted separately to discourage repetition across future Constellation Forge runs.
+Constellation Forge runs in deliberate phases. All six Stars first perform a light vocabulary pass using separate deterministic noun and verb seed pools; the viewpoint Star then makes the outline. The outline now carries a living named `characters` cast and `storySubjects` list in addition to its beats, and every later builder may update all three while revising the full story. Stories may center any named characters rather than automatically making the viewpoint Star or The Last Cat the protagonist. The other five Stars take rotating build passes with fresh seeds and are explicitly encouraged to all contribute before completion. A finish request becomes `pendingFinish` and must be approved by a different tail Star. After approval, the viewpoint Star performs the final funny/beautiful/deep/interesting revision and must return `finalStep=true`. The completed story is reviewed with the same 27-category **open-ended value vector** and persistence rules used by Sparks. Writing values are measured in information units (IU): `100 IU` is an excellent-work calibration reference, not a maximum, and materially stronger work can exceed it. Story noun/verb recency and cumulative usage totals are persisted separately to discourage repetition across future Constellation Forge runs.
 
 Constellation Stories are kept out of the existing short-form X publisher and five-at-a-time spoken Spark action so a long work cannot be truncated and accidentally marked posted/told.
 
-`WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques.
+Value calibration can be curated in the optional `src/Wds.SixStars.Api/Content/Writing/writing-value-baselines.json` file. New Spark and Constellation reviews share one compact open-ended `reader-emotion-iu-v1` vector: 30 fixed reader-emotion IU values plus Overall last, serialized as one semicolon-delimited string for local-model efficiency. Reader-emotion review uses one shared curated ruler for every actor and never feeds an actor's persisted shelf values back into its own calibration; when shared references are absent, the fixed IU magnitude ladder is used instead. Legacy 27-value literary vectors remain readable but are not relabeled as reader emotions.
+
+`WritingMethods.ConstellationForgeWeight` controls how often the new technique is selected relative to the two Spark techniques. The current experiment sets Constellation Forge to 100% (`1.0`) and both Spark technique weights to `0.0` so every shelf run exercises the collaborative story pipeline.
 
 ## Speech / hotword / Whisper pipeline
 
@@ -579,9 +581,9 @@ or simple plain text such as `Elusiaa`, `Kaelia`, or `none`.
 
 ## CUDA-only local AI policy
 
-This build is configured to use GPU/CUDA for local LLM, ASR, and TTS. CPU fallback is disabled in `config/runtime-manifest.json` under `gpuPolicy`. If CUDA is not available, services fail fast and tell you to configure NVIDIA CUDA engines or use a hosted service option.
+The normal packaged runtime is llama-server + whisper.cpp + qwentts.cpp, supervised by `Wds.SixStars.Launcher`. The .NET application calls whisper.cpp and qwentts.cpp directly over HTTP; there is no native Drogon/WebSocket gateway in the production path. CPU fallback is disabled in `config/runtime-manifest.json`. The launcher checks `nvidia-smi` so a missing/incompatible NVIDIA driver fails fast.
 
-The Qwen TTS server has been restored to the previous parallel streaming behavior. Android and desktop clients subscribe for WAV chunks; they do not receive GPU/model objects.
+A full CUDA Toolkit install is not required for the end-user redist when the prebuilt engine packs include the CUDA runtime DLLs they depend on. The Toolkit is a build-time requirement; the packaged runtime should carry permitted runtime dependencies beside the native executables. The .NET TTS adapter registers Star voices and calls qwentts.cpp on `http://127.0.0.1:8101`; GPU/model objects remain entirely server-side.
 
 ## Memory archive and information need vector
 
@@ -595,3 +597,7 @@ Use **Clear All Star Data** in the desktop UI or Android app to reset all local 
 ## LLM exchange logs
 
 The desktop runtime now appends local LLM request/response/debug entries to one plain daily log file: `logs/llm-exchanges/YYYY-MM-DD.log`. Use **Open LLM Exchange Log Folder** in Quick Actions to inspect the day's `.log` file and trim unused prompt/context sections.
+
+## Optional hosted LLM / ASR / TTS
+
+The main Star LLM, microphone transcription, and Star TTS can now be switched independently from the local stack to Google AI Studio (Gemma 4), Groq Whisper, and Alibaba Qwen3-TTS voice cloning. The hosted providers are disabled by default and can be enabled with keys in `appsettings.Local.json` or environment variables. See [`docs/Hosted-AI-Services.md`](docs/Hosted-AI-Services.md).

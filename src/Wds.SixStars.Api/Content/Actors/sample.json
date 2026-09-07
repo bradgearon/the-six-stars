@@ -1,0 +1,26 @@
+{
+  "actorId": "sample",
+  "displayName": "Sample Actor",
+  "actorType": "ambient",
+  "active": false,
+  "description": "Disabled example showing the minimum generic actor package. Copy this file, rename it to match actorId, and set active=true.",
+  "personality": "Give only as much personality as this actor needs.",
+  "background": "Optional background or world role.",
+  "aliases": [],
+  "quotes": [],
+  "behaviors": [],
+  "storytellingRules": [],
+  "canonNotes": [],
+  "soul": {
+    "depth": 20,
+    "memory": false,
+    "playerQuotes": false,
+    "conversation": false,
+    "relationshipState": false,
+    "writing": false,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": ["story-seed", "story-appearance", "rumor-source"]
+  }
+}

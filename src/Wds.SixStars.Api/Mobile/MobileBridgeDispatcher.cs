@@ -147,6 +147,8 @@ public sealed class MobileBridgeDispatcher
     {
         if (string.IsNullOrWhiteSpace(value)) return "RefreshState";
         string compact = value.Trim().Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty);
+        if (compact.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("UserActivity", StringComparison.OrdinalIgnoreCase) || compact.Equals("ForegroundPlayerActivity", StringComparison.OrdinalIgnoreCase)) return "PlayerActivity";
+        if (compact.Equals("VoicePlaybackStarted", StringComparison.OrdinalIgnoreCase) || compact.Equals("PlaybackStarted", StringComparison.OrdinalIgnoreCase) || compact.Equals("PhoneVoicePlaybackStarted", StringComparison.OrdinalIgnoreCase)) return "VoicePlaybackStarted";
         if (compact.Equals("SelectStar", StringComparison.OrdinalIgnoreCase) || compact.Equals("SelectedStar", StringComparison.OrdinalIgnoreCase)) return "SelectStar";
         if (compact.Equals("SetMet", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleMet", StringComparison.OrdinalIgnoreCase)) return "SetMet";
         if (compact.Equals("SetAlly", StringComparison.OrdinalIgnoreCase) || compact.Equals("ToggleAlly", StringComparison.OrdinalIgnoreCase)) return "SetAlly";
@@ -182,8 +184,11 @@ public sealed class MobileBridgeDispatchCommand
     public bool? BackgroundWritingLoopEnabled { get; set; }
     public bool? XPostingEnabled { get; set; }
     public bool? PlaybackPaused { get; set; }
+    public string VoiceStreamId { get; set; } = string.Empty;
+    public int VoiceAudioSequence { get; set; } = -1;
     public string Reason { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
+    public string WritingOutputType { get; set; } = "spark";
     public string PlayerText { get; set; } = string.Empty;
     public string Area { get; set; } = string.Empty;
     public string Quest { get; set; } = string.Empty;
@@ -252,6 +257,9 @@ public sealed class MobileBridgeDispatchResult
     public long ServerElapsedMs { get; set; }
     public long RuntimeElapsedMs { get; set; }
     public long GateWaitMs { get; set; }
+    public string StreamingResponseId { get; set; } = string.Empty;
+    public int StreamedTextChunkCount { get; set; }
+    public long FirstStreamedTextChunkMs { get; set; }
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;
@@ -360,6 +368,7 @@ public sealed class MobileBridgeDispatchEvent
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
     public string Transcript { get; set; } = string.Empty;
+    public string AnimationName { get; set; } = string.Empty;
     public string StoryId { get; set; } = string.Empty;
     public string StoryTitle { get; set; } = string.Empty;
     public string StoryMarkdown { get; set; } = string.Empty;
@@ -386,6 +395,8 @@ public sealed class MobileBridgeDispatchEvent
     public long ServerElapsedMs { get; set; }
     public long RuntimeElapsedMs { get; set; }
     public long GateWaitMs { get; set; }
+    public int StreamingChunkIndex { get; set; }
+    public long FirstStreamedTextChunkMs { get; set; }
     public bool PhotoAttached { get; set; }
     public string PhotoSummary { get; set; } = string.Empty;
     public string PhotoError { get; set; } = string.Empty;

@@ -8,6 +8,7 @@ Domain: {{ data.domain }}
 Core line: {{ data.coreQuote }}
 Short personality: {{ data.personalityShort }}
 Deep personality: {{ data.deepPersonality }}
+Action/battle appetite: {{ data.actionBattlePreference }}
 Backstory: {{ data.backstorySummary }}
 Relevant background: {{ data.completeBackgroundStory }}
 Speaking / writing style: {{ data.speakingStyle }}
@@ -23,6 +24,24 @@ STORYTELLING RULES
 - {{ item }}
 {{ end }}
 
+VALUED CONSTELLATION REFERENCES
+Quality anchors only; invent a meaningfully different story.
+Reference excellence value: {{ data.referenceValue }} IU (information units; not a maximum)
+Reader-emotion IU vector order (Overall last): {{ data.vectorOrder }}
+{{ if data.valueReferences.size == 0 }}
+(no valued Constellation references available yet)
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }} | {{ item.starId }}] {{ if item.title != "" }}{{ item.title }}{{ else }}Untitled{{ end }}
+Overall value={{ item.overallValue }} IU | aggregate public value={{ item.publicValue }} IU
+Review discipline={{ item.reviewDiscipline }}
+Review values: {{ item.valueVector }}
+FULL REFERENCE STORY:
+{{ item.writing }}
+--- END REFERENCE ---
+{{ end }}
+{{ end }}
+
 TEAM SUBJECT POOL
 {{ for word in data.subjects }}
 - {{ word }}
@@ -33,9 +52,19 @@ TEAM VERB POOL
 - {{ word }}
 {{ end }}
 
+TEAM STORY WISHES — OPTIONAL CREATIVE OFFERS
+{{ if data.storyWishes.size == 0 }}
+(none)
+{{ else }}
+{{ for wish in data.storyWishes }}
+- [{{ wish.sourceActorId }} | {{ wish.sourceActorType }}] {{ wish.sourceDisplayName }}: {{ wish.wish }}
+{{ end }}
+{{ end }}
+
 FRESH OPTIONAL SEEDS
 {{ for word in data.seedWords }}
 - {{ word }}
 {{ end }}
 
-Create the structural outline now. Return JSON only.
+Create the structural outline now. Remember: you are the author, not automatically a character or narrator, and this shelf story is non-canon by default. Return JSON only with starId, title, premise, characters, storySubjects, and beats.
+The characters list is the named cast you want the team to develop; the storySubjects list is what this particular story is actually about, not merely a repetition of the seed noun pool.

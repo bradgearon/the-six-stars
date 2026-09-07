@@ -90,21 +90,28 @@ namespace Wds.SixStars.Api.Agents
             StarWritingReviewResult result = new StarWritingReviewResult { StarId = profile.StarId, RawModelJson = "mock" };
             for (int i = 0; i < 5; i++)
             {
-                List<string> scores = new List<string>();
-                for (int category = 0; category < StarWritingEmotionVector.Categories.Length; category++)
+                Dictionary<string, double> values = StarWritingReaderEmotionVector.Categories
+                    .ToDictionary(
+                        category => category,
+                        category => string.Equals(category, "Mirthful", StringComparison.OrdinalIgnoreCase)
+                            ? 72.0 + i
+                            : string.Equals(category, "Overall", StringComparison.OrdinalIgnoreCase)
+                                ? 90.0 + i
+                                : 78.0,
+                        StringComparer.OrdinalIgnoreCase);
+                string vector = StarWritingReaderEmotionVector.FormatValues(values);
+                result.Ratings.Add(new StarWritingRating
                 {
-                    string name = StarWritingEmotionVector.Categories[category];
-                    double score = name == "Funny" ? 72 + i : name == "Poetic" || name == "Characterful" || name == "Overall" ? 86 + Math.Min(i, 4) : 78;
-                    scores.Add(score.ToString(System.Globalization.CultureInfo.InvariantCulture));
-                }
-                string vector = string.Join(";", scores);
-                vector = StarWritingEmotionVector.Normalize(vector, out _);
-                result.Ratings.Add(new StarWritingRating { Index = i, EmotionalVector = vector });
+                    Index = i,
+                    ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    EmotionalVector = vector,
+                    OverallValue = values["Overall"]
+                });
             }
             return Task.FromResult(result);
         }
 
-        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, int phaseNumber, CancellationToken cancellationToken)
+        public Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(StarProfile profile, StarWritingNotesState viewpointState, IReadOnlyList<string> nounSeeds, IReadOnlyList<string> verbSeeds, IReadOnlyList<string> subjectsSoFar, IReadOnlyList<string> verbsSoFar, IReadOnlyList<StarWritingStoryWish> storyWishesSoFar, int phaseNumber, CancellationToken cancellationToken)
         {
             string prefix = string.IsNullOrWhiteSpace(profile.Element) ? profile.StarId : profile.Element;
             return Task.FromResult(new StarWritingStoryTermContributionResult
@@ -112,11 +119,12 @@ namespace Wds.SixStars.Api.Agents
                 StarId = profile.StarId,
                 Subjects = new List<string> { prefix + " bell", prefix + " bridge", prefix + " moth" },
                 Verbs = new List<string> { "wanders", "unfolds", "remembers" },
+                StoryWishes = new List<string> { "a dangerous crossing", "a memorable stranger", "a sharp joke under pressure", "a difficult choice", "an earned emotional payoff" },
                 RawModelJson = "mock"
             });
         }
 
-        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        public Task<StarWritingStoryOutlineResult> CreateStoryOutlineAsync(StarProfile viewpointProfile, StarWritingNotesState state, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
         {
             return Task.FromResult(new StarWritingStoryOutlineResult
             {
@@ -136,7 +144,7 @@ namespace Wds.SixStars.Api.Agents
             });
         }
 
-        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
+        public Task<StarWritingStoryBuildResult> BuildStoryPhaseAsync(StarProfile contributorProfile, StarProfile viewpointProfile, StarWritingNotesState viewpointState, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> seedWords, IReadOnlyList<string> priorContributorStarIds, IReadOnlyList<string> eligibleContributorStarIds, int phaseNumber, bool pendingFinish, string finishRequestedByStarId, CancellationToken cancellationToken)
         {
             string story = string.IsNullOrWhiteSpace(currentStory)
                 ? "Under a broken bridge, a traveler found a bell that rang without being touched. Each note seemed to remember a street the city had forgotten."
@@ -157,7 +165,7 @@ namespace Wds.SixStars.Api.Agents
             });
         }
 
-        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
+        public Task<StarWritingStoryFinalResult> FinalizeStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, StarWritingStoryOutlineResult outline, string currentStory, IReadOnlyList<string> subjects, IReadOnlyList<string> verbs, IReadOnlyList<StarWritingStoryWish> storyWishes, IReadOnlyList<string> contributorStarIds, IReadOnlyList<string> seedWords, CancellationToken cancellationToken)
         {
             return Task.FromResult(new StarWritingStoryFinalResult
             {
@@ -171,11 +179,23 @@ namespace Wds.SixStars.Api.Agents
 
         public Task<StarWritingRating> RateStoryAsync(StarProfile viewpointProfile, StarWritingNotesState state, string title, string story, IReadOnlyList<string> contributorStarIds, CancellationToken cancellationToken)
         {
-            List<string> scores = StarWritingEmotionVector.Categories.Select(name => name == "Overall" ? "90" : "84").ToList();
+            Dictionary<string, double> values = StarWritingReaderEmotionVector.Categories
+                .ToDictionary(
+                    category => category,
+                    category => string.Equals(category, "Mirthful", StringComparison.OrdinalIgnoreCase)
+                        ? 35.0
+                        : string.Equals(category, "Overall", StringComparison.OrdinalIgnoreCase)
+                            ? 90.0
+                            : 84.0,
+                    StringComparer.OrdinalIgnoreCase);
+            string vector = StarWritingReaderEmotionVector.FormatValues(values);
             return Task.FromResult(new StarWritingRating
             {
                 Index = 0,
-                EmotionalVector = StarWritingEmotionVector.Normalize(string.Join(";", scores), out _)
+                ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                EmotionalVector = vector,
+                EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                OverallValue = values["Overall"]
             });
         }
 
@@ -191,6 +211,19 @@ namespace Wds.SixStars.Api.Agents
             result.SpokenText.AddRange(selected.Select((x, index) => index == 0
                 ? "I kept a few small fragments from the dark. Listen. " + x.Writing
                 : x.Writing));
+            return Task.FromResult(result);
+        }
+
+        public Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(StarProfile profile, StarWritingNotesState state, PersistedStarWriting story, CancellationToken cancellationToken)
+        {
+            StarWritingPerformancePlan result = new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = new List<string> { story.Id },
+                RawModelJson = "mock"
+            };
+            result.SpokenText.AddRange(Wds.SixStars.Api.Stories.StarStorySpeechAdapter.SplitStoryChunkForSpeech(story.Writing));
+            if (result.SpokenText.Count == 0 && !string.IsNullOrWhiteSpace(story.Writing)) result.SpokenText.Add(story.Writing.Trim());
             return Task.FromResult(result);
         }
 
@@ -379,10 +412,8 @@ namespace Wds.SixStars.Api.Agents
             response.ConversationSummary = "The Last Cat is speaking with " + profile.DisplayName + ". Latest request type: " + request.RequestType + ". Prior summary: " + prior + " Latest exchange: player said '" + Truncate(playerText, 180) + "' and she answered '" + Truncate(response.SpokenText, 180) + "'.";
             response.ChangesSummary = profile.DisplayName + " responded to the player's latest " + request.RequestType + " input; purpose=" + response.EmotionalPurpose + ".";
 
-            if (!string.IsNullOrWhiteSpace(playerText) && response.EmotionScores.Any(x => x.Value.Score >= 80 && x.Value.Confidence >= 0.75))
-            {
-                response.ImportantPlayerQuotes.Add(playerText);
-            }
+            // Important-player-quote significance belongs to the protected background review LLM.
+            // The mock path intentionally does not infer quotes from emotion magnitude.
 
             if (response.DetectedCombos.Count > 0)
             {

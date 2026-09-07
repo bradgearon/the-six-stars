@@ -3,12 +3,14 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ======================================================================
-echo Six Stars AI runtime setup
-echo Builds/installs llama.cpp, faster-whisper, and Qwen3-TTS runtime packs.
+echo Six Stars native AI runtime setup
+echo Installs/validates llama-server, whisper.cpp, and qwentts.cpp native packs.
 echo ======================================================================
-
-echo This can take a long time the first time because it may build llama.cpp,
-echo create Python runtime packs, install CUDA packages, and download models.
+echo.
+echo The normal runtime does not create a Python environment.
+echo For the NVIDIA redist, package the required native runtime DLLs beside
+echo each engine. End users then need a compatible NVIDIA driver; they do not
+echo need the full CUDA Toolkit merely to run the packaged app.
 echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Install-AiRuntime.ps1 %*
 if errorlevel 1 exit /b %ERRORLEVEL%

@@ -10,14 +10,14 @@ namespace Wds.SixStars.Ui.Audio;
 
 /// <summary>
 /// Standard desktop WAV playback endpoint. Unity will provide its own endpoint later, but WPF uses NAudio.
-/// DirectSound is the desktop harness default because it behaves like a forgiving game-style output path.
-/// If DirectSound fails on a given Windows 11/.NET/driver combination, playback falls back to WASAPI
-/// and then WaveOut instead of crashing.
-/// Set SIX_STARS_AUDIO_BACKEND=wasapi, waveout, directsound, or auto to override.
+/// Streaming Star speech uses the smart DirectSound rolling-PCM session so one DirectSound device
+/// stays open for the whole response with adaptive prebuffer/refill behavior. One-shot playback
+/// still honors SIX_STARS_AUDIO_BACKEND for compatibility.
 /// </summary>
-public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint
+public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint, IStreamingWavePlaybackEndpoint
 {
     private readonly string? _configuredBackend;
+    private readonly DesktopSmartPcmAdaptiveProfile _smartPcmProfile = new DesktopSmartPcmAdaptiveProfile();
     private readonly object _keepAliveGate = new object();
     private KeepAlivePlayback? _keepAlivePlayback;
     private int _keepAliveLeaseCount;
@@ -25,6 +25,13 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
     public NaudioWavePlaybackEndpoint(string? configuredBackend = null)
     {
         _configuredBackend = configuredBackend;
+    }
+
+    public IStreamingWavePlaybackSession CreateStreamingSession(string reason)
+    {
+        // Deliberately DirectSound-only: this mirrors Android SmartPcmPlaybackWriter semantics
+        // rather than reopening/alternating Windows audio backends while a response is playing.
+        return new SmartDirectSoundPcmPlaybackSession(_smartPcmProfile, reason);
     }
 
     public IDisposable StartOutputKeepAlive(string reason, CancellationToken cancellationToken)
@@ -99,20 +106,21 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
 
         if (backend == "waveout")
         {
-            await PlayWithFallbacksAsync(wav, voiceAudio.MimeType, cancellationToken, "waveout", "wasapi", "directsound").ConfigureAwait(false);
+            await PlayWithFallbacksAsync(wav, voiceAudio.MimeType, cancellationToken, "waveout", "directsound").ConfigureAwait(false);
             return;
         }
 
-        if (backend == "directsound")
+        if (backend == "directsound" || backend == "auto")
         {
-            // DirectSound is useful on some machines, but do not let the known NAudio/DirectSoundOut
-            // GCHandle failure kill playback. Fall back to the modern Windows endpoint immediately.
-            await PlayWithFallbacksAsync(wav, voiceAudio.MimeType, cancellationToken, "directsound", "wasapi", "waveout").ConfigureAwait(false);
+            // Use the exact same adaptive single-stream DirectSound path for complete WAVs and for
+            // rolling qwentts PCM. This avoids maintaining two different DirectSound timing models.
+            using IStreamingWavePlaybackSession smart = CreateStreamingSession("one-shot desktop voice");
+            await smart.EnqueueAsync(voiceAudio, cancellationToken).ConfigureAwait(false);
+            await smart.CompleteAsync(cancellationToken).ConfigureAwait(false);
             return;
         }
 
-        // auto: prefer the Windows default endpoint, then the older WaveOut path, then DirectSound last.
-        await PlayWithFallbacksAsync(wav, voiceAudio.MimeType, cancellationToken, "wasapi", "waveout", "directsound").ConfigureAwait(false);
+        await PlayWithFallbacksAsync(wav, voiceAudio.MimeType, cancellationToken, "directsound", "waveout").ConfigureAwait(false);
     }
 
     private static bool IsKeepAliveDisabled()
@@ -208,7 +216,8 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
         using MemoryStream memoryStream = new MemoryStream(wav, writable: false);
         using WaveStream reader = CreateReader(memoryStream, mimeType);
         byte[] pcm = ReadAllPcmBytes(reader);
-        BufferedWaveProvider provider = new BufferedWaveProvider(reader.WaveFormat)
+        WaveFormat directSoundFormat = DirectSoundWaveFormatHelper.Canonicalize(reader.WaveFormat);
+        BufferedWaveProvider provider = new BufferedWaveProvider(directSoundFormat)
         {
             DiscardOnBufferOverflow = false,
             BufferDuration = reader.TotalTime + TimeSpan.FromSeconds(1),

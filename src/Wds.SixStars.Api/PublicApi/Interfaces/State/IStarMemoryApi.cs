@@ -10,6 +10,7 @@ namespace Wds.SixStars.Api.State
         Task<StarMemorySnapshot> GetStarMemorySnapshotAsync(string sessionId, string starId, int recentHistoryCount, CancellationToken cancellationToken);
         Task<StarInteractionHistoryPage> GetStarInteractionHistoryAsync(string sessionId, string starId, int skip, int take, CancellationToken cancellationToken);
         Task<StarStateUpdateResult> UpdateStarWithInteractionAsync(StarStateUpdateRequest request, CancellationToken cancellationToken);
+        Task<StarState> ApplyUnresolvedThreadUpdatesAsync(string sessionId, string starId, string incomingVector, string outgoingVector, string resolutionVector, CancellationToken cancellationToken);
         Task<SixStarsSaveData> ExportSaveDataAsync(string sessionId, CancellationToken cancellationToken);
         Task ImportSaveDataAsync(SixStarsSaveData saveData, CancellationToken cancellationToken);
         Task<StarState> ResetStarMemoryAsync(string sessionId, string starId, CancellationToken cancellationToken);

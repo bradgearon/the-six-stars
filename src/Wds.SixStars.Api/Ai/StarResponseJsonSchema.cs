@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.Writings;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -228,11 +229,11 @@ namespace Wds.SixStars.Api.Ai
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[] { "id", "oldScore", "newWordSet", "newWriting", "newScore" } },
+                { "required", new[] { "id", "oldValue", "newWordSet", "newWriting", "newValue" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "id", StringProperty(80) },
-                        { "oldScore", NumberProperty(0, 100) },
+                        { "oldValue", NonNegativeNumberProperty() },
                         { "newWordSet", new Dictionary<string, object>
                             {
                                 { "type", "array" }, { "minItems", 2 }, { "maxItems", 2 },
@@ -240,7 +241,7 @@ namespace Wds.SixStars.Api.Ai
                             }
                         },
                         { "newWriting", StringProperty(1400) },
-                        { "newScore", NumberProperty(0, 100) }
+                        { "newValue", NonNegativeNumberProperty() }
                     }
                 }
             };
@@ -259,20 +260,28 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "subjects", "verbs" } },
+                { "required", new[] { "starId", "subjects", "verbs", "storyWishes" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
                         { "subjects", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
-                                { "items", StringProperty(80) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
                         { "verbs", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 3 }, { "maxItems", 5 },
-                                { "items", StringProperty(80) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "storyWishes", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "minItems", 5 },
+                                { "maxItems", 5 },
+                                { "items", StringProperty() }
                             }
                         }
                     }
@@ -286,16 +295,28 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "title", "premise", "beats" } },
+                { "required", new[] { "starId", "title", "premise", "characters", "storySubjects", "beats" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
-                        { "premise", StringProperty(1800) },
+                        { "title", StringProperty() },
+                        { "premise", StringProperty() },
+                        { "characters", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "storySubjects", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
                         { "beats", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
-                                { "items", StringProperty(1200) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         }
                     }
@@ -309,22 +330,34 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
                 { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "starId", "title", "revisedBeats", "story", "addedLayers", "completionDecision", "completionReason" } },
+                { "required", new[] { "starId", "title", "characters", "storySubjects", "revisedBeats", "story", "addedLayers", "completionDecision", "completionReason" } },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
-                        { "revisedBeats", new Dictionary<string, object>
+                        { "title", StringProperty() },
+                        { "characters", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 6 }, { "maxItems", 14 },
-                                { "items", StringProperty(1200) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
-                        { "story", StringProperty(24000) },
+                        { "storySubjects", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "revisedBeats", new Dictionary<string, object>
+                            {
+                                { "type", "array" },
+                                { "items", StringProperty() }
+                            }
+                        },
+                        { "story", StringProperty() },
                         { "addedLayers", new Dictionary<string, object>
                             {
-                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 8 },
-                                { "items", StringProperty(500) }
+                                { "type", "array" },
+                                { "items", StringProperty() }
                             }
                         },
                         { "completionDecision", new Dictionary<string, object>
@@ -333,7 +366,7 @@ namespace Wds.SixStars.Api.Ai
                                 { "enum", new[] { "continue", "request-finish", "approve-pending-finish", "deny-pending-finish" } }
                             }
                         },
-                        { "completionReason", StringProperty(1000) }
+                        { "completionReason", StringProperty() }
                     }
                 }
             };
@@ -349,8 +382,8 @@ namespace Wds.SixStars.Api.Ai
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty(80) },
-                        { "title", StringProperty(180) },
-                        { "story", StringProperty(24000) },
+                        { "title", StringProperty() },
+                        { "story", StringProperty() },
                         { "finalStep", new Dictionary<string, object> { { "type", "boolean" } } }
                     }
                 }
@@ -362,15 +395,36 @@ namespace Wds.SixStars.Api.Ai
         {
             Dictionary<string, object> schema = new Dictionary<string, object>
             {
-                { "type", "object" }, { "additionalProperties", false },
-                { "required", new[] { "0" } },
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "valueVector" } },
                 { "properties", new Dictionary<string, object>
                     {
-                        { "0", StringProperty(512) }
+                        // One compact positional vector keeps local-model completion work small.
+                        // ReaderEmotionIuV1 contains 30 reader-emotion IU values plus Overall last.
+                        { "valueVector", StringProperty(1024) }
                     }
                 }
             };
-            return WrapSchema("six_stars_story_review", schema);
+            return WrapSchema("six_stars_story_reader_emotion_review", schema);
+        }
+
+        public static object CreateStarWritingSingleReviewRepairResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" },
+                { "additionalProperties", false },
+                { "required", new[] { "valueVector" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        // A malformed five-Spark response is repaired one candidate at a time.
+                        // Keeping the repair output to one 31-value string dramatically reduces count drift.
+                        { "valueVector", StringProperty(512) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_writing_single_review_repair", schema);
         }
 
         public static object CreateStarWritingReviewResponseFormat()
@@ -378,8 +432,8 @@ namespace Wds.SixStars.Api.Ai
             Dictionary<string, object> properties = new Dictionary<string, object>();
             for (int i = 0; i < 5; i++)
             {
-                // One compact score-only vector string per writing minimizes completion tokens.
-                // Each value contains exactly 27 semicolon-delimited scores.
+                // One compact value-only vector string per writing minimizes completion tokens.
+                // Each value contains exactly 31 semicolon-delimited open-ended reader-emotion IU values (30 emotions + Overall).
                 properties[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = StringProperty(512);
             }
 
@@ -445,6 +499,30 @@ namespace Wds.SixStars.Api.Ai
                 }
             };
             return WrapSchema("six_stars_writing_performance", schema);
+        }
+
+        public static object CreateConstellationStoryPerformanceResponseFormat()
+        {
+            Dictionary<string, object> schema = new Dictionary<string, object>
+            {
+                { "type", "object" }, { "additionalProperties", false },
+                { "required", new[] { "starId", "selectedWritingIds", "spokenText" } },
+                { "properties", new Dictionary<string, object>
+                    {
+                        { "starId", StringProperty(80) },
+                        { "selectedWritingIds", new Dictionary<string, object>
+                            {
+                                { "type", "array" }, { "minItems", 1 }, { "maxItems", 1 }, { "items", StringProperty(160) }
+                            }
+                        },
+                        // Story length is governed by the story itself and the model context, not an
+                        // arbitrary shelf-reader item/character ceiling. The prompt asks for natural
+                        // TTS chunks while this schema simply requires a non-empty ordered array.
+                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) }
+                    }
+                }
+            };
+            return WrapSchema("six_stars_constellation_story_performance", schema);
         }
 
         public static object CreateDailyStarStateResponseFormat()
@@ -544,59 +622,84 @@ namespace Wds.SixStars.Api.Ai
 
         public static object CreateBackgroundReviewResponseFormat(string schemaName = "six_stars_background_memory_review_compact")
         {
-            Dictionary<string, object> schema = new Dictionary<string, object>
+            Dictionary<string, object> schema = CreateBackgroundReviewRawSchema();
+            return WrapSchema(schemaName, schema);
+        }
+
+        /// <summary>
+        /// Deliberately flat background-review schema. The response object contains only primitive
+        /// values and arrays of primitive strings. Structures that used to be nested JSON objects
+        /// are encoded as compact ^-delimited strings and decoded deterministically after parsing.
+        /// This keeps grammar-constrained generation light for LM Studio and hosted Gemma.
+        /// </summary>
+        public static Dictionary<string, object> CreateBackgroundReviewRawSchema()
+        {
+            string[] required = new[]
+            {
+                "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
+                "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
+                "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "isSexting", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
+                "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
+                "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
+                "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
+            };
+
+            return new Dictionary<string, object>
             {
                 { "type", "object" },
                 { "additionalProperties", false },
-                { "required", new[]
-                    {
-                        "starId", "emotionalEffectVector", "negativeEmotionVector", "storyTitle", "storyId", "storySummary", "storyIsFinished", "storyPartIndex",
-                        "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
-                        "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
-                        "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
-                        "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
-                    }
-                },
+                { "required", required },
                 { "properties", new Dictionary<string, object>
                     {
                         { "starId", StringProperty() },
-                        { "spokenText", SpokenTextArray(maxItems: 0, maxItemLength: 0) },
                         { "emotionalEffectVector", EmotionEffectVectorProperty() },
                         { "negativeEmotionVector", NegativeEmotionVectorProperty() },
-                        { "storyTitle", NullableStringProperty() },
+                        // Empty string means no story. Avoid nullable union types in the compact review grammar.
+                        { "storyTitle", StringProperty() },
                         { "storyId", StringProperty() },
-                        { "storySummary", StringProperty(700) },
+                        { "storySummary", StringProperty() },
                         { "storyIsFinished", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "storyPartIndex", new Dictionary<string, object> { { "type", "integer" }, { "minimum", 0 } } },
-                        { "detectedCombos", StringArray(4) },
-                        { "suggestedStateDeltas", DeltaObject() },
-                        { "conversationSummary", StringProperty(900) },
-                        { "changesSummary", StringProperty(450) },
-                        { "importantPlayerQuotes", EmptyStringArray() },
-                        { "memoryNotes", StringArray(6) },
-                        { "rememberedMarkers", RememberedMarkerArray(4) },
-                        { "referencedMemoryMarkerIds", StringArray(6) },
-                        { "secretsUnlocked", StringArray(3) },
-                        { "learnedFunctions", LearnedFunctionArray(3) },
-                        { "relationshipEvents", StringArray(4) },
-                        { "girlfriendHistoryUpdates", StringArray(3) },
-                        { "petNamesPlayerUsesForStar", StringArray(3) },
-                        { "petNamesStarUsesForPlayer", StringArray(3) },
-                        { "girlfriendNeedsMetSummary", StringProperty(420) },
-                        { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
-                        { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
-                        { "girlfriendCoupleActivitySummary", StringProperty(520) },
-                        { "girlfriendCoupleActivityVector", StringProperty(1200) },
+                        { "storyPartIndex", new Dictionary<string, object> { { "type", "number" } } },
+                        { "detectedCombos", StringArray() },
+                        // Four numeric positions: heart^trust^romance^emotionalConnectionPercent.
+                        { "suggestedStateDeltas", StringProperty() },
+                        { "conversationSummary", StringProperty() },
+                        { "changesSummary", StringProperty() },
+                        { "tenTurnConversationSummary", StringProperty() },
+                        { "hundredTurnConversationSummary", StringProperty() },
+                        { "thingsLearnedOrSuggestedByPlayer", StringArray() },
+                        { "shortTermMemoryItems", StringArray() },
+                        { "isSexting", new Dictionary<string, object> { { "type", "boolean" } } },
+                        { "questionsFromLastCatVector", StringProperty() },
+                        { "questionsToLastCatVector", StringProperty() },
+                        { "questionResolutionVector", StringProperty() },
+                        { "emotionAnimation", StringProperty() },
+                        { "informationNeedsVector", StringProperty() },
+                        { "importantPlayerQuotes", StringArray() },
+                        { "memoryNotes", StringArray() },
+                        // Each item is one ^-delimited marker record; no nested objects in the response schema.
+                        { "rememberedMarkers", StringArray() },
+                        { "referencedMemoryMarkerIds", StringArray() },
+                        { "secretsUnlocked", StringArray() },
+                        // Each item is one ^-delimited learned-function record.
+                        { "learnedFunctions", StringArray() },
+                        { "relationshipEvents", StringArray() },
+                        { "girlfriendHistoryUpdates", StringArray() },
+                        { "petNamesPlayerUsesForStar", StringArray() },
+                        { "petNamesStarUsesForPlayer", StringArray() },
+                        { "girlfriendNeedsMetSummary", StringProperty() },
+                        // Each item is itemId^displayName^confidence^score^reason.
+                        { "girlfriendNeedsMetVector", StringArray() },
+                        { "girlfriendWantsMetVector", StringArray() },
+                        { "girlfriendCoupleActivitySummary", StringProperty() },
+                        { "girlfriendCoupleActivityVector", StringProperty() },
                         { "requestToShowBoobs", new Dictionary<string, object> { { "type", "boolean" } } },
-                        { "loreUsed", StringArray(5) },
-                        { "riskFlags", StringArray(3) },
-                        { "wisdomScore", NumberProperty(0, 1) }
+                        { "loreUsed", StringArray() },
+                        { "riskFlags", StringArray() },
+                        { "wisdomScore", new Dictionary<string, object> { { "type", "number" } } }
                     }
                 }
             };
-
-            return WrapSchema(schemaName, schema);
         }
 
         public static object CreateDecisionScoreResponseFormat()
@@ -1082,6 +1185,11 @@ namespace Wds.SixStars.Api.Ai
         private static Dictionary<string, object> NumberProperty(double min, double max)
         {
             return new Dictionary<string, object> { { "type", "number" }, { "minimum", min }, { "maximum", max } };
+        }
+
+        private static Dictionary<string, object> NonNegativeNumberProperty()
+        {
+            return new Dictionary<string, object> { { "type", "number" }, { "minimum", 0 } };
         }
 
         private static Dictionary<string, object> DeltaObject()

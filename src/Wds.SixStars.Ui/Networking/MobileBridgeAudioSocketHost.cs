@@ -17,9 +17,11 @@ namespace Wds.SixStars.Ui.Networking;
 /// <summary>
 /// Lightweight persistent TCP socket for Android phone audio playback.
 ///
-/// This is intentionally not the Qwen TTS WebSocket. The desktop app still connects to
-/// Qwen over WebSocket and receives WAV chunks there. This host is the second hop:
-/// desktop -> Android. It sends ordered WAV chunks to the phone as small framed messages.
+/// This is intentionally separate from qwentts.cpp. The desktop .NET speech layer calls
+/// qwentts.cpp over HTTP and receives WAV chunks there. This host is only the second hop:
+/// desktop -> Android. It sends ordered audio packets to the phone as small framed messages. PCM
+/// streaming packets remain WAV-wrapped on the wire for compatibility; Android joins them into one
+/// continuous AudioTrack per logical stream.
 /// </summary>
 public sealed class MobileBridgeAudioSocketHost : IDisposable
 {
@@ -158,7 +160,15 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
 
         byte[] wavCopy = CopyBytes(result.WavAudio);
         string checksum = Sha256Hex(wavCopy);
-        MobileSpeechActivityResult speechMarkers = MobileAudioSpeechActivityMarkers.AnalyzeWav(wavCopy);
+        string spokenText = result.Instructions ?? string.Empty;
+        string textHash = string.IsNullOrEmpty(spokenText) ? string.Empty : Sha256Hex(Encoding.UTF8.GetBytes(spokenText));
+        if (textHash.Length > 12) textHash = textHash.Substring(0, 12);
+        // Live continuous PCM now owns lip analysis on Android inside SmartPcmPlaybackWriter,
+        // where marker timing is tied to the actual AudioTrack playback head. Keep desktop markers
+        // only for ordinary complete WAVs/cached speech.
+        MobileSpeechActivityResult speechMarkers = result.IsStreamingPcmWindow
+            ? MobileSpeechActivityResult.Empty
+            : MobileAudioSpeechActivityMarkers.AnalyzeWav(wavCopy);
         int audioSequence = streamSession?.NextAudioSequence() ?? chunkIndex;
         string header = JsonSerializer.Serialize(new
         {
@@ -175,6 +185,9 @@ public sealed class MobileBridgeAudioSocketHost : IDisposable
             sha256 = checksum,
             sha256Short = checksum.Length > 12 ? checksum.Substring(0, 12) : checksum,
             durationMs = result.DurationMs,
+            continuousPcm = result.IsStreamingPcmWindow,
+            textChars = spokenText.Length,
+            textKey = textHash,
             source = result.Source ?? string.Empty,
             isStory = streamSession?.IsStory ?? frameContext?.IsStory ?? false,
             storyId = frameContext?.StoryId ?? string.Empty,

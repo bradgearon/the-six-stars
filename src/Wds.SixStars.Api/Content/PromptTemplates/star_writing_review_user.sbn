@@ -1,20 +1,28 @@
-RATE FIVE WRITINGS
+REVIEW FIVE SPARKS
 
-COMPACT CHARACTER CARD
-Name: {{ data.displayName }}
-Element: {{ data.element }}
-Domain: {{ data.domain }}
-Core line: {{ data.coreQuote }}
-Personality: {{ data.personalityShort }}
-Deep personality: {{ data.deepPersonality }}
-Speaking style: {{ data.speakingStyle }}
-Signature imagery / behavior:
-{{ for item in data.behaviors }}
-- {{ item }}
-{{ end }}
-
-EXACT VECTOR CATEGORY ORDER (27)
+EXACT READER-EMOTION IU VECTOR ORDER ({{ data.vectorCount }})
 {{ data.vectorOrder }}
+Overall is LAST.
+
+BUCKET MEANINGS
+{{ for item in data.emotionBuckets }}
+- {{ item.emotion }}: {{ item.discipline }}
+{{ end }}
+- Overall: integrated literary/information value of the complete work; not an emotion and not an average.
+
+GLOBAL SHARED CALIBRATION REFERENCES
+These references are the same ruler for every actor. Never change the scale because of who wrote the candidate.
+Reference excellence value: {{ data.referenceValue }} IU. It is not a maximum.
+{{ if data.valueReferences.size == 0 }}
+No curated shared Spark references are installed. Use the fixed shared IU ladder from the system instruction; do not infer a scale from this actor's prior writing.
+{{ else }}
+{{ for item in data.valueReferences }}
+[{{ item.source }}] Overall={{ item.overallValue }} IU
+Reader-emotion vector: {{ item.valueVector }}
+Writing: {{ item.writing }}
+---
+{{ end }}
+{{ end }}
 
 CANDIDATES
 {{ for item in data.candidates }}
@@ -22,9 +30,7 @@ CANDIDATES
 Writing: {{ item.writing }}
 {{ end }}
 
-Return only this outer JSON shape:
+Return only:
 {"0":"","1":"","2":"","3":"","4":""}
 
-Replace each empty value with one compact string containing exactly 27 integer scores separated by semicolons.
-Example beginning: 35;72;68;...
-The numeric property name identifies the writing; it is not a Star ID.
+Replace each empty string with exactly {{ data.vectorCount }} non-negative integer IU values separated by semicolons in the order above. Values may exceed 100 or every reference when justified.

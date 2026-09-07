@@ -36,7 +36,7 @@ namespace Wds.SixStars.Api.State
         public async Task<StarState> GetStarStateAsync(string sessionId, string starId, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow) || PruneExpiredShortTermMemory(state, DateTimeOffset.UtcNow))
             {
                 await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
             }
@@ -46,7 +46,7 @@ namespace Wds.SixStars.Api.State
         public async Task<StarMemorySnapshot> GetStarMemorySnapshotAsync(string sessionId, string starId, int recentHistoryCount, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
-            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow))
+            if (NormalizeWorldDefaults(state) || PruneExpiredEffectors(state, DateTimeOffset.UtcNow) || PruneExpiredShortTermMemory(state, DateTimeOffset.UtcNow))
             {
                 await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
             }
@@ -74,14 +74,44 @@ namespace Wds.SixStars.Api.State
             };
         }
 
+        public async Task<StarState> ApplyUnresolvedThreadUpdatesAsync(string sessionId, string starId, string incomingVector, string outgoingVector, string resolutionVector, CancellationToken cancellationToken)
+        {
+            StarState state = await _stateStore.GetAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
+            NormalizeWorldDefaults(state);
+            UpdateUnresolvedThreadState(state, new StarStateUpdateRequest
+            {
+                SessionId = sessionId ?? string.Empty,
+                StarId = starId ?? string.Empty,
+                IncomingUnresolvedVector = incomingVector ?? string.Empty,
+                OutgoingUnresolvedVector = outgoingVector ?? string.Empty,
+                UnresolvedResolutionVector = resolutionVector ?? string.Empty,
+                IsInternalBackgroundUpdate = true,
+                SuppressConversationLog = true,
+                SuppressConversationSummaryUpdate = true
+            });
+            await _stateStore.SaveAsync(sessionId, state, cancellationToken).ConfigureAwait(false);
+            return state;
+        }
+
         public async Task<StarStateUpdateResult> UpdateStarWithInteractionAsync(StarStateUpdateRequest request, CancellationToken cancellationToken)
         {
             StarState state = await _stateStore.GetAsync(request.SessionId, request.StarId, cancellationToken).ConfigureAwait(false);
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset turnStartedAt = request.TurnStartedAt == default
+                ? now
+                : request.TurnStartedAt.ToUniversalTime();
+            // Defensive clamp for malformed external callers. A logical turn may be old because its
+            // review was retried, but it should never be materially in the future.
+            if (turnStartedAt > now.AddMinutes(5)) turnStartedAt = now;
+
             NormalizeWorldDefaults(state);
             PruneExpiredEffectors(state, now);
+            PruneExpiredShortTermMemory(state, now);
 
             bool isInternalBackgroundUpdate = request.IsInternalBackgroundUpdate;
+            bool isLatestDirectTurn = isInternalBackgroundUpdate
+                || !state.LastInteractionAt.HasValue
+                || turnStartedAt >= state.LastInteractionAt.Value;
             bool suppressConversationSummaryUpdate = request.SuppressConversationSummaryUpdate || isInternalBackgroundUpdate;
             bool suppressConversationLog = request.SuppressConversationLog || isInternalBackgroundUpdate;
 
@@ -89,7 +119,10 @@ namespace Wds.SixStars.Api.State
             if (!isInternalBackgroundUpdate)
             {
                 state.InteractionCount += 1;
-                state.LastInteractionAt = now;
+                if (!state.LastInteractionAt.HasValue || turnStartedAt > state.LastInteractionAt.Value)
+                {
+                    state.LastInteractionAt = turnStartedAt;
+                }
             }
             state.LastDailyStateSourceUpdateAt = now;
 
@@ -108,23 +141,35 @@ namespace Wds.SixStars.Api.State
             AutoPromoteAllyIfReady(state, now);
             UpdateGirlfriendReadiness(state, now);
 
-            if (!suppressConversationSummaryUpdate && !string.IsNullOrWhiteSpace(request.ConversationSummary))
+            if (!suppressConversationSummaryUpdate && isLatestDirectTurn && !string.IsNullOrWhiteSpace(request.ConversationSummary))
             {
+                // A retry of an older turn may settle after a newer turn. Do not let that stale
+                // background completion roll the prompt-facing current summary backward.
                 state.ConversationSummary = request.ConversationSummary.Trim();
             }
 
-            // Important player quotes are no longer chosen by the LLM. The deterministic layer
-            // captures the exact latest player message only when the accepted compact emotion
-            // vectors show a sufficiently strong reaction. Model-provided importantPlayerQuotes
-            // are ignored for durable storage so ordinary turns do not bloat the quote list.
+            // Important quote SIGNIFICANCE is chosen by the protected background LLM again.
+            // The deterministic layer only validates exactness/current-turn provenance before
+            // making those rare selections durable; ordinary emotion magnitude is not enough.
             AddUnique(state.MemoryNotes, request.MemoryNotes, _options.MaxMemoryNotes);
+            AddShortTermMemoryEntries(state, request.ShortTermMemoryItems, turnStartedAt, now, request.RequestType);
+            if (state.IsGirlfriend && request.SextingDetected)
+            {
+                // One-way relationship latch: once this girlfriend and the Last Cat have actually sexted,
+                // keep her Star-specific sexting palette available on future relevant turns.
+                state.GirlfriendSextingEnabled = true;
+            }
             List<string> newlyLearnedOrSuggested = AddUniqueWithResult(state.ThingsLearnedOrSuggestedByPlayer, request.ThingsLearnedOrSuggestedByPlayer, _options.MaxThingsLearnedOrSuggestedByPlayer);
+            UpdateUnresolvedThreadState(state, request);
             List<StarRememberedMarker> markersToStore = PrepareRememberedMarkers(request, now);
             UpsertRememberedMarkers(state, markersToStore, now);
             MarkReferencedMemoryMarkers(state, request.ReferencedMemoryMarkerIds, now);
             AddUnique(state.SecretsUnlocked, request.SecretsUnlocked, _options.MaxSecrets);
             AddUnique(state.RelationshipEvents, request.RelationshipEvents, _options.MaxRelationshipEvents);
-            AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
+            if (state.IsGirlfriend)
+            {
+                AddUnique(state.GirlfriendHistory, request.GirlfriendHistoryUpdates, _options.MaxGirlfriendHistoryEntries);
+            }
             AddUnique(state.PetNamesPlayerUsesForStar, request.PetNamesPlayerUsesForStar, 20);
             AddUnique(state.PetNamesStarUsesForPlayer, request.PetNamesStarUsesForPlayer, 20);
             UpdateGirlfriendNeedsMetHistory(state, request, now);
@@ -135,7 +180,7 @@ namespace Wds.SixStars.Api.State
             if (!isInternalBackgroundUpdate)
             {
                 UpdateSuccessionCounters(state, applied, request, now);
-                UpdateEmotionStateHistory(state, request, applied, now, emotionalConnectionBefore, state.EmotionalConnectionPercent);
+                UpdateEmotionStateHistory(state, request, applied, turnStartedAt, emotionalConnectionBefore, state.EmotionalConnectionPercent, isLatestDirectTurn);
             }
             else
             {
@@ -144,12 +189,13 @@ namespace Wds.SixStars.Api.State
             UpdateStoryHistory(state, request, now);
             PruneExpiredEffectors(state, now);
 
-            string autoQuoteReason = string.Empty;
-            string autoQuote = isInternalBackgroundUpdate ? string.Empty : TryCreateAutoQuote(request, applied, out autoQuoteReason);
-            if (!string.IsNullOrWhiteSpace(autoQuote))
+            List<string> selectedImportantQuotes = isInternalBackgroundUpdate
+                ? new List<string>()
+                : PrepareModelSelectedImportantQuotes(request, 3);
+            if (selectedImportantQuotes.Count > 0)
             {
-                AddUnique(state.ImportantPlayerQuotes, new[] { autoQuote }, _options.MaxImportantQuotes);
-                AddImportantQuoteSourceRecords(state, request, new[] { autoQuote }, markersToStore, applied, now, string.IsNullOrWhiteSpace(autoQuoteReason) ? "auto-high-emotion-quote" : autoQuoteReason);
+                AddUnique(state.ImportantPlayerQuotes, selectedImportantQuotes, _options.MaxImportantQuotes);
+                AddImportantQuoteSourceRecords(state, request, selectedImportantQuotes, markersToStore, applied, now, "background-review-significant-player-quote");
             }
 
             ConversationLogEntry entry = new ConversationLogEntry();
@@ -157,7 +203,7 @@ namespace Wds.SixStars.Api.State
             {
             entry = new ConversationLogEntry
             {
-                CreatedAt = now,
+                CreatedAt = turnStartedAt,
                 RequestType = request.RequestType,
                 PlayerText = CompactDurableText(request.PlayerText, 8000),
                 StarResponse = CompactDurableText(request.StarResponse, 24000),
@@ -172,7 +218,7 @@ namespace Wds.SixStars.Api.State
                 DeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty,
                 WisdomScore = request.WisdomScore
             };
-            if (!string.IsNullOrWhiteSpace(autoQuote)) entry.ImportantQuotes.Add(autoQuote);
+            entry.ImportantQuotes.AddRange(selectedImportantQuotes);
             entry.ThingsLearnedOrSuggestedByPlayer.AddRange(newlyLearnedOrSuggested);
             entry.RememberedMarkers.AddRange(markersToStore);
             entry.ReferencedMemoryMarkerIds.AddRange(request.ReferencedMemoryMarkerIds);
@@ -184,7 +230,12 @@ namespace Wds.SixStars.Api.State
             entry.LearnedFunctionIds.AddRange(request.LearnedFunctions.Select(x => x.Id).Where(x => !string.IsNullOrWhiteSpace(x)));
             entry.SecretsUnlocked.AddRange(request.SecretsUnlocked);
 
-            state.MemoryLog.Insert(0, entry);
+            state.MemoryLog.Add(entry);
+            state.MemoryLog = state.MemoryLog
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .ToList();
+            StoreConversationRollups(state, request, now);
             ArchiveOldConversationTurns(state, now);
             Trim(state.MemoryLog, _options.MaxMemoryLogEntries);
             }
@@ -468,6 +519,158 @@ namespace Wds.SixStars.Api.State
                 if (string.Equals(compact, keyCompact, StringComparison.OrdinalIgnoreCase)) return key;
             }
             return compact;
+        }
+
+        private static void UpdateUnresolvedThreadState(StarState state, StarStateUpdateRequest request)
+        {
+            if (state == null || request == null) return;
+            state.IncomingUnresolvedVectors ??= new List<string>();
+            state.OutgoingUnresolvedVectors ??= new List<string>();
+            state.UnresolvedResolutionHistory ??= new List<string>();
+
+            List<StarUnresolvedVectorCodec.IncomingThread> incoming = StarUnresolvedVectorCodec.ParseIncomingItems(state.IncomingUnresolvedVectors, 20);
+            List<StarUnresolvedVectorCodec.OutgoingThread> outgoing = StarUnresolvedVectorCodec.ParseOutgoingItems(state.OutgoingUnresolvedVectors, 20);
+            List<StarUnresolvedVectorCodec.IncomingThread> incomingUpdates = StarUnresolvedVectorCodec.ParseIncomingVector(request.IncomingUnresolvedVector, 10);
+            List<StarUnresolvedVectorCodec.OutgoingThread> outgoingUpdates = StarUnresolvedVectorCodec.ParseOutgoingVector(request.OutgoingUnresolvedVector, 10);
+            List<StarUnresolvedVectorCodec.Resolution> resolutions = StarUnresolvedVectorCodec.ParseResolutionVector(request.UnresolvedResolutionVector, 8);
+
+            foreach (StarUnresolvedVectorCodec.IncomingThread update in incomingUpdates)
+            {
+                StarUnresolvedVectorCodec.IncomingThread? existing = incoming.FirstOrDefault(x =>
+                    string.Equals(x.Id, update.Id, StringComparison.OrdinalIgnoreCase)
+                    || SameUnresolvedText(x.OpenQuestion, update.OpenQuestion));
+                if (existing == null) incoming.Add(update);
+                else
+                {
+                    existing.Confidence = update.Confidence;
+                    existing.Tags = update.Tags;
+                    existing.OpenQuestion = update.OpenQuestion;
+                    existing.ResolutionIntent = update.ResolutionIntent;
+                }
+            }
+
+            foreach (StarUnresolvedVectorCodec.OutgoingThread update in outgoingUpdates)
+            {
+                StarUnresolvedVectorCodec.OutgoingThread? existing = outgoing.FirstOrDefault(x =>
+                    string.Equals(x.Id, update.Id, StringComparison.OrdinalIgnoreCase)
+                    || SameUnresolvedText(x.OpenThread, update.OpenThread));
+                if (existing == null) outgoing.Add(update);
+                else
+                {
+                    existing.Priority = update.Priority;
+                    existing.Tags = update.Tags;
+                    existing.OpenThread = update.OpenThread;
+                    existing.ResolutionIntent = update.ResolutionIntent;
+                    existing.IntendedEffects = update.IntendedEffects;
+                }
+            }
+
+            List<StarUnresolvedVectorCodec.Resolution> priorResolutionHistory = StarUnresolvedVectorCodec.ParseResolutionItems(state.UnresolvedResolutionHistory, 24);
+            foreach (StarUnresolvedVectorCodec.Resolution resolution in resolutions)
+            {
+                bool matchedActive = false;
+                if (string.Equals(resolution.Direction, "in", StringComparison.OrdinalIgnoreCase))
+                {
+                    StarUnresolvedVectorCodec.IncomingThread? matched = incoming.FirstOrDefault(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    if (matched != null)
+                    {
+                        matchedActive = true;
+                        if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = matched.ResolutionIntent;
+                        incoming.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+                else
+                {
+                    StarUnresolvedVectorCodec.OutgoingThread? matched = outgoing.FirstOrDefault(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    if (matched != null)
+                    {
+                        matchedActive = true;
+                        if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = matched.ResolutionIntent;
+                        if (string.IsNullOrWhiteSpace(resolution.IntendedEffects)) resolution.IntendedEffects = matched.IntendedEffects;
+                        outgoing.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase));
+                    }
+                }
+
+                // A recently resolved outgoing thread can receive a later "how it landed" update on
+                // the next player turn. Merge that evidence into the existing resolution record rather
+                // than reviving the active thread or losing the original plan/intended effect.
+                StarUnresolvedVectorCodec.Resolution? prior = priorResolutionHistory.FirstOrDefault(x =>
+                    string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(x.Direction, resolution.Direction, StringComparison.OrdinalIgnoreCase));
+                if (!matchedActive && prior == null) continue; // ignore hallucinated/unknown resolution ids
+                if (prior != null)
+                {
+                    if (string.IsNullOrWhiteSpace(resolution.ResolutionIntent)) resolution.ResolutionIntent = prior.ResolutionIntent;
+                    if (string.IsNullOrWhiteSpace(resolution.IntendedEffects)) resolution.IntendedEffects = prior.IntendedEffects;
+                    if (string.IsNullOrWhiteSpace(resolution.LandedEffect)) resolution.LandedEffect = prior.LandedEffect;
+                    if (string.IsNullOrWhiteSpace(resolution.ResolutionText)) resolution.ResolutionText = prior.ResolutionText;
+                }
+
+                string encoded = StarUnresolvedVectorCodec.EncodeResolutionHistory(resolution);
+                if (!string.IsNullOrWhiteSpace(encoded))
+                {
+                    state.UnresolvedResolutionHistory.RemoveAll(x => ResolutionHistoryMatches(x, resolution.Id, resolution.Direction));
+                    state.UnresolvedResolutionHistory.Insert(0, encoded);
+                    priorResolutionHistory.RemoveAll(x => string.Equals(x.Id, resolution.Id, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(x.Direction, resolution.Direction, StringComparison.OrdinalIgnoreCase));
+                    priorResolutionHistory.Insert(0, resolution);
+                }
+            }
+
+            incoming = incoming
+                .GroupBy(x => NormalizeUnresolvedText(x.OpenQuestion), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.OrderByDescending(y => y.Confidence).First())
+                .OrderByDescending(x => x.Confidence)
+                .Take(10)
+                .ToList();
+            outgoing = outgoing
+                .GroupBy(x => NormalizeUnresolvedText(x.OpenThread), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.OrderByDescending(y => y.Priority).First())
+                .OrderByDescending(x => x.Priority)
+                .Take(10)
+                .ToList();
+
+            // Keep one tiny active working set across both directions. Incoming confidence is
+            // compared on the same 0-100 scale as outgoing priority.
+            while (incoming.Count + outgoing.Count > 10)
+            {
+                double weakestIncoming = incoming.Count == 0 ? double.MaxValue : incoming[incoming.Count - 1].Confidence * 100.0;
+                double weakestOutgoing = outgoing.Count == 0 ? double.MaxValue : outgoing[outgoing.Count - 1].Priority;
+                if (weakestIncoming <= weakestOutgoing && incoming.Count > 0) incoming.RemoveAt(incoming.Count - 1);
+                else if (outgoing.Count > 0) outgoing.RemoveAt(outgoing.Count - 1);
+                else break;
+            }
+
+            state.IncomingUnresolvedVectors = incoming
+                .Select(StarUnresolvedVectorCodec.EncodeIncoming)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+            state.OutgoingUnresolvedVectors = outgoing
+                .Select(StarUnresolvedVectorCodec.EncodeOutgoing)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            Trim(state.UnresolvedResolutionHistory, 24);
+        }
+
+        private static bool ResolutionHistoryMatches(string raw, string id, string direction)
+        {
+            StarUnresolvedVectorCodec.Resolution? parsed = StarUnresolvedVectorCodec.ParseResolutionItems(new[] { raw }, 1).FirstOrDefault();
+            return parsed != null
+                && string.Equals(parsed.Id, id, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(parsed.Direction, direction, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool SameUnresolvedText(string? a, string? b)
+        {
+            string left = NormalizeUnresolvedText(a);
+            string right = NormalizeUnresolvedText(b);
+            return !string.IsNullOrWhiteSpace(left) && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeUnresolvedText(string? value)
+        {
+            return new string((value ?? string.Empty).ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c)).ToArray()).Trim();
         }
 
         private static void UpdateGirlfriendCoupleActivityHistory(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
@@ -839,6 +1042,21 @@ namespace Wds.SixStars.Api.State
                 state.MemoryLog = new List<ConversationLogEntry>();
                 changed = true;
             }
+            if (state.TenTurnConversationSummaries == null)
+            {
+                state.TenTurnConversationSummaries = new List<StarConversationSummaryBlock>();
+                changed = true;
+            }
+            if (state.HundredTurnConversationSummaries == null)
+            {
+                state.HundredTurnConversationSummaries = new List<StarConversationSummaryBlock>();
+                changed = true;
+            }
+            if (state.OldConversationArchives == null)
+            {
+                state.OldConversationArchives = new List<StarConversationArchiveEntry>();
+                changed = true;
+            }
             if (state.OtherStars == null)
             {
                 state.OtherStars = new List<InterstarRelationshipState>();
@@ -862,11 +1080,19 @@ namespace Wds.SixStars.Api.State
                 state.MemoryNotes = new List<string>();
                 changed = true;
             }
+            if (state.ShortTermMemory == null)
+            {
+                state.ShortTermMemory = new List<StarShortTermMemoryEntry>();
+                changed = true;
+            }
             if (state.ThingsLearnedOrSuggestedByPlayer == null)
             {
                 state.ThingsLearnedOrSuggestedByPlayer = new List<string>();
                 changed = true;
             }
+            if (state.IncomingUnresolvedVectors == null) { state.IncomingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.OutgoingUnresolvedVectors == null) { state.OutgoingUnresolvedVectors = new List<string>(); changed = true; }
+            if (state.UnresolvedResolutionHistory == null) { state.UnresolvedResolutionHistory = new List<string>(); changed = true; }
             if (state.GirlfriendHistory == null)
             {
                 state.GirlfriendHistory = new List<string>();
@@ -963,6 +1189,7 @@ namespace Wds.SixStars.Api.State
                 if (!state.IsMet && !explicitlyRemovedMet) { state.IsMet = true; changed = true; }
                 if (!state.IsAlly && !explicitlyRemovedAlly) { state.IsAlly = true; changed = true; }
             }
+            if (BackfillConversationRollups(state)) changed = true;
             return changed;
         }
 
@@ -1246,6 +1473,54 @@ namespace Wds.SixStars.Api.State
             return cleaned.Substring(0, maxLength).Trim();
         }
 
+        private bool PruneExpiredShortTermMemory(StarState state, DateTimeOffset now)
+        {
+            if (state == null) return false;
+            state.ShortTermMemory ??= new List<StarShortTermMemoryEntry>();
+            int windowMs = Math.Max(1000, _options.ShortTermMemoryWindowMs);
+            DateTimeOffset cutoff = now.AddMilliseconds(-windowMs);
+            int before = state.ShortTermMemory.Count;
+            state.ShortTermMemory = state.ShortTermMemory
+                .Where(x => x != null && x.CreatedAt >= cutoff && !string.IsNullOrWhiteSpace(x.Text))
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, _options.MaxShortTermMemoryEntries))
+                .ToList();
+            return state.ShortTermMemory.Count != before;
+        }
+
+        private void AddShortTermMemoryEntries(StarState state, IEnumerable<string>? items, DateTimeOffset createdAt, DateTimeOffset pruneAt, string? source)
+        {
+            if (state == null || items == null) return;
+            state.ShortTermMemory ??= new List<StarShortTermMemoryEntry>();
+            foreach (string raw in items)
+            {
+                string text = CompactDurableText(raw, 700).Trim();
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                StarShortTermMemoryEntry? existing = state.ShortTermMemory
+                    .FirstOrDefault(x => x != null && string.Equals(x.Text, text, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
+                {
+                    // Preserve the deterministic time this short-term fact was originally added.
+                    // Once it ages out of the configured window, the same fact may be added again
+                    // as a new short-term memory if it is genuinely current again.
+                    continue;
+                }
+                state.ShortTermMemory.Insert(0, new StarShortTermMemoryEntry
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    CreatedAt = createdAt,
+                    Text = text,
+                    Source = string.IsNullOrWhiteSpace(source) ? "background-review" : source.Trim()
+                });
+            }
+            PruneExpiredShortTermMemory(state, pruneAt);
+            state.ShortTermMemory = state.ShortTermMemory
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(Math.Max(1, _options.MaxShortTermMemoryEntries))
+                .ToList();
+        }
+
         private static IEnumerable<string> BuildInternalUpdateMemoryNotes(StarStateUpdateRequest request, RelationshipDelta applied)
         {
             if (request == null) yield break;
@@ -1256,12 +1531,16 @@ namespace Wds.SixStars.Api.State
             yield return "Internal background update: " + TruncateLocal(summary, 360);
         }
 
-        private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter)
+        private static void UpdateEmotionStateHistory(StarState state, StarStateUpdateRequest request, RelationshipDelta applied, DateTimeOffset now, double emotionalConnectionBefore, double emotionalConnectionAfter, bool updateLatestFields)
         {
-            state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
-            state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
-            state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
-            state.LastTopAffectedEmotions = RelationshipDeltaCalculator.BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector);
+            List<TopAffectedEmotion> turnTopAffectedEmotions = RelationshipDeltaCalculator.BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector);
+            if (updateLatestFields)
+            {
+                state.LastEmotionalEffectVector = request.EmotionalEffectVector ?? string.Empty;
+                state.LastNegativeEmotionVector = request.NegativeEmotionVector ?? string.Empty;
+                state.LastDeterministicEmotionSummary = request.DeterministicEmotionSummary ?? string.Empty;
+                state.LastTopAffectedEmotions = turnTopAffectedEmotions.ToList();
+            }
             if (string.IsNullOrWhiteSpace(state.EmotionalConnectionSkillLevel))
             {
                 state.EmotionalConnectionSkillLevel = "interested_private_potential_partner";
@@ -1279,7 +1558,7 @@ namespace Wds.SixStars.Api.State
                 AcceptedPositiveSignals = request.AcceptedPositiveSignals.ToList(),
                 AcceptedNegativeSignals = request.AcceptedNegativeSignals.ToList(),
                 AcceptedCombos = request.AcceptedCombos.ToList(),
-                TopAffectedEmotions = state.LastTopAffectedEmotions.ToList(),
+                TopAffectedEmotions = turnTopAffectedEmotions.ToList(),
                 SuggestedDelta = request.SuggestedDelta,
                 ActualDelta = applied,
                 EmotionalConnectionPercentBefore = emotionalConnectionBefore,
@@ -1287,7 +1566,11 @@ namespace Wds.SixStars.Api.State
                 IsGirlfriendReadyAfter = state.IsGirlfriendReady,
                 Summary = request.DeterministicEmotionSummary ?? string.Empty
             });
-            Trim(state.EmotionUpdateHistory, 80);
+            state.EmotionUpdateHistory = state.EmotionUpdateHistory
+                .Where(x => x != null)
+                .OrderByDescending(x => x.CreatedAt)
+                .Take(80)
+                .ToList();
         }
 
         private static void AccumulateDeterministicEmotionTotals(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
@@ -1554,6 +1837,27 @@ namespace Wds.SixStars.Api.State
         }
 
 
+        private static List<string> PrepareModelSelectedImportantQuotes(StarStateUpdateRequest request, int maxItems)
+        {
+            List<string> result = new List<string>();
+            if (request == null || maxItems <= 0) return result;
+            string player = (request.PlayerText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(player)) return result;
+
+            foreach (string raw in request.ImportantPlayerQuotes ?? new List<string>())
+            {
+                string quote = CleanMarkerText(raw, 700);
+                if (string.IsNullOrWhiteSpace(quote)) continue;
+                // Significance belongs to the background LLM. Durability still validates that the
+                // alleged exact quote actually occurs in this turn so a model cannot invent wording.
+                if (player.IndexOf(quote, StringComparison.Ordinal) < 0) continue;
+                if (result.Any(x => string.Equals(x, quote, StringComparison.Ordinal))) continue;
+                result.Add(quote);
+                if (result.Count >= maxItems) break;
+            }
+            return result;
+        }
+
         private void AddImportantQuoteSourceRecords(StarState state, StarStateUpdateRequest request, IEnumerable<string> quotes, IEnumerable<StarRememberedMarker> markers, RelationshipDelta applied, DateTimeOffset now, string reason)
         {
             state.AllImportantPlayerQuotes ??= new List<StarImportantQuoteRecord>();
@@ -1580,6 +1884,144 @@ namespace Wds.SixStars.Api.State
                 state.AllImportantPlayerQuotes.Insert(0, record);
             }
             Trim(state.AllImportantPlayerQuotes, _options.MaxAllImportantQuoteRecords);
+        }
+
+        private static bool BackfillConversationRollups(StarState state)
+        {
+            if (state == null || state.InteractionCount < 10) return false;
+            state.TenTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+            state.HundredTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives.Where(x => x != null).SelectMany(x => x.Entries ?? new List<ConversationLogEntry>()).Where(x => x != null));
+            }
+            List<ConversationLogEntry> newestFirst = retained.Distinct().OrderByDescending(x => x.CreatedAt).ToList();
+            Dictionary<int, ConversationLogEntry> byTurn = new Dictionary<int, ConversationLogEntry>();
+            for (int i = 0; i < newestFirst.Count; i++)
+            {
+                int turn = state.InteractionCount - i;
+                if (turn > 0) byTurn[turn] = newestFirst[i];
+            }
+
+            bool changed = false;
+            int lastCompletedTen = (state.InteractionCount / 10) * 10;
+            for (int endTurn = 10; endTurn <= lastCompletedTen; endTurn += 10)
+            {
+                int startTurn = endTurn - 9;
+                if (state.TenTurnConversationSummaries.Any(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn)) continue;
+                List<ConversationLogEntry> block = Enumerable.Range(startTurn, 10).Where(byTurn.ContainsKey).Select(x => byTurn[x]).ToList();
+                if (block.Count != 10) continue;
+                string summary = string.Join(" ", block.Select(x => string.IsNullOrWhiteSpace(x.Summary)
+                    ? ("The player said " + TruncateLocal(x.PlayerText, 100) + ", and the Star replied " + TruncateLocal(x.StarResponse, 100) + ".")
+                    : TruncateLocal(x.Summary, 180)));
+                summary = CompactDurableText(summary, 1400);
+                if (string.IsNullOrWhiteSpace(summary)) continue;
+                state.TenTurnConversationSummaries.Add(new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = block.Last().CreatedAt,
+                    Summary = summary
+                });
+                changed = true;
+            }
+            state.TenTurnConversationSummaries = state.TenTurnConversationSummaries.OrderByDescending(x => x.EndTurn).ToList();
+
+            int lastCompletedHundred = (state.InteractionCount / 100) * 100;
+            for (int endTurn = 100; endTurn <= lastCompletedHundred; endTurn += 100)
+            {
+                int startTurn = endTurn - 99;
+                if (state.HundredTurnConversationSummaries.Any(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn)) continue;
+                List<StarConversationSummaryBlock> blocks = state.TenTurnConversationSummaries
+                    .Where(x => x != null && x.StartTurn >= startTurn && x.EndTurn <= endTurn && !string.IsNullOrWhiteSpace(x.Summary))
+                    .OrderBy(x => x.StartTurn)
+                    .ToList();
+                if (blocks.Count != 10) continue;
+                string summary = CompactDurableText(string.Join(" ", blocks.Select(x => x.Summary)), 1800);
+                if (string.IsNullOrWhiteSpace(summary)) continue;
+                state.HundredTurnConversationSummaries.Add(new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = blocks.Last().CreatedAt,
+                    Summary = summary
+                });
+                changed = true;
+            }
+            state.HundredTurnConversationSummaries = state.HundredTurnConversationSummaries.OrderByDescending(x => x.EndTurn).ToList();
+            return changed;
+        }
+
+        private static void StoreConversationRollups(StarState state, StarStateUpdateRequest request, DateTimeOffset now)
+        {
+            if (state == null || request == null || state.InteractionCount <= 0) return;
+            state.TenTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+            state.HundredTurnConversationSummaries ??= new List<StarConversationSummaryBlock>();
+
+            int endTurn = state.InteractionCount;
+            if (endTurn % 10 == 0)
+            {
+                int startTurn = endTurn - 9;
+                string summary = CompactDurableText(request.TenTurnConversationSummary, 1400);
+                if (string.IsNullOrWhiteSpace(summary)) summary = BuildTenTurnRollupFallback(state, startTurn, endTurn);
+                UpsertConversationRollup(state.TenTurnConversationSummaries, startTurn, endTurn, summary, now);
+            }
+
+            if (endTurn % 100 == 0)
+            {
+                int startTurn = endTurn - 99;
+                string summary = CompactDurableText(request.HundredTurnConversationSummary, 1800);
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    List<StarConversationSummaryBlock> blocks = state.TenTurnConversationSummaries
+                        .Where(x => x != null && x.StartTurn >= startTurn && x.EndTurn <= endTurn && !string.IsNullOrWhiteSpace(x.Summary))
+                        .OrderBy(x => x.StartTurn)
+                        .Take(10)
+                        .ToList();
+                    summary = CompactDurableText(string.Join(" ", blocks.Select(x => x.Summary)), 1800);
+                }
+                UpsertConversationRollup(state.HundredTurnConversationSummaries, startTurn, endTurn, summary, now);
+            }
+        }
+
+        private static void UpsertConversationRollup(List<StarConversationSummaryBlock> blocks, int startTurn, int endTurn, string summary, DateTimeOffset now)
+        {
+            if (blocks == null || string.IsNullOrWhiteSpace(summary)) return;
+            StarConversationSummaryBlock? existing = blocks.FirstOrDefault(x => x != null && x.StartTurn == startTurn && x.EndTurn == endTurn);
+            if (existing == null)
+            {
+                blocks.Insert(0, new StarConversationSummaryBlock
+                {
+                    StartTurn = startTurn,
+                    EndTurn = endTurn,
+                    CreatedAt = now,
+                    Summary = summary
+                });
+            }
+            else
+            {
+                existing.CreatedAt = now;
+                existing.Summary = summary;
+            }
+        }
+
+        private static string BuildTenTurnRollupFallback(StarState state, int startTurn, int endTurn)
+        {
+            if (state == null) return string.Empty;
+            List<ConversationLogEntry> retained = new List<ConversationLogEntry>();
+            if (state.MemoryLog != null) retained.AddRange(state.MemoryLog.Where(x => x != null));
+            if (state.OldConversationArchives != null)
+            {
+                retained.AddRange(state.OldConversationArchives.Where(x => x != null).SelectMany(x => x.Entries ?? new List<ConversationLogEntry>()).Where(x => x != null));
+            }
+            List<ConversationLogEntry> newest = retained.Distinct().OrderByDescending(x => x.CreatedAt).Take(Math.Max(1, endTurn - startTurn + 1)).OrderBy(x => x.CreatedAt).ToList();
+            string combined = string.Join(" ", newest.Select(x => string.IsNullOrWhiteSpace(x.Summary)
+                ? ("The player said " + TruncateLocal(x.PlayerText, 120) + ", and the Star replied " + TruncateLocal(x.StarResponse, 120) + ".")
+                : TruncateLocal(x.Summary, 220)));
+            return CompactDurableText(combined, 1400);
         }
 
         private void ArchiveOldConversationTurns(StarState state, DateTimeOffset now)
@@ -1638,48 +2080,6 @@ namespace Wds.SixStars.Api.State
             string cleaned = value.Replace("\r", " ").Replace("\n", " ").Trim();
             if (cleaned.Length <= maxLength) return cleaned;
             return cleaned.Substring(0, maxLength).Trim() + "...";
-        }
-
-        private string TryCreateAutoQuote(StarStateUpdateRequest request, RelationshipDelta delta, out string reason)
-        {
-            reason = string.Empty;
-            if (!_options.AutoCaptureHighImpactPlayerQuotes) return string.Empty;
-            string text = (request.PlayerText ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-
-            List<TopAffectedEmotion> affected = RelationshipDeltaCalculator
-                .BuildTopAffectedEmotions(request.EmotionalEffectVector, request.NegativeEmotionVector)
-                .Where(x => x != null)
-                .OrderByDescending(x => x.WeightedScore)
-                .ThenByDescending(x => x.Score)
-                .ThenByDescending(x => x.Confidence)
-                .ToList();
-
-            double minConfidence = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionConfidence);
-            double minScore = Math.Max(0.0, _options.AutoImportantQuoteMinEmotionScore);
-            double minWeighted = Math.Max(0.0, _options.AutoImportantQuoteMinWeightedEmotionScore);
-            TopAffectedEmotion? qualifying = affected.FirstOrDefault(x =>
-                x.Confidence >= minConfidence &&
-                x.Score >= minScore &&
-                x.WeightedScore >= minWeighted);
-
-            if (qualifying == null) return string.Empty;
-
-            int maxLength = Math.Max(80, _options.AutoImportantQuoteMaxLength);
-            string cleaned = CleanMarkerText(text, maxLength);
-            if (string.IsNullOrWhiteSpace(cleaned)) return string.Empty;
-
-            reason = "auto-high-emotion-quote:"
-                + qualifying.Valence
-                + ":"
-                + qualifying.EmotionId
-                + ":score="
-                + qualifying.Score.ToString("0", CultureInfo.InvariantCulture)
-                + ":confidence="
-                + qualifying.Confidence.ToString("0.00", CultureInfo.InvariantCulture)
-                + ":weighted="
-                + qualifying.WeightedScore.ToString("0.0", CultureInfo.InvariantCulture);
-            return cleaned;
         }
 
         private static UnityEventEnvelope CreateMemoryUpdatedEvent(string starId, StarState state, ConversationLogEntry entry, RelationshipDelta delta, bool acceptedModelDelta)

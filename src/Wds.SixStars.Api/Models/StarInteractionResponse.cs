@@ -9,8 +9,9 @@ namespace Wds.SixStars.Api.Models
         private string _spokenText = string.Empty;
 
         /// <summary>
-        /// Ordered TTS-ready speech chunks. The LLM is instructed to produce this as spokenText: [..]
-        /// with one or two natural sentences per part, so the TTS server does not need to guess splits.
+        /// Ordered TTS-ready speech chunks. Normal foreground Chat is built incrementally from
+        /// delimiter-streamed plain text; structured Story/StarInitiative responses may still supply
+        /// spokenText arrays. Hosts can use these final parts for display/history/fallback TTS.
         /// </summary>
         public List<string> SpokenParts { get; set; } = new List<string>();
 
@@ -97,10 +98,28 @@ namespace Wds.SixStars.Api.Models
         public bool InformationFollowupSucceeded { get; set; }
         public string InformationFollowupContextSummary { get; set; } = string.Empty;
 
+        /// <summary>Temporary current-context items produced by the background review. The deterministic memory layer timestamps and expires them.</summary>
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+
+        /// <summary>True when the compact background review detected active sexting in this girlfriend turn. The state layer treats this as a one-way enable latch.</summary>
+        public bool SextingDetected { get; set; }
+
         /// <summary>New durable facts, events, or game-world suggestions explicitly stated by the Last Cat this turn.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
-        /// <summary>Optional foreground informationNeeds array returned by the Star before source selection.</summary>
+        /// <summary>Compact incoming unresolved updates produced by the background review after seeing the player text and foreground reply.</summary>
+        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact outgoing unresolved updates produced by deliberate fast-stream controls and/or the later background review.</summary>
+        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+
+        /// <summary>Compact unresolved resolution events detected this turn.</summary>
+        public string UnresolvedResolutionVector { get; set; } = string.Empty;
+
+        /// <summary>Optional high-emotion one-shot animation selected by the private background review.</summary>
+        public string EmotionAnimationName { get; set; } = string.Empty;
+
+        /// <summary>Optional foreground/background information selection result.</summary>
         public InformationNeedSelectionResult InformationNeedSelection { get; set; } = new InformationNeedSelectionResult();
         public List<InformationNeedAvailabilityItem> InformationNeedAvailability { get; set; } = new List<InformationNeedAvailabilityItem>();
 
@@ -140,6 +159,8 @@ namespace Wds.SixStars.Api.Models
 
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         /// <summary>Interstar target reaction only: how this Star feels toward the source Star who told her the relay.</summary>
         public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
         public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;
@@ -173,9 +194,10 @@ namespace Wds.SixStars.Api.Models
         public bool RequestToShowBoobs { get; set; }
 
         /// <summary>
-        /// Runtime coordination id for the deferred background emotion/memory review.
-        /// Voice systems should call SixStarsRuntime.StartBackgroundAnalysisAfterVoiceReady
-        /// with this id after TTS generation has completed so speech generation gets priority.
+        /// Runtime coordination id for the background emotion/memory review. Normal foreground
+        /// Chat/Photo turns queue the protected review automatically as soon as the complete Gemma
+        /// response is available; generated story/proposal speech paths may still use the explicit
+        /// StartBackgroundAnalysisAfterVoiceReady compatibility hook when narration begins.
         /// </summary>
         public string BackgroundAnalysisId { get; set; } = string.Empty;
 

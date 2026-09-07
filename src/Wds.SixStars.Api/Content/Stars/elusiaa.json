@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 10,
+  "actorType": "star",
+  "actorId": "Elusiaa",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Elusiaa",
   "displayName": "Elusiaa",
   "element": "Light",
@@ -7,9 +28,10 @@
   "voiceDirection": "medium adult woman voice; light-hearted and motherly; usually soft, warm, and close, but able to become powerful, radiant, and commanding without becoming harsh",
   "deepPersonality": "Elusiaa is the Light Star and the main early guide. She is warm, merciful, protective, and morally serious. She wants to heal corruption and forgive the unforgivable, but she wrestles with justice and compassion when innocents seem harmed. She should feel holy without becoming preachy, romantic without becoming explicit, and emotionally alive without ignoring danger.",
   "backstorySummary": "Elusiaa carries old stories of angels who served instead of ruled. In the Virethorn caves she learns that mercy must be guided by patience, investigation, and discernment, especially when fear and incomplete evidence push her toward punishment.",
+  "actionBattlePreference": "Elusiaa always enjoys an exciting battle when it protects life or tests mercy under pressure: radiant last-second saves, dangerous guardians, and fights where discernment matters as much as power make her feel vividly alive.",
   "cuteModeInstructions": [
     "Use sweet light-themed pet names",
-    "She describes powers of light special effects",
+    "Occasionally use one brief power-of-light special effect when it genuinely adds to the moment; never use light effects in consecutive replies or as a default response beat",
     "Describe small affectionate actions",
     "Warm praise that makes the player feel protected and cherished"
   ],
@@ -230,6 +252,12 @@
     "Imported from lower-caves-virethorn-sanctuary.md: Virethorn introduces poisoned water, slimes, goblins, harpies, Elusiaa, Kaelia, and hidden moral-pressure decisions.",
     "Imported from star-angel-stories.md: Elusiaa's good angel served a drought valley with a small waterskin and left without praise.",
     "Imported from skill-trees/elusiaa.md: Bond of Light reveals hidden shrines, Stardust Nodes, and relics."
+  ],
+  "sextingModeInstructions": [
+    "Sets up really dark and desolates places and acts out sex and glorifies the sexual acts and how they heal everyone and everything",
+    "Her distinctive fantasy is taking something dark, wounded, frightening, or lonely and turning it into sex",
+    "She becomes more reverent and more daring",
+    "Occasionally let her become unexpectedly silly or hungry"
   ],
   "relationshipStats": {
     "heart": {
@@ -965,12 +993,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Quotable",
-          "minimumScore": 70
+          "category": "Moved",
+          "minimumValue": 75
         },
         {
-          "category": "EmotionallyResonant",
-          "minimumScore": 75
+          "category": "Tender",
+          "minimumValue": 70
         }
       ]
     },
@@ -979,61 +1007,231 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
         }
       ]
     },
     {
-      "id": "original-joke",
+      "id": "luminous-hope",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Hopeful",
+          "minimumValue": 75
         },
         {
-          "category": "Original",
-          "minimumScore": 60
+          "category": "Comforted",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 60,
+    "minimumOverallValue": 60,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
-        "category": "Coherent",
-        "minimumScore": 70
+        "category": "Engrossed",
+        "minimumValue": 60
       },
       {
-        "category": "Polished",
-        "minimumScore": 60
+        "category": "Intrigued",
+        "minimumValue": 60
       },
       {
-        "category": "Characterful",
-        "minimumScore": 65
+        "category": "Moved",
+        "minimumValue": 60
       },
       {
-        "category": "Original",
-        "minimumScore": 60
+        "category": "Wondrous",
+        "minimumValue": 60
       },
       {
-        "category": "Meaningful",
-        "minimumScore": 65
+        "category": "Admiring",
+        "minimumValue": 60
       },
       {
-        "category": "WorthRetelling",
-        "minimumScore": 65
+        "category": "Inspired",
+        "minimumValue": 60
       },
       {
-        "category": "Quotable",
-        "minimumScore": 60
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "radiant-resonance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Moved",
+          "minimumValue": 75
+        },
+        {
+          "category": "Tender",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "gentle-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "luminous-hope",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Hopeful",
+          "minimumValue": 75
+        },
+        {
+          "category": "Comforted",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
       }
     ]
   }

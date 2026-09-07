@@ -1,0 +1,230 @@
+{
+  "type": "json_schema",
+  "json_schema": {
+    "name": "six_stars_background_memory_review_compact",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "starId",
+        "emotionalEffectVector",
+        "negativeEmotionVector",
+        "storyTitle",
+        "storyId",
+        "storySummary",
+        "storyIsFinished",
+        "storyPartIndex",
+        "detectedCombos",
+        "suggestedStateDeltas",
+        "conversationSummary",
+        "changesSummary",
+        "tenTurnConversationSummary",
+        "hundredTurnConversationSummary",
+        "thingsLearnedOrSuggestedByPlayer",
+        "shortTermMemoryItems",
+        "isSexting",
+        "questionsFromLastCatVector",
+        "questionsToLastCatVector",
+        "questionResolutionVector",
+        "emotionAnimation",
+        "informationNeedsVector",
+        "importantPlayerQuotes",
+        "memoryNotes",
+        "rememberedMarkers",
+        "referencedMemoryMarkerIds",
+        "secretsUnlocked",
+        "learnedFunctions",
+        "relationshipEvents",
+        "girlfriendHistoryUpdates",
+        "petNamesPlayerUsesForStar",
+        "petNamesStarUsesForPlayer",
+        "girlfriendNeedsMetSummary",
+        "girlfriendNeedsMetVector",
+        "girlfriendWantsMetVector",
+        "girlfriendCoupleActivitySummary",
+        "girlfriendCoupleActivityVector",
+        "requestToShowBoobs",
+        "loreUsed",
+        "riskFlags",
+        "wisdomScore"
+      ],
+      "properties": {
+        "starId": {
+          "type": "string"
+        },
+        "emotionalEffectVector": {
+          "type": "string"
+        },
+        "negativeEmotionVector": {
+          "type": "string"
+        },
+        "storyTitle": {
+          "type": "string"
+        },
+        "storyId": {
+          "type": "string"
+        },
+        "storySummary": {
+          "type": "string"
+        },
+        "storyIsFinished": {
+          "type": "boolean"
+        },
+        "storyPartIndex": {
+          "type": "number"
+        },
+        "detectedCombos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "suggestedStateDeltas": {
+          "type": "string"
+        },
+        "conversationSummary": {
+          "type": "string"
+        },
+        "changesSummary": {
+          "type": "string"
+        },
+        "tenTurnConversationSummary": {
+          "type": "string"
+        },
+        "hundredTurnConversationSummary": {
+          "type": "string"
+        },
+        "thingsLearnedOrSuggestedByPlayer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shortTermMemoryItems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "isSexting": {
+          "type": "boolean"
+        },
+        "questionsFromLastCatVector": {
+          "type": "string"
+        },
+        "questionsToLastCatVector": {
+          "type": "string"
+        },
+        "questionResolutionVector": {
+          "type": "string"
+        },
+        "emotionAnimation": {
+          "type": "string"
+        },
+        "informationNeedsVector": {
+          "type": "string"
+        },
+        "importantPlayerQuotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "memoryNotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rememberedMarkers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "referencedMemoryMarkerIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "secretsUnlocked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "learnedFunctions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relationshipEvents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "girlfriendHistoryUpdates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "petNamesPlayerUsesForStar": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "petNamesStarUsesForPlayer": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "girlfriendNeedsMetSummary": {
+          "type": "string"
+        },
+        "girlfriendNeedsMetVector": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "girlfriendWantsMetVector": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "girlfriendCoupleActivitySummary": {
+          "type": "string"
+        },
+        "girlfriendCoupleActivityVector": {
+          "type": "string"
+        },
+        "requestToShowBoobs": {
+          "type": "boolean"
+        },
+        "loreUsed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "riskFlags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wisdomScore": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

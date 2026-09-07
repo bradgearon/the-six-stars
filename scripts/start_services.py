@@ -229,9 +229,10 @@ def shared_environment() -> Dict[str, str]:
         "QWEN_TTS_DEVICE": os.environ.get("QWEN_TTS_DEVICE", "cuda"),
         "QWEN_TTS_PRELOAD_MODEL": os.environ.get("QWEN_TTS_PRELOAD_MODEL", "true"),
         "SIX_STARS_REQUIRE_CUDA": os.environ.get("SIX_STARS_REQUIRE_CUDA", "true"),
-        "QWEN_TTS_CHUNK_GENERATION_MODE": os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "parallel"),
+        "QWEN_TTS_CHUNK_GENERATION_MODE": os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "first_then_parallel"),
         "QWEN_TTS_PARALLEL_CHUNKS": os.environ.get("QWEN_TTS_PARALLEL_CHUNKS", "true"),
         "QWEN_TTS_MAX_PARALLEL_CHUNKS": os.environ.get("QWEN_TTS_MAX_PARALLEL_CHUNKS", "0"),
+        "QWEN_TTS_AFTER_FIRST_MAX_PARALLEL_CHUNKS": os.environ.get("QWEN_TTS_AFTER_FIRST_MAX_PARALLEL_CHUNKS", "1"),
         "QWEN_TTS_OFFICIAL_DEVICE_MAP": os.environ.get("QWEN_TTS_OFFICIAL_DEVICE_MAP", "cuda:0"),
         "QWEN_TTS_USE_CUDA_GRAPHS": os.environ.get("QWEN_TTS_USE_CUDA_GRAPHS", "true"),
         "QWEN_TTS_USE_FASTER_QWEN3": os.environ.get("QWEN_TTS_USE_FASTER_QWEN3", "true"),
@@ -518,9 +519,10 @@ def main() -> int:
                         "QWEN_TTS_MODEL_PATH": resolved_qwen_model,
                         "QWEN_TTS_DEVICE": "cuda",
                         "SIX_STARS_REQUIRE_CUDA": "true",
-                        "QWEN_TTS_CHUNK_GENERATION_MODE": "parallel",
+                        "QWEN_TTS_CHUNK_GENERATION_MODE": "first_then_parallel",
                         "QWEN_TTS_PARALLEL_CHUNKS": "true",
                         "QWEN_TTS_MAX_PARALLEL_CHUNKS": "0",
+                        "QWEN_TTS_AFTER_FIRST_MAX_PARALLEL_CHUNKS": "1",
                     },
                 )
     else:

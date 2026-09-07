@@ -5,9 +5,8 @@ using System.Linq;
 namespace Wds.SixStars.Api.Writings
 {
     /// <summary>
-    /// Deterministic ranking helpers for persisted shelf writing. The saved review vector is the
-    /// source of truth: no additional LLM call is needed to decide which part of a large shelf is
-    /// strong enough to enter a later selection pass.
+    /// Deterministic ranking helpers for persisted shelf writing. The saved open-ended review values are the
+    /// source of truth. New Sparks and Constellations share the compact ReaderEmotionIuV1 vector; legacy literary vectors remain readable.
     /// </summary>
     public static class StarWritingDeterministicRanker
     {
@@ -45,16 +44,58 @@ namespace Wds.SixStars.Api.Writings
             "Vivid"
         };
 
-        /// <summary>
-        /// Scores a persisted writing for public sharing from 0-103. Overall quality provides
-        /// 40%, broadly reusable craft/retellability provides 40%, and the best three expressive
-        /// strengths provide 20%. A small bonus rewards writings that matched multiple persistence
-        /// routes, which helps each Star's strongest characteristic material rise inside her own shelf.
-        /// </summary>
-        public static double PublicSharingScore(PersistedStarWriting? writing)
+        public static double OverallValue(PersistedStarWriting? writing)
         {
-            if (writing == null
-                || !StarWritingEmotionVector.TryNormalizeUsable(
+            if (writing == null) return -1.0;
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    writing.EmotionalVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> readerValues))
+            {
+                return StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall");
+            }
+
+            if (!StarWritingEmotionVector.TryNormalizeUsable(
+                writing.EmotionalVector,
+                out _,
+                out Dictionary<string, StarWritingEmotionValue> values))
+            {
+                return -1.0;
+            }
+            return Value(values, "Overall");
+        }
+
+        /// <summary>
+        /// Computes an open-ended public-sharing value. Overall contributes 40%, broadly reusable
+        /// craft/retellability 40%, and the strongest three expressive dimensions 20%. Multiple
+        /// non-global persistence routes add a small proportional bonus, so the calculation remains
+        /// meaningful when values rise above 100 instead of flattening against a hard ceiling.
+        /// </summary>
+        public static double PublicSharingValue(PersistedStarWriting? writing)
+        {
+            if (writing == null) return -1.0;
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(writing.EmotionalVector, out string readerVector, out _))
+            {
+                double baseReaderValue = StarWritingValueBaselineCatalog.ComputeReaderEmotionPublicValue(readerVector);
+                int readerRouteCount = (writing.MatchedPersistenceRuleIds ?? new List<string>())
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count(id => !string.Equals(id, "global-overall-excellence", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(id, "constellation-default-overall", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(id, "default-overall", StringComparison.OrdinalIgnoreCase));
+                return baseReaderValue * (1.0 + (Math.Min(2, readerRouteCount) * 0.015));
+            }
+
+            if (!StarWritingEmotionVector.TryNormalizeUsable(
                     writing.EmotionalVector,
                     out _,
                     out Dictionary<string, StarWritingEmotionValue> values))
@@ -62,14 +103,18 @@ namespace Wds.SixStars.Api.Writings
                 return -1.0;
             }
 
-            double overall = Score(values, "Overall");
-            double qualityAverage = PublicQualityCategories.Average(category => Score(values, category));
+            double overall = Value(values, "Overall");
+            double qualityAverage = PublicQualityCategories.Average(category => Value(values, category));
             double expressiveAverage = ExpressiveCategories
-                .Select(category => Score(values, category))
+                .Select(category => Value(values, category))
                 .OrderByDescending(x => x)
                 .Take(3)
                 .DefaultIfEmpty(0.0)
                 .Average();
+
+            double baseValue = (overall * 0.40)
+                + (qualityAverage * 0.40)
+                + (expressiveAverage * 0.20);
 
             int characterRouteCount = (writing.MatchedPersistenceRuleIds ?? new List<string>())
                 .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -77,16 +122,13 @@ namespace Wds.SixStars.Api.Writings
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count(id => !string.Equals(id, "global-overall-excellence", StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(id, "default-overall", StringComparison.OrdinalIgnoreCase));
-            double routeBonus = Math.Min(2, characterRouteCount) * 1.5;
+            double routeMultiplier = 1.0 + (Math.Min(2, characterRouteCount) * 0.015);
 
-            return (overall * 0.40)
-                + (qualityAverage * 0.40)
-                + (expressiveAverage * 0.20)
-                + routeBonus;
+            return baseValue * routeMultiplier;
         }
 
         /// <summary>
-        /// Returns the strongest writings first. Tie breakers are also vector-derived before falling
+        /// Returns the strongest writings first. Legacy literary tie breakers apply when available before falling
         /// back to stable persisted metadata, so the same shelf state always produces the same window.
         /// </summary>
         public static List<PersistedStarWriting> TakeHighestRanked(
@@ -99,12 +141,12 @@ namespace Wds.SixStars.Api.Writings
             return (writings ?? Enumerable.Empty<PersistedStarWriting>())
                 .Where(x => x != null)
                 .Select(x => new RankedWriting(x!, ReadVector(x!)))
-                .OrderByDescending(x => x.PublicScore)
-                .ThenByDescending(x => x.Score("Overall"))
-                .ThenByDescending(x => x.Score("Quotable"))
-                .ThenByDescending(x => x.Score("WorthRetelling"))
-                .ThenByDescending(x => x.Score("Memorable"))
-                .ThenByDescending(x => x.Score("Original"))
+                .OrderByDescending(x => x.PublicValue)
+                .ThenByDescending(x => x.OverallValue)
+                .ThenByDescending(x => x.Value("Quotable"))
+                .ThenByDescending(x => x.Value("WorthRetelling"))
+                .ThenByDescending(x => x.Value("Memorable"))
+                .ThenByDescending(x => x.Value("Original"))
                 .ThenByDescending(x => x.Writing.PersistedAt)
                 .ThenBy(x => x.Writing.Id ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 .Take(take)
@@ -114,6 +156,18 @@ namespace Wds.SixStars.Api.Writings
 
         private static Dictionary<string, StarWritingEmotionValue> ReadVector(PersistedStarWriting writing)
         {
+            if (string.Equals(
+                    StarWritingReviewDisciplines.Normalize(writing.ReviewDiscipline),
+                    StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    StringComparison.OrdinalIgnoreCase)
+                && StarWritingReaderEmotionVector.TryNormalizeComplete(
+                    writing.EmotionalVector,
+                    out _,
+                    out Dictionary<string, StarWritingEmotionValue> readerValues))
+            {
+                return readerValues;
+            }
+
             if (StarWritingEmotionVector.TryNormalizeUsable(
                 writing.EmotionalVector,
                 out _,
@@ -125,13 +179,15 @@ namespace Wds.SixStars.Api.Writings
             return new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
         }
 
-        private static double Score(
+        private static double Value(
             IReadOnlyDictionary<string, StarWritingEmotionValue> values,
             string category)
         {
-            return values.TryGetValue(category, out StarWritingEmotionValue? value)
-                ? Math.Max(0.0, Math.Min(100.0, value.Score))
-                : 0.0;
+            if (values != null && values.TryGetValue(category ?? string.Empty, out StarWritingEmotionValue? value) && value != null)
+            {
+                return Math.Max(0.0, value.Value);
+            }
+            return 0.0;
         }
 
         private sealed class RankedWriting
@@ -144,15 +200,16 @@ namespace Wds.SixStars.Api.Writings
             {
                 Writing = writing;
                 _values = values;
-                PublicScore = PublicSharingScore(writing);
+                PublicValue = PublicSharingValue(writing);
             }
 
             public PersistedStarWriting Writing { get; }
-            public double PublicScore { get; }
+            public double PublicValue { get; }
+            public double OverallValue => StarWritingDeterministicRanker.OverallValue(Writing);
 
-            public double Score(string category)
+            public double Value(string category)
             {
-                return StarWritingDeterministicRanker.Score(_values, category);
+                return StarWritingDeterministicRanker.Value(_values, category);
             }
         }
     }

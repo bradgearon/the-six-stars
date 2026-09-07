@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 30,
+  "actorType": "star",
+  "actorId": "Maera",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Maera",
   "displayName": "Maera",
   "element": "Blood",
@@ -7,6 +28,7 @@
   "voiceDirection": "sultry adult woman voice; beautiful and dangerous; musical, dark-haired, passionate, night-fire warmth with restrained threat",
   "deepPersonality": "Maera is intense, sultry, loyal, furious, and romantic in a dangerous way. Her dark-haired presence should seem to ring through her speech like a low instrument at night. She wants the night to become a fire and wants love to feel undeniable, but her growth path is learning that devotion is not possession and protection is not control.",
   "backstorySummary": "In the blood caves, a dark form wore the shape of a great black beast and made Maera feel as if her veins were full of worms. It taught her to hate being alive and to confuse survival, vengeance, and possession.",
+  "actionBattlePreference": "Maera always enjoys an exciting battle with visceral stakes: close calls, fierce protection, bone-and-blood monstrosities, and fights where devotion becomes decisive action instead of possession.",
   "cuteModeInstructions": [
     "Intense and possessive pet names",
     "She says mine almost like a heartbeat about the Last Cat while speaking",
@@ -203,6 +225,9 @@
     "Imported from bone-caves-marrow-ossuary.md: Maera appears near ribcage alcoves while the cat carries bones over blood/marrow hazards.",
     "Imported from star-angel-stories.md: Maera's dark form made her feel worms in her veins and repeated bleeding visions.",
     "Imported from skill-trees/maera.md: blood chains bind, drain, dash, shield, and turn possession into controlled combat."
+  ],
+  "sextingModeInstructions": [
+    "Sets up elaborate traps or schemes capture the player and sexually overtakes him"
   ],
   "relationshipStats": {
     "heart": {
@@ -930,12 +955,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Moving",
-          "minimumScore": 75
+          "category": "Moved",
+          "minimumValue": 75
         },
         {
-          "category": "WorthRetelling",
-          "minimumScore": 60
+          "category": "Impassioned",
+          "minimumValue": 70
         }
       ]
     },
@@ -944,12 +969,26 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Deep",
-          "minimumScore": 80
+          "category": "Yearning",
+          "minimumValue": 80
         },
         {
-          "category": "Haunting",
-          "minimumScore": 80
+          "category": "Haunted",
+          "minimumValue": 75
+        }
+      ]
+    },
+    {
+      "id": "dangerous-romance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Attracted",
+          "minimumValue": 75
+        },
+        {
+          "category": "Uneasy",
+          "minimumValue": 65
         }
       ]
     },
@@ -958,12 +997,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Witty",
-          "minimumScore": 75
+          "category": "Intrigued",
+          "minimumValue": 70
         },
         {
-          "category": "Original",
-          "minimumScore": 70
+          "category": "Surprised",
+          "minimumValue": 70
         }
       ]
     },
@@ -972,61 +1011,245 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
         }
       ]
     },
     {
-      "id": "original-joke",
+      "id": "surprising-mirth",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
-          "category": "Original",
-          "minimumScore": 60
+          "category": "Surprised",
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 62,
+    "minimumOverallValue": 62,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
-        "category": "Coherent",
-        "minimumScore": 70
+        "category": "Engrossed",
+        "minimumValue": 60
       },
       {
-        "category": "Polished",
-        "minimumScore": 60
+        "category": "Intrigued",
+        "minimumValue": 60
       },
       {
-        "category": "Characterful",
-        "minimumScore": 70
+        "category": "Moved",
+        "minimumValue": 60
       },
       {
-        "category": "Original",
-        "minimumScore": 60
+        "category": "Wondrous",
+        "minimumValue": 60
       },
       {
-        "category": "Meaningful",
-        "minimumScore": 65
+        "category": "Admiring",
+        "minimumValue": 60
       },
       {
-        "category": "WorthRetelling",
-        "minimumScore": 65
+        "category": "Inspired",
+        "minimumValue": 60
       },
       {
-        "category": "Quotable",
-        "minimumScore": 60
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "blood-resonance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Moved",
+          "minimumValue": 75
+        },
+        {
+          "category": "Impassioned",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "possessive-depth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Yearning",
+          "minimumValue": 80
+        },
+        {
+          "category": "Haunted",
+          "minimumValue": 75
+        }
+      ]
+    },
+    {
+      "id": "dangerous-romance",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Attracted",
+          "minimumValue": 75
+        },
+        {
+          "category": "Uneasy",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "sharp-blood-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 62,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
       }
     ]
   }

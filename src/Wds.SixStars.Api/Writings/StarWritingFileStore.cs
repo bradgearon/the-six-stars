@@ -38,8 +38,86 @@ namespace Wds.SixStars.Api.Writings
         {
             string? configured = Environment.GetEnvironmentVariable("SIX_STARS_WRITING_NOTES_DIRECTORY");
             if (!string.IsNullOrWhiteSpace(configured)) return new StarWritingFileStore(configured);
-            string root = FindProjectRoot(AppContext.BaseDirectory);
-            return new StarWritingFileStore(Path.Combine(root, "state", "writing-notes"));
+
+            // Runtime writing state must survive replacing/extracting a new project build. Older builds
+            // stored the shelf under <project>/state/writing-notes, which made every fresh extraction
+            // look like a brand-new empty shelf. Keep the project folder only as a one-time migration
+            // seed and use a stable per-user application-data directory from then on.
+            string projectRoot = FindProjectRoot(AppContext.BaseDirectory);
+            string projectSeedDirectory = Path.Combine(projectRoot, "state", "writing-notes");
+            string stableRoot = ResolveStableWritingNotesDirectory(projectRoot);
+            SeedStableStoreOnce(stableRoot, projectSeedDirectory);
+            return new StarWritingFileStore(stableRoot);
+        }
+
+        private static string ResolveStableWritingNotesDirectory(string projectRoot)
+        {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!string.IsNullOrWhiteSpace(localAppData))
+            {
+                return Path.Combine(localAppData, "Wds.SixStars", "state", "writing-notes");
+            }
+
+            string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(userProfile))
+            {
+                return Path.Combine(userProfile, ".wds-six-stars", "state", "writing-notes");
+            }
+
+            // Last-resort compatibility fallback for unusual hosts with no user-data directory.
+            return Path.Combine(projectRoot, "state", "writing-notes");
+        }
+
+        private static void SeedStableStoreOnce(string stableRoot, string projectSeedDirectory)
+        {
+            try
+            {
+                Directory.CreateDirectory(stableRoot);
+                string markerPath = Path.Combine(stableRoot, ".stable-writing-store-v1");
+                if (File.Exists(markerPath)) return;
+
+                if (!PathsEqual(stableRoot, projectSeedDirectory) && Directory.Exists(projectSeedDirectory))
+                {
+                    foreach (string sourcePath in Directory.EnumerateFiles(projectSeedDirectory, "*-writing-notes.json", SearchOption.TopDirectoryOnly))
+                    {
+                        string destinationPath = Path.Combine(stableRoot, Path.GetFileName(sourcePath));
+                        if (!File.Exists(destinationPath)) File.Copy(sourcePath, destinationPath, false);
+                    }
+
+                    string sourceLog = Path.Combine(projectSeedDirectory, "all-star-writing-statements.jsonl");
+                    string destinationLog = Path.Combine(stableRoot, "all-star-writing-statements.jsonl");
+                    if (File.Exists(sourceLog) && !File.Exists(destinationLog))
+                    {
+                        File.Copy(sourceLog, destinationLog, false);
+                    }
+                }
+
+                File.WriteAllText(
+                    markerPath,
+                    "Stable Six Stars writing store initialized " + DateTimeOffset.UtcNow.ToString("O")
+                    + Environment.NewLine
+                    + "Project seed: " + projectSeedDirectory
+                    + Environment.NewLine);
+            }
+            catch
+            {
+                // Failure to migrate must never prevent the app from starting. The store itself will
+                // still create the target directory/file on the first successful save.
+            }
+        }
+
+        private static bool PathsEqual(string left, string right)
+        {
+            try
+            {
+                string a = Path.GetFullPath(left ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                string b = Path.GetFullPath(right ?? string.Empty).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                return string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         public async Task<StarWritingNotesState> LoadAsync(string starId, CancellationToken cancellationToken)
@@ -146,6 +224,60 @@ namespace Wds.SixStars.Api.Writings
             finally { _gate.Release(); }
         }
 
+        /// <summary>
+        /// Reads the append-only aggregate writing log for one Star. This is used only for
+        /// deterministic local policy migrations; it never calls an LLM and never rewrites the log.
+        /// Malformed individual lines are skipped so one interrupted append cannot block startup.
+        /// </summary>
+        public async Task<IReadOnlyList<StarWritingStatementLogEntry>> ReadStatementLogAsync(
+            string starId,
+            CancellationToken cancellationToken)
+        {
+            await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (!File.Exists(AllStatementsLogPath)) return Array.Empty<StarWritingStatementLogEntry>();
+
+                string normalizedStarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim();
+                List<StarWritingStatementLogEntry> entries = new List<StarWritingStatementLogEntry>();
+                using FileStream stream = new FileStream(AllStatementsLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 8192, true);
+                using StreamReader reader = new StreamReader(stream, Encoding.UTF8, true, 8192, false);
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string? line = await reader.ReadLineAsync().ConfigureAwait(false);
+                    if (line == null) break;
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    try
+                    {
+                        StarWritingStatementLogEntry? entry = JsonSerializer.Deserialize<StarWritingStatementLogEntry>(line, _jsonOptions);
+                        if (entry == null || !string.Equals(entry.StarId?.Trim(), normalizedStarId, StringComparison.OrdinalIgnoreCase)) continue;
+                        entry.WritingMethod = StarWritingMethods.Normalize(entry.WritingMethod);
+                        entry.OutputType = string.Equals(entry.WritingMethod, StarWritingMethods.ConstellationForge, StringComparison.OrdinalIgnoreCase)
+                            ? StarWritingOutputTypes.ConstellationStory
+                            : StarWritingOutputTypes.Normalize(entry.OutputType);
+                        entry.Title ??= string.Empty;
+                        entry.ContributingStarIds ??= new List<string>();
+                        entry.StoryCharacters ??= new List<string>();
+                        entry.StorySubjects ??= new List<string>();
+                        entry.StoryWishes ??= new List<StarWritingStoryWish>();
+                        entry.WordsUsed ??= new List<string>();
+                        entry.Statement ??= string.Empty;
+                        entry.MatchedPersistenceRuleIds ??= new List<string>();
+                        entries.Add(entry);
+                    }
+                    catch (JsonException)
+                    {
+                        // Keep scanning. The file is append-only and an incomplete final line is recoverable.
+                    }
+                }
+
+                return entries;
+            }
+            finally { _gate.Release(); }
+        }
+
         public async Task ClearAsync(string starId, CancellationToken cancellationToken)
         {
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -224,18 +356,39 @@ namespace Wds.SixStars.Api.Writings
             StringBuilder lines = new StringBuilder();
             foreach (StarWritingHistoryItem item in batch.Items.Where(x => x != null))
             {
-                StarWritingEmotionVector.TryNormalizeComplete(
-                    item.EmotionalVector,
-                    out string normalizedVector,
-                    out Dictionary<string, StarWritingEmotionValue> values);
-
-                Dictionary<string, double> scores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
-                foreach (string category in StarWritingEmotionVector.Categories)
+                string reviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                string normalizedVector = string.Empty;
+                Dictionary<string, double> namedValues = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                double overallValue = item.OverallValue;
+                if (string.Equals(reviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (values.TryGetValue(category, out StarWritingEmotionValue? value))
+                    string readerVector = item.EmotionalVector;
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out normalizedVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
                     {
-                        scores[category] = value.Score;
+                        readerVector = StarWritingReaderEmotionVector.FromLegacyEmotionFeedback(item.EmotionFeedback, item.OverallValue);
+                        StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out normalizedVector, out readerValues);
                     }
+                    foreach (string category in StarWritingReaderEmotionVector.Categories)
+                    {
+                        if (readerValues.TryGetValue(category, out StarWritingEmotionValue? value)) namedValues[category] = value.Value;
+                    }
+                    overallValue = namedValues.TryGetValue("Overall", out double readerOverall) ? readerOverall : 0.0;
+                }
+                else
+                {
+                    reviewDiscipline = StarWritingReviewDisciplines.LiteraryValuesV1;
+                    StarWritingEmotionVector.TryNormalizeComplete(
+                        item.EmotionalVector,
+                        out normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values);
+                    foreach (string category in StarWritingEmotionVector.Categories)
+                    {
+                        if (values.TryGetValue(category, out StarWritingEmotionValue? value))
+                        {
+                            namedValues[category] = value.Value;
+                        }
+                    }
+                    overallValue = namedValues.TryGetValue("Overall", out double legacyOverall) ? legacyOverall : 0.0;
                 }
 
                 StarWritingStatementLogEntry entry = new StarWritingStatementLogEntry
@@ -248,12 +401,19 @@ namespace Wds.SixStars.Api.Writings
                     OutputType = StarWritingOutputTypes.Normalize(item.OutputType),
                     Title = item.Title ?? string.Empty,
                     ContributingStarIds = (item.ContributingStarIds ?? new List<string>()).ToList(),
+                    StoryCharacters = (item.StoryCharacters ?? new List<string>()).ToList(),
+                    StorySubjects = (item.StorySubjects ?? new List<string>()).ToList(),
+                    StoryWishes = NormalizeStoryWishes(item.StoryWishes),
                     GeneratedAt = item.GeneratedAt,
                     Index = item.Index,
                     WordsUsed = (item.WordsUsed ?? new List<string>()).ToList(),
                     Statement = item.Writing ?? string.Empty,
-                    EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? (item.EmotionalVector ?? string.Empty) : normalizedVector,
-                    Scores = scores,
+                    ReviewDiscipline = reviewDiscipline,
+                    EmotionalVector = string.IsNullOrWhiteSpace(normalizedVector) ? string.Empty : normalizedVector,
+                    EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                    OverallValue = overallValue,
+                    ValueUnit = StarWritingValueUnits.InformationUnits,
+                    Values = namedValues,
                     Persisted = item.Persisted,
                     MatchedPersistenceRuleIds = (item.MatchedPersistenceRuleIds ?? new List<string>()).ToList()
                 };
@@ -272,11 +432,16 @@ namespace Wds.SixStars.Api.Writings
 
         private string BuildPath(string starId) => Path.Combine(_rootDirectory, SafeName(starId) + "-writing-notes.json");
 
-        private static StarWritingNotesState CreateEmpty(string starId) => new StarWritingNotesState { StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(), UpdatedAt = DateTimeOffset.UtcNow };
+        private static StarWritingNotesState CreateEmpty(string starId) => new StarWritingNotesState
+        {
+            StarId = string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim(),
+            UpdatedAt = DateTimeOffset.UtcNow,
+            PersistencePolicyVersion = StarWritingPersistencePolicy.CurrentVersion
+        };
 
         private static StarWritingNotesState Normalize(StarWritingNotesState state, string starId)
         {
-            state.Version = 10;
+            state.Version = 16;
             state.StarId = string.IsNullOrWhiteSpace(state.StarId) ? (string.IsNullOrWhiteSpace(starId) ? "UnknownStar" : starId.Trim()) : state.StarId.Trim();
             state.RecentWritingHistory ??= new List<StarWritingHistoryItem>();
             state.LatestWritingMethod = StarWritingMethods.Normalize(state.LatestWritingMethod);
@@ -301,6 +466,9 @@ namespace Wds.SixStars.Api.Writings
                 item.Title ??= string.Empty;
                 item.ContributingStarIds ??= new List<string>();
                 item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                item.StoryCharacters = NormalizeStoryArchitectureList(item.StoryCharacters);
+                item.StorySubjects = NormalizeStoryArchitectureList(item.StorySubjects);
+                item.StoryWishes = NormalizeStoryWishes(item.StoryWishes);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
@@ -361,6 +529,30 @@ namespace Wds.SixStars.Api.Writings
             state.StoryVerbUsageCounts = NormalizeTermUsageCounts(state.StoryVerbUsageCounts, state.RecentStoryVerbs);
             NormalizeStoryDevelopment(state.LatestStoryDevelopment);
 
+            foreach (StarWritingHistoryItem item in state.RecentWritingHistory.Where(x => x != null))
+            {
+                item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+                {
+                    string readerVector = item.EmotionalVector;
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out string normalizedReaderVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
+                    {
+                        readerVector = StarWritingReaderEmotionVector.FromLegacyEmotionFeedback(item.EmotionFeedback, item.OverallValue);
+                        StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out normalizedReaderVector, out readerValues);
+                    }
+                    item.EmotionalVector = normalizedReaderVector;
+                    item.OverallValue = StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
+                else if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedHistoryVector, out Dictionary<string, StarWritingEmotionValue> historyValues))
+                {
+                    item.EmotionalVector = normalizedHistoryVector;
+                    item.OverallValue = StarWritingEmotionVector.ReadValue(historyValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
+            }
+
             state.RecentWritingHistory = state.RecentWritingHistory
                 .Where(x => x != null)
                 .OrderByDescending(x => x.GeneratedAt)
@@ -400,13 +592,32 @@ namespace Wds.SixStars.Api.Writings
                 item.Title ??= string.Empty;
                 item.ContributingStarIds ??= new List<string>();
                 item.ContributingStarIds = item.ContributingStarIds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                item.StoryCharacters = NormalizeStoryArchitectureList(item.StoryCharacters);
+                item.StorySubjects = NormalizeStoryArchitectureList(item.StorySubjects);
+                item.StoryWishes = NormalizeStoryWishes(item.StoryWishes);
                 item.WordsUsed ??= new List<string>();
                 item.MatchedPersistenceRuleIds ??= new List<string>();
                 item.XPostId ??= string.Empty;
                 item.PostedText ??= string.Empty;
-                if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out _))
+                item.ReviewDiscipline = StarWritingReviewDisciplines.Normalize(item.ReviewDiscipline);
+                item.EmotionFeedback ??= new List<StarWritingStoryEmotionValue>();
+                if (string.Equals(item.ReviewDiscipline, StarWritingReviewDisciplines.ReaderEmotionIuV1, StringComparison.OrdinalIgnoreCase))
+                {
+                    string readerVector = item.EmotionalVector;
+                    if (!StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out string normalizedReaderVector, out Dictionary<string, StarWritingEmotionValue> readerValues))
+                    {
+                        readerVector = StarWritingReaderEmotionVector.FromLegacyEmotionFeedback(item.EmotionFeedback, item.OverallValue);
+                        StarWritingReaderEmotionVector.TryNormalizeComplete(readerVector, out normalizedReaderVector, out readerValues);
+                    }
+                    item.EmotionalVector = normalizedReaderVector;
+                    item.OverallValue = StarWritingReaderEmotionVector.ReadValue(readerValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
+                else if (StarWritingEmotionVector.TryNormalizeComplete(item.EmotionalVector, out string normalizedVector, out Dictionary<string, StarWritingEmotionValue> legacyValues))
                 {
                     item.EmotionalVector = normalizedVector;
+                    item.OverallValue = StarWritingEmotionVector.ReadValue(legacyValues, "Overall");
+                    item.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
                 }
             }
             state.PersistedWritings = state.PersistedWritings.Where(x => x != null).ToList();
@@ -508,6 +719,30 @@ namespace Wds.SixStars.Api.Writings
                 .ToList();
         }
 
+
+        private static List<StarWritingStoryWish> NormalizeStoryWishes(IEnumerable<StarWritingStoryWish>? values)
+        {
+            return (values ?? Enumerable.Empty<StarWritingStoryWish>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Wish))
+                .Select(x => new StarWritingStoryWish
+                {
+                    SourceActorId = (x.SourceActorId ?? string.Empty).Trim(),
+                    SourceDisplayName = (x.SourceDisplayName ?? string.Empty).Trim(),
+                    SourceActorType = (x.SourceActorType ?? string.Empty).Trim(),
+                    Wish = x.Wish.Trim()
+                })
+                .ToList();
+        }
+
+        private static List<string> NormalizeStoryArchitectureList(IEnumerable<string>? values)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private static Dictionary<string, int> NormalizeTermUsageCounts(
             IDictionary<string, int>? counts,
             IEnumerable<string>? fallbackTerms)
@@ -538,6 +773,9 @@ namespace Wds.SixStars.Api.Writings
             development.ViewpointStarId ??= string.Empty;
             development.Title ??= string.Empty;
             development.Premise ??= string.Empty;
+            development.Characters = NormalizeStoryArchitectureList(development.Characters);
+            development.StorySubjects = NormalizeStoryArchitectureList(development.StorySubjects);
+            development.StoryWishes = NormalizeStoryWishes(development.StoryWishes);
             development.OutlineBeats ??= new List<string>();
             development.CurrentStory ??= string.Empty;
             development.Subjects = NormalizeRecentTerms(development.Subjects, 100);
@@ -550,6 +788,9 @@ namespace Wds.SixStars.Api.Writings
             {
                 phase.Stage ??= string.Empty;
                 phase.StarId ??= string.Empty;
+                phase.Characters = NormalizeStoryArchitectureList(phase.Characters);
+                phase.StorySubjects = NormalizeStoryArchitectureList(phase.StorySubjects);
+                phase.StoryWishes = NormalizeStoryWishes(phase.StoryWishes);
                 phase.CompletionDecision ??= string.Empty;
                 phase.Summary ??= string.Empty;
                 phase.StorySnapshot ??= string.Empty;

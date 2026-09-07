@@ -8,9 +8,9 @@ namespace Wds.SixStars.Ui.Configuration
         public OpenWakeWordConfig OpenWakeWord { get; set; } = new OpenWakeWordConfig();
         public VoiceInputConfig VoiceInput { get; set; } = new VoiceInputConfig();
         public LlmConfig LLM { get; set; } = new LlmConfig();
+        public HostedServicesConfig HostedServices { get; set; } = new HostedServicesConfig();
         public WhisperConfig Whisper { get; set; } = new WhisperConfig();
-        public TtsConfig TTS { get; set; } = new TtsConfig();
-        public WebSocketTtsConfig WebSocketTTS { get; set; } = new WebSocketTtsConfig();
+        public QwenTtsConfig QwenTTS { get; set; } = new QwenTtsConfig();
         public VoiceOutputConfig VoiceOutput { get; set; } = new VoiceOutputConfig();
         public CompanionConfig Companion { get; set; } = new CompanionConfig();
         public MemoryConfig Memory { get; set; } = new MemoryConfig();
@@ -22,6 +22,7 @@ namespace Wds.SixStars.Ui.Configuration
         public StarSpeechIntentConfig StarSpeechIntents { get; set; } = new StarSpeechIntentConfig();
         public PreparedSpeechConfig PreparedSpeech { get; set; } = new PreparedSpeechConfig();
         public ForegroundSpeechStyleConfig ForegroundSpeechStyle { get; set; } = new ForegroundSpeechStyleConfig();
+        public BackgroundAnalysisTracingConfig BackgroundAnalysisTracing { get; set; } = new BackgroundAnalysisTracingConfig();
         public WritingPassesConfig WritingPasses { get; set; } = new WritingPassesConfig();
         public WritingMethodsConfig WritingMethods { get; set; } = new WritingMethodsConfig();
         public XPostingConfig XPosting { get; set; } = new XPostingConfig();
@@ -107,6 +108,15 @@ namespace Wds.SixStars.Ui.Configuration
         public int MaximumArtifactAgeHours { get; set; } = 72;
     }
 
+    public sealed class BackgroundAnalysisTracingConfig
+    {
+        /// <summary>When true, writes scheduler/cancellation/barrier timing for primary memory reviews to disk.</summary>
+        public bool Enabled { get; set; } = false;
+
+        /// <summary>Absolute path or path relative to the desktop executable directory.</summary>
+        public string LogFilePath { get; set; } = "logs/background-analysis-trace.log";
+    }
+
     public sealed class ForegroundSpeechStyleConfig
     {
         public bool Enabled { get; set; } = true;
@@ -142,11 +152,11 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class WritingMethodsConfig
     {
         /// <summary>Relative weight for the existing two-word semantic collision technique.</summary>
-        public double SemanticCollisionWeight { get; set; } = 0.70;
+        public double SemanticCollisionWeight { get; set; } = 0.00;
         /// <summary>Relative weight for the verb and noun displacement technique.</summary>
-        public double VerbNounDisplacementWeight { get; set; } = 0.30;
+        public double VerbNounDisplacementWeight { get; set; } = 0.00;
         /// <summary>Relative weight for the collaborative long-form Constellation Forge technique.</summary>
-        public double ConstellationForgeWeight { get; set; } = 0.10;
+        public double ConstellationForgeWeight { get; set; } = 1.00;
     }
 
     public sealed class XPostingConfig
@@ -231,23 +241,20 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class LocalModelsConfig
     {
-        /// <summary>Repository-local models folder shared by LLM, faster-whisper, and Qwen TTS.</summary>
+        /// <summary>Repository-local models folder shared by llama-server, whisper.cpp, and qwentts.cpp.</summary>
         public string Root { get; set; } = "models";
         public string HuggingFaceHome { get; set; } = "models/hf";
         public string HuggingFaceHubCache { get; set; } = "models/hf/hub";
 
-        /// <summary>OpenAI-compatible LLM endpoint. Defaults to LM Studio for speed; the Python Gemma server is optional.</summary>
+        /// <summary>OpenAI-compatible LLM endpoint. The launcher starts llama-server on this port by default.</summary>
         public string LlmEndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string LlmModel { get; set; } = "local-model";
+        public string LlmModel { get; set; } = "six-stars-gemma4";
         public string LlmLocalPath { get; set; } = string.Empty;
 
-        public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
-        public string WhisperModel { get; set; } = "tiny.en";
-        public string WhisperLocalPath { get; set; } = string.Empty;
+        public string WhisperEndpointUrl { get; set; } = "http://localhost:8000/inference";
+        public string WhisperModel { get; set; } = "large-v3-turbo";
+        public string WhisperLocalPath { get; set; } = "models/asr/ggml-large-v3-turbo.bin";
 
-        public string QwenTtsWebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
-        public string QwenTtsModel { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
-        public string QwenTtsLocalPath { get; set; } = string.Empty;
     }
 
     public sealed class OpenWakeWordConfig
@@ -285,13 +292,13 @@ namespace Wds.SixStars.Ui.Configuration
     public sealed class LlmConfig
     {
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string Model { get; set; } = "local-model";
+        public string Model { get; set; } = "six-stars-gemma4";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
         public bool DisableReasoning { get; set; } = true;
         public int ReasoningBudget { get; set; } = 0;
         public string ReasoningFormat { get; set; } = "none";
-        public bool SendReasoningControlFields { get; set; } = true;
+        public bool SendReasoningControlFields { get; set; } = false;
 
         /// <summary>
         /// Local models can take a while after the backend reports 100% generation because
@@ -315,42 +322,85 @@ namespace Wds.SixStars.Ui.Configuration
         public double Temperature { get; set; } = 0.65;
     }
 
+    public sealed class HostedServicesConfig
+    {
+        /// <summary>Hosted LLM replacement. Disabled by default so the local stack remains unchanged.</summary>
+        public HostedLlmConfig LLM { get; set; } = new HostedLlmConfig();
+
+        /// <summary>Hosted speech-to-text replacement.</summary>
+        public HostedAsrConfig ASR { get; set; } = new HostedAsrConfig();
+
+        /// <summary>Hosted speech synthesis replacement.</summary>
+        public HostedTtsConfig TTS { get; set; } = new HostedTtsConfig();
+    }
+
+    public sealed class HostedLlmConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "google-ai-studio";
+        public string? ApiKey { get; set; }
+        public string EndpointBaseUrl { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
+        public string Model { get; set; } = "gemma-4-26b-a4b-it";
+        /// <summary>Gemma 4 accepts high (thinking on) or minimal (thinking off).</summary>
+        public string ThinkingLevel { get; set; } = "high";
+        /// <summary>Enable Gemini API Google Search grounding for normal text/streaming replies. JSON review calls do not attach search tools.</summary>
+        public bool EnableGoogleSearch { get; set; } = false;
+        public int TimeoutSeconds { get; set; } = 600;
+    }
+
+    public sealed class HostedAsrConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "groq";
+        public string? ApiKey { get; set; }
+        public string EndpointUrl { get; set; } = "https://api.groq.com/openai/v1/audio/transcriptions";
+        public string Model { get; set; } = "whisper-large-v3-turbo";
+        public string Language { get; set; } = "en";
+        public int TimeoutSeconds { get; set; } = 60;
+    }
+
+    public sealed class HostedTtsConfig
+    {
+        public bool Enabled { get; set; } = false;
+        public string Provider { get; set; } = "alibaba-qwen3-tts-vc";
+        public string? ApiKey { get; set; }
+        public string EndpointUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+        public string VoiceEnrollmentEndpointUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization";
+        public string Model { get; set; } = "qwen3-tts-vc-2026-01-22";
+        public string VoiceEnrollmentModel { get; set; } = "qwen-voice-enrollment";
+        public string DefaultLanguage { get; set; } = "English";
+        /// <summary>When true, the existing per-Star local clone WAV is automatically enrolled the first time that Star speaks through hosted TTS.</summary>
+        public bool AutoCloneVoices { get; set; } = true;
+        /// <summary>Relative paths resolve under the desktop executable directory.</summary>
+        public string VoiceCachePath { get; set; } = "state/hosted-tts-voices.json";
+        public int TimeoutSeconds { get; set; } = 120;
+        /// <summary>Optional pre-enrolled voice IDs keyed by StarId. These bypass automatic enrollment.</summary>
+        public Dictionary<string, string> VoiceIds { get; set; } = new Dictionary<string, string>();
+    }
+
     public sealed class WhisperConfig
     {
-        public string Provider { get; set; } = "faster-whisper";
-        public string EndpointUrl { get; set; } = "http://localhost:8000/v1/audio/transcriptions";
+        public string Provider { get; set; } = "whispercpp";
+        public string EndpointUrl { get; set; } = "http://localhost:8000/inference";
         public string ModelPath { get; set; } = string.Empty;
+        public string Model { get; set; } = string.Empty;
         public string? ApiKey { get; set; }
         public int TimeoutSeconds { get; set; } = 60;
         public string Language { get; set; } = "en";
     }
 
-    public sealed class TtsConfig
+    public sealed class QwenTtsConfig
     {
-        public string EndpointUrl { get; set; } = string.Empty;
-        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
-        public string? ApiKey { get; set; }
-        public string PayloadShape { get; set; } = "OpenAiSpeech";
-        public string TaskType { get; set; } = "VoiceClone";
-        public string DefaultLanguage { get; set; } = "English";
-    }
-
-    public sealed class WebSocketTtsConfig
-    {
-        /// <summary>
-        /// Streaming TTS is the default desktop voice path. Set Enabled=false or SIX_STARS_USE_STREAMING_TTS=false
-        /// to fall back to the normal HTTP /v1/audio/speech endpoint and NAudio WAV playback.
-        /// </summary>
+        /// <summary>Use the local qwentts.cpp HTTP server for Star speech.</summary>
         public bool Enabled { get; set; } = true;
-        public string WebSocketUrl { get; set; } = "ws://localhost:8100/tts/stream";
-        public string Model { get; set; } = "Qwen/Qwen3-TTS-12Hz-0.6B-Base";
+        public string HttpBaseUrl { get; set; } = "http://localhost:8101";
+        public string Model { get; set; } = "qwen3-tts-base";
         public string DefaultLanguage { get; set; } = "English";
-        public string ResponseFormat { get; set; } = "wav";
+        /// <summary>pcm gives low-latency rolling playback on Android; wav keeps one-shot compatibility.</summary>
+        public string ResponseFormat { get; set; } = "pcm";
+        /// <summary>Transport packet size only. Android owns the adaptive rolling playback buffer.</summary>
+        public int PcmPacketMilliseconds { get; set; } = 240;
         public string TaskType { get; set; } = "VoiceClone";
-        public int MaxWordsPerChunk { get; set; } = 30;
-        public int MaxSentencesPerChunk { get; set; } = 2;
-        public string ChunkGenerationMode { get; set; } = "first_then_prefetch";
-        public int MaxParallelChunks { get; set; } = 1;
     }
 
     public sealed class VoiceOutputConfig
@@ -373,7 +423,7 @@ namespace Wds.SixStars.Ui.Configuration
         /// forgiving game-style playback. WASAPI and WaveOut remain selectable fallbacks.
         /// Valid values: wasapi, waveout, directsound, auto. Override with SIX_STARS_AUDIO_BACKEND.
         /// </summary>
-        public string AudioBackend { get; set; } = "directsound";
+        public string AudioBackend { get; set; } = "wasapi";
 
         public bool SaveMetadataText { get; set; } = true;
     }
@@ -396,6 +446,7 @@ namespace Wds.SixStars.Ui.Configuration
         public int MaxMemoryNotes { get; set; } = 160;
         public int ImportantQuotesForPrompt { get; set; } = 24;
         public int MemoryNotesForPrompt { get; set; } = 40;
+        public int ShortTermMemoryWindowMs { get; set; } = 1800000;
         public int RelationshipEventsForPrompt { get; set; } = 30;
         public int GirlfriendHistoryForPrompt { get; set; } = 20;
         public int LearnedFunctionsForPrompt { get; set; } = 25;
@@ -410,15 +461,15 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class ScreenLlmConfig
     {
-        public bool Enabled { get; set; } = true;
+        public bool Enabled { get; set; } = false;
         public string EndpointUrl { get; set; } = "http://localhost:8080/v1/chat/completions";
-        public string Model { get; set; } = "local-model";
+        public string Model { get; set; } = "six-stars-gemma4";
         public string? ApiKey { get; set; }
         public bool UseJsonSchemaResponseFormat { get; set; } = false;
         public bool DisableReasoning { get; set; } = true;
         public int ReasoningBudget { get; set; } = 0;
         public string ReasoningFormat { get; set; } = "none";
-        public bool SendReasoningControlFields { get; set; } = true;
+        public bool SendReasoningControlFields { get; set; } = false;
         public int MaxTokens { get; set; } = 0;
         public int TimeoutSeconds { get; set; } = 120;
         public bool LogExchangesToDisk { get; set; } = true;

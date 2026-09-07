@@ -10,17 +10,22 @@ namespace Wds.SixStars.Ui.ViewModels;
 
 public sealed partial class MainViewModel
 {
-    private static readonly string[] BackgroundWritingStarOrder =
+    private string[] BackgroundWritingStarOrder
     {
-        "Elusiaa",
-        "Kaelia",
-        "Maera",
-        "Khavia",
-        "Auerlis",
-        "Nyxari"
-    };
+        get
+        {
+            string[] active = (_profileProvider?.GetAllProfiles() ?? Array.Empty<Wds.SixStars.Api.Stars.StarProfile>())
+                .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.StarId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return active.Length > 0 ? active : new[] { "Elusiaa" };
+        }
+    }
 
-    private static readonly TimeSpan BackgroundWritingIdleDelay = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan BackgroundWritingIdleDelay = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BackgroundWritingPollDelay = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan BackgroundWritingBetweenStarsDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan BackgroundWritingErrorDelay = TimeSpan.FromSeconds(5);
@@ -58,7 +63,7 @@ public sealed partial class MainViewModel
                     _backgroundWritingNextStarIndex = ResolveBackgroundWritingStartIndex(SelectedStarId);
                 }
 
-                SetBackgroundWritingLoopStatus("Enabled. Waiting for a few idle seconds before generating for " + BackgroundWritingStarOrder[_backgroundWritingNextStarIndex] + ".");
+                SetBackgroundWritingLoopStatus("Enabled. Waiting until the player has been idle for 30 seconds before generating for " + BackgroundWritingStarOrder[_backgroundWritingNextStarIndex] + ".");
                 EnsureBackgroundWritingLoopStarted();
             }
             else
@@ -151,7 +156,7 @@ public sealed partial class MainViewModel
             TimeSpan idleFor = DateTimeOffset.UtcNow - lastForegroundActivity;
             if (!startNow && idleFor < BackgroundWritingIdleDelay)
             {
-                SetBackgroundWritingLoopStatus("Waiting for a few idle seconds before generating for " + BackgroundWritingStarOrder[nextStarIndex] + ".");
+                SetBackgroundWritingLoopStatus("Waiting until the player has been idle for 30 seconds before generating for " + BackgroundWritingStarOrder[nextStarIndex] + ".");
                 await Task.Delay(BackgroundWritingPollDelay, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -180,7 +185,7 @@ public sealed partial class MainViewModel
                         _backgroundWritingIterationCts = null;
                     }
                 }
-                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after a few idle seconds.");
+                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after 30 idle seconds.");
                 await Task.Delay(BackgroundWritingPollDelay, cancellationToken).ConfigureAwait(false);
                 continue;
             }
@@ -190,7 +195,10 @@ public sealed partial class MainViewModel
             try
             {
                 SetBackgroundWritingLoopStatus("Generating a writing-shelf work and running its selected development process for " + starId + " in the background...");
-                StarWritingCreateResult result = await _writingService.GenerateAndReviewAsync(starId, iterationCts.Token).ConfigureAwait(false);
+                StarWritingCreateResult result = await GenerateForgeShelfContentAsync(
+                    starId,
+                    iterationCts.Token,
+                    message => SetBackgroundWritingLoopStatus(message)).ConfigureAwait(false);
                 completed = true;
 
                 OnUiThread(() =>
@@ -213,13 +221,14 @@ public sealed partial class MainViewModel
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after a few idle seconds.");
+                SetBackgroundWritingLoopStatus("Background writing paused for player activity. It will resume after 30 idle seconds.");
             }
             catch (Exception ex)
             {
-                completed = true;
+                completed = false;
                 failed = true;
-                SetBackgroundWritingLoopStatus("Background writing failed for " + starId + ": " + ex.Message + ". The loop will continue with the next Star.");
+                SetBackgroundWritingLoopStatus("Background writing failed for " + starId + ": " + ex.Message
+                    + ". The loop will keep " + starId + " as the current Star and retry the same work path after the error delay; it will not skip ahead.");
                 System.Diagnostics.Debug.WriteLine("[WritingLoop] " + starId + " failed: " + ex);
             }
             finally
@@ -314,7 +323,7 @@ public sealed partial class MainViewModel
 
         if (enabled)
         {
-            SetBackgroundWritingLoopStatus("Paused for " + reason + ". It will resume after a few idle seconds.");
+            SetBackgroundWritingLoopStatus("Paused for " + reason + ". It will resume after 30 idle seconds.");
         }
     }
 
@@ -382,7 +391,7 @@ public sealed partial class MainViewModel
         }
     }
 
-    private static int NormalizeBackgroundWritingIndex(int index)
+    private int NormalizeBackgroundWritingIndex(int index)
     {
         int count = BackgroundWritingStarOrder.Length;
         if (count <= 0)
@@ -394,7 +403,7 @@ public sealed partial class MainViewModel
         return normalized < 0 ? normalized + count : normalized;
     }
 
-    private static int ResolveBackgroundWritingStartIndex(string? starId)
+    private int ResolveBackgroundWritingStartIndex(string? starId)
     {
         int index = Array.FindIndex(
             BackgroundWritingStarOrder,

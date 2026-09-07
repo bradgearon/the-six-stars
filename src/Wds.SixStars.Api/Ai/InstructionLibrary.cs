@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Wds.SixStars.Api.Stars;
+using Wds.SixStars.Api.Actors;
 
 namespace Wds.SixStars.Api.Ai
 {
@@ -51,6 +52,10 @@ namespace Wds.SixStars.Api.Ai
             {
                 throw new InvalidOperationException("Could not deserialize Star profile: " + path);
             }
+
+            profile.ActorId = string.IsNullOrWhiteSpace(profile.ActorId) ? profile.StarId : profile.ActorId.Trim();
+            profile.ActorType = string.IsNullOrWhiteSpace(profile.ActorType) ? "star" : profile.ActorType.Trim();
+            profile.Soul ??= ActorSoulConfig.FullStarSoul();
 
             if (profile.Emotions.Count == 0)
             {

@@ -1,0 +1,58 @@
+{
+  "SessionId": "android-standalone",
+  "LLM": {
+    "Enabled": true,
+    "Provider": "google-ai-studio",
+    "ApiKey": "AQ.Ab8RN6JqHtwT8iJxqX5O-bF42JHXHBRldy8Vpfg4z4J9CS7Sqw",
+    "EndpointBaseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "Model": "gemma-4-26b-a4b-it",
+    "ThinkingLevel": "off",
+    "EnableGoogleSearch": false,
+    "Temperature": 0.75,
+    "TimeoutSeconds": 600
+  },
+  "ASR": {
+    "Enabled": true,
+    "Provider": "groq",
+    "ApiKey": "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",
+    "EndpointUrl": "https://api.groq.com/openai/v1/audio/transcriptions",
+    "Model": "whisper-large-v3-turbo",
+    "Language": "en",
+    "TimeoutSeconds": 60
+  },
+  "TTS": {
+    "Enabled": true,
+    "Mode": "local",
+    "Provider": "alibaba-qwen3-tts-vc",
+    "ApiKey": "",
+    "EndpointUrl": "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+    "VoiceEnrollmentEndpointUrl": "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/customization",
+    "Model": "qwen3-tts-vc-2026-01-22",
+    "VoiceEnrollmentModel": "qwen-voice-enrollment",
+    "DefaultLanguage": "English",
+    "AutoCloneVoices": true,
+    "TimeoutSeconds": 120,
+    "VoiceIds": {},
+    "LocalServiceUrl": "http://192.168.1.179:8066/api/mobile/local-tts",
+    "LocalWebSocketUrl": "ws://192.168.1.179:8100/tts/stream",
+    "LocalModel": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "LocalLanguage": "English",
+    "LocalTaskType": "VoiceClone",
+    "LocalSpeed": 1.0,
+    "LocalTimeoutSeconds": 120
+  },
+  "Runtime": {
+    "RomanceMode": true,
+    "ShortTermMemoryMinutes": 30,
+    "RecentConversationTurns": 10,
+    "BlockNextForegroundUntilPrimaryReviewSettles": true,
+    "EnableDailyStateRefresh": true,
+    "EnableGirlfriendHourlyRefresh": true,
+    "TraceEnabled": true
+  },
+  "Proxy": {
+    "Enabled": false,
+    "BaseUrl": "https://api.example.com",
+    "AccessToken": ""
+  }
+}

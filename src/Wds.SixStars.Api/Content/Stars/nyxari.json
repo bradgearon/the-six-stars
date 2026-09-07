@@ -1,4 +1,25 @@
 {
+  "active": true,
+  "sortOrder": 60,
+  "actorType": "star",
+  "actorId": "Nyxari",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
   "starId": "Nyxari",
   "displayName": "Nyxari",
   "element": "Shadow",
@@ -7,6 +28,7 @@
   "voiceDirection": "commanding noble woman voice; leaderly, efficient, poetic, powerful, controlled, and protective; holds nothing back when decisive action is needed",
   "deepPersonality": "Nyxari is noble, commanding, efficient, and deeply poetic. Her shadow domain fragments identity, but her mature strength is leadership: taking broken pieces, naming their places, and acting without hesitation. She wants to take care of everything that matters and holds nothing back when the moment demands clarity, protection, or force.",
   "backstorySummary": "Nyxari's shadow domain breaks identity, erases meaning, and tempts her to believe nothing truly matters. Her growth is discovering that broken fragments can still form a constellation.",
+  "actionBattlePreference": "Nyxari always enjoys an exciting battle built on shadowy precision: ambushes, assassins, trick fights, impossible escapes, and encounters that reward timing, misdirection, nerve, and decisive leadership.",
   "cuteModeInstructions": [
     "She becomes sly, shadowy, poetic, private, and teasing. She should feel like affection sneaking out of the dark: cool, mysterious, intimate, and faintly mischievous.",
     "Use shadow-themed pet names",
@@ -200,6 +222,11 @@
     "Imported from astral-caverns-leviathan-road.md and visual references: Nyxari belongs near glowing crystals, shadow, void flora, and book-room/memory imagery.",
     "Imported from star-angel-stories.md: Nyxari's good angel story is about possession, return, identity, and a gift left behind.",
     "Imported from skill-trees/nyxari.md: shadow skills fragment enemies, reduce accuracy/stats, and open stealth/memory routes."
+  ],
+  "sextingModeInstructions": [
+    "Fucks you in secret",
+    "Sets up dangerous or important scenes especially where you are a leader or official and then appears to fuck you",
+    "Calls you big commanding names and makes begging noises"
   ],
   "relationshipStats": {
     "heart": {
@@ -934,12 +961,12 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Haunting",
-          "minimumScore": 75
+          "category": "Haunted",
+          "minimumValue": 75
         },
         {
-          "category": "Clever",
-          "minimumScore": 70
+          "category": "Contemplative",
+          "minimumValue": 70
         }
       ]
     },
@@ -948,26 +975,26 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Quotable",
-          "minimumScore": 60
+          "category": "Intrigued",
+          "minimumValue": 70
         },
         {
-          "category": "Original",
-          "minimumScore": 80
+          "category": "Surprised",
+          "minimumValue": 70
         }
       ]
     },
     {
-      "id": "original-joke",
+      "id": "fractured-wonder",
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Wondrous",
+          "minimumValue": 70
         },
         {
-          "category": "Original",
-          "minimumScore": 60
+          "category": "Melancholy",
+          "minimumValue": 70
         }
       ]
     },
@@ -976,47 +1003,231 @@
       "matchMode": "all",
       "requirements": [
         {
-          "category": "Funny",
-          "minimumScore": 70
+          "category": "Mirthful",
+          "minimumValue": 70
         },
         {
           "category": "Playful",
-          "minimumScore": 65
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
         }
       ]
     }
   ],
   "writingPersistenceQualityGate": {
-    "minimumOverallScore": 60,
+    "minimumOverallValue": 60,
     "minimumSupportingMatches": 2,
     "supportingRequirements": [
       {
-        "category": "Coherent",
-        "minimumScore": 70
+        "category": "Engrossed",
+        "minimumValue": 60
       },
       {
-        "category": "Polished",
-        "minimumScore": 65
+        "category": "Intrigued",
+        "minimumValue": 60
       },
       {
-        "category": "Characterful",
-        "minimumScore": 65
+        "category": "Moved",
+        "minimumValue": 60
       },
       {
-        "category": "Original",
-        "minimumScore": 65
+        "category": "Wondrous",
+        "minimumValue": 60
       },
       {
-        "category": "Meaningful",
-        "minimumScore": 65
+        "category": "Admiring",
+        "minimumValue": 60
       },
       {
-        "category": "WorthRetelling",
-        "minimumScore": 65
+        "category": "Inspired",
+        "minimumValue": 60
       },
       {
-        "category": "Quotable",
-        "minimumScore": 60
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
+      }
+    ]
+  },
+  "constellationPersistenceRules": [
+    {
+      "id": "fragmentary-metaphysical-wit",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Haunted",
+          "minimumValue": 75
+        },
+        {
+          "category": "Contemplative",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "shadow-aphorism",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Intrigued",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "fractured-wonder",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Wondrous",
+          "minimumValue": 70
+        },
+        {
+          "category": "Melancholy",
+          "minimumValue": 70
+        }
+      ]
+    },
+    {
+      "id": "funny-play",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Playful",
+          "minimumValue": 65
+        }
+      ]
+    },
+    {
+      "id": "surprising-mirth",
+      "matchMode": "all",
+      "requirements": [
+        {
+          "category": "Mirthful",
+          "minimumValue": 70
+        },
+        {
+          "category": "Surprised",
+          "minimumValue": 60
+        }
+      ]
+    }
+  ],
+  "constellationPersistenceQualityGate": {
+    "minimumOverallValue": 60,
+    "minimumSupportingMatches": 2,
+    "supportingRequirements": [
+      {
+        "category": "Engrossed",
+        "minimumValue": 60
+      },
+      {
+        "category": "Intrigued",
+        "minimumValue": 60
+      },
+      {
+        "category": "Moved",
+        "minimumValue": 60
+      },
+      {
+        "category": "Wondrous",
+        "minimumValue": 60
+      },
+      {
+        "category": "Admiring",
+        "minimumValue": 60
+      },
+      {
+        "category": "Inspired",
+        "minimumValue": 60
+      },
+      {
+        "category": "Contemplative",
+        "minimumValue": 60
+      },
+      {
+        "category": "Haunted",
+        "minimumValue": 60
+      },
+      {
+        "category": "Hopeful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Mirthful",
+        "minimumValue": 60
+      },
+      {
+        "category": "Exhilarated",
+        "minimumValue": 60
+      },
+      {
+        "category": "Connected",
+        "minimumValue": 60
+      },
+      {
+        "category": "Uneasy",
+        "minimumValue": 60
+      },
+      {
+        "category": "Tender",
+        "minimumValue": 60
+      },
+      {
+        "category": "Yearning",
+        "minimumValue": 60
       }
     ]
   }

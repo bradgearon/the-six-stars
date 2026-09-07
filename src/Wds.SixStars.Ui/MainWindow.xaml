@@ -44,6 +44,12 @@
                     <TextBlock DockPanel.Dock="Top"
                                Text="Type any request here, including long answers or stories. Everything is handled as normal Chat, displayed in full, and spoken in order. This box clears after the request is queued."
                                TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,6" />
+                    <Button DockPanel.Dock="Bottom"
+                            Content="Speak as Star"
+                            Command="{Binding SpeakPlayerTextAsStarCommand}"
+                            ToolTip="Clear the main text box and speak its text directly in the selected Star's voice without sending it to the LLM."
+                            Height="34"
+                            Margin="0,8,0,0" />
                     <TextBox Text="{Binding PlayerText, UpdateSourceTrigger=PropertyChanged}"
                              AcceptsReturn="True" TextWrapping="Wrap"
                              VerticalScrollBarVisibility="Auto"
@@ -156,11 +162,21 @@
                             <TextBox Text="{Binding LastTranscript}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" MinHeight="48" MaxHeight="90" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                         <Button Content="{Binding RecordButtonText}" Command="{Binding ToggleRecordingCommand}" Width="210" Height="34" Margin="0,0,6,0" />
                         <Button Content="{Binding CancelStopButtonText}" Command="{Binding CancelOrStopRuntimeCommand}" Width="82" Height="34" />
                     </StackPanel>
-                    <TextBlock Text="Push-to-talk is still available for testing. Start Listen is now the normal hands-free voice mode." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <Button Content="{Binding SpeakAsStarRecordButtonText}"
+                                Command="{Binding ToggleSpeakAsStarRecordingCommand}"
+                                ToolTip="Record your voice, send it to Whisper, then replay the transcript directly with the selected Star's TTS voice. It does not create a conversation turn."
+                                Width="210" Height="34" Margin="0,0,6,0" />
+                        <Button Content="Cancel"
+                                Command="{Binding CancelSpeakAsStarRecordingCommand}"
+                                ToolTip="Discard the current Speak as Star recording without transcribing or speaking it."
+                                Width="82" Height="34" />
+                    </StackPanel>
+                    <TextBlock Text="The normal recorder sends your transcript to the Star conversation. Speak as Star instead sends the recording only to Whisper and TTS, so you can perform a line and hear it in the selected Star's voice. Start Listen remains the normal hands-free conversation mode." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <TextBlock Text="Speech Status" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding SpeechStatus}" TextWrapping="Wrap" Foreground="#666" Margin="0,2,0,8" />
                     <Separator Margin="0,8,0,8" />
@@ -181,8 +197,8 @@
                               Margin="0,0,0,6" Height="30" />
                     <TextBlock Text="Default is directsound. Use wasapi when Windows shared-mode audio is healthy and you want the modern output path; use waveout as the legacy fallback." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Button Content="Play Elusiaa Clone WAV" Command="{Binding PlayElusiaaCloneWavCommand}" Margin="0,0,0,8" Height="34" />
-                    <TextBlock Text="This plays src\Wds.SixStars.Api\Content\VoiceClones\elusiaa_clone.wav directly through NAudio using the selected audio backend, bypassing LLM, Qwen, WebSocket TTS, and HTTP TTS." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
-                    <TextBlock Text="Default desktop mode uses WebSocket streaming TTS so Star replies can begin playing chunk-by-chunk. The old HTTP /v1/audio/speech generator is disabled in this desktop harness." TextWrapping="Wrap" Foreground="#666" />
+                    <TextBlock Text="This plays src\Wds.SixStars.Api\Content\VoiceClones\elusiaa_clone.wav directly through NAudio using the selected audio backend, bypassing LLM and Qwen synthesis." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <TextBlock Text="TTS orchestration stays in .NET and calls the local qwentts.cpp HTTP server directly. PCM mode emits low-latency transport packets; Android joins them into one continuous adaptively buffered AudioTrack." TextWrapping="Wrap" Foreground="#666" />
                 </StackPanel>
                 </ScrollViewer>
             </GroupBox>

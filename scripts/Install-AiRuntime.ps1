@@ -1,9 +1,11 @@
 param(
-  [ValidateSet("auto", "cpu", "nvidia-cu12")][string]$Profile = "auto",
+  [ValidateSet("auto", "cpu", "nvidia", "nvidia-cu12")][string]$Profile = "auto",
   [switch]$Force,
+  # Kept for compatibility with older launch scripts. This installer stages prebuilt native packs; it does not rebuild them by default.
   [switch]$SkipLlamaBuild,
   [switch]$SkipPythonPacks,
-  [switch]$SkipModels
+  [switch]$SkipModels,
+  [string]$RuntimeSource = "runtime-packs/win-x64"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,40 +20,71 @@ function Have-Nvidia() {
 }
 
 $resolvedProfile = $Profile
-if ($Profile -eq "auto") {
-  $resolvedProfile = if (Have-Nvidia) { "nvidia-cu12" } else { "cpu" }
+if ($resolvedProfile -eq "auto") {
+  $resolvedProfile = if (Have-Nvidia) { "nvidia" } else { "cpu" }
 }
 
-Write-Host "Six Stars AI runtime install profile: $resolvedProfile"
+Write-Host "Six Stars native AI runtime profile: $resolvedProfile"
+Write-Host "Runtime source: $RuntimeSource"
+
+if ($resolvedProfile -eq "cpu") {
+  throw "This native Six Stars runtime manifest is CUDA/NVIDIA-only. Use a hosted service or add CPU/Vulkan packs to config/runtime-manifest.json."
+}
+
+if (!(Have-Nvidia)) {
+  throw "No usable NVIDIA driver was detected (nvidia-smi failed). Install/update the NVIDIA display driver first. The full CUDA Toolkit is not required when the redistributed runtime pack includes its CUDA runtime DLLs."
+}
+
 New-Item -ItemType Directory -Force -Path "engines", "models", "logs/services" | Out-Null
 
-if (!$SkipLlamaBuild) {
-  $llamaExe = "engines/llm/llama-cpp-dynamic-win-x64/llama-server.exe"
-  if ($Force -or !(Test-Path $llamaExe)) {
-    & "$PSScriptRoot/Build-LlamaCppDynamic.ps1" -WithCuda:($resolvedProfile -eq "nvidia-cu12") -WithVulkan:$false -Clean:$Force -BuildParallel 2
+$sourceRoot = if ([IO.Path]::IsPathRooted($RuntimeSource)) { $RuntimeSource } else { Join-Path $Root $RuntimeSource }
+
+$packs = @(
+  @{ Name = "llama.cpp";   Source = "llama-cpp-dynamic-win-x64";         Destination = "engines/llm/llama-cpp-dynamic-win-x64";              Required = "llama-server.exe" },
+  @{ Name = "whisper.cpp"; Source = "whispercpp-nvidia-win-x64";         Destination = "engines/asr/whispercpp-nvidia-win-x64";              Required = "whisper-server.exe" },
+  @{ Name = "qwentts.cpp"; Source = "qwenttscpp-nvidia-win-x64";         Destination = "engines/tts/qwenttscpp-nvidia-win-x64";              Required = "tts-server.exe" }
+)
+
+$missing = @()
+foreach ($pack in $packs) {
+  $dest = Join-Path $Root $pack.Destination
+  $required = Join-Path $dest $pack.Required
+  $src = Join-Path $sourceRoot $pack.Source
+
+  if ($Force -and (Test-Path $dest) -and (Test-Path $src)) {
+    Remove-Item $dest -Recurse -Force
+  }
+
+  if (!(Test-Path $required)) {
+    if (Test-Path $src) {
+      Write-Host "Installing $($pack.Name) native pack -> $($pack.Destination)"
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+      Copy-Item $src $dest -Recurse -Force
+    }
+  }
+
+  if (!(Test-Path $required)) {
+    $missing += "$($pack.Name): $required"
   } else {
-    Write-Host "llama.cpp dynamic runtime already exists: $llamaExe"
+    Write-Host "Ready: $($pack.Name) ($required)"
   }
 }
 
-if (!$SkipPythonPacks) {
-  $asrCpu = "engines/asr/faster-whisper-cpu-win-x64/faster_whisper_openai_server.exe"
-  if ($Force -or !(Test-Path $asrCpu)) { & "$PSScriptRoot/Build-PythonRuntimePack.ps1" -Server asr -Profile cpu }
-
-  $ttsCpu = "engines/tts/qwen3-tts-cpu-win-x64/websocket_tts_server.exe"
-  if ($Force -or !(Test-Path $ttsCpu)) { & "$PSScriptRoot/Build-PythonRuntimePack.ps1" -Server tts -Profile cpu }
-
-  if ($resolvedProfile -eq "nvidia-cu12") {
-    $asrNvidia = "engines/asr/faster-whisper-nvidia-cu12-win-x64/faster_whisper_openai_server.exe"
-    if ($Force -or !(Test-Path $asrNvidia)) { & "$PSScriptRoot/Build-PythonRuntimePack.ps1" -Server asr -Profile nvidia-cu12 }
-
-    $ttsNvidia = "engines/tts/qwen3-tts-nvidia-cu12-win-x64/websocket_tts_server.exe"
-    if ($Force -or !(Test-Path $ttsNvidia)) { & "$PSScriptRoot/Build-PythonRuntimePack.ps1" -Server tts -Profile nvidia-cu12 }
-  }
+if ($missing.Count -gt 0) {
+  Write-Host ""
+  Write-Host "Missing native runtime files:" -ForegroundColor Yellow
+  $missing | ForEach-Object { Write-Host "  $_" }
+  Write-Host ""
+  Write-Host "Place the prebuilt redistribution folders under '$sourceRoot' or directly under engines/."
+  Write-Host "No Python environment is required by this runtime."
+  throw "Native runtime pack is incomplete."
 }
 
 if (!$SkipModels) {
-  & "$PSScriptRoot/Download-AiModels.ps1"
+  Write-Host "Model download is handled by six-stars-launcher from config/models.json using bezzad/Downloader."
+  Write-Host "Run launch.cmd --download-models-only if you only want to fetch model files."
 }
 
-Write-Host "AI runtime install complete." -ForegroundColor Green
+Write-Host ""
+Write-Host "Native AI runtime ready." -ForegroundColor Green
+Write-Host "Runtime requirement: compatible NVIDIA driver. A CUDA Toolkit install is only needed if your particular redistributed binaries were built to depend on CUDA DLLs that you did not ship beside them."

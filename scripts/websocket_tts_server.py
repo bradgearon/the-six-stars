@@ -152,6 +152,14 @@ CUDA_GRAPH_WARMUP_RUNS = int(os.environ.get("QWEN_TTS_CUDA_GRAPH_WARMUP_RUNS", "
 USE_CLONE_PROMPT_CACHE = os.environ.get("QWEN_TTS_CACHE_CLONE_PROMPTS", "true").strip().lower() not in {"0", "false", "no"}
 DIRECT_FALLBACK_ON_SILENCE = os.environ.get("QWEN_TTS_DIRECT_FALLBACK_ON_SILENCE", "true").strip().lower() not in {"0", "false", "no"}
 SILENCE_RMS_THRESHOLD = float(os.environ.get("QWEN_TTS_SILENCE_RMS_THRESHOLD", "0.0001"))
+# Live conversational chunks are short enough that a generated WAV which is implausibly short
+# for its word count is usually a partial Qwen decode, not intentional fast speech. Retry once
+# and keep the longer take rather than silently shipping a clipped sentence to Android.
+RETRY_IMPLAUSIBLY_SHORT_AUDIO = os.environ.get("QWEN_TTS_RETRY_SHORT_AUDIO", "true").strip().lower() not in {"0", "false", "no", "off"}
+MIN_COMPLETE_SPEECH_WORDS_PER_SECOND = float(os.environ.get("QWEN_TTS_MIN_COMPLETE_WORDS_PER_SECOND", "5.5"))
+# A tiny PCM tail protects the final phoneme from device/audio-buffer edge truncation without
+# creating a noticeable pause between normal sentence chunks.
+OUTPUT_TAIL_SILENCE_MS = int(os.environ.get("QWEN_TTS_TAIL_SILENCE_MS", "100"))
 
 
 def require_cuda_runtime() -> None:
@@ -180,14 +188,14 @@ require_cuda_runtime()
 DEBUG_OUTPUT_DIR = os.environ.get("QWEN_TTS_DEBUG_OUTPUT_DIR", "").strip()
 SAVE_SERVER_WAVS = os.environ.get("QWEN_TTS_SAVE_WAVS", "false").strip().lower() in {"1", "true", "yes"}
 # Chunk generation mode:
-# - parallel (default): start every chunk generation task immediately and send results in order.
-#   This is fastest when your local Qwen build/GPU can handle concurrent chunk generation.
+# - parallel: start every chunk generation task immediately and send results in order.
+#   Use only when your local Qwen build/GPU is known to tolerate concurrent chunk generation.
 # - first_then_prefetch: generate chunk 1 alone, send it immediately, then start chunk 2 while
 #   the client plays chunk 1. Safer if parallel mode overloads your model/GPU.
-# - first_then_parallel: generate chunk 1 alone, send it, then generate remaining chunks with
-#   bounded parallelism and send them in order.
+# - first_then_parallel (default): generate chunk 1 alone, send it, then generate remaining chunks
+#   with bounded parallelism and send them in order. This minimizes time-to-first-audio and GPU spikes.
 # - sequential: generate and send one chunk at a time. Functionally safe, but less explicit.
-CHUNK_GENERATION_MODE = os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "parallel").strip().lower()
+CHUNK_GENERATION_MODE = os.environ.get("QWEN_TTS_CHUNK_GENERATION_MODE", "first_then_parallel").strip().lower()
 PARALLEL_CHUNK_GENERATION = os.environ.get("QWEN_TTS_PARALLEL_CHUNKS", "true").strip().lower() not in {"0", "false", "no"}
 # 0 means start generation for every chunk immediately in legacy parallel mode.
 MAX_PARALLEL_CHUNKS = int(os.environ.get("QWEN_TTS_MAX_PARALLEL_CHUNKS", "0"))
@@ -213,7 +221,7 @@ def _resolve_chunk_generation_mode(settings: Dict[str, Any]) -> str:
         settings.get("chunkGenerationMode")
         or settings.get("chunk_generation_mode")
         or CHUNK_GENERATION_MODE
-        or "parallel"
+        or "first_then_parallel"
     ).strip().lower()
 
     if PARALLEL_CHUNK_GENERATION and mode in {"first_then_prefetch", "pipelined", "sequential"}:
@@ -231,8 +239,8 @@ def _resolve_chunk_generation_mode(settings: Dict[str, Any]) -> str:
         "prefetch",
         "sequential",
     }:
-        logger.warning("Unknown chunkGenerationMode=%s; falling back to parallel", mode)
-        mode = "parallel"
+        logger.warning("Unknown chunkGenerationMode=%s; falling back to first_then_parallel", mode)
+        mode = "first_then_parallel"
 
     return mode
 
@@ -1059,6 +1067,39 @@ def wav_duration_ms(wav_bytes: bytes) -> float:
     return float(stats.get("duration_seconds", 0.0)) * 1000.0
 
 
+def append_wav_tail_silence(wav_bytes: bytes, silence_ms: int) -> bytes:
+    if silence_ms <= 0 or not wav_bytes:
+        return wav_bytes
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as source:
+            channels = source.getnchannels()
+            sample_width = source.getsampwidth()
+            sample_rate = source.getframerate()
+            frames = source.readframes(source.getnframes())
+        silence_frames = max(0, int(sample_rate * silence_ms / 1000.0))
+        if silence_frames <= 0:
+            return wav_bytes
+        tail = b"\x00" * (silence_frames * channels * sample_width)
+        output = io.BytesIO()
+        with wave.open(output, "wb") as target:
+            target.setnchannels(channels)
+            target.setsampwidth(sample_width)
+            target.setframerate(sample_rate)
+            target.writeframes(frames + tail)
+        return output.getvalue()
+    except Exception as exc:
+        logger.warning("Could not append WAV tail silence: %s", exc)
+        return wav_bytes
+
+
+def minimum_plausible_speech_duration_ms(text: str) -> float:
+    words = re.findall(r"[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?", text or "")
+    if len(words) < 5:
+        return 0.0
+    words_per_second = max(3.0, MIN_COMPLETE_SPEECH_WORDS_PER_SECOND)
+    return (len(words) / words_per_second) * 1000.0
+
+
 class TtsSession:
     """Manages one client TTS generation session."""
 
@@ -1177,14 +1218,41 @@ class TtsSession:
         )
         audio_data = await self.tts_engine.generate_audio(chunk.text, star_id, voice_id, settings)
         duration_ms = wav_duration_ms(audio_data)
+        first_duration_ms = duration_ms
+        minimum_ms = minimum_plausible_speech_duration_ms(chunk.text)
+        if RETRY_IMPLAUSIBLY_SHORT_AUDIO and minimum_ms > 0.0 and duration_ms < minimum_ms:
+            logger.warning(
+                "Chunk %s/%s looks truncated: %.0fms audio for text needing at least ~%.0fms; regenerating once.",
+                chunk.index + 1,
+                chunk.total_chunks,
+                duration_ms,
+                minimum_ms,
+            )
+            retry_audio = await self.tts_engine.generate_audio(chunk.text, star_id, voice_id, settings)
+            retry_duration_ms = wav_duration_ms(retry_audio)
+            if retry_duration_ms > duration_ms:
+                audio_data = retry_audio
+                duration_ms = retry_duration_ms
+            logger.info(
+                "Short-audio retry for chunk %s/%s selected %.0fms take (first %.0fms, retry %.0fms).",
+                chunk.index + 1,
+                chunk.total_chunks,
+                duration_ms,
+                first_duration_ms,
+                retry_duration_ms,
+            )
+
+        audio_data = append_wav_tail_silence(audio_data, OUTPUT_TAIL_SILENCE_MS)
+        duration_ms = wav_duration_ms(audio_data)
         elapsed_ms = (time.monotonic() - start_time) * 1000.0
         logger.info(
-            "Generated chunk %s/%s in %.0fms (%s bytes, %.0fms audio)",
+            "Generated chunk %s/%s in %.0fms (%s bytes, %.0fms audio incl. %sms tail)",
             chunk.index + 1,
             chunk.total_chunks,
             elapsed_ms,
             len(audio_data),
             duration_ms,
+            OUTPUT_TAIL_SILENCE_MS,
         )
         return GeneratedChunk(chunk=chunk, audio_data=audio_data, duration_ms=duration_ms, elapsed_ms=elapsed_ms)
 

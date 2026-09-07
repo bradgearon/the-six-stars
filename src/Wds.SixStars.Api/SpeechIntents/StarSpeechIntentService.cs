@@ -222,6 +222,17 @@ namespace Wds.SixStars.Api.SpeechIntents
             }, cancellationToken, x => !IsTerminal(x.Status));
         }
 
+        public Task<StarSpeechIntent?> MarkDeferredAsync(string intentId, string reason, CancellationToken cancellationToken)
+        {
+            return MutateAsync(intentId, "deferred", x =>
+            {
+                x.Status = StarSpeechIntentStatuses.Pending;
+                x.PrepareAttempts = Math.Max(0, x.PrepareAttempts - 1);
+                x.LastError = reason ?? string.Empty;
+                x.LeaseExpiresAt = null;
+            }, cancellationToken, x => x.Status == StarSpeechIntentStatuses.Preparing || x.Status == StarSpeechIntentStatuses.Failed);
+        }
+
         public Task<StarSpeechIntent?> LeaseAsync(string intentId, CancellationToken cancellationToken)
         {
             return MutateAsync(intentId, "leased", x =>

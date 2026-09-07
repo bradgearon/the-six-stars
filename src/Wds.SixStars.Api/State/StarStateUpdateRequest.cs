@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Wds.SixStars.Api.Models;
 
@@ -8,10 +9,13 @@ namespace Wds.SixStars.Api.State
         public string SessionId { get; set; } = "local-dev";
         public string StarId { get; set; } = string.Empty;
         public string RequestType { get; set; } = string.Empty;
+        public DateTimeOffset TurnStartedAt { get; set; }
         public string PlayerText { get; set; } = string.Empty;
         public string StarResponse { get; set; } = string.Empty;
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         public RelationshipDelta ActualDelta { get; set; } = RelationshipDelta.Zero();
         public RelationshipDelta SuggestedDelta { get; set; } = RelationshipDelta.Zero();
         public string EmotionalEffectVector { get; set; } = string.Empty;
@@ -23,7 +27,12 @@ namespace Wds.SixStars.Api.State
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
         public List<string> ImportantPlayerQuotes { get; set; } = new List<string>();
         public List<string> MemoryNotes { get; set; } = new List<string>();
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+        public bool SextingDetected { get; set; }
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+        public string IncomingUnresolvedVector { get; set; } = string.Empty;
+        public string OutgoingUnresolvedVector { get; set; } = string.Empty;
+        public string UnresolvedResolutionVector { get; set; } = string.Empty;
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
         public List<string> ReferencedMemoryMarkerIds { get; set; } = new List<string>();
         public List<string> SecretsUnlocked { get; set; } = new List<string>();

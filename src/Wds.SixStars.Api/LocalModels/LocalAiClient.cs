@@ -36,6 +36,11 @@ namespace Wds.SixStars.Api.LocalModels
             return _chatClient.CompleteJsonAsync(messages, responseFormat, maxTokens, debugLabel, cancellationToken);
         }
 
+        public Task<string> CompleteTextStreamingAsync(IReadOnlyList<ChatMessage> messages, int? maxTokens, string debugLabel, Action<string>? onTextDelta, CancellationToken cancellationToken)
+        {
+            return _chatClient.CompleteTextStreamingAsync(messages, maxTokens, debugLabel, onTextDelta, cancellationToken);
+        }
+
         public void Dispose()
         {
             _chatClient.Dispose();

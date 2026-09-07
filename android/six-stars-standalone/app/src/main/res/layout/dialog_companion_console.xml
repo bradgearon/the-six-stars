@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="Last Cat Console"
+            android:textColor="#EAF7FF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:text="Standalone services, state paths, and detailed runtime trace."
+            android:textColor="#B6E6F2"
+            android:textSize="12sp" />
+
+        <CheckBox
+            android:id="@+id/console_echo_mic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:text="Echo microphone while recording"
+            android:textColor="#EAF7FF"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="monospace"
+            android:text="Low-latency mic monitoring is only active during Talk recording. It is useful for device/screen capture; headphones or low speaker volume help avoid feedback."
+            android:textColor="#B6E6F2"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/console_summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/prod_history_panel"
+            android:fontFamily="monospace"
+            android:padding="10dp"
+            android:textColor="#EAF7FF"
+            android:textIsSelectable="true"
+            android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:fontFamily="monospace"
+            android:text="Runtime trace"
+            android:textColor="#9EE8F0"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <ScrollView
+            android:id="@+id/console_log_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="360dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/prod_history_panel"
+            android:fillViewport="true"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/console_log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:padding="10dp"
+                android:textColor="#D6F6FF"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+        </ScrollView>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/console_refresh"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Refresh Log"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/console_retry_review"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:text="Retry Memory Review"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

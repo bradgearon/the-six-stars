@@ -11,8 +11,8 @@ Each entry contains:
 - the writing and its two source words;
 - `StarId` and the human-readable `Speaker` name;
 - generation time, batch ID, item ID, and index;
-- the compact 27-score `EmotionalVector`;
-- a named `Scores` object containing all 27 category scores;
+- the compact review `EmotionalVector` (new work uses the shared 31-position reader-emotion IU vector; legacy records may retain the older 27-value literary vector);
+- a named `Values` object expanded from the saved review vector for diagnostics;
 - whether the statement reached the shelf;
 - the persistence rules it matched.
 

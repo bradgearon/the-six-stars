@@ -12,9 +12,9 @@ This update adds a delayed interstar emotional-state pipeline after normal Star 
    - Override for local testing with `SIX_STARS_INTERSTAR_SETTLE_SECONDS`.
    - Values are clamped between 5 and 600 seconds.
 6. The origin Star privately decides what she would tell each eligible affected Star.
-7. Each affected Star generates a compact emotional vector reaction toward the Last Cat.
-8. The deterministic relationship/emotion layer applies those micro-updates to the affected Star states.
-9. The origin Star receives a final feedback-vector pass based on the other Stars' responses, and the deterministic layer applies that micro-update to the origin Star.
+7. Each affected Star generates a compact second-hand emotional impression about the Last Cat plus a separate vector toward the source Star.
+8. The second-hand Last Cat impression is awareness only: it does not change Last Cat Heart/Trust/Romance/connection and does not enter direct-player vector history. The source-Star vector may update the separate Star-to-Star relationship state.
+9. The origin Star receives a final feedback-vector pass based on the other Stars' responses; its Last Cat impression is likewise awareness only while per-Star feedback vectors may update Star-to-Star relationships.
 
 ## API / runtime events
 
@@ -84,4 +84,4 @@ Android:
 
 Interstar micro-updates are synthetic internal requests with `interstarMicroUpdate=true` so they do not recursively trigger another interstar ripple.
 
-The target Star vector and origin feedback vector still pass through the same deterministic `RelationshipDeltaCalculator`, so Heart/Trust/Romance movement remains code-owned rather than model-owned.
+Interstar micro requests are explicitly isolated from the direct Last Cat relationship calculator. Their Last Cat impression vectors are retained for private awareness/debugging only and cannot move player Heart/Trust/Romance/EmotionalConnectionPercent or direct-player vector history. Separate source-Star/per-Star vectors still use deterministic code to update `OtherStars` Star-to-Star Heart/Trust state.

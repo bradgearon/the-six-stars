@@ -24,13 +24,17 @@ using Wds.SixStars.Ui.Infrastructure;
 using Wds.SixStars.Ui.Networking;
 using Wds.SixStars.Ui.Services;
 using Wds.SixStars.Api.State;
+using Wds.SixStars.Api.Stars;
 
 namespace Wds.SixStars.Ui.ViewModels;
 
 public sealed partial class MainViewModel
 {
     private readonly object _mobileVoiceStreamGate = new object();
+    private readonly object _mobileLiveVoiceRunGate = new object();
+    private readonly Dictionary<string, MobileLiveVoiceRun> _mobileLiveVoiceRuns = new Dictionary<string, MobileLiveVoiceRun>(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _mobileVoiceStreamCts;
+    private CancellationTokenSource? _backgroundPreparedSpeechCts;
     private MobileVoiceStreamScope? _pendingMobileStoryVoiceStream;
     private Task? _pendingMobileStoryThinkingVoiceTask;
     private long _mobileVoiceStreamOrdinal;
@@ -135,6 +139,7 @@ public sealed partial class MainViewModel
             ProcessMobileMessageAsync,
             ProcessMobileAudioAsync,
             ProcessMobileTestAudioAsync,
+            ProcessStandaloneLocalTtsAsync,
             CreateMobileHealthPayload,
             CreateMobileStarsPayload,
             CreateMobileStatePayloadAsync,
@@ -198,10 +203,26 @@ public sealed partial class MainViewModel
 
     private object CreateMobileStarsPayload()
     {
+        IReadOnlyList<StarProfile> profiles = _profileProvider.GetAllProfiles()
+            .Where(x => x != null && x.Active && !string.IsNullOrWhiteSpace(x.StarId))
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         return new
         {
             ok = true,
-            stars = StarIds.ToArray(),
+            stars = profiles.Select(x => x.StarId).ToArray(),
+            starProfiles = profiles.Select(x => new
+            {
+                starId = x.StarId,
+                displayName = x.DisplayName,
+                element = x.Element,
+                domain = x.Domain,
+                sortOrder = x.SortOrder,
+                actorId = x.ActorId,
+                actorType = x.ActorType,
+                soulDepth = x.Soul == null ? 0 : x.Soul.Depth
+            }).ToArray(),
             requestTypes = RequestTypes.Select(x => x.ToString()).ToArray()
         };
     }
@@ -354,7 +375,6 @@ public sealed partial class MainViewModel
             requestType = entry.RequestType ?? string.Empty,
             playerText = entry.PlayerText ?? string.Empty,
             starResponse = entry.StarResponse ?? string.Empty,
-            summary = entry.Summary ?? string.Empty,
             emotionalEffectVector = entry.EmotionalEffectVector ?? string.Empty,
             negativeEmotionVector = entry.NegativeEmotionVector ?? string.Empty,
             deterministicEmotionSummary = entry.DeterministicEmotionSummary ?? string.Empty,
@@ -433,8 +453,93 @@ public sealed partial class MainViewModel
         string sessionId = string.IsNullOrWhiteSpace(command.SessionId) ? "android-phone-dev" : command.SessionId;
         string starId = ResolveDefaultStarId(command.StarId);
 
+        // Build 15H: any explicit phone control is foreground player activity. Quiet automatic
+        // RefreshState and at-rest initiative traffic are intentionally excluded so background
+        // writing can still run while the phone is truly idle. A separate PlayerActivity command
+        // is sent on Android touch/local playback so even controls that never need the LLM can
+        // immediately cancel the current writing iteration.
+        if (!commandType.Equals("RefreshState", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("MaybeStarInitiative", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("PlayerActivity", StringComparison.OrdinalIgnoreCase)
+            && !commandType.Equals("VoicePlaybackStarted", StringComparison.OrdinalIgnoreCase))
+        {
+            NotifyBackgroundWritingLoopForegroundActivity("Android command " + commandType);
+        }
+
         switch (commandType)
         {
+            case "VoicePlaybackStarted":
+            {
+                string streamId = command.VoiceStreamId?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(streamId) || command.VoiceAudioSequence != 0)
+                {
+                    return new MobileBridgeDispatchResult
+                    {
+                        Ok = true,
+                        CommandId = command.CommandId,
+                        CommandType = commandType,
+                        StarId = starId,
+                        SelectedStarId = SelectedStarId,
+                        Message = "Ignored a non-first or uncorrelated phone playback-start signal.",
+                        SuppressEventPublication = true
+                    };
+                }
+
+                MobileLiveVoiceRun? playbackRun = null;
+                lock (_mobileLiveVoiceRunGate)
+                {
+                    _mobileLiveVoiceRuns.TryGetValue(streamId, out playbackRun);
+                }
+
+                if (playbackRun != null)
+                {
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "First-sentence phone playback confirmed",
+                        "stream=" + streamId + "; playback acknowledgement is diagnostic only because the primary memory review is already queued at Gemma EOS."));
+                }
+
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    Message = playbackRun == null
+                        ? "Playback-start signal arrived after the live run was no longer tracked."
+                        : "First-sentence playback start recorded for diagnostics; primary memory review scheduling is independent of phone playback.",
+                    SuppressEventPublication = true
+                };
+            }
+            case "PlayerActivity":
+            {
+                string activityReason = string.IsNullOrWhiteSpace(command.Reason)
+                    ? "Android app activity"
+                    : command.Reason.Trim();
+                NotifyBackgroundWritingLoopForegroundActivity(activityReason);
+                // PlayerActivity suppresses/cancels ordinary background work while the player is
+                // composing. Protected primary memory reviews explicitly bypass this pulse so a
+                // sub-second durable update cannot be repeatedly cancelled by Talk/touch events.
+                try
+                {
+                    _services.MobileConversation.SuppressBackgroundAnalysisForPlayerActivity(
+                        TimeSpan.FromSeconds(30),
+                        activityReason + " suppressed background AI while the player is active.");
+                }
+                catch { }
+                return new MobileBridgeDispatchResult
+                {
+                    Ok = true,
+                    CommandId = command.CommandId,
+                    CommandType = commandType,
+                    StarId = starId,
+                    SelectedStarId = SelectedStarId,
+                    BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
+                    BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
+                    Message = "Ordinary background writing/AI was preempted for player activity and will wait for 30 idle seconds; an active/queued primary memory review is protected and continues.",
+                    SuppressEventPublication = true
+                };
+            }
             case "SelectStar":
             {
                 OnUiThread(() =>
@@ -586,7 +691,7 @@ public sealed partial class MainViewModel
             case "GenerateStarWriting":
             {
                 using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request to generate Star writing");
-                StarWritingCreateResult writingResult = await _writingService.GenerateAndReviewAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarWritingCreateResult writingResult = await GenerateForgeShelfContentAsync(starId, cancellationToken).ConfigureAwait(false);
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 List<string> items = IsConstellationStory(writingResult)
                     ? writingResult.Batch.Items.Select(x =>
@@ -648,12 +753,37 @@ public sealed partial class MainViewModel
             case "TellStarWriting":
             {
                 using IDisposable writingLoopLease = BeginBackgroundWritingForegroundActivity("an Android request for the Star to tell her writing");
-                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(starId, cancellationToken).ConfigureAwait(false);
+                StarWritingPerformanceResult? performance = await _writingService.TellPendingAsync(
+                    starId,
+                    string.IsNullOrWhiteSpace(command.WritingOutputType) ? StarWritingOutputTypes.Spark : command.WritingOutputType,
+                    cancellationToken).ConfigureAwait(false);
+
+                // Build 15O: once the Spark selection or stored Constellation Story text is known,
+                // start Qwen immediately instead of waiting for state reload + event construction +
+                // correlated Android transport. The audio consumer remains blocked until transport.
+                MobileLiveVoiceRun? writingLiveVoice = null;
+                if (performance != null && command.ReturnAudio)
+                {
+                    writingLiveVoice = TryStartMobileKnownResponseVoice(
+                        performance.Response,
+                        sessionId,
+                        cancellationToken,
+                        string.Equals(StarWritingOutputTypes.Normalize(performance.OutputType), StarWritingOutputTypes.ConstellationStory, StringComparison.OrdinalIgnoreCase)
+                            ? "Android Constellation Story playback"
+                            : "Android Spark performance");
+                }
+
                 StarState state = await _services.MobileConversation.GetStateAsync(sessionId, starId, cancellationToken).ConfigureAwait(false);
                 if (performance == null)
                 {
                     StarWritingNotesState writingState = await _writingService.GetStateAsync(starId, cancellationToken).ConfigureAwait(false);
-                    string emptyMessage = starId + " has no new persisted writing waiting to be told.";
+                    bool requestedConstellation = string.Equals(
+                        StarWritingOutputTypes.Normalize(command.WritingOutputType),
+                        StarWritingOutputTypes.ConstellationStory,
+                        StringComparison.OrdinalIgnoreCase);
+                    string emptyMessage = requestedConstellation
+                        ? starId + " has no unplayed persisted Constellation Stories waiting on the shelf."
+                        : starId + " has no untold persisted Sparks waiting to be told.";
                     OnUiThread(() =>
                     {
                         if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
@@ -699,8 +829,26 @@ public sealed partial class MainViewModel
                     };
                 }
 
-                List<string> items = performance.SelectedWritings.Select(x => x.Writing).ToList();
-                string message = starId + " selected " + items.Count + " writing(s) to tell; " + performance.State.PendingCount + " remain new.";
+                bool isConstellation = string.Equals(
+                    StarWritingOutputTypes.Normalize(performance.OutputType),
+                    StarWritingOutputTypes.ConstellationStory,
+                    StringComparison.OrdinalIgnoreCase);
+                List<string> items = isConstellation
+                    ? performance.SelectedWritings.Select(x =>
+                        (string.IsNullOrWhiteSpace(x.Title) ? "Constellation Story" : x.Title)
+                        + " — " + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + " IU")
+                        .ToList()
+                    : performance.SelectedWritings.Select(x => x.Writing).ToList();
+                string message = isConstellation
+                    ? starId + " selected the highest-Overall-IU unplayed Constellation Story, “"
+                        + (performance.Response.StoryTitle ?? "Constellation Story") + "” at "
+                        + Math.Round(performance.SelectedOverallValue, 2).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+                        + " IU, and split the complete story into " + performance.Response.SpokenParts.Count
+                        + " spoken queue chunks. " + performance.State.PendingConstellationStoryCount + " unplayed Constellation Stories remain."
+                    : starId + " chose " + items.Count + " Spark(s) from a weighted "
+                        + performance.CandidateCount + "-item listening set drawn from her top " + performance.ElitePoolCount
+                        + " IU Sparks (" + performance.AnchorCount + " peak anchors, " + performance.ContrastCount
+                        + " contrast picks); " + performance.State.PendingCount + " untold Sparks remain.";
                 OnUiThread(() =>
                 {
                     if (string.Equals(SelectedStarId, starId, StringComparison.OrdinalIgnoreCase))
@@ -726,6 +874,10 @@ public sealed partial class MainViewModel
                     PersistedWritingCount = performance.State.PersistedWritings.Count,
                     WritingItems = items,
                     SpokenText = performance.Response.SpokenText,
+                    StoryId = performance.Response.StoryId ?? string.Empty,
+                    StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                    StoryIsFinished = performance.Response.StoryIsFinished,
+                    StoryChunkCount = performance.Response.SpokenParts.Count,
                     Message = message
                 });
                 MobileBridgeDispatchResult dispatchResult = new MobileBridgeDispatchResult
@@ -743,6 +895,10 @@ public sealed partial class MainViewModel
                     WritingItems = items,
                     SpokenText = performance.Response.SpokenText,
                     StarOutput = performance.Response.SpokenText,
+                    StoryId = performance.Response.StoryId ?? string.Empty,
+                    StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                    StoryIsFinished = performance.Response.StoryIsFinished,
+                    StoryChunkCount = performance.Response.SpokenParts.Count,
                     VoiceRequested = command.ReturnAudio,
                     VoiceSocketConnected = _services.MobileVoice.IsConnected,
                     State = state,
@@ -756,13 +912,38 @@ public sealed partial class MainViewModel
                     {
                         Ok = true,
                         StarId = starId,
-                        RequestType = "StarWritingPerformance",
+                        RequestType = isConstellation ? "ConstellationStoryPerformance" : "StarWritingPerformance",
                         SpokenText = performance.Response.SpokenText,
+                        StoryId = performance.Response.StoryId ?? string.Empty,
+                        StoryTitle = performance.Response.StoryTitle ?? string.Empty,
+                        StoryIsFinished = performance.Response.StoryIsFinished,
+                        StoryChunkCount = performance.Response.SpokenParts.Count,
                         StarOutput = performance.Response.SpokenText,
                         VoiceRequested = true,
                         VoiceSocketConnected = _services.MobileVoice.IsConnected
                     };
-                    dispatchResult.AfterTransportResponseAsync = () => SendMobileVoiceAsync(performance.Response, mobileVoiceResponse, CancellationToken.None);
+
+                    if (writingLiveVoice != null)
+                    {
+                        MobileLiveVoiceRun exactWritingLiveVoice = writingLiveVoice;
+                        dispatchResult.AfterTransportResponseAsync = async () =>
+                        {
+                            await FinishMobileLiveVoiceAsync(exactWritingLiveVoice, string.Empty).ConfigureAwait(false);
+                            mobileVoiceResponse.VoiceChunksSent = exactWritingLiveVoice.ChunksSent;
+                            mobileVoiceResponse.VoiceBytesSent = exactWritingLiveVoice.BytesSent;
+                            mobileVoiceResponse.VoiceError = exactWritingLiveVoice.ErrorMessage;
+                        };
+                        dispatchResult.OnTransportFailureAsync = () =>
+                        {
+                            AbortMobileLiveVoice(exactWritingLiveVoice, "Android writing/story text transport failed while prewarmed voice was active.");
+                            return Task.CompletedTask;
+                        };
+                    }
+                    else
+                    {
+                        // Socket-unavailable/non-streaming fallback keeps the older path usable.
+                        dispatchResult.AfterTransportResponseAsync = () => SendMobileVoiceAsync(performance.Response, mobileVoiceResponse, CancellationToken.None);
+                    }
                 }
                 return dispatchResult;
             }
@@ -889,7 +1070,7 @@ public sealed partial class MainViewModel
                 result.Event = _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
                 {
                     EventType = photoResponse.Ok ? "PhotoResponseReady" : "PhotoResponseFailed",
-                    CommandId = command.CommandId,
+                    CommandId = !string.IsNullOrWhiteSpace(photoResponse.StreamingResponseId) ? photoResponse.StreamingResponseId : command.CommandId,
                     SourceClientId = command.SourceClientId,
                     SessionId = sessionId,
                     StarId = starId,
@@ -920,6 +1101,11 @@ public sealed partial class MainViewModel
                     EmotionalEffectVector = FirstNonEmptyForMobile(photoResponse.EmotionalEffectVector, state.LastEmotionalEffectVector),
                     NegativeEmotionVector = FirstNonEmptyForMobile(photoResponse.NegativeEmotionVector, state.LastNegativeEmotionVector),
                     LastEmotionVectorsText = FirstNonEmptyForMobile(photoResponse.LastEmotionVectorsText, FormatEmotionVectors(photoResponse.EmotionalEffectVector, photoResponse.NegativeEmotionVector)),
+                    StreamingChunkIndex = photoResponse.StreamedTextChunkCount,
+                    FirstStreamedTextChunkMs = photoResponse.FirstStreamedTextChunkMs,
+                    ServerElapsedMs = photoResponse.ServerElapsedMs,
+                    RuntimeElapsedMs = photoResponse.RuntimeElapsedMs,
+                    GateWaitMs = photoResponse.GateWaitMs,
                     InterstarStatusText = InterstarStatusText
                 });
                 return result;
@@ -1051,7 +1237,7 @@ public sealed partial class MainViewModel
         AppendMobileBridgeVoiceDebug("Mobile state update", status + " Heart=" + state.Heart + ", Trust=" + state.Trust + ", Romance=" + state.Romance + ", Connection=" + state.EmotionalConnectionPercent.ToString("0.0") + "%, top=" + FormatTopAffectedEmotions(state.LastTopAffectedEmotions));
     }
 
-    private void PublishMobileConversationFailureEventIfNeeded(MobileBridgeRequest mobileRequest, string starId, RequestType requestType, string error)
+    private void PublishMobileConversationFailureEventIfNeeded(MobileBridgeRequest mobileRequest, string starId, RequestType requestType, string error, string streamingResponseId = "")
     {
         if (requestType == RequestType.StarInitiative || requestType == RequestType.Photo) return;
         try
@@ -1059,7 +1245,9 @@ public sealed partial class MainViewModel
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = "MobileConversationResponseFailed",
-                CommandId = "direct-mobile-failed-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CommandId = !string.IsNullOrWhiteSpace(streamingResponseId)
+                    ? streamingResponseId
+                    : "direct-mobile-failed-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
                 SessionId = string.IsNullOrWhiteSpace(mobileRequest.SessionId) ? "android-phone-dev" : mobileRequest.SessionId,
                 StarId = starId ?? string.Empty,
@@ -1083,7 +1271,9 @@ public sealed partial class MainViewModel
             _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
             {
                 EventType = response.Ok ? "MobileConversationResponseReady" : "MobileConversationResponseFailed",
-                CommandId = "direct-mobile-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CommandId = !string.IsNullOrWhiteSpace(response.StreamingResponseId)
+                    ? response.StreamingResponseId
+                    : "direct-mobile-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
                 SessionId = request.SessionId ?? string.Empty,
                 StarId = response.StarId ?? request.StarId ?? string.Empty,
@@ -1116,6 +1306,11 @@ public sealed partial class MainViewModel
                 NegativeEmotionVector = response.NegativeEmotionVector ?? string.Empty,
                 LastEmotionVectorsText = response.LastEmotionVectorsText ?? string.Empty,
                 InterstarStatusText = InterstarStatusText,
+                StreamingChunkIndex = response.StreamedTextChunkCount,
+                FirstStreamedTextChunkMs = response.FirstStreamedTextChunkMs,
+                ServerElapsedMs = response.ServerElapsedMs,
+                RuntimeElapsedMs = response.RuntimeElapsedMs,
+                GateWaitMs = response.GateWaitMs,
                 DailyStateSlotId = response.DailyStateSlotId ?? string.Empty,
                 DailyStateLocalDate = response.DailyStateLocalDate ?? string.Empty,
                 DailyStateGeneratedAt = response.DailyStateGeneratedAt,
@@ -1185,6 +1380,9 @@ public sealed partial class MainViewModel
             ServerElapsedMs = response.ServerElapsedMs,
             RuntimeElapsedMs = response.RuntimeElapsedMs,
             GateWaitMs = response.GateWaitMs,
+            StreamingResponseId = response.StreamingResponseId,
+            StreamedTextChunkCount = response.StreamedTextChunkCount,
+            FirstStreamedTextChunkMs = response.FirstStreamedTextChunkMs,
             StoryId = response.StoryId,
             StoryTitle = response.StoryTitle,
             StoryMarkdown = response.StoryMarkdown,
@@ -1517,6 +1715,112 @@ public sealed partial class MainViewModel
         }
     }
 
+    private void PublishMobileBridgeBackgroundEmotionAnimationCue(StarInteractionResponse response)
+    {
+        if (response == null || string.IsNullOrWhiteSpace(response.EmotionAnimationName)) return;
+        string mobile = GetResponseEventData(response, "BackgroundReviewMetadata", "mobileBridge");
+        if (!string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase)) return;
+
+        string sessionId = GetResponseEventData(response, "BackgroundReviewMetadata", "sessionId");
+        try
+        {
+            string animation = response.EmotionAnimationName.Trim().ToLowerInvariant();
+            _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+            {
+                EventType = "StarEmotionAnimationCue",
+                CommandId = "background-emotion-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                SourceClientId = "SixStarsBackgroundReview",
+                SessionId = sessionId,
+                StarId = response.StarId ?? string.Empty,
+                SelectedStarId = SelectedStarId,
+                AnimationName = animation,
+                Message = animation
+            });
+            AppendMobileBridgeVoiceDebug("Background emotion animation queued", (response.StarId ?? "Star") + " -> " + animation);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish background Star emotion animation cue: " + ex.Message);
+        }
+    }
+
+    private async Task HandleBackgroundInformationFollowupResponseAsync(StarInteractionResponse response)
+    {
+        if (response == null || string.IsNullOrWhiteSpace(response.SpokenText)) return;
+        string mobile = GetResponseEventData(response, "BackgroundInformationFollowupReady", "mobileBridge");
+        string sessionId = FirstNonEmptyForMobile(
+            GetResponseEventData(response, "BackgroundInformationFollowupReady", "sessionId"),
+            "android-phone-dev");
+        // The lookup answer is a new spoken continuation even if the original input arrived via
+        // Photo/voice transport, so publish it as ordinary Chat for Android conversation display.
+        RequestType requestType = RequestType.Chat;
+
+        if (string.Equals(mobile, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                string starId = response.StarId ?? SelectedStarId;
+                StarState state = await _runtime.GetStarStateAsync(sessionId, starId, CancellationToken.None).ConfigureAwait(false);
+                MobileBridgeRequest mobileRequest = new MobileBridgeRequest
+                {
+                    StarId = starId,
+                    RequestType = requestType.ToString(),
+                    ReturnAudio = true,
+                    SessionId = sessionId,
+                    ClientName = "SixStarsMobileAndroid-BackgroundInfo"
+                };
+                StarInteractionRequest runtimeRequest = new StarInteractionRequest
+                {
+                    SessionId = sessionId,
+                    StarId = starId,
+                    RequestType = requestType,
+                    PlayerText = string.Empty,
+                    GameContext = CreateMobileGameContext(mobileRequest, starId)
+                };
+                MobileBridgeResponse mobileResponse = CreateMobileResponse(mobileRequest, runtimeRequest, string.Empty, response, state);
+
+                // The background continuation has no direct HTTP response. Queue its visible text
+                // first, then use the ordinary phone voice stream for the answer.
+                PublishMobileConversationResponseEventIfNeeded(mobileRequest, runtimeRequest, mobileResponse, response, state);
+                OnUiThread(() =>
+                {
+                    StarOutput = FormatStarOutput(response);
+                    Status = starId + " found the requested information and is answering now.";
+                    AppendMobileBridgeVoiceDebug("Background information follow-up ready", starId + ", chars=" + response.SpokenText.Length);
+                });
+                await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug("Background information follow-up failed", ex.Message));
+            }
+            return;
+        }
+
+        try
+        {
+            OnUiThread(() =>
+            {
+                StarOutput = FormatStarOutput(response);
+                Status = (response.StarId ?? "Star") + " found the requested information and is answering now.";
+            });
+            await SpeakStarResponseAsync(response, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            OnUiThread(() => Status = "Background information follow-up voice failed: " + ex.Message);
+        }
+    }
+
+    private static string GetResponseEventData(StarInteractionResponse response, string eventType, string key)
+    {
+        if (response?.UnityEvents == null) return string.Empty;
+        UnityEventEnvelope? evt = response.UnityEvents.LastOrDefault(x =>
+            x != null && string.Equals(x.Type, eventType, StringComparison.OrdinalIgnoreCase));
+        if (evt?.Data != null && evt.Data.TryGetValue(key, out string? value)) return value ?? string.Empty;
+        return string.Empty;
+    }
+
     private void PublishMobileBridgeTopEmotionUpdate(StarInteractionResponse response, string eventType = "TopAffectedEmotionsChanged")
     {
         if (response == null) return;
@@ -1598,6 +1902,47 @@ public sealed partial class MainViewModel
         return hash.Length <= 12 ? hash : hash.Substring(0, 12);
     }
 
+
+    private async Task<byte[]> ProcessStandaloneLocalTtsAsync(string starId, string text, CancellationToken cancellationToken)
+    {
+        string normalizedStar = string.IsNullOrWhiteSpace(starId) ? SelectedStarId ?? "Elusiaa" : starId.Trim();
+        string spoken = (text ?? string.Empty).Trim();
+        if (spoken.Length == 0) throw new InvalidOperationException("Standalone local TTS text is empty.");
+
+        StarInteractionResponse response = CreateLiveVoiceTemplateResponse(normalizedStar);
+        response.SetSpokenParts(new[] { spoken });
+        VoiceSynthesisRequest request = CreateVoiceSynthesisRequest(response);
+        string clonePath = request.VoiceSettings?.VoiceCloneAudioFile ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(clonePath) || !Path.IsPathFullyQualified(clonePath) || !File.Exists(clonePath))
+        {
+            throw new FileNotFoundException(
+                "Standalone local TTS could not resolve the canonical absolute voice-clone file for " + normalizedStar + ".",
+                clonePath);
+        }
+        AppendMobileBridgeVoiceDebug("Standalone local TTS request", normalizedStar + " clone=" + clonePath);
+
+        using IStreamingVoiceGenerator generator = CreateLocalStreamingVoiceGenerator();
+        TaskCompletionSource<byte[]> audioReady = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        generator.AudioChunkReady += (_, args) =>
+        {
+            if (args.AudioData != null && args.AudioData.Length > 0) audioReady.TrySetResult(args.AudioData);
+        };
+        generator.GenerationError += (_, args) =>
+        {
+            audioReady.TrySetException(args.Exception ?? new InvalidOperationException(args.ErrorMessage));
+        };
+        generator.GenerationComplete += (_, args) =>
+        {
+            if (args.WasCancelled) audioReady.TrySetCanceled(cancellationToken);
+            else if (!audioReady.Task.IsCompleted) audioReady.TrySetException(new InvalidOperationException("Local TTS completed without returning a WAV chunk."));
+        };
+
+        await generator.ConnectAsync(cancellationToken).ConfigureAwait(false);
+        await generator.GenerateStreamingAsync(request, cancellationToken).ConfigureAwait(false);
+        byte[] wav = await audioReady.Task.WaitAsync(TimeSpan.FromSeconds(120), cancellationToken).ConfigureAwait(false);
+        AppendMobileBridgeVoiceDebug("Standalone local TTS", normalizedStar + " generated " + wav.Length + " WAV bytes through the desktop-resolved clone path.");
+        return wav;
+    }
 
     private async Task<object> ProcessMobileTestAudioAsync(CancellationToken cancellationToken)
     {
@@ -1736,7 +2081,8 @@ public sealed partial class MainViewModel
 
             await streamer.BeginSegmentAsync(segmentId, pcm.Format, new WhisperTranscriptionOptions
             {
-                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language
+                Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
+                Prompt = CreateWhisperNamePrompt()
             }, cancellationToken).ConfigureAwait(false);
             await streamer.PushAudioAsync(segmentId, pcm.Pcm16, 0, pcm.Pcm16.Length, cancellationToken).ConfigureAwait(false);
             SpeechTranscript transcript = await streamer.EndSegmentAsync(segmentId, cancellationToken).ConfigureAwait(false);
@@ -1793,6 +2139,9 @@ public sealed partial class MainViewModel
 
     private async Task<MobileBridgeResponse> ProcessMobileConversationAsync(MobileBridgeRequest mobileRequest, string transcript, CancellationToken cancellationToken)
     {
+        // Capture the logical player-turn time immediately. The protected primary background review
+        // commits later, so its completion time must never become the conversation timestamp.
+        DateTimeOffset turnStartedAt = DateTimeOffset.UtcNow;
         System.Diagnostics.Stopwatch totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
         long gateWaitMs = 0;
         long runtimeElapsedMs = 0;
@@ -1817,6 +2166,12 @@ public sealed partial class MainViewModel
             ? BeginBackgroundWritingForegroundActivity("an Android foreground interaction with " + starId)
             : null;
         MobileConversationService.Lease? mobileLease = null;
+        MobileLiveVoiceRun? livePhoneVoice = null;
+        string streamingResponseId = string.Empty;
+        int streamedTextChunkCount = 0;
+        long firstStreamedTextChunkMs = 0;
+        object streamedTextGate = new object();
+        StringBuilder streamedText = new StringBuilder();
         System.Diagnostics.Stopwatch gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         if (isPrefetchInitiative)
@@ -1850,14 +2205,33 @@ public sealed partial class MainViewModel
         }
         else
         {
-            // Real text/voice/photo and the user-pressed Listen button preempt automatic at-rest or
-            // background work. Android uses separate client queues, so this request reaches the
-            // desktop immediately instead of waiting behind the older initiative HTTP call.
+            // A new player request may arrive while the PREVIOUS foreground is still streaming Gemma
+            // after sentence one has already begun speaking. Do not call CancelAllRuntimeOperations
+            // before this gate: that used to cancel the still-running foreground token before it could
+            // reach EOS and create/commit its primary memory review. Ordinary background work can be
+            // cancelled now, but the protected primary review ignores that cancellation by design.
             string priorityLabel = isManualInitiative ? "Android manual Listen request" : "Android foreground request";
-            try { _operationController.CancelAllRuntimeOperations(priorityLabel + " preempted mobile background/at-rest work for " + starId + "."); } catch { }
-            try { _services.MobileConversation.CancelBackgroundAnalysis(priorityLabel + " preempted background analysis for " + starId + "."); } catch { }
+            string traceSessionId = string.IsNullOrWhiteSpace(mobileRequest.SessionId) ? "android-phone-dev" : mobileRequest.SessionId;
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.foreground-gate-wait-start",
+                string.Empty,
+                traceSessionId,
+                starId,
+                priorityLabel + " arrived. Waiting for the previous mobile foreground lane without cancelling its Gemma request; cancellable background work may still be preempted.");
+            try { _services.MobileConversation.CancelBackgroundAnalysis(priorityLabel + " preempted cancellable background analysis for " + starId + "."); } catch { }
             mobileLease = await _services.MobileConversation.AcquireAsync(cancellationToken).ConfigureAwait(false);
             gateWaitMs = gateStopwatch.ElapsedMilliseconds;
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.foreground-gate-acquired",
+                string.Empty,
+                traceSessionId,
+                starId,
+                priorityLabel + " acquired the mobile foreground lane after " + gateWaitMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms. The previous foreground has returned; protected primary review settlement is enforced again inside SixStarsRuntime.ProcessAsync.");
+
+            // Only now is it safe to stop stale live/TTS/input work from the previous operation. At
+            // this point the previous ProcessMobileConversationAsync no longer owns the mobile lane,
+            // so this cannot abort its Gemma generation before the primary review was created.
+            try { _operationController.CancelAllRuntimeOperations(priorityLabel + " acquired the mobile foreground lane; cancelling stale cancellable runtime work for " + starId + "."); } catch { }
         }
 
         try
@@ -1882,6 +2256,7 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 Speaker = "LastCat",
                 RequestType = requestType,
+                TurnStartedAt = turnStartedAt,
                 PlayerText = mobileRequest.PlayerText ?? string.Empty,
                 AttachedPhoto = new StarPhotoAttachment(),
                 GameContext = CreateMobileGameContext(mobileRequest, starId),
@@ -1890,6 +2265,56 @@ public sealed partial class MainViewModel
 
             MobileAttachedPhotoResult photoResult = await AddMobileAttachedPhotoContextAsync(request, mobileRequest, cancellationToken).ConfigureAwait(false);
 
+            // Normal Chat/Photo speech is split deterministically from streamed punctuation. Send
+            // each complete sentence to Android immediately as a transient cumulative conversation
+            // row instead of waiting for model EOS. The first sentence is published before its Qwen
+            // audio is released, so visible text still leads audible speech.
+            if (ShouldUseMobileLiveStreamingSpeech(request))
+            {
+                streamingResponseId = Guid.NewGuid().ToString("N");
+                request.SpokenChunkReady = chunk =>
+                {
+                    if (string.IsNullOrWhiteSpace(chunk)) return;
+
+                    string cumulative;
+                    int chunkIndex;
+                    long elapsedMs;
+                    lock (streamedTextGate)
+                    {
+                        if (streamedText.Length > 0) streamedText.Append(' ');
+                        streamedText.Append(chunk.Trim());
+                        streamedTextChunkCount++;
+                        chunkIndex = streamedTextChunkCount;
+                        elapsedMs = totalStopwatch.ElapsedMilliseconds;
+                        if (firstStreamedTextChunkMs <= 0) firstStreamedTextChunkMs = elapsedMs;
+                        cumulative = streamedText.ToString();
+                    }
+
+                    try
+                    {
+                        _mobileBridgeDispatcher.Publish(new MobileBridgeDispatchEvent
+                        {
+                            EventType = "MobileConversationStreamChunk",
+                            CommandId = streamingResponseId,
+                            SourceClientId = string.IsNullOrWhiteSpace(mobileRequest.ClientName) ? "SixStarsMobileAndroid" : mobileRequest.ClientName,
+                            SessionId = request.SessionId ?? string.Empty,
+                            StarId = request.StarId ?? starId,
+                            SelectedStarId = SelectedStarId,
+                            SpokenText = cumulative,
+                            StreamingChunkIndex = chunkIndex,
+                            FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
+                            ServerElapsedMs = elapsedMs,
+                            Message = "Committed foreground speech chunk " + chunkIndex + " is ready for immediate Android display; final response/state is still generating."
+                        });
+                    }
+                    catch (Exception streamEventError)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish streamed Android text chunk: " + streamEventError.Message);
+                    }
+                };
+
+            }
+
             ResetLlmDebugLog(request);
             CancellationToken runtimeToken = isPrefetchInitiative
                 ? cancellationToken
@@ -1897,6 +2322,16 @@ public sealed partial class MainViewModel
             using CancellationTokenSource linkedCts = isPrefetchInitiative
                 ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
                 : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runtimeToken);
+
+            if (wantsPhoneAudio && ShouldUseMobileLiveStreamingSpeech(request))
+            {
+                livePhoneVoice = await TryStartMobileLiveVoiceAsync(request, linkedCts.Token).ConfigureAwait(false);
+                if (livePhoneVoice != null)
+                {
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Foreground voice stream armed", "The first complete punctuated sentence is queued to Qwen immediately while Gemma continues; its streamed text is published before audio release. Later sentences are batched at Gemma EOS."));
+                }
+            }
+
             System.Diagnostics.Stopwatch runtimeStopwatch = System.Diagnostics.Stopwatch.StartNew();
             StarInteractionResponse starResponse = isPrefetchInitiative
                 ? await _services.MobileConversation.ProcessWhenForegroundIdleAsync(
@@ -1904,9 +2339,52 @@ public sealed partial class MainViewModel
                     "Prepare " + starId + "'s private Android Listen response only after foreground conversation is idle.",
                     linkedCts.Token).ConfigureAwait(false)
                 : await _services.MobileConversation.ProcessAsync(request, linkedCts.Token).ConfigureAwait(false);
-            StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
+
+            // The complete foreground response exists at Gemma EOS. The runtime now queues the
+            // protected primary memory review immediately at that point; Android playback-start is
+            // diagnostic only and no longer controls/cancels the durable update lifecycle.
             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
+            livePhoneVoice?.MarkGemmaEos();
+            _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                "mobile.gemma-eos",
+                backgroundAnalysisId,
+                request.SessionId ?? string.Empty,
+                request.StarId ?? string.Empty,
+                "Foreground Gemma response returned to the Android host after " + runtimeStopwatch.ElapsedMilliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms; primary review should already be registered/queued by SixStarsRuntime.");
+            if (livePhoneVoice != null && !string.IsNullOrWhiteSpace(backgroundAnalysisId))
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Protected background review queued at Gemma EOS",
+                    "analysis=" + backgroundAnalysisId + "; review is independent of phone playback acknowledgement and must settle before the next foreground turn."));
+            }
+
+            if (livePhoneVoice != null)
+            {
+                // The first punctuation-complete sentence is already synthesizing (and may already be
+                // playing). Batch all later immutable sentences now that Gemma has reached EOS. This
+                // gives first-speech latency the streaming benefit without making Qwen compete with
+                // Gemma for the entire remainder of a longer response.
+                List<string> deferredChunks = livePhoneVoice.DrainDeferredTextChunks();
+                List<string> postLlmChunks = livePhoneVoice.Pipeline.TextChunksEnqueued == 0
+                    ? starResponse.SpokenParts
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Select(x => x.Trim())
+                        .ToList()
+                    : deferredChunks;
+                if (postLlmChunks.Count > 0)
+                {
+                    livePhoneVoice.Pipeline.EnqueueTextChunks(postLlmChunks);
+                }
+                livePhoneVoice.ExpectedChunks = livePhoneVoice.Pipeline.TextChunksEnqueued;
+                livePhoneVoice.PostLlmSynthesisStarted = true;
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Streaming Qwen sentence count finalized",
+                    "Gemma EOS reached; first sentence synthesis began during streaming and " + postLlmChunks.Count + " later/fallback speech chunk(s) were queued now. Expected total=" + livePhoneVoice.ExpectedChunks + "."));
+            }
+
+            StarState stateAfterResponse = await _services.MobileConversation.GetStateAsync(request.SessionId, starResponse.StarId ?? request.StarId, linkedCts.Token).ConfigureAwait(false);
             runtimeElapsedMs = runtimeStopwatch.ElapsedMilliseconds;
+
             if (photoResult.Attached)
             {
                 starResponse.Debug.Notes.Add("Android photo summary: " + photoResult.Summary);
@@ -1935,9 +2413,23 @@ public sealed partial class MainViewModel
             }
 
             MobileBridgeResponse response = CreateMobileResponse(mobileRequest, request, transcript, starResponse, stateAfterResponse);
+            if (livePhoneVoice != null)
+            {
+                response.VoiceRequested = true;
+                response.VoiceSocketConnected = livePhoneVoice.HadTargets;
+                response.VoiceChunksSent = livePhoneVoice.ChunksSent;
+                response.VoiceBytesSent = livePhoneVoice.BytesSent;
+                response.VoiceError = livePhoneVoice.ErrorMessage;
+                response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
+                    ? "The first complete sentence starts Qwen during Gemma streaming; qwentts.cpp returns one smooth WAV for that sentence while Gemma can continue generating later text."
+                    : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
+            }
             response.GateWaitMs = gateWaitMs;
             response.RuntimeElapsedMs = runtimeElapsedMs;
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
+            response.StreamingResponseId = streamingResponseId;
+            response.StreamedTextChunkCount = streamedTextChunkCount;
+            response.FirstStreamedTextChunkMs = firstStreamedTextChunkMs;
             if (requestType == RequestType.StarInitiative && (!starResponse.InitiativeShouldSpeak || string.IsNullOrWhiteSpace(starResponse.SpokenText)))
             {
                 wantsPhoneAudio = false;
@@ -1982,6 +2474,9 @@ public sealed partial class MainViewModel
                         response.ServerElapsedMs,
                         response.RuntimeElapsedMs,
                         response.GateWaitMs,
+                        response.StreamingResponseId,
+                        response.StreamedTextChunkCount,
+                        response.FirstStreamedTextChunkMs,
                         storyMarkdownChars = response.StoryMarkdown?.Length ?? 0,
                         storyChunkCount = response.StoryChunkCount,
                         storyMarkdownReady = response.StoryMarkdownReady,
@@ -2009,6 +2504,35 @@ public sealed partial class MainViewModel
             if (wantsInlineAudio)
             {
                 ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Prepared inline Android Listen cache audio.");
+            }
+            else if (livePhoneVoice != null)
+            {
+                // The first complete streamed sentence may already be speaking. The final correlated
+                // response still owns completion of the ordered stream, expected chunk count, and the
+                // remaining sentence batch after Gemma EOS.
+                MobileLiveVoiceRun exactLiveRun = livePhoneVoice;
+                string exactAnalysisId = backgroundAnalysisId;
+                response.VoiceSocketConnected = exactLiveRun.HadTargets && _services.MobileVoice.IsConnected;
+                response.VoiceMessage = "Android text is split into complete streamed sentences; the first sentence starts Qwen immediately and may begin playing before Gemma EOS. PCM packets for the whole logical reply feed one rolling AudioTrack, with adaptive startup buffering and refill protection.";
+                response.AfterTransportResponseAsync = async () =>
+                {
+                    await FinishMobileLiveVoiceAsync(exactLiveRun, exactAnalysisId).ConfigureAwait(false);
+                    response.VoiceChunksSent = exactLiveRun.ChunksSent;
+                    response.VoiceBytesSent = exactLiveRun.BytesSent;
+                    response.VoiceError = exactLiveRun.ErrorMessage;
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "Live phone voice drained after text transport",
+                        "chunks=" + exactLiveRun.ChunksSent + ", bytes=" + exactLiveRun.BytesSent + ", error=" + exactLiveRun.ErrorMessage));
+                };
+                response.OnTransportFailureAsync = () =>
+                {
+                    AbortMobileLiveVoice(exactLiveRun, "Android text response transport failed while live voice was active.");
+                    ReleasePendingBackgroundAnalysis(exactAnalysisId, "Android response transport failed during live voice.");
+                    return Task.CompletedTask;
+                };
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Live phone voice waiting for text transport",
+                    "The first Qwen sentence may already be synthesizing/playing before Gemma EOS; later sentences batch after EOS while final text transport completes. chunks sent before transport=" + exactLiveRun.ChunksSent + "."));
             }
             else if (wantsPhoneAudio)
             {
@@ -2063,21 +2587,49 @@ public sealed partial class MainViewModel
             if (!wantsInlineAudio) response.VoiceSocketConnected = _services.MobileVoice.IsConnected;
             if (!mobileRequest.PrefetchForListen)
             {
-                PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                if (mobileRequest.DeferConversationResponseEventUntilTransportFailure)
+                {
+                    // A persistent WebSocket request already returns this exact reply through its
+                    // correlated response. Publishing the recovery event before that transport made
+                    // Android render a silent first copy and then handle the direct copy that starts
+                    // voice. Preserve recovery semantics by publishing only if direct transport fails.
+                    Func<Task>? existingTransportFailure = response.OnTransportFailureAsync;
+                    response.OnTransportFailureAsync = async () =>
+                    {
+                        try
+                        {
+                            if (existingTransportFailure != null)
+                            {
+                                await existingTransportFailure().ConfigureAwait(false);
+                            }
+                        }
+                        finally
+                        {
+                            PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                        }
+                    };
+                }
+                else
+                {
+                    PublishMobileConversationResponseEventIfNeeded(mobileRequest, request, response, starResponse, stateAfterResponse);
+                }
             }
             OnUiThread(() =>
             {
                 MobileBridgeStatus = wantsInlineAudio
                     ? "Prepared Android Listen cache: " + response.VoiceChunksCached + " chunk(s), " + response.VoiceBytesCached + " bytes."
-                    : wantsPhoneAudio
-                        ? "Android text response returned. Phone voice generation continues in the background."
-                        : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
+                    : livePhoneVoice != null
+                        ? "Android text response ready; warmed live TTS will start on the phone immediately after transport."
+                        : wantsPhoneAudio
+                            ? "Android text response returned. Phone voice generation continues in the background."
+                            : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
             });
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
             return response;
         }
         catch (OperationCanceledException)
         {
+            AbortMobileLiveVoice(livePhoneVoice, "Android bridge request was cancelled.");
             ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge request was cancelled after the foreground response was created.");
             MobileBridgeResponse cancelled = new MobileBridgeResponse
             {
@@ -2085,15 +2637,19 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 RequestType = requestType.ToString(),
                 VoiceError = "Android bridge request was cancelled.",
+                StreamingResponseId = streamingResponseId,
+                StreamedTextChunkCount = streamedTextChunkCount,
+                FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
                 GateWaitMs = gateWaitMs,
                 RuntimeElapsedMs = runtimeElapsedMs,
                 ServerElapsedMs = totalStopwatch.ElapsedMilliseconds
             };
-            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError);
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, cancelled.VoiceError, streamingResponseId);
             return cancelled;
         }
         catch (Exception ex)
         {
+            AbortMobileLiveVoice(livePhoneVoice, "Android bridge failed: " + ex.Message);
             ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android bridge failed after the foreground response was created: " + ex.Message);
             OnUiThread(() => MobileBridgeStatus = "Android bridge error: " + ex.Message);
             MobileBridgeResponse failed = new MobileBridgeResponse
@@ -2102,12 +2658,15 @@ public sealed partial class MainViewModel
                 StarId = starId,
                 RequestType = requestType.ToString(),
                 VoiceError = ex.Message,
+                StreamingResponseId = streamingResponseId,
+                StreamedTextChunkCount = streamedTextChunkCount,
+                FirstStreamedTextChunkMs = firstStreamedTextChunkMs,
                 GateWaitMs = gateWaitMs,
                 RuntimeElapsedMs = runtimeElapsedMs,
                 ServerElapsedMs = totalStopwatch.ElapsedMilliseconds,
                 Notes = { ex.GetType().Name }
             };
-            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message);
+            PublishMobileConversationFailureEventIfNeeded(mobileRequest, starId, requestType, ex.Message, streamingResponseId);
             return failed;
         }
         finally
@@ -2377,14 +2936,544 @@ public sealed partial class MainViewModel
         public static MobileAttachedPhotoResult Empty => new MobileAttachedPhotoResult(false, string.Empty, string.Empty);
     }
 
+    private bool ShouldUseMobileLiveStreamingSpeech(StarInteractionRequest request)
+    {
+        if (request == null || !_useStreamingTts) return false;
+        if (ShouldUseLiveForegroundSpeech(request.RequestType)) return true;
+
+        // A manually requested Thought/Listen uses the same plain-text sentence stream as normal
+        // chat. Prepared/automatic at-rest initiative remains the compact JSON/cache path.
+        return request.RequestType == RequestType.StarInitiative
+            && IsTruthy(GetFlag(request, "starInitiativeForce"))
+            && !IsTruthy(GetFlag(request, "starInitiativePrepareForListen"));
+    }
+
+    private async Task<MobileLiveVoiceRun?> TryStartMobileLiveVoiceAsync(StarInteractionRequest request, CancellationToken cancellationToken)
+    {
+        if (!ShouldUseMobileLiveStreamingSpeech(request)) return null;
+        if (!_services.MobileVoice.IsConnected) return null;
+
+        StarInteractionResponse template = CreateLiveVoiceTemplateResponse(request.StarId);
+        MobileVoiceStreamScope stream = BeginMobileVoiceStream(template, false, "Android sentence-streamed foreground reply");
+        if (stream.AudioSession == null || stream.AudioSession.TargetClientIds.Count == 0)
+        {
+            EndMobileVoiceStream(stream, "no connected Android audio targets for live speech");
+            return null;
+        }
+
+        CancellationTokenSource voiceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stream.CancellationToken);
+        IStreamingVoiceGenerator? generator = null;
+        LiveStarVoiceResponsePipeline? pipeline = null;
+        try
+        {
+            generator = CreateStreamingVoiceGenerator();
+            pipeline = new LiveStarVoiceResponsePipeline(
+                generator,
+                new NullWavePlaybackEndpoint(),
+                _speechPipeline,
+                _interruptionManager)
+            {
+                AutoPlayChunks = false
+            };
+
+            MobileLiveVoiceRun run = new MobileLiveVoiceRun(stream, pipeline, voiceCts)
+            {
+                HadTargets = true
+            };
+            RegisterMobileLiveVoiceRun(run);
+
+            pipeline.GenerationError += (_, args) =>
+            {
+                run.ErrorMessage = args.ErrorMessage ?? "Live TTS generation error.";
+            };
+            pipeline.ChunkReadyForConsumer += (_, args) =>
+            {
+                try
+                {
+                    if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
+
+                    // Primary background review timing is independent of Android playback now.
+                    // This callback only delivers the generated audio to the phone; playback-start
+                    // acknowledgements remain diagnostic and cannot release/cancel the durable review.
+
+                    // The first streamed sentence is published to the Android text bridge before
+                    // Qwen is queued. Once that first text event has been published, the transport
+                    // gate opens and the WAV may follow as soon as synthesis completes; we no longer
+                    // wait for Gemma EOS just to begin audible speech.
+                    run.TransportReady.Wait(stream.CancellationToken);
+
+                    if (run.TryMarkFirstAudioReady(out long firstAudioMs, out bool gemmaEosAlreadyReached))
+                    {
+                        _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                            "mobile.first-audio-ready",
+                            string.Empty,
+                            request.SessionId ?? string.Empty,
+                            request.StarId ?? string.Empty,
+                            "First playable Qwen audio became available " + firstAudioMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms after the first sentence was queued; gemmaEosAlreadyReached=" + gemmaEosAlreadyReached + ".");
+                        OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                            "First Qwen audio ready",
+                            firstAudioMs + " ms after first sentence queued; Gemma EOS already reached=" + gemmaEosAlreadyReached + "."));
+                    }
+
+                    int chunkIndex = args.Sequence;
+                    int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
+                    MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+                    {
+                        IsStory = false,
+                        TtsPartIndex = chunkIndex,
+                        TtsTotalParts = knownTotal
+                    };
+                    MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(
+                        args.Result,
+                        chunkIndex,
+                        knownTotal,
+                        stream.CancellationToken,
+                        stream.AudioSession,
+                        frameContext).GetAwaiter().GetResult();
+                    if (sent.SentClients > 0)
+                    {
+                        run.ChunksSent++;
+                        run.BytesSent += args.Result.WavAudio.Length;
+                    }
+                    string checksum = Sha256Hex(args.Result.WavAudio);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "Live voice chunk sent",
+                        "stream=" + stream.Ordinal + ", chunk=" + (chunkIndex + 1) + ", clients=" + sent.SentClients + ", bytes=" + args.Result.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+                }
+                catch (OperationCanceledException)
+                {
+                    run.ErrorMessage = "Android live voice stream was replaced by a newer request.";
+                }
+                catch (Exception ex)
+                {
+                    run.ErrorMessage = "Phone live audio send failed: " + ex.Message;
+                }
+            };
+
+            pipeline.Start(request.SessionId, template, voiceCts.Token);
+
+            // Build 15X: sentence punctuation, not §, now commits ordinary speech. The existing
+            // callback publishes that complete sentence to Android first; then the first sentence is
+            // queued to Qwen and the audio transport is released immediately. Later sentences remain
+            // buffered until Gemma EOS so only the first Qwen request competes with foreground Gemma.
+            Action<string>? existingChunkReady = request.SpokenChunkReady;
+            request.SpokenChunkReady = text =>
+            {
+                try { existingChunkReady?.Invoke(text); } catch { }
+                if (string.IsNullOrWhiteSpace(text)) return;
+
+                if (run.AcceptForegroundTextChunk(text))
+                {
+                    _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                        "mobile.first-speech-request-queued",
+                        string.Empty,
+                        request.SessionId ?? string.Empty,
+                        request.StarId ?? string.Empty,
+                        "First complete foreground sentence was handed to Qwen while Gemma is still streaming. From this point a new Android foreground waits for this turn instead of cancelling its Gemma token.");
+                    BeginMobileLiveVoiceTransportAfterFirstSentence(run);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "First streamed sentence queued to Qwen",
+                        "Qwen synthesis began as soon as the first complete punctuated sentence arrived; Android text was published first and audio no longer waits for Gemma EOS."));
+                }
+            };
+            return run;
+        }
+        catch
+        {
+            try { pipeline?.Dispose(); } catch { }
+            if (pipeline == null)
+            {
+                try { generator?.Dispose(); } catch { }
+            }
+            voiceCts.Dispose();
+            UnregisterMobileLiveVoiceRun(stream.StreamId);
+            EndMobileVoiceStream(stream, "live foreground voice could not start");
+            throw;
+        }
+    }
+
+    private void BeginMobileLiveVoiceTransportAfterFirstSentence(MobileLiveVoiceRun run)
+    {
+        if (run == null) return;
+        run.TryBeginTransportRelease(() => Task.Run(async () =>
+        {
+            try
+            {
+                if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+                {
+                    await _services.MobileVoice.SendControlAsync(
+                        run.Stream.AudioSession,
+                        "start",
+                        "First streamed sentence text was published; release its audio as soon as Qwen finishes synthesizing it.",
+                        run.VoiceCts.Token).ConfigureAwait(false);
+                }
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Foreground voice transport released",
+                    "The first streamed sentence was published to Android before Qwen audio; speech may now begin before Gemma reaches EOS."));
+            }
+            catch (OperationCanceledException)
+            {
+                // A newer foreground request owns the stream now.
+            }
+            catch (Exception ex)
+            {
+                run.ErrorMessage = "Early Android live voice start signal failed: " + ex.Message;
+            }
+            finally
+            {
+                try { run.TransportReady.Set(); } catch { }
+            }
+        }));
+    }
+
+    private MobileLiveVoiceRun? TryStartMobileKnownResponseVoice(
+        StarInteractionResponse response,
+        string sessionId,
+        CancellationToken cancellationToken,
+        string reason)
+    {
+        if (response == null || !_useStreamingTts || !_services.MobileVoice.IsConnected) return null;
+        List<string> spokenParts = (response.SpokenParts ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .ToList();
+        if (spokenParts.Count == 0) return null;
+
+        PrepareVoiceCloneReferenceForTts(response);
+        bool isStory = !string.IsNullOrWhiteSpace(response.StoryId);
+        MobileVoiceStreamScope stream = BeginMobileVoiceStream(response, isStory, reason);
+        if (stream.AudioSession == null || stream.AudioSession.TargetClientIds.Count == 0)
+        {
+            EndMobileVoiceStream(stream, "no connected Android audio targets for known-response speech");
+            return null;
+        }
+
+        CancellationTokenSource voiceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, stream.CancellationToken);
+        IStreamingVoiceGenerator? generator = null;
+        LiveStarVoiceResponsePipeline? pipeline = null;
+        try
+        {
+            generator = CreateStreamingVoiceGenerator();
+            pipeline = new LiveStarVoiceResponsePipeline(
+                generator,
+                new NullWavePlaybackEndpoint(),
+                _speechPipeline,
+                _interruptionManager)
+            {
+                AutoPlayChunks = false
+            };
+
+            MobileLiveVoiceRun run = new MobileLiveVoiceRun(stream, pipeline, voiceCts)
+            {
+                HadTargets = true
+            };
+
+            pipeline.GenerationError += (_, args) =>
+            {
+                run.ErrorMessage = args.ErrorMessage ?? "Known-response TTS generation error.";
+            };
+            pipeline.ChunkReadyForConsumer += (_, args) =>
+            {
+                try
+                {
+                    if (!IsMobileVoiceStreamCurrent(stream) || stream.CancellationToken.IsCancellationRequested) return;
+
+                    // Qwen may synthesize the already-known Spark/Story text immediately, but the
+                    // stable Build 15A transport rule remains: no WAV reaches Android until the
+                    // correlated writing/story text response has been transported first.
+                    run.TransportReady.Wait(stream.CancellationToken);
+
+                    int chunkIndex = args.Sequence;
+                    int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
+                    MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+                    {
+                        IsStory = isStory,
+                        StoryId = response.StoryId ?? string.Empty,
+                        StoryTitle = response.StoryTitle ?? string.Empty,
+                        StoryPartIndex = response.StoryPartIndex,
+                        StoryChunkCount = isStory ? Math.Max(1, spokenParts.Count) : 0,
+                        TtsPartIndex = chunkIndex,
+                        TtsTotalParts = knownTotal
+                    };
+                    MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(
+                        args.Result,
+                        chunkIndex,
+                        knownTotal,
+                        stream.CancellationToken,
+                        stream.AudioSession,
+                        frameContext).GetAwaiter().GetResult();
+                    if (sent.SentClients > 0)
+                    {
+                        run.ChunksSent++;
+                        run.BytesSent += args.Result.WavAudio.Length;
+                    }
+                    string checksum = Sha256Hex(args.Result.WavAudio);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                        "Known-response voice chunk sent",
+                        "stream=" + stream.Ordinal + ", chunk=" + (chunkIndex + 1) + ", clients=" + sent.SentClients + ", bytes=" + args.Result.WavAudio.Length + ", sha256=" + ShortHash(checksum)));
+                }
+                catch (OperationCanceledException)
+                {
+                    run.ErrorMessage = "Android known-response voice stream was replaced by a newer request.";
+                }
+                catch (Exception ex)
+                {
+                    run.ErrorMessage = "Phone known-response audio send failed: " + ex.Message;
+                }
+            };
+
+            pipeline.Start(string.IsNullOrWhiteSpace(sessionId) ? DefaultSessionId : sessionId, response, voiceCts.Token);
+            pipeline.EnqueueTextChunks(spokenParts);
+            run.ExpectedChunks = pipeline.TextChunksEnqueued;
+            run.PostLlmSynthesisStarted = true;
+            OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                "Known-response Qwen synthesis started",
+                reason + ": queued " + run.ExpectedChunks + " speech chunk(s) before final Android text transport; playback remains gated."));
+            return run;
+        }
+        catch
+        {
+            try { pipeline?.Dispose(); } catch { }
+            if (pipeline == null)
+            {
+                try { generator?.Dispose(); } catch { }
+            }
+            voiceCts.Dispose();
+            EndMobileVoiceStream(stream, "known-response voice could not start");
+            throw;
+        }
+    }
+
+    private async Task FinishMobileLiveVoiceAsync(MobileLiveVoiceRun run, string backgroundAnalysisId)
+    {
+        if (run == null) return;
+        try
+        {
+            // The first punctuation-complete sentence normally started Qwen and released Android
+            // audio while Gemma was still generating. If no early sentence was observed (for example,
+            // a non-streaming compatible client), retain the final-response fallback here.
+            if (!run.PostLlmSynthesisStarted)
+            {
+                run.PostLlmSynthesisStarted = true;
+            }
+            run.ExpectedChunks = run.Pipeline.TextChunksEnqueued;
+
+            if (run.TransportReleaseStarted)
+            {
+                Task? releaseTask = run.TransportReleaseTask;
+                if (releaseTask != null) await releaseTask.ConfigureAwait(false);
+            }
+            else
+            {
+                if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+                {
+                    await _services.MobileVoice.SendControlAsync(
+                        run.Stream.AudioSession,
+                        "start",
+                        "Starting ordered Android voice stream " + run.Stream.StreamId + " after final text transport fallback.",
+                        run.VoiceCts.Token).ConfigureAwait(false);
+                }
+                run.TransportReady.Set();
+            }
+
+            await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
+            run.ExpectedChunks = Math.Max(run.ExpectedChunks, run.Pipeline.AudioChunksProduced);
+            if (run.ExpectedChunks > 0 && run.ChunksSent != run.ExpectedChunks)
+            {
+                throw new InvalidOperationException(
+                    "Live Android voice completed with " + run.ChunksSent + " sent audio segment(s) for " + run.ExpectedChunks + " generated audio segment(s).");
+            }
+            if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+            {
+                await _services.MobileVoice.SendControlAsync(
+                    run.Stream.AudioSession,
+                    "end",
+                    "Live Android voice stream completed after " + run.ChunksSent + " chunk(s).",
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback release: live Android reply finished before a first-sentence background checkpoint could release it.");
+        }
+        catch (OperationCanceledException)
+        {
+            run.ErrorMessage = "Android live voice stream was replaced by a newer request.";
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Live Android voice stream was replaced by a newer request.");
+        }
+        catch (Exception ex)
+        {
+            run.ErrorMessage = "Android live voice failed: " + ex.Message;
+            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Live Android voice failed: " + ex.Message);
+        }
+        finally
+        {
+            // Never leave the consumer lane parked if start/transport failed.
+            try { run.TransportReady.Set(); } catch { }
+            run.Pipeline.Dispose();
+            try { run.TransportReady.Dispose(); } catch { }
+            run.VoiceCts.Dispose();
+            UnregisterMobileLiveVoiceRun(run.Stream.StreamId);
+            EndMobileVoiceStream(run.Stream, "live foreground voice completed or was replaced");
+            run.Finished = true;
+        }
+    }
+
+    private void AbortMobileLiveVoice(MobileLiveVoiceRun? run, string reason)
+    {
+        if (run == null || run.Finished) return;
+        try { run.TransportReady.Set(); } catch { }
+        try { run.Pipeline.CancelCurrentSpeech(); } catch { }
+        try { run.Pipeline.Dispose(); } catch { }
+        try { run.TransportReady.Dispose(); } catch { }
+        try { run.VoiceCts.Dispose(); } catch { }
+        try { UnregisterMobileLiveVoiceRun(run.Stream.StreamId); } catch { }
+        try { EndMobileVoiceStream(run.Stream, reason); } catch { }
+        run.Finished = true;
+    }
+
+    private sealed class MobileLiveVoiceRun
+    {
+        public MobileLiveVoiceRun(MobileVoiceStreamScope stream, LiveStarVoiceResponsePipeline pipeline, CancellationTokenSource voiceCts)
+        {
+            Stream = stream;
+            Pipeline = pipeline;
+            VoiceCts = voiceCts;
+        }
+
+        public MobileVoiceStreamScope Stream { get; }
+        public LiveStarVoiceResponsePipeline Pipeline { get; }
+        public CancellationTokenSource VoiceCts { get; }
+        private readonly object _textChunkGate = new object();
+        private readonly object _transportGate = new object();
+        private readonly List<string> _deferredTextChunks = new List<string>();
+        private bool _firstSpeechChunkAccepted;
+        private bool _transportReleaseStarted;
+        private readonly System.Diagnostics.Stopwatch _firstSentenceTtsTimer = new System.Diagnostics.Stopwatch();
+        private bool _gemmaEosReached;
+        private bool _firstAudioReadyLogged;
+
+        public bool HadTargets { get; set; }
+        public int ChunksSent { get; set; }
+        public int BytesSent { get; set; }
+        public int ExpectedChunks { get; set; }
+        public bool PostLlmSynthesisStarted { get; set; }
+        public string ErrorMessage { get; set; } = string.Empty;
+        public bool Finished { get; set; }
+        public Task? TransportReleaseTask { get; set; }
+        public bool TransportReleaseStarted
+        {
+            get
+            {
+                lock (_transportGate) return _transportReleaseStarted;
+            }
+        }
+        public System.Threading.ManualResetEventSlim TransportReady { get; } = new System.Threading.ManualResetEventSlim(false);
+
+        public bool TryBeginTransportRelease(Func<Task> taskFactory)
+        {
+            if (taskFactory == null) return false;
+            lock (_transportGate)
+            {
+                if (_transportReleaseStarted) return false;
+                _transportReleaseStarted = true;
+                TransportReleaseTask = taskFactory();
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Returns true only for the first streamed speech sentence. That first immutable sentence
+        /// is sent to Qwen immediately; later sentences are buffered so they can be batched at EOS.
+        /// </summary>
+        public bool AcceptForegroundTextChunk(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            string cleaned = text.Trim();
+            bool startNow = false;
+            lock (_textChunkGate)
+            {
+                if (!_firstSpeechChunkAccepted)
+                {
+                    _firstSpeechChunkAccepted = true;
+                    startNow = true;
+                }
+                else
+                {
+                    _deferredTextChunks.Add(cleaned);
+                }
+            }
+
+            if (startNow)
+            {
+                lock (_transportGate)
+                {
+                    _firstSentenceTtsTimer.Restart();
+                    _gemmaEosReached = false;
+                    _firstAudioReadyLogged = false;
+                }
+                Pipeline.EnqueueTextChunk(cleaned);
+            }
+            return startNow;
+        }
+
+        public void MarkGemmaEos()
+        {
+            lock (_transportGate)
+            {
+                _gemmaEosReached = true;
+            }
+        }
+
+        public bool TryMarkFirstAudioReady(out long elapsedMilliseconds, out bool gemmaEosAlreadyReached)
+        {
+            lock (_transportGate)
+            {
+                elapsedMilliseconds = _firstSentenceTtsTimer.IsRunning ? _firstSentenceTtsTimer.ElapsedMilliseconds : -1L;
+                gemmaEosAlreadyReached = _gemmaEosReached;
+                if (_firstAudioReadyLogged) return false;
+                _firstAudioReadyLogged = true;
+                return true;
+            }
+        }
+
+        public List<string> DrainDeferredTextChunks()
+        {
+            lock (_textChunkGate)
+            {
+                List<string> copy = new List<string>(_deferredTextChunks);
+                _deferredTextChunks.Clear();
+                return copy;
+            }
+        }
+    }
+
+    private void RegisterMobileLiveVoiceRun(MobileLiveVoiceRun run)
+    {
+        if (run == null || string.IsNullOrWhiteSpace(run.Stream.StreamId)) return;
+        lock (_mobileLiveVoiceRunGate)
+        {
+            _mobileLiveVoiceRuns[run.Stream.StreamId] = run;
+        }
+    }
+
+    private void UnregisterMobileLiveVoiceRun(string streamId)
+    {
+        if (string.IsNullOrWhiteSpace(streamId)) return;
+        lock (_mobileLiveVoiceRunGate)
+        {
+            _mobileLiveVoiceRuns.Remove(streamId);
+        }
+    }
+
     private MobileVoiceStreamScope BeginMobileVoiceStream(StarInteractionResponse response, bool isStory, string reason)
     {
         CancellationTokenSource cts = new CancellationTokenSource();
         CancellationTokenSource? previous = null;
+        CancellationTokenSource? preparedBackgroundVoice = null;
         long ordinal;
         lock (_mobileVoiceStreamGate)
         {
             previous = _mobileVoiceStreamCts;
+            preparedBackgroundVoice = _backgroundPreparedSpeechCts;
+            _backgroundPreparedSpeechCts = null;
             if (_pendingMobileStoryVoiceStream != null && ReferenceEquals(_pendingMobileStoryVoiceStream.CancellationSource, previous))
             {
                 _pendingMobileStoryVoiceStream = null;
@@ -2395,6 +3484,13 @@ public sealed partial class MainViewModel
         }
 
         try { previous?.Cancel(); } catch { }
+        try { preparedBackgroundVoice?.Cancel(); } catch { }
+        if (preparedBackgroundVoice != null)
+        {
+            OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                "Foreground voice preempted prepared cache TTS",
+                "A live Android voice stream took priority over background prepared-speech synthesis."));
+        }
 
         string streamId = "android-voice-" + ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
         MobileAudioStreamSession? audioSession = _services.MobileVoice.CreateStreamSession(
@@ -2546,6 +3642,14 @@ public sealed partial class MainViewModel
         try
         {
             string normalizedStarId = ResolveDefaultStarId(starId);
+            if (ShouldDeferPreparedSpeechForForeground())
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Prepared speech yielded to foreground",
+                    normalizedStarId + " preparation was deferred because a foreground interaction or Android voice stream is active."));
+                SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity has priority");
+                return;
+            }
             for (int prepared = 0; prepared < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPreparedItemsPerStar); prepared++)
             {
                 StarSpeechIntent? intent = await _runtime.GetNextSpeechIntentToPrepareAsync(normalizedStarId, CancellationToken.None).ConfigureAwait(false);
@@ -2554,6 +3658,13 @@ public sealed partial class MainViewModel
                 if (locked == null) return;
                 try
                 {
+                    if (ShouldDeferPreparedSpeechForForeground())
+                    {
+                        await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity has priority over prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                        SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity became active");
+                        return;
+                    }
+
                     MobileBridgeRequest request = new MobileBridgeRequest
                     {
                         SessionId = "android-phone-prod",
@@ -2575,9 +3686,56 @@ public sealed partial class MainViewModel
                         SpeechIntentPriority = intent.Priority,
                         SpeechIntentScore = intent.EffectiveScore
                     };
-                    MobileBridgeResponse response = await ProcessMobileConversationAsync(request, string.Empty, CancellationToken.None).ConfigureAwait(false);
+
+                    CancellationTokenSource preparedOperationCts = new CancellationTokenSource();
+                    bool foregroundWonRace = false;
+                    lock (_mobileVoiceStreamGate)
+                    {
+                        if (_mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested)
+                        {
+                            foregroundWonRace = true;
+                        }
+                        else
+                        {
+                            try { _backgroundPreparedSpeechCts?.Cancel(); } catch { }
+                            try { _backgroundPreparedSpeechCts?.Dispose(); } catch { }
+                            _backgroundPreparedSpeechCts = preparedOperationCts;
+                        }
+                    }
+
+                    if (foregroundWonRace)
+                    {
+                        preparedOperationCts.Dispose();
+                        await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground Android voice became active before prepared speech generation could start.", CancellationToken.None).ConfigureAwait(false);
+                        SchedulePreparedSpeechRetry(normalizedStarId, "foreground Android voice won the prepared-speech start race");
+                        return;
+                    }
+
+                    MobileBridgeResponse response;
+                    try
+                    {
+                        response = await ProcessMobileConversationAsync(request, string.Empty, preparedOperationCts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        lock (_mobileVoiceStreamGate)
+                        {
+                            if (ReferenceEquals(_backgroundPreparedSpeechCts, preparedOperationCts))
+                            {
+                                _backgroundPreparedSpeechCts = null;
+                            }
+                        }
+                        preparedOperationCts.Dispose();
+                    }
                     if (!response.Ok || !response.InitiativeShouldSpeak || response.InlineVoiceChunks == null || response.InlineVoiceChunks.Count == 0)
                     {
+                        if (ShouldDeferPreparedSpeechForForeground())
+                        {
+                            await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity preempted prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                            SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity preempted prepared cache generation");
+                            return;
+                        }
+
                         string failure = FirstNonEmptyForMobile(response.VoiceError, response.InitiativeReason, "The Star did not produce prepared speech.");
                         await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, failure, CancellationToken.None).ConfigureAwait(false);
                         if (locked.PrepareAttempts < Math.Max(1, _appConfig.StarSpeechIntents.MaximumPrepareAttempts))
@@ -2617,6 +3775,16 @@ public sealed partial class MainViewModel
                         SpeechIntentStatus = ready?.Status ?? StarSpeechIntentStatuses.Ready
                     });
                 }
+                catch (OperationCanceledException)
+                {
+                    // This background preparation uses its own CTS. Live Android voice cancels that
+                    // CTS so foreground speech can take over immediately; cancellation is a defer,
+                    // not a failed preparation attempt.
+                    await _runtime.MarkSpeechIntentDeferredAsync(intent.IntentId, "Foreground speech/activity cancelled prepared speech generation.", CancellationToken.None).ConfigureAwait(false);
+                    OnUiThread(() => AppendMobileBridgeVoiceDebug("Prepared speech preempted", normalizedStarId + " cache generation yielded to foreground speech/activity."));
+                    SchedulePreparedSpeechRetry(normalizedStarId, "foreground speech/activity cancelled prepared cache generation");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     await _runtime.MarkSpeechIntentFailedAsync(intent.IntentId, ex.Message, CancellationToken.None).ConfigureAwait(false);
@@ -2635,6 +3803,15 @@ public sealed partial class MainViewModel
         }
     }
 
+    private bool ShouldDeferPreparedSpeechForForeground()
+    {
+        if (IsForegroundStarInteractionActive()) return true;
+        lock (_mobileVoiceStreamGate)
+        {
+            return _mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested;
+        }
+    }
+
     private void SchedulePreparedSpeechRetry(string starId, string reason)
     {
         _ = Task.Run(async () =>
@@ -2646,12 +3823,33 @@ public sealed partial class MainViewModel
 
     private async Task<List<MobileInlineVoiceChunk>> GenerateMobileInlineVoiceChunksAsync(StarInteractionResponse starResponse, CancellationToken cancellationToken)
     {
+        // Prepared Listen audio is background cache work. It must never register itself as the
+        // currently interruptible foreground speech, because SpeechInterruptionManager starts a new
+        // generation by cancelling the previous one. That allowed a prepared-thought TTS request to
+        // cancel a live Spark/Story/Chat voice stream while the phone still showed the text.
+        lock (_mobileVoiceStreamGate)
+        {
+            if (_mobileVoiceStreamCts != null && !_mobileVoiceStreamCts.IsCancellationRequested)
+            {
+                OnUiThread(() => AppendMobileBridgeVoiceDebug(
+                    "Prepared cache TTS deferred",
+                    (starResponse.StarId ?? "Star") + " cache audio yielded because foreground Android voice is active."));
+                return new List<MobileInlineVoiceChunk>();
+            }
+        }
+
         PrepareVoiceCloneReferenceForTts(starResponse);
         List<byte[]> generated = new List<byte[]>();
         object generatedGate = new object();
 
         using IStreamingVoiceGenerator generator = CreateStreamingVoiceGenerator();
-        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(generator, new NullWavePlaybackEndpoint(), _speechPipeline, _interruptionManager)
+        // This is offline/cache synthesis, not audible Star speech. Do not attach the shared
+        // playback observer or SpeechInterruptionManager. Foreground streams own those.
+        using StreamingStarVoiceResponsePipeline pipeline = new StreamingStarVoiceResponsePipeline(
+            generator,
+            new NullWavePlaybackEndpoint(),
+            null,
+            null)
         {
             AutoPlayChunks = false
         };
@@ -2694,6 +3892,12 @@ public sealed partial class MainViewModel
 
     private async Task SendMobileVoiceAsync(StarInteractionResponse starResponse, MobileBridgeResponse mobileResponse, CancellationToken cancellationToken, MobileVoiceStreamScope? existingStream = null, string backgroundAnalysisId = "")
     {
+        if (existingStream == null && !_services.MobileVoice.IsConnected)
+        {
+            OnUiThread(() => AppendMobileBridgeVoiceDebug("Waiting for Android phone audio", "Giving a foreground phone-audio reconnect up to six seconds before snapshotting the writing/story voice targets."));
+            await _services.MobileVoice.WaitForConnectionAsync(TimeSpan.FromSeconds(6), cancellationToken).ConfigureAwait(false);
+        }
+
         bool ownsStream = existingStream == null;
         MobileVoiceStreamScope voiceStream = existingStream ?? BeginMobileVoiceStream(starResponse, _storySpeechAdapter.ShouldUseStoryAutoplay(starResponse), "Android phone voice request");
         using CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, voiceStream.CancellationToken);
@@ -2732,7 +3936,8 @@ public sealed partial class MainViewModel
                 };
 
                 int chunksSent = 0;
-                int bytesSent = 0;
+                int bytesSent = 0; 
+                bool backgroundReleasedAfterFirstChunk = false;
                 mobilePipeline.ChunkReadyForConsumer += (sender, args) =>
                 {
                     try
@@ -2750,6 +3955,11 @@ public sealed partial class MainViewModel
                         MobileAudioSendResult sent = _services.MobileVoice.SendChunkAsync(args.Result, chunkIndex, totalChunks, voiceToken, voiceStream.AudioSession, frameContext).GetAwaiter().GetResult();
                         chunksSent++;
                         bytesSent += args.Result.WavAudio.Length;
+                        if (!backgroundReleasedAfterFirstChunk && sent.SentClients > 0)
+                        {
+                            backgroundReleasedAfterFirstChunk = true;
+                            ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback Android path delivered the first speech WAV to the connected phone; background review may continue while later speech plays.");
+                        }
                         _services.MobileVoice.SendStatusAsync("Elusiaa sent phone voice chunk " + chunksSent + "/" + totalChunks + " sha256=" + ShortHash(checksum) + ", bytes=" + args.Result.WavAudio.Length + ".", voiceToken).GetAwaiter().GetResult();
                         OnUiThread(() =>
                         {
@@ -2798,7 +4008,7 @@ public sealed partial class MainViewModel
 
             if (!voiceToken.IsCancellationRequested)
             {
-                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Android phone voice chunks were generated/sent.");
+                ReleasePendingBackgroundAnalysis(backgroundAnalysisId, "Fallback release after Android phone voice chunks were generated/sent.");
             }
         }
         catch (OperationCanceledException)

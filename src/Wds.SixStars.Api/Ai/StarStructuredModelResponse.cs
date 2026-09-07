@@ -37,6 +37,33 @@ namespace Wds.SixStars.Api.Ai
         public List<InformationNeedVectorItem> InformationNeeds { get; set; } = new List<InformationNeedVectorItem>();
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
 
+        /// <summary>Temporary current-context items such as what the Last Cat is doing now, the shared task, or an immediate plan. Host timestamps and expires these.</summary>
+        public List<string> ShortTermMemoryItems { get; set; } = new List<string>();
+
+        /// <summary>Background review only: true when the current girlfriend turn is active sexting, not merely flirting or discussing sex.</summary>
+        [JsonPropertyName("isSexting")]
+        public bool IsSexting { get; set; }
+
+        /// <summary>Compact questions/topics raised by the Last Cat that remain open for the Star.</summary>
+        [JsonPropertyName("questionsFromLastCatVector")]
+        public string QuestionsFromLastCatVector { get; set; } = string.Empty;
+
+        /// <summary>Compact questions/open thoughts the Star intentionally leaves with the Last Cat.</summary>
+        [JsonPropertyName("questionsToLastCatVector")]
+        public string QuestionsToLastCatVector { get; set; } = string.Empty;
+
+        /// <summary>Compact question-resolution events detected this turn.</summary>
+        [JsonPropertyName("questionResolutionVector")]
+        public string QuestionResolutionVector { get; set; } = string.Empty;
+
+        /// <summary>Optional high-emotion one-shot animation selected by the private background review.</summary>
+        [JsonPropertyName("emotionAnimation")]
+        public string EmotionAnimation { get; set; } = string.Empty;
+
+        /// <summary>Compact missing-reference requests: source^subject^score, separated by ~.</summary>
+        [JsonPropertyName("informationNeedsVector")]
+        public string InformationNeedsVector { get; set; } = string.Empty;
+
         public VoiceDirective VoiceDirective { get; set; } = VoiceDirective.Empty();
         [JsonIgnore]
         public Dictionary<string, EmotionScore> EmotionScores { get; set; } = new Dictionary<string, EmotionScore>();
@@ -44,6 +71,8 @@ namespace Wds.SixStars.Api.Ai
         public RelationshipDelta SuggestedStateDeltas { get; set; } = RelationshipDelta.Zero();
         public string ConversationSummary { get; set; } = string.Empty;
         public string ChangesSummary { get; set; } = string.Empty;
+        public string TenTurnConversationSummary { get; set; } = string.Empty;
+        public string HundredTurnConversationSummary { get; set; } = string.Empty;
         /// <summary>Interstar target reaction only: how this Star feels toward the source Star after hearing the relay from her.</summary>
         public string SourceStarEmotionalEffectVector { get; set; } = string.Empty;
         public string SourceStarNegativeEmotionVector { get; set; } = string.Empty;

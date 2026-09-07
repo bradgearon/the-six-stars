@@ -22,12 +22,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -45,6 +48,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         void onError(String title, Throwable error);
         void onStreamState(boolean active, String starId, String action);
         void onPlaybackStarted(PhoneVoiceClip clip, long durationMs, long playbackElapsedMs);
+        void onLipSyncState(boolean speaking);
         void onPlaybackFinished(PhoneVoiceClip clip, boolean completedNormally);
         void onQueueIdle();
     }
@@ -58,18 +62,31 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         final long streamOrdinal;
         final int audioSequence;
         final int[] speechActivitySegmentsMs;
+        final boolean continuousPcm;
+        final int textChars;
+        final String textKey;
+        final long declaredDurationMs;
+        final long receivedAtElapsedMs;
         final Runnable onCompleted;
 
         PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop,
                        String streamId, long streamOrdinal, int audioSequence,
                        int[] speechActivitySegmentsMs) {
             this(wav, label, sha256, fromDesktop, streamId, streamOrdinal, audioSequence,
-                    speechActivitySegmentsMs, null);
+                    speechActivitySegmentsMs, false, 0, "", 0L, null);
         }
 
         PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop,
                        String streamId, long streamOrdinal, int audioSequence,
                        int[] speechActivitySegmentsMs, Runnable onCompleted) {
+            this(wav, label, sha256, fromDesktop, streamId, streamOrdinal, audioSequence,
+                    speechActivitySegmentsMs, false, 0, "", 0L, onCompleted);
+        }
+
+        PhoneVoiceClip(byte[] wav, String label, String sha256, boolean fromDesktop,
+                       String streamId, long streamOrdinal, int audioSequence,
+                       int[] speechActivitySegmentsMs, boolean continuousPcm, int textChars,
+                       String textKey, long declaredDurationMs, Runnable onCompleted) {
             this.wav = wav == null ? new byte[0] : wav;
             this.label = label == null ? "phone voice" : label;
             this.sha256 = sha256 == null ? "" : sha256;
@@ -78,6 +95,11 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             this.streamOrdinal = streamOrdinal;
             this.audioSequence = audioSequence;
             this.speechActivitySegmentsMs = speechActivitySegmentsMs == null ? new int[0] : speechActivitySegmentsMs;
+            this.continuousPcm = continuousPcm;
+            this.textChars = Math.max(0, textChars);
+            this.textKey = textKey == null ? "" : textKey;
+            this.declaredDurationMs = Math.max(0L, declaredDurationMs);
+            this.receivedAtElapsedMs = SystemClock.elapsedRealtime();
             this.onCompleted = onCompleted;
         }
     }
@@ -131,6 +153,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         @Override public void onError(String title, Throwable error) { }
         @Override public void onStreamState(boolean active, String starId, String action) { }
         @Override public void onPlaybackStarted(PhoneVoiceClip clip, long durationMs, long playbackElapsedMs) { }
+        @Override public void onLipSyncState(boolean speaking) { }
         @Override public void onPlaybackFinished(PhoneVoiceClip clip, boolean completedNormally) { }
         @Override public void onQueueIdle() { }
     };
@@ -146,6 +169,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private final TreeMap<Integer, PhoneVoiceClip> pendingDesktopClips = new TreeMap<>();
     private final HashSet<Integer> acceptedDesktopSequences = new HashSet<>();
     private final WavAudioQueue playbackQueue = new WavAudioQueue();
+    private final PcmStreamAudioQueue pcmStreamQueue = new PcmStreamAudioQueue();
 
     private volatile boolean closed;
     private Socket audioSocket;
@@ -155,6 +179,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private String desiredHost = "";
     private int desiredPort = -1;
     private boolean reconnectScheduled;
+    private boolean refreshWhenIdle;
     private int reconnectAttempt;
     private String activeStreamId = "";
     private long activeStreamOrdinal;
@@ -175,13 +200,13 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
     void setListener(Listener value) { listener = value == null ? NO_OP_LISTENER : value; }
 
-    void start() { playbackQueue.start(); }
-    boolean isIdle() { return playbackQueue.isIdle(); }
-    boolean isPaused() { return playbackQueue.isPaused(); }
+    void start() { playbackQueue.start(); pcmStreamQueue.start(); }
+    boolean isIdle() { return playbackQueue.isIdle() && pcmStreamQueue.isIdle(); }
+    boolean isPaused() { return playbackQueue.isPaused() || pcmStreamQueue.isPaused(); }
     boolean isDesktopStreamActive() { return desktopStreamActive; }
-    void pause() { playbackQueue.pausePlayback(); }
-    void resume() { playbackQueue.resumePlayback(); }
-    void clearForNewStream() { playbackQueue.clearForNewStream(); }
+    void pause() { playbackQueue.pausePlayback(); pcmStreamQueue.pausePlayback(); }
+    void resume() { playbackQueue.resumePlayback(); pcmStreamQueue.resumePlayback(); }
+    void clearForNewStream() { playbackQueue.clearForNewStream(); pcmStreamQueue.clearForNewStream(); }
     void beginPreparedPrefix() { playbackQueue.beginPreparedPrefix(); }
     void enqueuePreparedPrefix(ArrayList<PhoneVoiceClip> clips) { playbackQueue.enqueuePreparedPrefix(clips); }
     void cancelPreparedPrefix() { playbackQueue.cancelPreparedPrefix(); }
@@ -192,11 +217,38 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             desiredHost = "";
             desiredPort = -1;
             reconnectScheduled = false;
+            refreshWhenIdle = false;
             reconnectAttempt = 0;
             closeSocketLocked();
         }
         resetTransportState(true);
         post(() -> listener.onSocketStatus("Phone voice socket disconnected."));
+    }
+
+    /**
+     * Re-open an idle voice socket after Android resumes. A TCP Socket can remain isConnected()==true
+     * even though Wi-Fi sleep invalidated the path, so connect() alone cannot reliably detect this.
+     * Never interrupt active/queued speech; in that case only remember the desired route.
+     */
+    void refreshConnection(String host, int port) {
+        if (host == null || host.trim().isEmpty() || port <= 0) return;
+        final String normalizedHost = host.trim();
+        synchronized (socketLock) {
+            desiredHost = normalizedHost;
+            desiredPort = port;
+            if (desktopStreamActive || !isIdle()) {
+                refreshWhenIdle = true;
+                post(() -> listener.onDebug("Phone voice resume refresh deferred",
+                        "Existing Star speech is active; the voice socket will refresh after the queue becomes idle."));
+                return;
+            }
+            refreshWhenIdle = false;
+            reconnectScheduled = false;
+            reconnectAttempt = 0;
+            post(() -> listener.onDebug("Phone voice socket",
+                    "Refreshing idle voice socket after Android resume: " + normalizedHost + ":" + port + "."));
+            startSocketLocked(normalizedHost, port);
+        }
     }
 
     void connect(String host, int port) {
@@ -210,10 +262,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 if (normalizedHost.equals(connectedHost) && port == connectedPort) return;
 
                 // A healthy audio route does not need to follow every control-WebSocket route
-                // promotion immediately. Switching between IPv4 and IPv6 while a sentence is
-                // playing used to close the socket and flush AudioTrack. Keep the working route
-                // until the current stream and playback queue are truly idle.
-                if (desktopStreamActive || !playbackQueue.isIdle()) {
+                // refresh immediately. Replacing a TCP socket while a sentence is playing can
+                // cut the stream or flush AudioTrack, so keep the working route until truly idle.
+                if (desktopStreamActive || !isIdle()) {
                     String currentRoute = connectedHost + ":" + connectedPort;
                     String requestedRoute = normalizedHost + ":" + port;
                     post(() -> listener.onDebug("Phone voice route change deferred",
@@ -246,6 +297,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     ? new Socket(host, port)
                     : localNetwork.connectSocket(host, port, 6000);
             socket.setTcpNoDelay(true);
+            socket.setKeepAlive(true);
             synchronized (socketLock) {
                 if (closed || !host.equals(connectedHost) || port != connectedPort) {
                     try { socket.close(); } catch (Exception ignored) { }
@@ -286,7 +338,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 desktopStreamActive = false;
                 post(() -> {
                     listener.onStreamState(false, "Star", "disconnected");
-                    if (playbackQueue.isIdle()) listener.onQueueIdle();
+                    if (PhoneVoicePlaybackService.this.isIdle()) listener.onQueueIdle();
                 });
             }
             if (shouldReconnect) scheduleReconnect(wasCurrent
@@ -310,13 +362,17 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             String streamId = header.optString("streamId", "");
             long ordinal = header.optLong("streamOrdinal", 0L);
             int[] segments = parseSpeechActivitySegments(header.optString("speechActivitySegmentsMs", ""));
+            boolean continuousPcm = header.optBoolean("continuousPcm", false);
+            int textChars = header.optInt("textChars", 0);
+            String textKey = header.optString("textKey", "");
+            long declaredDurationMs = Math.max(0L, Math.round(header.optDouble("durationMs", 0.0)));
             if (!acceptStreamFrame(streamId, ordinal, starId)) {
                 droppedStaleFrames++;
                 post(() -> listener.onDebug("Stale voice frame dropped", "stream=" + ordinal + ", active=" + activeStreamOrdinal + ", dropped=" + droppedStaleFrames));
                 return;
             }
             PhoneVoiceClip clip = new PhoneVoiceClip(wav, starId + " chunk " + chunkNumber + "/" + totalChunks,
-                    checksum, true, streamId, ordinal, sequence, segments);
+                    checksum, true, streamId, ordinal, sequence, segments, continuousPcm, textChars, textKey, declaredDurationMs, null);
             int queued;
             if (ordinal <= 0L || streamId.isEmpty()) {
                 // Unscoped one-off audio such as the desktop test tone does not participate in a
@@ -412,6 +468,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             return;
         }
         if (clear) playbackQueue.prepareForDesktopStream();
+        if ("end".equalsIgnoreCase(action)) pcmStreamQueue.endStream(streamId, ordinal);
+        else if ("cancel".equalsIgnoreCase(action)) pcmStreamQueue.cancelStream(streamId, ordinal);
         post(() -> listener.onStreamState(activeAfter, starId, action));
         if (!activeAfter) maybeConnectDesiredRoute();
     }
@@ -427,7 +485,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 PhoneVoiceClip ready = pendingDesktopClips.remove(nextExpectedSequence);
                 if (ready == null) break;
                 acceptedDesktopSequences.add(ready.audioSequence);
-                playbackQueue.enqueue(ready);
+                if (ready.continuousPcm) pcmStreamQueue.enqueue(ready);
+                else playbackQueue.enqueue(ready);
                 nextExpectedSequence++;
                 queued++;
             }
@@ -461,7 +520,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
         resetOrderedQueue();
         resetSavedAccumulator();
-        if (clearPlayback) playbackQueue.clearForNewStream();
+        if (clearPlayback) {
+            playbackQueue.clearForNewStream();
+            pcmStreamQueue.clearForNewStream();
+        }
     }
 
     private void markTransportConnected() {
@@ -503,15 +565,19 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private void maybeConnectDesiredRoute() {
         final String host;
         final int port;
+        final boolean forceRefresh;
         synchronized (socketLock) {
             if (closed || desiredHost.isEmpty() || desiredPort <= 0) return;
-            if (desktopStreamActive || !playbackQueue.isIdle()) return;
-            if (audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
-                    && desiredHost.equals(connectedHost) && desiredPort == connectedPort) return;
+            if (desktopStreamActive || !isIdle()) return;
             host = desiredHost;
             port = desiredPort;
+            forceRefresh = refreshWhenIdle;
+            refreshWhenIdle = false;
+            if (!forceRefresh && audioSocket != null && audioSocket.isConnected() && !audioSocket.isClosed()
+                    && desiredHost.equals(connectedHost) && desiredPort == connectedPort) return;
         }
-        connect(host, port);
+        if (forceRefresh) refreshConnection(host, port);
+        else connect(host, port);
     }
 
     void playSavedVoice() {
@@ -550,7 +616,32 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
     }
 
+    private void appendContinuousPcmToSavedVoice(ArrayList<PhoneVoiceClip> clips) {
+        if (clips == null || clips.isEmpty()) return;
+        try {
+            byte[] combined;
+            synchronized (this) {
+                for (PhoneVoiceClip clip : clips) {
+                    ParsedWav parsed = ParsedWav.parse(clip.wav);
+                    if (savedPcm == null || savedSampleRate != parsed.sampleRate || savedChannels != parsed.channels) {
+                        savedPcm = new ByteArrayOutputStream();
+                        savedSampleRate = parsed.sampleRate;
+                        savedChannels = parsed.channels;
+                    }
+                    savedPcm.write(parsed.pcm, 0, parsed.pcm.length);
+                }
+                combined = VoiceCaptureService.wavFromPcm16(savedPcm.toByteArray(), savedSampleRate, savedChannels);
+            }
+            try (FileOutputStream output = new FileOutputStream(lastVoiceFile, false)) { output.write(combined); }
+        } catch (Throwable error) {
+            post(() -> listener.onError("Could not save received PCM stream", error));
+        }
+    }
+
     private final class WavAudioQueue {
+        private static final long LOCAL_BURST_COALESCE_MS = 18L;
+        private static final int MAX_LOCAL_BURST_CLIPS = 64;
+
         private final LinkedBlockingDeque<PhoneVoiceClip> queue = new LinkedBlockingDeque<>();
         private final Object pauseLock = new Object();
         private final Object preparedLock = new Object();
@@ -622,12 +713,96 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                         synchronized (preparedLock) { if (preparedPrefixPending && running) preparedLock.wait(100L); }
                         continue;
                     }
+
+                    // Prepared Listen and other cached Android speech is often queued as several
+                    // complete WAV fragments in one tight burst. Playing each fragment through a new
+                    // AudioTrack creates audible seams and sends finished/started lifecycle edges to
+                    // the Activity between chunks (which also toggles FLAG_KEEP_SCREEN_ON). Join the
+                    // burst into one PCM/WAV clip before playback so it is one continuous speaker and
+                    // animation lifecycle.
+                    clip = coalesceLocalBurst(clip);
                     playWav(clip);
                 } catch (InterruptedException ignored) {
                 } catch (Throwable error) {
                     post(() -> listener.onError("Audio playback failed", error));
                 }
             }
+        }
+
+        private PhoneVoiceClip coalesceLocalBurst(PhoneVoiceClip first) throws InterruptedException {
+            if (first == null || first.fromDesktop || first.continuousPcm || first.wav.length == 0) return first;
+
+            // Give a synchronous cache-enqueue loop one small scheduling window to put the rest of
+            // its chunks into this queue. This replaces much larger inter-clip AudioTrack gaps with a
+            // single negligible startup wait and does not affect live desktop PCM.
+            if (queue.isEmpty() && running) Thread.sleep(LOCAL_BURST_COALESCE_MS);
+
+            ParsedWav format = ParsedWav.parse(first.wav);
+            ArrayList<PhoneVoiceClip> clips = new ArrayList<>();
+            clips.add(first);
+            ByteArrayOutputStream pcm = new ByteArrayOutputStream();
+            pcm.write(format.pcm, 0, format.pcm.length);
+
+            while (clips.size() < MAX_LOCAL_BURST_CLIPS) {
+                PhoneVoiceClip next = queue.peekFirst();
+                if (next == null || next.fromDesktop || next.continuousPcm || next.wav.length == 0) break;
+
+                ParsedWav parsed;
+                try {
+                    parsed = ParsedWav.parse(next.wav);
+                } catch (Throwable invalid) {
+                    break;
+                }
+                if (parsed.sampleRate != format.sampleRate || parsed.channels != format.channels) break;
+
+                next = queue.pollFirst();
+                if (next == null) break;
+                clips.add(next);
+                pcm.write(parsed.pcm, 0, parsed.pcm.length);
+            }
+
+            if (clips.size() == 1) return first;
+
+            byte[] combinedPcm = pcm.toByteArray();
+            byte[] combinedWav = VoiceCaptureService.wavFromPcm16(
+                    combinedPcm, format.sampleRate, format.channels);
+            PcmSpeechActivityAnalyzer.Analysis activity =
+                    PcmSpeechActivityAnalyzer.analyzePcm16(
+                            combinedPcm, format.sampleRate, format.channels);
+            long frames = combinedPcm.length / Math.max(1L, format.channels * 2L);
+            long durationMs = frames * 1000L / Math.max(1, format.sampleRate);
+
+            ArrayList<Runnable> completions = new ArrayList<>();
+            for (PhoneVoiceClip clip : clips) {
+                if (clip.onCompleted != null) completions.add(clip.onCompleted);
+            }
+            Runnable completion = completions.isEmpty() ? null : () -> {
+                for (Runnable callback : completions) {
+                    try { callback.run(); } catch (Throwable ignored) { }
+                }
+            };
+
+            PhoneVoiceClip merged = new PhoneVoiceClip(
+                    combinedWav,
+                    first.label + " + " + (clips.size() - 1) + " cached chunk(s)",
+                    sha256Hex(combinedWav),
+                    false,
+                    "",
+                    0L,
+                    first.audioSequence,
+                    activity.segmentsMs,
+                    false,
+                    0,
+                    "",
+                    durationMs,
+                    completion);
+
+            int mergedCount = clips.size();
+            post(() -> listener.onDebug(
+                    "Cached voice coalesced",
+                    "Joined " + mergedCount + " local WAV fragments into one "
+                            + durationMs + "ms AudioTrack playback."));
+            return merged;
         }
 
         private void playWav(PhoneVoiceClip clip) {
@@ -649,6 +824,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             AtomicBoolean started = new AtomicBoolean(false);
             AtomicBoolean finished = new AtomicBoolean(false);
             boolean completed = false;
+            boolean playbackDrained = false;
+            boolean drainInterrupted = false;
+            long finalPlaybackFrames = 0L;
             Thread watcher = null;
             int offset = 0;
             try {
@@ -661,13 +839,33 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     if (written <= 0) break;
                     offset += written;
                 }
+
+                // WRITE_BLOCKING means the PCM has entered AudioTrack, not necessarily that the last
+                // phoneme has reached the speaker. Never advance to the next Star sentence merely
+                // because all bytes were accepted. Wait for the playback head to consume the entire
+                // WAV and give the device a tiny hardware drain guard before stop/flush/release.
                 long waitStarted = System.currentTimeMillis();
-                long maxWait = Math.max(250L, durationMs + 750L);
-                while (running && Integer.toUnsignedLong(track.getPlaybackHeadPosition()) < expectedFrames
-                        && System.currentTimeMillis() - waitStarted < maxWait) {
-                    try { Thread.sleep(12L); } catch (InterruptedException interrupted) { break; }
+                long maxWait = Math.max(1200L, durationMs + 1500L);
+                while (running && System.currentTimeMillis() - waitStarted < maxWait) {
+                    finalPlaybackFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+                    if (finalPlaybackFrames >= expectedFrames) {
+                        playbackDrained = true;
+                        break;
+                    }
+                    try {
+                        Thread.sleep(12L);
+                    } catch (InterruptedException interrupted) {
+                        drainInterrupted = true;
+                        break;
+                    }
                 }
-                completed = running && offset >= parsed.pcm.length;
+                // During a live desktop stream another legacy WAV sentence may already be queued. Avoid
+                // injecting an extra drain guard between those durable clips. Continuous qwentts PCM
+                // packets bypass this queue and use PcmStreamAudioQueue instead.
+                if (playbackDrained && running && !drainInterrupted && !desktopStreamActive && queue.isEmpty()) {
+                    try { Thread.sleep(70L); } catch (InterruptedException interrupted) { drainInterrupted = true; }
+                }
+                completed = running && !drainInterrupted && playbackDrained && offset >= parsed.pcm.length;
             } finally {
                 finished.set(true);
                 if (watcher != null) watcher.interrupt();
@@ -680,14 +878,20 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                 boolean finalCompleted = completed;
                 int finalOffset = offset;
                 int totalPcmBytes = parsed.pcm.length;
+                long finalPlayedFrames = finalPlaybackFrames;
+                long finalExpectedFrames = expectedFrames;
+                boolean finalDrainInterrupted = drainInterrupted;
+                boolean finalPlaybackDrained = playbackDrained;
                 post(() -> {
                     if (!finalCompleted) {
                         listener.onDebug("Phone voice playback interrupted",
                                 clip.label + ", wrote=" + finalOffset + "/" + totalPcmBytes
-                                        + " PCM bytes. Check the preceding voice journal entry for an explicit clear, service shutdown, or AudioTrack failure.");
+                                        + " PCM bytes, playedFrames=" + finalPlayedFrames + "/" + finalExpectedFrames
+                                        + ", drained=" + finalPlaybackDrained + ", interrupted=" + finalDrainInterrupted
+                                        + ". The next sentence will no longer silently classify an interrupted drain as successful playback.");
                     }
                     listener.onPlaybackFinished(clip, finalCompleted);
-                    if (isIdle()) {
+                    if (PhoneVoicePlaybackService.this.isIdle()) {
                         listener.onQueueIdle();
                         maybeConnectDesiredRoute();
                     }
@@ -724,6 +928,236 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             }, "six-stars-playback-start-watcher");
             watcher.start();
             return watcher;
+        }
+    }
+
+    /**
+     * Routes logical qwentts.cpp PCM streams into one self-contained SmartPcmPlaybackWriter per
+     * response. This class owns only stream ordering/identity; buffering, AudioTrack writes,
+     * emergency refill, and live lip-sync timing all live in the writer.
+     */
+    private final class PcmStreamAudioQueue {
+        private final Object gate = new Object();
+        private final Object pauseLock = new Object();
+        private final LinkedBlockingDeque<DesktopPcmStream> streams = new LinkedBlockingDeque<>();
+        private final Map<String, DesktopPcmStream> byKey = new HashMap<>();
+        private final SmartPcmPlaybackWriter.AdaptiveProfile adaptiveProfile = new SmartPcmPlaybackWriter.AdaptiveProfile();
+        private volatile boolean running;
+        private volatile boolean paused;
+        private volatile DesktopPcmStream activeStream;
+        private volatile SmartPcmPlaybackWriter activeWriter;
+        private Thread thread;
+
+        void start() {
+            if (running) return;
+            running = true;
+            thread = new Thread(this::loop, "six-stars-smart-pcm-player");
+            thread.start();
+        }
+
+        void stop() {
+            running = false;
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
+            clearForNewStream();
+            if (thread != null) thread.interrupt();
+        }
+
+        boolean isPaused() { return paused; }
+        boolean isIdle() {
+            synchronized (gate) {
+                return activeStream == null && streams.isEmpty() && byKey.isEmpty();
+            }
+        }
+
+        void pausePlayback() {
+            paused = true;
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.pause();
+        }
+
+        void resumePlayback() {
+            paused = false;
+            synchronized (pauseLock) { pauseLock.notifyAll(); }
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.resume();
+        }
+
+        void enqueue(PhoneVoiceClip clip) {
+            if (clip == null || !clip.continuousPcm || clip.wav.length == 0) return;
+            String key = streamKey(clip.streamId, clip.streamOrdinal);
+            DesktopPcmStream stream;
+            synchronized (gate) {
+                stream = byKey.get(key);
+                if (stream == null) {
+                    stream = new DesktopPcmStream(clip.streamId, clip.streamOrdinal, clip.label);
+                    byKey.put(key, stream);
+                    streams.offerLast(stream);
+                }
+                if (stream.firstClip == null) stream.firstClip = clip;
+            }
+            stream.chunks.offerLast(clip);
+        }
+
+        void endStream(String streamId, long ordinal) {
+            DesktopPcmStream stream;
+            synchronized (gate) { stream = byKey.get(streamKey(streamId, ordinal)); }
+            if (stream != null) stream.ended = true;
+        }
+
+        void cancelStream(String streamId, long ordinal) {
+            DesktopPcmStream stream;
+            synchronized (gate) { stream = byKey.get(streamKey(streamId, ordinal)); }
+            if (stream != null) {
+                stream.cancelled = true;
+                if (stream == activeStream) {
+                    SmartPcmPlaybackWriter writer = activeWriter;
+                    if (writer != null) writer.cancel();
+                }
+            }
+        }
+
+        void clearForNewStream() {
+            synchronized (gate) {
+                if (activeStream != null) activeStream.cancelled = true;
+                for (DesktopPcmStream stream : byKey.values()) stream.cancelled = true;
+                streams.clear();
+                byKey.clear();
+            }
+            SmartPcmPlaybackWriter writer = activeWriter;
+            if (writer != null) writer.cancel();
+        }
+
+        private void loop() {
+            while (running) {
+                try {
+                    DesktopPcmStream stream = streams.takeFirst();
+                    synchronized (gate) { activeStream = stream; }
+                    // Prepared/local WAV playback keeps priority. A single live writer starts only
+                    // after an already-playing prepared prefix has naturally finished.
+                    while (running && !stream.cancelled && !playbackQueue.isIdle()) Thread.sleep(20L);
+                    if (running && !stream.cancelled) playStream(stream);
+                    synchronized (gate) {
+                        byKey.remove(streamKey(stream.streamId, stream.ordinal));
+                        if (activeStream == stream) activeStream = null;
+                    }
+                    post(() -> {
+                        if (PhoneVoicePlaybackService.this.isIdle()) {
+                            listener.onQueueIdle();
+                            maybeConnectDesiredRoute();
+                        }
+                    });
+                } catch (InterruptedException ignored) {
+                } catch (Throwable error) {
+                    post(() -> listener.onError("Smart PCM playback failed", error));
+                }
+            }
+        }
+
+        private void playStream(DesktopPcmStream stream) throws Exception {
+            ArrayList<PhoneVoiceClip> receivedClips = new ArrayList<>();
+            AtomicBoolean playbackStarted = new AtomicBoolean(false);
+            AtomicBoolean completionDelivered = new AtomicBoolean(false);
+
+            SmartPcmPlaybackWriter writer = new SmartPcmPlaybackWriter(adaptiveProfile, new SmartPcmPlaybackWriter.Listener() {
+                @Override public void onDebug(String title, String details) {
+                    post(() -> listener.onDebug(title, "stream=" + stream.ordinal + ", " + details));
+                }
+
+                @Override public void onPlaybackStarted(long playbackFrame) {
+                    PhoneVoiceClip first = stream.firstClip;
+                    if (first == null || !playbackStarted.compareAndSet(false, true)) return;
+                    post(() -> listener.onPlaybackStarted(first, 0L, 0L));
+                }
+
+                @Override public void onLipSyncDataCommitted(SmartPcmPlaybackWriter.LipSyncCommit commit) {
+                    // Marker data intentionally stays inside the writer. It is append-only and tied
+                    // to absolute AudioTrack frames; the observer below emits only actual mouth-state
+                    // transitions when those frames reach the speaker.
+                }
+
+                @Override public void onSpeechStateChanged(boolean speaking, long playbackFrame) {
+                    post(() -> listener.onLipSyncState(speaking));
+                }
+
+                @Override public void onBufferingChanged(boolean buffering, long leadMs, long targetMs) {
+                    if (buffering) {
+                        post(() -> listener.onDebug("Smart PCM buffering",
+                                "stream=" + stream.ordinal + ", lead=" + leadMs + "ms, target=" + targetMs + "ms."));
+                    }
+                }
+
+                @Override public void onCompleted(SmartPcmPlaybackWriter.Result result) {
+                    if (result.completed) appendContinuousPcmToSavedVoice(receivedClips);
+                    PhoneVoiceClip first = stream.firstClip;
+                    if (first != null && playbackStarted.get() && completionDelivered.compareAndSet(false, true)) {
+                        post(() -> listener.onPlaybackFinished(first, result.completed));
+                    }
+                    post(() -> listener.onDebug("Smart PCM stream complete",
+                            "stream=" + stream.ordinal + ", completed=" + result.completed
+                                    + ", generation=" + String.format(Locale.US, "%.2f", Math.max(0.0, result.generationRate)) + "x realtime"
+                                    + ", underruns=" + result.underruns
+                                    + ", emergencyRefills=" + result.emergencyRefills
+                                    + ", learnedStartup=" + result.learnedStartupMs + "ms."));
+                }
+
+                @Override public void onError(Throwable error) {
+                    post(() -> listener.onError("Smart PCM writer failed", error));
+                }
+            });
+
+            activeWriter = writer;
+            if (paused) writer.pause();
+            writer.start();
+            try {
+                while (running && !stream.cancelled) {
+                    PhoneVoiceClip clip = stream.chunks.poll(50L, TimeUnit.MILLISECONDS);
+                    if (clip != null) {
+                        ParsedWav parsed = ParsedWav.parse(clip.wav);
+                        receivedClips.add(clip);
+                        writer.write(new SmartPcmPlaybackWriter.PcmChunk(
+                                parsed.pcm,
+                                parsed.sampleRate,
+                                parsed.channels,
+                                clip.textChars,
+                                clip.textKey,
+                                clip.receivedAtElapsedMs,
+                                clip));
+                    }
+
+                    if (stream.ended && stream.chunks.isEmpty()) {
+                        writer.endInput();
+                        break;
+                    }
+                    if (writer.isFinished()) break;
+                }
+
+                if (stream.cancelled || !running) writer.cancel();
+                else if (stream.ended) writer.endInput();
+                writer.awaitCompletion();
+            } finally {
+                if (activeWriter == writer) activeWriter = null;
+                writer.close();
+            }
+        }
+
+        private String streamKey(String streamId, long ordinal) {
+            return ordinal + ":" + (streamId == null ? "" : streamId);
+        }
+
+        private final class DesktopPcmStream {
+            final String streamId;
+            final long ordinal;
+            final String label;
+            final LinkedBlockingDeque<PhoneVoiceClip> chunks = new LinkedBlockingDeque<>();
+            volatile boolean ended;
+            volatile boolean cancelled;
+            volatile PhoneVoiceClip firstClip;
+
+            DesktopPcmStream(String streamId, long ordinal, String label) {
+                this.streamId = streamId == null ? "" : streamId;
+                this.ordinal = ordinal;
+                this.label = label == null ? "Star PCM stream" : label;
+            }
         }
     }
 
@@ -783,9 +1217,11 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             desiredHost = "";
             desiredPort = -1;
             reconnectScheduled = false;
+            refreshWhenIdle = false;
             closeSocketLocked();
         }
         playbackQueue.stop();
+        pcmStreamQueue.stop();
         fileExecutor.shutdownNow();
     }
 }

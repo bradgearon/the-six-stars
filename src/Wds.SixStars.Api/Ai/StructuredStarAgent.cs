@@ -19,17 +19,18 @@ namespace Wds.SixStars.Api.Ai
 {
     public sealed class StructuredStarAgent : IStarAgent, IStarDecisionScorer, IStarTurnAnalyzer, IStarInformationNeedAnalyzer, IStarDailyStateGenerator, IStarGirlfriendHourlyStateGenerator, IInterstarUpdateAgent, IStarWritingAgent
     {
-        private const int WritingPerformanceCandidateLimit = 12;
-        private const int WritingPerformanceTextLimit = 600;
+        private const int WritingPerformanceCandidateLimit = 25;
 
         private readonly ILocalChatModelClient _client;
         private readonly StarPromptBuilder _promptBuilder;
         private readonly PromptTemplateRenderer _templates;
+        private readonly StarWritingValueBaselineCatalog _valueBaselines;
         private readonly JsonSerializerOptions _jsonOptions;
         private readonly int _speechMaxTokens;
         private readonly int _initiativeMaxTokens;
         private readonly int _storyPlanMaxTokens;
         private readonly int _reviewMaxTokens;
+        private readonly bool _fastSpeechControlsEnabled;
 
         public StructuredStarAgent(ILocalChatModelClient client, MainInstructionSet mainInstructions)
             : this(client, mainInstructions, new StarPromptOptions())
@@ -46,10 +47,12 @@ namespace Wds.SixStars.Api.Ai
             _client = client;
             _promptBuilder = new StarPromptBuilder(mainInstructions, promptOptions);
             _templates = PromptTemplateRenderer.CreateDefault();
+            _valueBaselines = StarWritingValueBaselineCatalog.CreateDefault();
             _speechMaxTokens = ResolveSpeechMaxTokens(speechMaxTokens);
             _initiativeMaxTokens = ResolveInitiativeMaxTokens();
             _storyPlanMaxTokens = ResolveStoryPlanMaxTokens();
             _reviewMaxTokens = ResolveReviewMaxTokens(reviewMaxTokens);
+            _fastSpeechControlsEnabled = mainInstructions?.FastSpeech?.IncludeControlItems == true;
             _jsonOptions = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true,
@@ -150,6 +153,10 @@ namespace Wds.SixStars.Api.Ai
             wordPairResult.WordPairs = NormalizeWritingWordPairs(wordPairResult.WordPairs);
             wordPairResult.RawModelJson = wordPairJson;
 
+            List<StarWritingValueReference> sparkValueReferences = BuildSharedReaderEmotionCalibrationReferences(
+                StarWritingOutputTypes.Spark,
+                5);
+
             object compositionData = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -187,6 +194,9 @@ namespace Wds.SixStars.Api.Ai
                         writing = PromptText(x.Writing, 1200)
                     })
                     .ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = sparkValueReferences,
                 wordPairs = wordPairResult.WordPairs
                     .Select((pair, index) => new
                     {
@@ -310,6 +320,10 @@ namespace Wds.SixStars.Api.Ai
                     objectActionError);
             }
 
+            List<StarWritingValueReference> sparkValueReferences = BuildSharedReaderEmotionCalibrationReferences(
+                StarWritingOutputTypes.Spark,
+                5);
+
             object compositionData = new
             {
                 starId = PromptText(profile.StarId, 80),
@@ -347,6 +361,9 @@ namespace Wds.SixStars.Api.Ai
                         writing = PromptText(x.Writing, 1200)
                     })
                     .ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = sparkValueReferences,
                 objects = objectActionResult.Objects
                     .Select((item, index) => new
                     {
@@ -452,6 +469,9 @@ namespace Wds.SixStars.Api.Ai
                 seedWords = NormalizeSeedWords(generation.SeedWords),
                 passNumber = Math.Max(2, passNumber),
                 totalPasses = Math.Max(Math.Max(2, passNumber), totalPasses),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.Spark, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select(item => new
@@ -527,7 +547,12 @@ namespace Wds.SixStars.Api.Ai
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 behaviors = PromptWritingBehaviorList(profile.Behaviors, 10, 700),
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
+                reviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                vectorCount = StarWritingReaderEmotionVector.Categories.Length,
+                emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.Spark, 5),
                 candidates = (generation.Items ?? new List<StarWritingCandidate>())
                     .Take(5)
                     .Select((item, index) => new
@@ -553,34 +578,246 @@ namespace Wds.SixStars.Api.Ai
                 cancellationToken).ConfigureAwait(false);
             StarWritingReviewResult result = ParseWritingReviewResult(json, profile.StarId);
 
-            if (!HasCompleteWritingReview(result))
+            if (HasCompleteWritingReview(result) && HasSuspiciousCollapsedWritingReview(result))
             {
-                IReadOnlyList<ChatMessage> repairMessages = new List<ChatMessage>
-                {
-                    new ChatMessage("system", _templates.Render("star_writing_review_repair_system.sbn", data)),
-                    new ChatMessage("user", _templates.Render("star_writing_review_repair_user.sbn", data))
-                };
-                string repairJson = await _client.CompleteJsonAsync(
-                    repairMessages,
+                List<ChatMessage> calibrationRepairMessages = messages.ToList();
+                calibrationRepairMessages.Add(new ChatMessage(
+                    "user",
+                    "CALIBRATION RE-REVIEW: The previous response collapsed different writings into the same reader-emotion vector. Read each candidate independently. The author identity must not affect magnitude; the same text under another actor must receive the same values. Re-evaluate all five from the shared IU scale and return only the compact JSON contract."));
+                string calibrationRepairJson = await _client.CompleteJsonAsync(
+                    calibrationRepairMessages,
                     StarResponseJsonSchema.CreateStarWritingReviewResponseFormat(),
                     0,
-                    "star-writing-rate-repair",
+                    "star-writing-rate-calibration-repair",
                     cancellationToken).ConfigureAwait(false);
-                StarWritingReviewResult repaired = ParseWritingReviewResult(repairJson, profile.StarId);
-                repaired.RawModelJson = json + Environment.NewLine + "--- RATING FORMAT REPAIR ---" + Environment.NewLine + repairJson;
-                result = repaired;
+                StarWritingReviewResult calibrationRepaired = ParseWritingReviewResult(calibrationRepairJson, profile.StarId);
+                calibrationRepaired.RawModelJson = json + Environment.NewLine
+                    + "--- CALIBRATION COLLAPSE RE-REVIEW ---" + Environment.NewLine
+                    + calibrationRepairJson;
+                // Prefer the independent rereview even if one vector is malformed. The targeted
+                // single-item repair below can fix that one vector without falling back to the
+                // suspiciously collapsed original batch.
+                result = calibrationRepaired;
             }
 
             if (!HasCompleteWritingReview(result))
             {
+                // Do not throw away four good vectors because one local-model string was off by one.
+                // A five-vector repair asks the model to count 155 positional values again and can turn
+                // one malformed item into several malformed items. Preserve every valid exact-index
+                // rating and rerate only the missing/malformed candidate, one 31-value vector at a time.
+                result = await RepairIncompleteWritingReviewAsync(
+                    profile,
+                    generation,
+                    result,
+                    json,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!HasCompleteWritingReview(result))
+            {
+                string missingIndexes = string.Join(",", GetIncompleteWritingReviewIndexes(result));
                 throw new InvalidOperationException(
-                    "Writing review did not return five usable 27-entry score vectors. " +
-                    "No new writing batch was saved; try the generation again.");
+                    "Writing review still had malformed 31-entry reader-emotion IU vectors after single-item repair" +
+                    (missingIndexes.Length > 0 ? " at candidate index(es) " + missingIndexes : string.Empty) +
+                    ". No new writing batch was saved; try the generation again.");
+            }
+
+            foreach (StarWritingRating rating in result.Ratings.Where(x => x != null))
+            {
+                if (StarWritingReaderEmotionVector.TryNormalizeComplete(
+                        rating.EmotionalVector,
+                        out string normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                    rating.EmotionalVector = normalizedVector;
+                    rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+                    rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                }
             }
 
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
             if (string.IsNullOrWhiteSpace(result.RawModelJson)) result.RawModelJson = json;
             return result;
+        }
+
+        private async Task<StarWritingReviewResult> RepairIncompleteWritingReviewAsync(
+            StarProfile profile,
+            StarWritingGenerationResult generation,
+            StarWritingReviewResult original,
+            string originalRawJson,
+            CancellationToken cancellationToken)
+        {
+            Dictionary<int, StarWritingRating> validByIndex = GetValidWritingRatingsByIndex(original);
+            List<string> rawParts = new List<string>();
+            string initialRaw = string.IsNullOrWhiteSpace(original.RawModelJson) ? originalRawJson : original.RawModelJson;
+            if (!string.IsNullOrWhiteSpace(initialRaw)) rawParts.Add(initialRaw);
+
+            List<StarWritingCandidate> candidates = (generation.Items ?? new List<StarWritingCandidate>()).Take(5).ToList();
+            List<StarWritingValueReference> references = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.Spark, 5);
+
+            foreach (int index in Enumerable.Range(0, 5).Where(i => !validByIndex.ContainsKey(i)).ToList())
+            {
+                if (index >= candidates.Count) continue;
+
+                StarWritingCandidate candidate = candidates[index];
+                StarWritingRating? repaired = null;
+                for (int attempt = 1; attempt <= 2 && repaired == null; attempt++)
+                {
+                    IReadOnlyList<ChatMessage> repairMessages = BuildSingleWritingReviewRepairMessages(
+                        candidate,
+                        index,
+                        references,
+                        attempt);
+                    string label = attempt == 1
+                        ? $"star-writing-rate-repair-item-{index}"
+                        : $"star-writing-rate-repair-item-{index}-retry";
+                    string repairJson = await _client.CompleteJsonAsync(
+                        repairMessages,
+                        StarResponseJsonSchema.CreateStarWritingSingleReviewRepairResponseFormat(),
+                        0,
+                        label,
+                        cancellationToken).ConfigureAwait(false);
+
+                    rawParts.Add($"--- SINGLE ITEM RATING FORMAT REPAIR index={index} attempt={attempt} ---");
+                    rawParts.Add(repairJson);
+                    repaired = ParseSingleWritingReviewRepair(repairJson, index);
+                }
+
+                if (repaired != null)
+                {
+                    validByIndex[index] = repaired;
+                }
+            }
+
+            return new StarWritingReviewResult
+            {
+                StarId = string.IsNullOrWhiteSpace(original.StarId) ? profile.StarId : original.StarId,
+                Ratings = validByIndex.OrderBy(x => x.Key).Select(x => x.Value).ToList(),
+                RawModelJson = string.Join(Environment.NewLine, rawParts)
+            };
+        }
+
+        private IReadOnlyList<ChatMessage> BuildSingleWritingReviewRepairMessages(
+            StarWritingCandidate candidate,
+            int index,
+            IReadOnlyList<StarWritingValueReference> references,
+            int attempt)
+        {
+            string referenceText = string.Join(
+                Environment.NewLine,
+                (references ?? Array.Empty<StarWritingValueReference>())
+                    .Take(5)
+                    .Select(item =>
+                        $"Overall={item.OverallValue:0.##} IU | Vector={item.ValueVector} | Writing={PromptText(item.Writing, 500)}"));
+
+            string bucketText = string.Join(
+                Environment.NewLine,
+                StarWritingStoryEmotionFeedback.Buckets.Select(bucket => $"- {bucket.Emotion}: {bucket.Discipline}"));
+            string zeroVectorExample = string.Join(";", Enumerable.Repeat("0", StarWritingReaderEmotionVector.Categories.Length));
+
+            string system =
+                "Act as a neutral reader-response evaluator repairing ONE malformed Spark review. " +
+                "Rate only the supplied writing. Use the same shared IU ruler as the normal review. " +
+                "Return exactly one compact JSON property named valueVector. Its string must contain exactly 31 " +
+                "non-negative integer IU values separated by exactly 30 semicolons, with no spaces, names, colons, " +
+                "brackets, commentary, or markdown. Overall is the 31st and final value. Do not copy a generic shape. " +
+                "IU is open-ended: 0 absent, 5 trace, 15 faint, 30 noticeable, 50 strong, 70 very strong, " +
+                "85 exceptional, 100 reference excellence, 125 rare extraordinary, 150+ landmark force.";
+
+            string user =
+                "REPAIR ONE SPARK REVIEW" + Environment.NewLine +
+                $"Candidate index: {index}" + Environment.NewLine +
+                $"Repair attempt: {attempt}" + Environment.NewLine + Environment.NewLine +
+                "EXACT ORDER (31)" + Environment.NewLine +
+                StarWritingReaderEmotionVector.CategoryOrder + Environment.NewLine +
+                "Overall is LAST." + Environment.NewLine + Environment.NewLine +
+                "BUCKET MEANINGS" + Environment.NewLine +
+                bucketText + Environment.NewLine + Environment.NewLine +
+                "WRITING" + Environment.NewLine +
+                $"Words: {string.Join(" + ", (candidate.WordsUsed ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Take(2))}" + Environment.NewLine +
+                PromptText(candidate.Writing, 1600) + Environment.NewLine + Environment.NewLine +
+                "SHARED CALIBRATION REFERENCES" + Environment.NewLine +
+                (referenceText.Length == 0 ? $"Reference excellence: {_valueBaselines.ReferenceValue:0.##} IU." : referenceText) + Environment.NewLine + Environment.NewLine +
+                "Count the 31 positions before returning. Return only one JSON object in this shape:" + Environment.NewLine +
+                "{\"valueVector\":\"" + zeroVectorExample + "\"}" + Environment.NewLine +
+                "Replace the zeros with your 31 IU judgments; keep exactly 30 semicolons.";
+
+            return new List<ChatMessage>
+            {
+                new ChatMessage("system", system),
+                new ChatMessage("user", user)
+            };
+        }
+
+        private static StarWritingRating? ParseSingleWritingReviewRepair(string rawContent, int index)
+        {
+            string json = ExtractJson(rawContent);
+            if (string.IsNullOrWhiteSpace(json)) return null;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object
+                    || !TryGetPropertyIgnoreCase(root, "valueVector", out JsonElement vectorElement))
+                {
+                    return null;
+                }
+
+                string vector = ReadWritingVector(vectorElement);
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                        vector,
+                        out string normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    return null;
+                }
+
+                return new StarWritingRating
+                {
+                    Index = index,
+                    ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                    EmotionalVector = normalizedVector,
+                    EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                    OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall")
+                };
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static Dictionary<int, StarWritingRating> GetValidWritingRatingsByIndex(StarWritingReviewResult result)
+        {
+            Dictionary<int, StarWritingRating> valid = new Dictionary<int, StarWritingRating>();
+            foreach (StarWritingRating rating in result?.Ratings ?? new List<StarWritingRating>())
+            {
+                if (rating == null || rating.Index < 0 || rating.Index > 4 || valid.ContainsKey(rating.Index)) continue;
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(
+                        rating.EmotionalVector,
+                        out string normalizedVector,
+                        out Dictionary<string, StarWritingEmotionValue> values))
+                {
+                    continue;
+                }
+
+                rating.ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1;
+                rating.EmotionalVector = normalizedVector;
+                rating.EmotionFeedback = new List<StarWritingStoryEmotionValue>();
+                rating.OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall");
+                valid[rating.Index] = rating;
+            }
+
+            return valid;
+        }
+
+        private static List<int> GetIncompleteWritingReviewIndexes(StarWritingReviewResult result)
+        {
+            Dictionary<int, StarWritingRating> valid = GetValidWritingRatingsByIndex(result);
+            return Enumerable.Range(0, 5).Where(index => !valid.ContainsKey(index)).ToList();
         }
 
         public async Task<StarWritingStoryTermContributionResult> ContributeStoryTermsAsync(
@@ -590,6 +827,7 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<string> verbSeeds,
             IReadOnlyList<string> subjectsSoFar,
             IReadOnlyList<string> verbsSoFar,
+            IReadOnlyList<StarWritingStoryWish> storyWishesSoFar,
             int phaseNumber,
             CancellationToken cancellationToken)
         {
@@ -602,6 +840,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(profile.CoreQuote, 500),
                 personalityShort = PromptText(profile.PersonalityShort, 900),
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(profile.ActionBattlePreference, 700),
                 characterAttributes = BuildCharacterAttributeSummary(profile),
                 behaviors = PromptWordSelectionBehaviorList(profile.Behaviors, 10, 700),
                 relevantSecrets = PromptList(
@@ -613,6 +852,7 @@ namespace Wds.SixStars.Api.Ai
                 verbSeeds = NormalizeSeedWords(verbSeeds),
                 subjectsSoFar = NormalizeStoryTerms(subjectsSoFar, 40),
                 verbsSoFar = NormalizeStoryTerms(verbsSoFar, 40),
+                storyWishesSoFar = FormatStoryWishes(storyWishesSoFar),
                 recentStoryNouns = NormalizeStoryTerms(viewpointState.RecentStoryNouns, 50),
                 recentStoryVerbs = NormalizeStoryTerms(viewpointState.RecentStoryVerbs, 50),
                 topStoryNouns = BuildTopStoryTermCounts(viewpointState.StoryNounUsageCounts),
@@ -637,12 +877,18 @@ namespace Wds.SixStars.Api.Ai
             usedSubjects.UnionWith(viewpointState.RecentStoryNouns ?? new List<string>());
             HashSet<string> usedVerbs = new HashSet<string>(verbsSoFar ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             usedVerbs.UnionWith(viewpointState.RecentStoryVerbs ?? new List<string>());
-            result.Subjects = NormalizeStoryTerms(result.Subjects, 5).Where(x => !usedSubjects.Contains(x)).Take(5).ToList();
-            result.Verbs = NormalizeStoryTerms(result.Verbs, 5).Where(x => !usedVerbs.Contains(x)).Take(5).ToList();
-            if (result.Subjects.Count < 3 || result.Verbs.Count < 3)
+            result.Subjects = NormalizeStoryTermsUnbounded(result.Subjects).Where(x => !usedSubjects.Contains(x)).ToList();
+            result.Verbs = NormalizeStoryTermsUnbounded(result.Verbs).Where(x => !usedVerbs.Contains(x)).ToList();
+            result.StoryWishes = NormalizeStoryTermsUnbounded(result.StoryWishes).ToList();
+            if (result.StoryWishes.Count != 5)
             {
-                throw new InvalidOperationException("Constellation Forge term contribution did not contain at least three fresh subjects and verbs.");
+                throw new InvalidOperationException(
+                    "Constellation Forge story-wish contribution from " + profile.StarId
+                    + " returned " + result.StoryWishes.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + " usable wishes; exactly five are required so every active Star gets the same creative voice in the seed pass. Raw response preview: "
+                    + PromptText(json, 1400));
             }
+            // Subject/verb counts remain instruction-guided rather than hard-gated; the active roster naturally accumulates them.
             result.RawModelJson = json;
             return result;
         }
@@ -652,6 +898,7 @@ namespace Wds.SixStars.Api.Ai
             StarWritingNotesState state,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
         {
@@ -664,6 +911,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
                 completeBackgroundStory = PromptText(viewpointProfile.CompleteBackgroundStory, 2200),
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
@@ -672,7 +920,11 @@ namespace Wds.SixStars.Api.Ai
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
-                seedWords = NormalizeSeedWords(seedWords)
+                storyWishes = FormatStoryWishes(storyWishes),
+                seedWords = NormalizeSeedWords(seedWords),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
@@ -685,17 +937,53 @@ namespace Wds.SixStars.Api.Ai
                 0,
                 "star-writing-story-outline",
                 cancellationToken).ConfigureAwait(false);
-            StarWritingStoryOutlineResult? result = JsonSerializer.Deserialize<StarWritingStoryOutlineResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Constellation Forge outline returned empty JSON.");
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
-            result.Title = PromptText(result.Title, 180);
-            result.Premise = PromptText(result.Premise, 1800);
-            result.Beats = (result.Beats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
-            if (string.IsNullOrWhiteSpace(result.Title) || string.IsNullOrWhiteSpace(result.Premise) || result.Beats.Count < 6)
+            StarWritingStoryOutlineResult? result = ParseAndNormalizeStoryOutline(json, viewpointProfile.StarId);
+            if (result == null)
             {
-                throw new InvalidOperationException("Constellation Forge outline was incomplete.");
+                throw new InvalidOperationException("Constellation Forge outline returned empty or unreadable JSON.");
             }
-            result.RawModelJson = json;
+
+            List<string> missing = GetMissingStoryOutlineFields(result);
+            if (missing.Count > 0)
+            {
+                List<ChatMessage> completionMessages = messages.ToList();
+                completionMessages.Add(new ChatMessage(
+                    "assistant",
+                    ExtractJson(json)));
+                completionMessages.Add(new ChatMessage(
+                    "user",
+                    "The outline is structurally incomplete because these required story components are empty: "
+                    + string.Join(", ", missing)
+                    + ". Complete this SAME outline now. Preserve every useful existing field, fill the missing components, and return the full JSON object again. "
+                    + "The characters, storySubjects, and beats properties must be JSON arrays of plain strings. Characters should be named, memorable story characters; storySubjects should describe what the story is actually about. "
+                    + "Each beat string may be as detailed as needed. Do not put objects inside these arrays. "
+                    + "Do not shorten the story architecture to satisfy a count or size target; let the story determine its structure."));
+
+                string completionJson = await _client.CompleteJsonAsync(
+                    completionMessages,
+                    StarResponseJsonSchema.CreateStarWritingStoryOutlineResponseFormat(),
+                    0,
+                    "star-writing-story-outline-completion",
+                    cancellationToken).ConfigureAwait(false);
+                StarWritingStoryOutlineResult? completed = ParseAndNormalizeStoryOutline(completionJson, viewpointProfile.StarId);
+                if (completed != null)
+                {
+                    MergeStoryOutline(result, completed);
+                    result.RawModelJson = json + Environment.NewLine + "--- OUTLINE COMPLETION ---" + Environment.NewLine + completionJson;
+                }
+                missing = GetMissingStoryOutlineFields(result);
+            }
+
+            if (missing.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Constellation Forge outline remained incomplete after asking the viewpoint Star to complete the same outline. Missing: "
+                    + string.Join(", ", missing)
+                    + ". This is a generation/instruction failure, not a length-limit rejection. Raw outline response preview: "
+                    + PromptText(result.RawModelJson, 1600));
+            }
+
+            if (string.IsNullOrWhiteSpace(result.RawModelJson)) result.RawModelJson = json;
             return result;
         }
 
@@ -707,8 +995,10 @@ namespace Wds.SixStars.Api.Ai
             string currentStory,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> seedWords,
             IReadOnlyList<string> priorContributorStarIds,
+            IReadOnlyList<string> eligibleContributorStarIds,
             int phaseNumber,
             bool pendingFinish,
             string finishRequestedByStarId,
@@ -723,6 +1013,7 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(contributorProfile.CoreQuote, 500),
                 personalityShort = PromptText(contributorProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(contributorProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(contributorProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(contributorProfile.BackstorySummary, 1400),
                 speakingStyle = PromptText(contributorProfile.SpeakingStyle, 1200),
                 characterAttributes = BuildCharacterAttributeSummary(contributorProfile),
@@ -737,14 +1028,24 @@ namespace Wds.SixStars.Api.Ai
                 viewpointDomain = PromptText(viewpointProfile.Domain, 120),
                 viewpointCoreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 viewpointPersonality = PromptText(viewpointProfile.DeepPersonality, 1600),
-                title = PromptText(outline.Title, 180),
-                premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
-                currentStory = PromptText(currentStory, 22000),
+                viewpointActionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
+                title = PromptText(outline.Title, 0),
+                premise = PromptText(outline.Premise, 0),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                characters = NormalizeStoryTermsUnbounded(outline.Characters),
+                storySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects),
+                currentStory = PromptText(currentStory, 0),
+                isViewpointInitialDraft = string.IsNullOrWhiteSpace(currentStory)
+                    && string.Equals(contributorProfile.StarId, viewpointProfile.StarId, StringComparison.OrdinalIgnoreCase),
                 subjects = NormalizeStoryTerms(subjects, 40),
                 verbs = NormalizeStoryTerms(verbs, 40),
+                storyWishes = FormatStoryWishes(storyWishes),
                 seedWords = NormalizeSeedWords(seedWords),
                 priorContributorStarIds = (priorContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                eligibleContributorStarIds = (eligibleContributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3),
                 phaseNumber = Math.Max(1, phaseNumber),
                 pendingFinish,
                 finishRequestedByStarId = PromptText(finishRequestedByStarId, 80)
@@ -760,18 +1061,9 @@ namespace Wds.SixStars.Api.Ai
                 0,
                 "star-writing-story-build-" + phaseNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 cancellationToken).ConfigureAwait(false);
-            StarWritingStoryBuildResult? result = JsonSerializer.Deserialize<StarWritingStoryBuildResult>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty JSON.");
-            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? contributorProfile.StarId : result.StarId.Trim();
-            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
-            result.RevisedBeats = (result.RevisedBeats ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 1200)).Take(14).ToList();
-            if (result.RevisedBeats.Count < 6) result.RevisedBeats = (outline.Beats ?? new List<string>()).Take(14).ToList();
-            result.Story = (result.Story ?? string.Empty).Trim();
-            result.AddedLayers = (result.AddedLayers ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 500)).Take(8).ToList();
-            result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
-            result.CompletionReason = PromptText(result.CompletionReason, 1000);
-            if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft.");
-            result.RawModelJson = json;
+            StarWritingStoryBuildResult? result = ParseAndNormalizeStoryBuildResult(json, contributorProfile.StarId, outline, pendingFinish);
+            if (result == null) throw new InvalidOperationException("Constellation Forge build phase returned empty or unreadable JSON.");
+            if (string.IsNullOrWhiteSpace(result.Story)) throw new InvalidOperationException("Constellation Forge build phase returned no story draft. Raw response preview: " + PromptText(json, 1600));
             return result;
         }
 
@@ -782,6 +1074,7 @@ namespace Wds.SixStars.Api.Ai
             string currentStory,
             IReadOnlyList<string> subjects,
             IReadOnlyList<string> verbs,
+            IReadOnlyList<StarWritingStoryWish> storyWishes,
             IReadOnlyList<string> contributorStarIds,
             IReadOnlyList<string> seedWords,
             CancellationToken cancellationToken)
@@ -795,48 +1088,54 @@ namespace Wds.SixStars.Api.Ai
                 coreQuote = PromptText(viewpointProfile.CoreQuote, 500),
                 personalityShort = PromptText(viewpointProfile.PersonalityShort, 900),
                 deepPersonality = PromptText(viewpointProfile.DeepPersonality, 1800),
+                actionBattlePreference = PromptText(viewpointProfile.ActionBattlePreference, 700),
                 backstorySummary = PromptText(viewpointProfile.BackstorySummary, 1400),
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
                 characterAttributes = BuildCharacterAttributeSummary(viewpointProfile),
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 12, 700),
                 storytellingRules = PromptList(viewpointProfile.StorytellingRules, 10, 700),
-                title = PromptText(outline.Title, 180),
-                premise = PromptText(outline.Premise, 1800),
-                beats = (outline.Beats ?? new List<string>()).Take(14).Select(x => PromptText(x, 1200)).ToList(),
-                currentStory = PromptText(currentStory, 22000),
+                title = PromptText(outline.Title, 0),
+                premise = PromptText(outline.Premise, 0),
+                beats = (outline.Beats ?? new List<string>()).Select(x => PromptText(x, 0)).ToList(),
+                characters = NormalizeStoryTermsUnbounded(outline.Characters),
+                storySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects),
+                currentStory = PromptText(currentStory, 0),
                 subjectsText = string.Join(", ", NormalizeStoryTerms(subjects, 40)),
                 verbsText = string.Join(", ", NormalizeStoryTerms(verbs, 40)),
+                storyWishes = FormatStoryWishes(storyWishes),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                seedWords = NormalizeSeedWords(seedWords)
+                seedWords = NormalizeSeedWords(seedWords),
+                referenceValue = _valueBaselines.ReferenceValue,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3)
             };
             List<ChatMessage> messages = new List<ChatMessage>
             {
                 new ChatMessage("system", _templates.Render("star_writing_story_final_system.sbn", data)),
                 new ChatMessage("user", _templates.Render("star_writing_story_final_user.sbn", data))
             };
-            string lastJson = string.Empty;
-            for (int attempt = 0; attempt < 2; attempt++)
+            string json = await _client.CompleteJsonAsync(
+                messages,
+                StarResponseJsonSchema.CreateStarWritingStoryFinalResponseFormat(),
+                0,
+                "star-writing-story-final",
+                cancellationToken).ConfigureAwait(false);
+            StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(json), _jsonOptions);
+            if (result == null)
             {
-                List<ChatMessage> attemptMessages = messages.ToList();
-                if (attempt > 0)
-                {
-                    attemptMessages.Add(new ChatMessage("user", "Return the final revised story now. The finalStep field must be true. Do not return planning or another intermediate draft."));
-                }
-                lastJson = await _client.CompleteJsonAsync(
-                    attemptMessages,
-                    StarResponseJsonSchema.CreateStarWritingStoryFinalResponseFormat(),
-                    0,
-                    attempt == 0 ? "star-writing-story-final" : "star-writing-story-final-retry",
-                    cancellationToken).ConfigureAwait(false);
-                StarWritingStoryFinalResult? result = JsonSerializer.Deserialize<StarWritingStoryFinalResult>(ExtractJson(lastJson), _jsonOptions);
-                if (result == null) continue;
-                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
-                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 180);
-                result.Story = (result.Story ?? string.Empty).Trim();
-                result.RawModelJson = lastJson;
-                if (result.FinalStep && !string.IsNullOrWhiteSpace(result.Story)) return result;
+                throw new InvalidOperationException("Constellation Forge final viewpoint revision returned empty or unreadable JSON. Raw response preview: " + PromptText(json, 1600));
             }
-            throw new InvalidOperationException("Constellation Forge final viewpoint revision did not return finalStep=true with a finished story.");
+            result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? viewpointProfile.StarId : result.StarId.Trim();
+            result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+            result.Story = (result.Story ?? string.Empty).Trim();
+            result.RawModelJson = json;
+            if (!result.FinalStep || string.IsNullOrWhiteSpace(result.Story))
+            {
+                throw new InvalidOperationException(
+                    "Constellation Forge final viewpoint revision violated its generation contract: finalStep must be true and story must be non-empty. Fix the final-revision instructions/model behavior rather than silently retrying or substituting output. Raw response preview: "
+                    + PromptText(json, 1600));
+            }
+            return result;
         }
 
         public async Task<StarWritingRating> RateStoryAsync(
@@ -858,52 +1157,331 @@ namespace Wds.SixStars.Api.Ai
                 speakingStyle = PromptText(viewpointProfile.SpeakingStyle, 1200),
                 behaviors = PromptWritingBehaviorList(viewpointProfile.Behaviors, 10, 700),
                 contributorStarIds = (contributorStarIds ?? Array.Empty<string>()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => PromptText(x, 80)).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                title = PromptText(title, 180),
-                story = PromptText(story, 24000)
+                reviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                vectorOrder = StarWritingReaderEmotionVector.CategoryOrder,
+                vectorCount = StarWritingReaderEmotionVector.Categories.Length,
+                emotionBuckets = StarWritingStoryEmotionFeedback.Buckets.Select(x => new { emotion = x.Emotion, discipline = x.Discipline }).ToList(),
+                referenceValue = _valueBaselines.ReferenceValue,
+                valueReferences = BuildSharedReaderEmotionCalibrationReferences(StarWritingOutputTypes.ConstellationStory, 3),
+                title = PromptText(title, 0),
+                story = PromptText(story, 0)
             };
             IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
             {
                 new ChatMessage("system", _templates.Render("star_writing_story_review_system.sbn", data)),
                 new ChatMessage("user", _templates.Render("star_writing_story_review_user.sbn", data))
             };
+
             string lastJson = string.Empty;
-            for (int attempt = 0; attempt < 2; attempt++)
+            for (int attempt = 0; attempt < 3; attempt++)
             {
                 List<ChatMessage> attemptMessages = messages.ToList();
                 if (attempt > 0)
                 {
                     attemptMessages.Add(new ChatMessage(
                         "user",
-                        "FORMAT REPAIR: Return only one JSON object with property \"0\". Its value must be exactly 27 scores from 0 through 100 separated by semicolons, in the supplied category order."));
+                        "FORMAT REPAIR: Return only {\"valueVector\":\"...\"}. valueVector must contain exactly "
+                        + StarWritingReaderEmotionVector.Categories.Length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + " non-negative IU values separated by exactly 30 semicolons in the supplied order, with Overall last. Count every position before returning. Do not return an emotions array or per-emotion objects."));
                 }
 
                 lastJson = await _client.CompleteJsonAsync(
                     attemptMessages,
                     StarResponseJsonSchema.CreateStarWritingStoryReviewResponseFormat(),
                     0,
-                    attempt == 0 ? "star-writing-story-rate" : "star-writing-story-rate-repair",
+                    attempt == 0
+                        ? "star-writing-story-emotion-vector-rate"
+                        : attempt == 1
+                            ? "star-writing-story-emotion-vector-rate-repair"
+                            : "star-writing-story-emotion-vector-rate-repair-2",
                     cancellationToken).ConfigureAwait(false);
-                string vector = string.Empty;
+
                 try
                 {
                     using JsonDocument document = JsonDocument.Parse(ExtractJson(lastJson));
-                    if (TryGetPropertyIgnoreCase(document.RootElement, "0", out JsonElement value))
+                    JsonElement root = document.RootElement;
+                    if (TryGetPropertyIgnoreCase(root, "valueVector", out JsonElement vectorElement))
                     {
-                        vector = ReadWritingVector(value);
+                        string vector = ReadWritingVector(vectorElement);
+                        if (StarWritingReaderEmotionVector.TryNormalizeComplete(
+                                vector,
+                                out string normalizedVector,
+                                out Dictionary<string, StarWritingEmotionValue> values))
+                        {
+                            return new StarWritingRating
+                            {
+                                Index = 0,
+                                ReviewDiscipline = StarWritingReviewDisciplines.ReaderEmotionIuV1,
+                                EmotionalVector = normalizedVector,
+                                EmotionFeedback = new List<StarWritingStoryEmotionValue>(),
+                                OverallValue = StarWritingReaderEmotionVector.ReadValue(values, "Overall")
+                            };
+                        }
                     }
                 }
                 catch (JsonException)
                 {
                 }
+            }
 
-                if (StarWritingEmotionVector.TryNormalizeUsable(vector, out string normalized, out _))
+            throw new InvalidOperationException(
+                "Constellation Story review did not return one complete compact ReaderEmotionIuV1 vector after a format-repair retry. "
+                + "The vector must contain every canonical reader-emotion bucket once in positional order plus Overall last. Raw response preview: "
+                + PromptText(lastJson, 1800));
+        }
+
+        private StarWritingStoryBuildResult? ParseAndNormalizeStoryBuildResult(
+            string json,
+            string fallbackStarId,
+            StarWritingStoryOutlineResult outline,
+            bool pendingFinish)
+        {
+            string extracted = ExtractJson(json);
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(extracted);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+                JsonElement root = document.RootElement;
+                StarWritingStoryBuildResult result = new StarWritingStoryBuildResult
                 {
-                    return new StarWritingRating { Index = 0, EmotionalVector = normalized };
+                    StarId = ReadLooseJsonString(root, "starId"),
+                    Title = ReadLooseJsonString(root, "title"),
+                    Characters = ReadLooseJsonStringList(root, "characters"),
+                    StorySubjects = ReadLooseJsonStringList(root, "storySubjects"),
+                    RevisedBeats = ReadStoryBeatList(root, "revisedBeats"),
+                    Story = ReadLooseJsonString(root, "story"),
+                    AddedLayers = ReadLooseJsonStringList(root, "addedLayers"),
+                    CompletionDecision = ReadLooseJsonString(root, "completionDecision"),
+                    CompletionReason = ReadLooseJsonString(root, "completionReason"),
+                    RawModelJson = json
+                };
+
+                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
+                result.Title = string.IsNullOrWhiteSpace(result.Title) ? outline.Title : PromptText(result.Title, 0);
+                result.Characters = NormalizeStoryTermsUnbounded(result.Characters);
+                if (result.Characters.Count == 0) result.Characters = NormalizeStoryTermsUnbounded(outline.Characters);
+                result.StorySubjects = NormalizeStoryTermsUnbounded(result.StorySubjects);
+                if (result.StorySubjects.Count == 0) result.StorySubjects = NormalizeStoryTermsUnbounded(outline.StorySubjects);
+                result.RevisedBeats = (result.RevisedBeats ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                if (result.RevisedBeats.Count == 0) result.RevisedBeats = (outline.Beats ?? new List<string>()).ToList();
+                result.Story = (result.Story ?? string.Empty).Trim();
+                result.AddedLayers = (result.AddedLayers ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                result.CompletionDecision = StarWritingStoryCompletionDecisions.Normalize(result.CompletionDecision, pendingFinish);
+                result.CompletionReason = PromptText(result.CompletionReason, 0);
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static List<string> ReadLooseJsonStringList(JsonElement root, string propertyName)
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement value)) return new List<string>();
+            List<string> result = new List<string>();
+
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in value.EnumerateArray())
+                {
+                    string text = FlattenStoryBeat(item);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+            }
+            else if (value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in value.EnumerateObject())
+                {
+                    string text = FlattenStoryBeat(property.Value);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+            }
+            else
+            {
+                string text = FlattenStoryBeat(value);
+                if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+            }
+
+            return result;
+        }
+
+        private StarWritingStoryOutlineResult? ParseAndNormalizeStoryOutline(string json, string fallbackStarId)
+        {
+            string extracted = ExtractJson(json);
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(extracted);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
+
+                JsonElement root = document.RootElement;
+                StarWritingStoryOutlineResult result = new StarWritingStoryOutlineResult
+                {
+                    StarId = ReadLooseJsonString(root, "starId"),
+                    Title = ReadLooseJsonString(root, "title"),
+                    Premise = ReadLooseJsonString(root, "premise"),
+                    Characters = ReadLooseJsonStringList(root, "characters"),
+                    StorySubjects = ReadLooseJsonStringList(root, "storySubjects"),
+                    Beats = ReadStoryBeatList(root),
+                    RawModelJson = json
+                };
+
+                result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? fallbackStarId : result.StarId.Trim();
+                result.Title = PromptText(result.Title, 0);
+                result.Premise = PromptText(result.Premise, 0);
+                result.Characters = NormalizeStoryTermsUnbounded(result.Characters);
+                result.StorySubjects = NormalizeStoryTermsUnbounded(result.StorySubjects);
+                result.Beats = (result.Beats ?? new List<string>())
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => PromptText(x, 0))
+                    .ToList();
+                return result;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ReadLooseJsonString(JsonElement root, string propertyName)
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement value)) return string.Empty;
+            return JsonScalarText(value);
+        }
+
+        private static List<string> ReadStoryBeatList(JsonElement root, string propertyName = "beats")
+        {
+            if (!TryGetPropertyIgnoreCase(root, propertyName, out JsonElement beats)) return new List<string>();
+
+            List<string> result = new List<string>();
+            if (beats.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in beats.EnumerateArray())
+                {
+                    string text = FlattenStoryBeat(item);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+                return result;
+            }
+
+            // Some local models naturally express an outline as an object keyed by beat number/name.
+            // Preserve that generated architecture rather than treating it as an empty outline.
+            if (beats.ValueKind == JsonValueKind.Object)
+            {
+                foreach (JsonProperty property in beats.EnumerateObject())
+                {
+                    string text = FlattenStoryBeat(property.Value);
+                    if (!string.IsNullOrWhiteSpace(text)) result.Add(text.Trim());
+                }
+                return result;
+            }
+
+            string single = FlattenStoryBeat(beats);
+            if (!string.IsNullOrWhiteSpace(single)) result.Add(single.Trim());
+            return result;
+        }
+
+        private static string FlattenStoryBeat(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.String) return element.GetString() ?? string.Empty;
+            if (element.ValueKind == JsonValueKind.Number || element.ValueKind == JsonValueKind.True || element.ValueKind == JsonValueKind.False)
+            {
+                return JsonScalarText(element);
+            }
+
+            if (element.ValueKind == JsonValueKind.Array)
+            {
+                return string.Join("; ", element.EnumerateArray()
+                    .Select(FlattenStoryBeat)
+                    .Where(x => !string.IsNullOrWhiteSpace(x)));
+            }
+
+            if (element.ValueKind != JsonValueKind.Object) return string.Empty;
+
+            List<string> pieces = new List<string>();
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                // Sequence metadata is redundant because array order already preserves it.
+                if (string.Equals(property.Name, "index", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "number", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "beatNumber", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string value = FlattenStoryBeat(property.Value);
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                if (string.Equals(property.Name, "beat", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "text", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "summary", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "description", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(property.Name, "content", StringComparison.OrdinalIgnoreCase))
+                {
+                    pieces.Add(value.Trim());
+                }
+                else
+                {
+                    pieces.Add(property.Name + ": " + value.Trim());
                 }
             }
 
-            throw new InvalidOperationException("Constellation Story review did not return one usable 27-entry score vector after a format-repair retry.");
+            return string.Join(" — ", pieces.Distinct(StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static string JsonScalarText(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String:
+                    return element.GetString() ?? string.Empty;
+                case JsonValueKind.Number:
+                    return element.GetRawText();
+                case JsonValueKind.True:
+                    return "true";
+                case JsonValueKind.False:
+                    return "false";
+                default:
+                    return string.Empty;
+            }
+        }
+
+        private static List<string> GetMissingStoryOutlineFields(StarWritingStoryOutlineResult outline)
+        {
+            List<string> missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(outline?.Title)) missing.Add("title");
+            if (string.IsNullOrWhiteSpace(outline?.Premise)) missing.Add("premise");
+            if (outline?.Characters == null || outline.Characters.Count == 0) missing.Add("characters");
+            if (outline?.StorySubjects == null || outline.StorySubjects.Count == 0) missing.Add("storySubjects");
+            if (outline?.Beats == null || outline.Beats.Count == 0) missing.Add("beats");
+            return missing;
+        }
+
+        private static void MergeStoryOutline(StarWritingStoryOutlineResult target, StarWritingStoryOutlineResult source)
+        {
+            if (target == null || source == null) return;
+            if (!string.IsNullOrWhiteSpace(source.StarId)) target.StarId = source.StarId.Trim();
+            if (!string.IsNullOrWhiteSpace(source.Title)) target.Title = source.Title.Trim();
+            if (!string.IsNullOrWhiteSpace(source.Premise)) target.Premise = source.Premise.Trim();
+            if (source.Characters != null && source.Characters.Count > 0) target.Characters = source.Characters.ToList();
+            if (source.StorySubjects != null && source.StorySubjects.Count > 0) target.StorySubjects = source.StorySubjects.ToList();
+            if (source.Beats != null && source.Beats.Count > 0) target.Beats = source.Beats.ToList();
+        }
+
+        private static List<string> NormalizeStoryTermsUnbounded(IEnumerable<string>? terms)
+        {
+            return (terms ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => PromptText(x, 0))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static List<string> NormalizeStoryTerms(IEnumerable<string>? terms, int limit)
@@ -1068,19 +1646,19 @@ namespace Wds.SixStars.Api.Ai
 
             JsonElement[] entries = element.EnumerateArray().ToArray();
 
-            // Compatibility with numeric-array output. The current score-only shape is 27
-            // numbers. Older revisions used 54 alternating score/confidence numbers; keep
-            // only every score so old model responses remain readable.
+            // Compatibility only. New review prompts require compact strings, but older local-model
+            // responses may still contain arrays. ReaderEmotionIuV1 is 31 values; legacy literary
+            // vectors are 27 values (or 54 alternating score/confidence values).
             bool flatNumericVector = entries.Length > 0 && entries.All(x => TryReadJsonDouble(x, out _));
             if (flatNumericVector)
             {
                 List<string> scores = new List<string>();
-                if (entries.Length >= 26 && entries.Length <= 28)
+                if ((entries.Length >= 26 && entries.Length <= 28) || entries.Length == StarWritingReaderEmotionVector.Categories.Length)
                 {
                     foreach (JsonElement entry in entries)
                     {
                         if (!TryReadJsonDouble(entry, out double score)
-                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                            || !TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                         {
                             return string.Empty;
                         }
@@ -1092,7 +1670,7 @@ namespace Wds.SixStars.Api.Ai
                     for (int i = 0; i < entries.Length; i += 2)
                     {
                         if (!TryReadJsonDouble(entries[i], out double score)
-                            || !TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                            || !TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                         {
                             return string.Empty;
                         }
@@ -1113,7 +1691,7 @@ namespace Wds.SixStars.Api.Ai
             {
                 if (entry.ValueKind == JsonValueKind.String)
                 {
-                    if (!TryNormalizeWritingScore(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
+                    if (!TryNormalizeWritingValue(entry.GetString() ?? string.Empty, out string score)) return string.Empty;
                     arrayScores.Add(score);
                     continue;
                 }
@@ -1123,7 +1701,7 @@ namespace Wds.SixStars.Api.Ai
                     JsonElement[] numbers = entry.EnumerateArray().Take(2).ToArray();
                     if (numbers.Length >= 1
                         && TryReadJsonDouble(numbers[0], out double score)
-                        && TryNormalizeWritingScore(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
+                        && TryNormalizeWritingValue(score.ToString(System.Globalization.CultureInfo.InvariantCulture), out string normalizedScore))
                     {
                         arrayScores.Add(normalizedScore);
                         continue;
@@ -1152,19 +1730,19 @@ namespace Wds.SixStars.Api.Ai
             {
                 foreach (string item in separated)
                 {
-                    if (!TryNormalizeWritingScore(item, out string score)) return string.Empty;
+                    if (!TryNormalizeWritingValue(item, out string score)) return string.Empty;
                     scores.Add(score);
                 }
             }
             else
             {
                 string[] tokens = text.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
-                if (tokens.Length >= 26 && tokens.Length <= 28)
+                if ((tokens.Length >= 26 && tokens.Length <= 28) || tokens.Length == StarWritingReaderEmotionVector.Categories.Length)
                 {
-                    // Defensive compatibility if a model uses colons between score-only items.
+                    // Defensive compatibility if a model uses colons between value-only items.
                     foreach (string token in tokens)
                     {
-                        if (!TryNormalizeWritingScore(token, out string score)) return string.Empty;
+                        if (!TryNormalizeWritingValue(token, out string score)) return string.Empty;
                         scores.Add(score);
                     }
                 }
@@ -1174,7 +1752,7 @@ namespace Wds.SixStars.Api.Ai
                     // score/confidence values. Confidence values are discarded.
                     for (int i = 0; i < tokens.Length; i += 2)
                     {
-                        if (!TryNormalizeWritingScore(tokens[i], out string score)) return string.Empty;
+                        if (!TryNormalizeWritingValue(tokens[i], out string score)) return string.Empty;
                         scores.Add(score);
                     }
                 }
@@ -1184,21 +1762,20 @@ namespace Wds.SixStars.Api.Ai
                 }
             }
 
-            // Gemma has omitted only Overall in some responses. Derive it from the core
-            // literary-quality categories rather than issuing a second full review.
+            // Legacy compatibility only: old 26-value literary responses occasionally omitted Overall.
+            // New ReaderEmotionIuV1 reviews are never synthesized or truncated; malformed 31-value
+            // output must go through the explicit repair request.
             if (scores.Count == 26)
             {
-                scores.Add(DeriveOverallWritingScore(scores));
-            }
-            else if (scores.Count > 27)
-            {
-                scores = scores.Take(27).ToList();
+                scores.Add(DeriveOverallWritingValue(scores));
             }
 
-            return scores.Count == 27 ? string.Join(";", scores) : string.Empty;
+            return scores.Count == 27 || scores.Count == StarWritingReaderEmotionVector.Categories.Length
+                ? string.Join(";", scores)
+                : string.Empty;
         }
 
-        private static bool TryNormalizeWritingScore(string raw, out string normalized)
+        private static bool TryNormalizeWritingValue(string raw, out string normalized)
         {
             normalized = string.Empty;
             string text = (raw ?? string.Empty).Trim().Trim('"');
@@ -1208,22 +1785,22 @@ namespace Wds.SixStars.Api.Ai
             int colon = text.IndexOf(':');
             if (colon >= 0) text = text.Substring(0, colon).Trim();
 
-            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) return false;
-            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
-            normalized = score.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)) return false;
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) return false;
+            normalized = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             return true;
         }
 
-        private static string DeriveOverallWritingScore(IReadOnlyList<string> scores)
+        private static string DeriveOverallWritingValue(IReadOnlyList<string> scores)
         {
             int[] qualityIndices = { 4, 5, 6, 8, 9, 19, 20, 21, 22, 23, 24, 25 };
             List<double> values = new List<double>();
             foreach (int index in qualityIndices)
             {
                 if (index < 0 || index >= scores.Count) continue;
-                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double score)) continue;
-                if (score < 0 || score > 100) continue;
-                values.Add(score);
+                if (!double.TryParse(scores[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)) continue;
+                if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) continue;
+                values.Add(value);
             }
 
             double overall = values.Count == 0 ? 50 : values.Average();
@@ -1280,27 +1857,28 @@ namespace Wds.SixStars.Api.Ai
             return false;
         }
 
-        private static bool HasCompleteWritingReview(StarWritingReviewResult result)
+        private static bool HasSuspiciousCollapsedWritingReview(StarWritingReviewResult result)
         {
-            if (result.Ratings == null || result.Ratings.Count < 5) return false;
-            HashSet<StarWritingRating> used = new HashSet<StarWritingRating>();
-            for (int i = 0; i < 5; i++)
+            if (result?.Ratings == null || result.Ratings.Count < 5) return false;
+
+            List<string> vectors = new List<string>();
+            foreach (StarWritingRating rating in result.Ratings.Where(x => x != null).Take(5))
             {
-                StarWritingRating? rating = result.Ratings.FirstOrDefault(x => !used.Contains(x) && x.Index == i)
-                    ?? result.Ratings.FirstOrDefault(x => !used.Contains(x));
-                if (rating == null
-                    || !StarWritingEmotionVector.TryNormalizeUsable(
-                        rating.EmotionalVector,
-                        out _,
-                        out _))
+                if (!StarWritingReaderEmotionVector.TryNormalizeComplete(rating.EmotionalVector, out string normalized, out _))
                 {
                     return false;
                 }
-
-                used.Add(rating);
+                vectors.Add(normalized);
             }
 
-            return true;
+            // Four or five byte-for-byte identical 31-value judgments across different writings is
+            // a strong sign that the local model copied a persona/template vector instead of reading.
+            return vectors.GroupBy(x => x, StringComparer.Ordinal).Any(group => group.Count() >= 4);
+        }
+
+        private static bool HasCompleteWritingReview(StarWritingReviewResult result)
+        {
+            return GetIncompleteWritingReviewIndexes(result).Count == 0;
         }
 
         public async Task<StarXPostSelectionResult> PrepareXPostsAsync(
@@ -1369,16 +1947,15 @@ namespace Wds.SixStars.Api.Ai
             IReadOnlyList<PersistedStarWriting> pendingWritings,
             CancellationToken cancellationToken)
         {
-            // A Star can accumulate hundreds of untold shelf entries while the idle writing loop runs.
-            // Sending the entire shelf to a 16K model makes the performance request fail before it can
-            // return any text or start TTS. Give the model a small newest-first candidate window instead.
+            // The service supplies a compact mixed listening set from the top-100 IU pool. Presentation
+            // order is intentionally shuffled; the saved IU values and the writing itself are the useful
+            // evidence. Keeping this request to 25 complete Sparks leaves the model room to actually read
+            // and compare the strongest pieces inside a 16k context window.
             List<PersistedStarWriting> performanceCandidates = (pendingWritings ?? Array.Empty<PersistedStarWriting>())
                 .Where(x => x != null
                     && !string.IsNullOrWhiteSpace(x.Id)
                     && !string.IsNullOrWhiteSpace(x.Writing)
                     && string.Equals(StarWritingOutputTypes.Normalize(x.OutputType), StarWritingOutputTypes.Spark, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.PersistedAt)
-                .ThenByDescending(x => x.GeneratedAt)
                 .Take(WritingPerformanceCandidateLimit)
                 .ToList();
 
@@ -1393,12 +1970,8 @@ namespace Wds.SixStars.Api.Ai
                 deepPersonality = PromptText(profile.DeepPersonality, 1800),
                 speakingStyle = PromptText(profile.SpeakingStyle, 1200),
                 voiceDirection = PromptText(profile.VoiceDirection, 900),
-                vectorOrder = StarWritingEmotionVector.CategoryOrder,
-                totalPendingCount = (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
+                totalPendingCount = state?.PendingCount ?? (pendingWritings ?? Array.Empty<PersistedStarWriting>()).Count(x => x != null),
                 candidateCount = performanceCandidates.Count,
-                pendingIds = performanceCandidates
-                    .Select(x => x.Id.Trim())
-                    .ToList(),
                 persistedWritings = performanceCandidates
                     .Select(x => new
                     {
@@ -1407,8 +1980,10 @@ namespace Wds.SixStars.Api.Ai
                         persistedAt = x.PersistedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
                         toldCount = x.ToldCount,
                         words = string.Join(" + ", (x.WordsUsed ?? new List<string>()).Where(w => !string.IsNullOrWhiteSpace(w)).Take(2)),
-                        emotionalVector = StarWritingEmotionVector.Normalize(x.EmotionalVector, out _),
-                        writing = PromptText(x.Writing, WritingPerformanceTextLimit)
+                        valueUnit = StarWritingValueUnits.InformationUnits,
+                        overallValue = Math.Round(StarWritingDeterministicRanker.OverallValue(x), 2),
+                        deterministicPublicValue = Math.Round(StarWritingDeterministicRanker.PublicSharingValue(x), 2),
+                        writing = (x.Writing ?? string.Empty).Trim()
                     })
                     .ToList()
             };
@@ -1419,17 +1994,114 @@ namespace Wds.SixStars.Api.Ai
                 new ChatMessage("user", _templates.Render("star_writing_performance_user.sbn", data))
             };
 
+            // Build 15O: the Spark performance pass no longer asks the local model to build a
+            // JSON object/arrays. Stream tiny positional records instead: exact-id^spokenText§.
+            // This keeps the selection contract cheap while retaining the deterministic validation
+            // and fallback in StarWritingService. Qwen still waits for Gemma EOS so they never
+            // compete for the GPU.
+            StreamingSpokenTextParser parser = new StreamingSpokenTextParser(null);
+            string streamed = await _client.CompleteTextStreamingAsync(
+                messages,
+                0,
+                "star-writing-perform-stream",
+                parser.Append,
+                cancellationToken).ConfigureAwait(false);
+            parser.Complete();
+
+            List<string> selectedIds = new List<string>();
+            List<string> spokenText = new List<string>();
+            foreach (string record in parser.Parts)
+            {
+                int separator = record.IndexOf('^');
+                if (separator <= 0 || separator >= record.Length - 1) continue;
+                string id = record.Substring(0, separator).Trim();
+                string spoken = record.Substring(separator + 1).Trim();
+                if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(spoken)) continue;
+                selectedIds.Add(id);
+                spokenText.Add(spoken);
+            }
+
+            // Defensive fallback for a client that returns a final body but never forwards SSE
+            // deltas. Parsing the final body through the same delimiter parser keeps one contract.
+            if (selectedIds.Count == 0 && !string.IsNullOrWhiteSpace(streamed))
+            {
+                StreamingSpokenTextParser finalParser = new StreamingSpokenTextParser(null);
+                finalParser.Append(streamed);
+                finalParser.Complete();
+                foreach (string record in finalParser.Parts)
+                {
+                    int separator = record.IndexOf('^');
+                    if (separator <= 0 || separator >= record.Length - 1) continue;
+                    string id = record.Substring(0, separator).Trim();
+                    string spoken = record.Substring(separator + 1).Trim();
+                    if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(spoken)) continue;
+                    selectedIds.Add(id);
+                    spokenText.Add(spoken);
+                }
+            }
+
+            return new StarWritingPerformancePlan
+            {
+                StarId = profile.StarId,
+                SelectedWritingIds = selectedIds,
+                SpokenText = spokenText,
+                RawModelJson = streamed
+            };
+        }
+
+        public async Task<StarWritingPerformancePlan> PrepareConstellationStoryPerformanceAsync(
+            StarProfile profile,
+            StarWritingNotesState state,
+            PersistedStarWriting story,
+            CancellationToken cancellationToken)
+        {
+            if (story == null) throw new ArgumentNullException(nameof(story));
+            if (string.IsNullOrWhiteSpace(story.Id)) throw new InvalidOperationException("Constellation Story playback requires a persisted writing ID.");
+            if (string.IsNullOrWhiteSpace(story.Writing)) throw new InvalidOperationException("Constellation Story playback requires story text.");
+
+            object data = new
+            {
+                starId = PromptText(profile.StarId, 80),
+                displayName = PromptText(profile.DisplayName, 120),
+                storyId = PromptText(story.Id, 160),
+                title = string.IsNullOrWhiteSpace(story.Title) ? "Untitled Constellation Story" : story.Title.Trim(),
+                valueUnit = StarWritingValueUnits.InformationUnits,
+                overallValue = Math.Round(StarWritingDeterministicRanker.OverallValue(story), 2),
+                publicValue = Math.Round(StarWritingDeterministicRanker.PublicSharingValue(story), 2),
+                story = story.Writing.Trim()
+            };
+
+            IReadOnlyList<ChatMessage> messages = new List<ChatMessage>
+            {
+                new ChatMessage("system", _templates.Render("star_constellation_story_performance_system.sbn", data)),
+                new ChatMessage("user", _templates.Render("star_constellation_story_performance_user.sbn", data))
+            };
+
             string json = await _client.CompleteJsonAsync(
                 messages,
-                StarResponseJsonSchema.CreateStarWritingPerformanceResponseFormat(),
+                StarResponseJsonSchema.CreateConstellationStoryPerformanceResponseFormat(),
                 0,
-                "star-writing-perform",
+                "star-writing-constellation-perform",
                 cancellationToken).ConfigureAwait(false);
             StarWritingPerformancePlan? result = JsonSerializer.Deserialize<StarWritingPerformancePlan>(ExtractJson(json), _jsonOptions);
-            if (result == null) throw new InvalidOperationException("Writing performance returned empty JSON.");
+            if (result == null) throw new InvalidOperationException("Constellation Story playback formatting returned empty JSON.");
             result.StarId = string.IsNullOrWhiteSpace(result.StarId) ? profile.StarId : result.StarId;
             result.RawModelJson = json;
             return result;
+        }
+
+        private static List<object> FormatStoryWishes(IEnumerable<StarWritingStoryWish>? storyWishes)
+        {
+            return (storyWishes ?? Enumerable.Empty<StarWritingStoryWish>())
+                .Where(x => x != null && !string.IsNullOrWhiteSpace(x.Wish))
+                .Select(x => (object)new
+                {
+                    sourceActorId = PromptText(x.SourceActorId, 120),
+                    sourceDisplayName = PromptText(x.SourceDisplayName, 120),
+                    sourceActorType = PromptText(x.SourceActorType, 80),
+                    wish = PromptText(x.Wish, 1000)
+                })
+                .ToList();
         }
 
         private static List<string> NormalizeSeedWords(IEnumerable<string>? seedWords)
@@ -1608,6 +2280,26 @@ namespace Wds.SixStars.Api.Ai
                     && x.IndexOf("story", StringComparison.OrdinalIgnoreCase) < 0
                     && x.IndexOf("aphorism", StringComparison.OrdinalIgnoreCase) < 0)
                 .ToList();
+        }
+
+        private List<StarWritingValueReference> BuildSharedReaderEmotionCalibrationReferences(
+            string outputType,
+            int maximum)
+        {
+            // IU is one shared currency. Never calibrate a reviewer from the current actor's
+            // previously persisted shelf: that creates a self-reinforcing per-actor exchange rate.
+            // The curated pack is deliberately actor-neutral and identical for every reviewer.
+            return _valueBaselines.GetSharedReaderEmotionCalibrationReferences(outputType, maximum);
+        }
+
+        private static bool IsTruthyFlag(StarInteractionRequest request, string key)
+        {
+            if (request?.GameContext?.Flags == null || string.IsNullOrWhiteSpace(key)) return false;
+            if (!request.GameContext.Flags.TryGetValue(key, out string? value) || string.IsNullOrWhiteSpace(value)) return false;
+            return value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("1", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+                || value.Equals("on", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string PromptText(string? value, int maximumCharacters)
@@ -1872,16 +2564,142 @@ namespace Wds.SixStars.Api.Ai
 
             bool isStory = request.RequestType == RequestType.Story;
             bool isStarInitiative = request.RequestType == RequestType.StarInitiative;
+            bool isManualStreamingInitiative = isStarInitiative
+                && IsTruthyFlag(request, "starInitiativeForce")
+                && !IsTruthyFlag(request, "starInitiativePrepareForListen");
+            bool isStructuredForeground = isStory || (isStarInitiative && !isManualStreamingInitiative);
             bool isStoryContinuation = isStory && request.StoryOptions != null && request.StoryOptions.ContinueActiveStory;
-            object responseFormat = isStory
-                ? StarResponseJsonSchema.CreateStorySpeechResponseFormat(isStoryContinuation)
-                : (isStarInitiative ? StarResponseJsonSchema.CreateStarInitiativeResponseFormat() : StarResponseJsonSchema.CreateSpeechResponseFormat());
             int maxTokens = isStory && !isStoryContinuation
                 ? _storyPlanMaxTokens
                 : (isStarInitiative ? _initiativeMaxTokens : _speechMaxTokens);
             string purpose = isStory
                 ? (isStoryContinuation ? "story-continuation-spoken-response" : "story-plan-and-first-spoken-response")
-                : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response");
+                : (isManualStreamingInitiative
+                    ? "star-initiative-manual-spoken-stream"
+                    : (isStarInitiative ? "star-initiative-check-response" : "fast-spoken-response-stream"));
+
+            if (!isStructuredForeground)
+            {
+                StreamingStarResponseMediator mediator = new StreamingStarResponseMediator(request.SpokenChunkReady, _fastSpeechControlsEnabled ? request.StreamActionReady : null);
+                string streamedText;
+                try
+                {
+                    streamedText = await _client.CompleteTextStreamingAsync(
+                        _promptBuilder.BuildSpeechMessages(profile, request, state),
+                        maxTokens,
+                        purpose,
+                        mediator.Append,
+                        cancellationToken).ConfigureAwait(false);
+                    mediator.Complete();
+                }
+                catch (Exception ex)
+                {
+                    string failedTracePath = StreamedResponseTraceLogger.Append(
+                        profile,
+                        request,
+                        purpose,
+                        "failed",
+                        mediator.RawReceivedText,
+                        mediator.SpokenParts,
+                        mediator.OutgoingUnresolvedVector,
+                        mediator.InformationNeeds,
+                        mediator.TraceEntries,
+                        ex.ToString());
+                    if (!string.IsNullOrWhiteSpace(failedTracePath))
+                    {
+                        System.Diagnostics.Debug.WriteLine("[StructuredStarAgent] Failed foreground stream trace written to " + failedTracePath);
+                    }
+                    throw;
+                }
+
+                List<string> spokenParts = mediator.SpokenParts.ToList();
+                List<string> mediationTrace = mediator.TraceEntries.ToList();
+                string rawStreamForTrace = string.IsNullOrWhiteSpace(mediator.RawReceivedText) ? streamedText : mediator.RawReceivedText;
+                string foregroundOutgoingUnresolved = _fastSpeechControlsEnabled ? mediator.OutgoingUnresolvedVector : string.Empty;
+                List<InformationNeedVectorItem> foregroundInformationNeeds = _fastSpeechControlsEnabled
+                    ? mediator.InformationNeeds.ToList()
+                    : new List<InformationNeedVectorItem>();
+                if (spokenParts.Count == 0 && !string.IsNullOrWhiteSpace(streamedText))
+                {
+                    // Some compatible clients only return the final body and never forward deltas.
+                    // Run that complete body through the same mediator so control vectors are still
+                    // kept out of visible/TTS speech and are only acted on once complete.
+                    StreamingStarResponseMediator fallbackMediator = new StreamingStarResponseMediator(request.SpokenChunkReady, _fastSpeechControlsEnabled ? request.StreamActionReady : null);
+                    fallbackMediator.Append(streamedText);
+                    fallbackMediator.Complete();
+                    spokenParts = fallbackMediator.SpokenParts.ToList();
+                    if (_fastSpeechControlsEnabled)
+                    {
+                        foregroundOutgoingUnresolved = fallbackMediator.OutgoingUnresolvedVector;
+                        foregroundInformationNeeds = fallbackMediator.InformationNeeds.ToList();
+                    }
+                    mediationTrace.Add("fallback mediator used because the primary streaming callback produced no speech chunks");
+                    mediationTrace.AddRange(fallbackMediator.TraceEntries);
+                    if (string.IsNullOrWhiteSpace(rawStreamForTrace)) rawStreamForTrace = fallbackMediator.RawReceivedText;
+                }
+
+                string streamTracePath = StreamedResponseTraceLogger.Append(
+                    profile,
+                    request,
+                    purpose,
+                    "completed",
+                    rawStreamForTrace,
+                    spokenParts,
+                    foregroundOutgoingUnresolved,
+                    foregroundInformationNeeds,
+                    mediationTrace);
+
+                StarInteractionResponse streamedResponse = new StarInteractionResponse
+                {
+                    StarId = profile.StarId,
+                    EmotionalPurpose = isManualStreamingInitiative
+                        ? "Manual at-rest Thought/Listen stream; no player emotion scoring or relationship update."
+                        : "Foreground spoken reply only; background emotion/vector/memory review pending.",
+                    InitiativeShouldSpeak = true,
+                    InitiativePriority = isManualStreamingInitiative ? 1.0 : 0.0,
+                    InitiativeTopic = isManualStreamingInitiative ? "fresh at-rest thought" : string.Empty,
+                    InitiativeReason = isManualStreamingInitiative ? "The Last Cat deliberately chose to hear a Thought now." : string.Empty,
+                    EmotionalEffectVector = string.Empty,
+                    NegativeEmotionVector = string.Empty,
+                    VoiceDirective = BuildDefaultVoiceDirective(profile, request),
+                    SuggestedStateDeltas = RelationshipDelta.Zero(),
+                    ConversationSummary = BuildFallbackConversationSummary(state, request, string.Join(" ", spokenParts)),
+                    ChangesSummary = BuildFallbackChangesSummary(request, string.Join(" ", spokenParts)),
+                    NeedsMoreInformation = foregroundInformationNeeds.Count > 0,
+                    InformationNeeds = foregroundInformationNeeds,
+                    ThingsLearnedOrSuggestedByPlayer = new List<string>(),
+                    OutgoingUnresolvedVector = foregroundOutgoingUnresolved,
+                    Debug = new DebugInfo
+                    {
+                        DetectedIntent = request.RequestType.ToString(),
+                        WisdomScore = 0
+                    }
+                };
+                streamedResponse.SetSpokenParts(spokenParts);
+                streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
+                    ? "StructuredStarAgent used the manual Thought/Listen plain-text streaming speech contract."
+                    : "StructuredStarAgent used REAL LLM plain-text streaming foreground speech pass.");
+                streamedResponse.Debug.Notes.Add((isManualStreamingInitiative ? "Manual Thought" : "Normal foreground speech") + " streams punctuation-complete sentences to Android immediately; foreground control items are " + (_fastSpeechControlsEnabled ? "enabled from main-instructions.json" : "disabled in main-instructions.json") + ".");
+                streamedResponse.Debug.Notes.Add(isManualStreamingInitiative
+                    ? "Manual Thought/Listen does not run player emotion/memory review or relationship deltas."
+                    : "Heavy emotion/memory analysis and compact emotion vectors wait until the voice pipeline reports foreground voice generation ready.");
+                streamedResponse.Debug.Notes.Add(maxTokens > 0
+                    ? $"Per-pass max_tokens cap used: {maxTokens}."
+                    : "Per-pass max_tokens cap not sent; backend/model stops on EOS/context.");
+                streamedResponse.Debug.Notes.Add($"Streamed speech parts: {streamedResponse.SpokenParts.Count}; joined length: {streamedResponse.SpokenText.Length} characters.");
+                streamedResponse.Debug.Notes.Add(_fastSpeechControlsEnabled
+                    ? "Foreground stream may return configured e/q/i controls; background review still refines durable cognition."
+                    : "Foreground stream returns speech only. Emotion animation, questions, and information needs are deferred to the private background review.");
+                if (!string.IsNullOrWhiteSpace(streamTracePath))
+                {
+                    streamedResponse.Debug.Notes.Add("Outgoing stream mediation trace: " + streamTracePath);
+                }
+                return streamedResponse;
+            }
+
+            object responseFormat = isStory
+                ? StarResponseJsonSchema.CreateStorySpeechResponseFormat(isStoryContinuation)
+                : StarResponseJsonSchema.CreateStarInitiativeResponseFormat();
 
             string json = await _client.CompleteJsonAsync(
                 _promptBuilder.BuildSpeechMessages(profile, request, state),
@@ -1890,7 +2708,7 @@ namespace Wds.SixStars.Api.Ai
                 purpose,
                 cancellationToken).ConfigureAwait(false);
 
-            System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received fast LLM speech response ({json.Length} chars)");
+            System.Diagnostics.Debug.WriteLine($"[StructuredStarAgent] Received structured foreground LLM response ({json.Length} chars)");
 
             StarSpeechModelResponse model = ParseSpeech(json, profile, request);
             model.ThingsLearnedOrSuggestedByPlayer = CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8);
@@ -1933,11 +2751,9 @@ namespace Wds.SixStars.Api.Ai
             {
                 response.SetSpokenParts(Array.Empty<string>());
             }
-            // Do not ask the foreground LLM pass for heavy emotion objects.
-            // It returns only the compact emotionalEffectVector; the background review computes impactful emotion scores and deterministic relationship updates.
             response.Debug.Notes.Add(isStarInitiative
                 ? "StructuredStarAgent used REAL LLM at-rest Star initiative check pass."
-                : "StructuredStarAgent used REAL LLM fast foreground speech pass.");
+                : "StructuredStarAgent used REAL LLM structured story foreground speech pass.");
             if (isStarInitiative)
             {
                 response.Debug.Notes.Add("Star initiative result: shouldSpeak=" + response.InitiativeShouldSpeak + ", priority=" + response.InitiativePriority.ToString("0.00") + ", topic=" + (response.InitiativeTopic ?? string.Empty) + ".");
@@ -1989,9 +2805,49 @@ namespace Wds.SixStars.Api.Ai
             response.RequestToShowBoobs = model.RequestToShowBoobs || IsRequestToShowBoobs(request.PlayerText);
             response.EmotionalEffectVector = string.IsNullOrWhiteSpace(model.EmotionalEffectVector) ? (foregroundResponse.EmotionalEffectVector ?? string.Empty) : model.EmotionalEffectVector;
             response.NegativeEmotionVector = string.IsNullOrWhiteSpace(model.NegativeEmotionVector) ? (foregroundResponse.NegativeEmotionVector ?? string.Empty) : model.NegativeEmotionVector;
+            if (_fastSpeechControlsEnabled)
+            {
+                response.InformationNeeds = MergeInformationNeeds(foregroundResponse.InformationNeeds, response.InformationNeeds);
+                response.OutgoingUnresolvedVector = MergeOutgoingUnresolvedVectors(foregroundResponse.OutgoingUnresolvedVector, response.OutgoingUnresolvedVector);
+            }
+            response.NeedsMoreInformation = response.InformationNeeds.Count > 0;
             PreserveForegroundStoryFields(foregroundResponse, response);
             response.Debug.Notes.Add("StructuredStarAgent used REAL LLM background emotion/memory review pass.");
             return response;
+        }
+
+        private static List<InformationNeedVectorItem> MergeInformationNeeds(IEnumerable<InformationNeedVectorItem>? first, IEnumerable<InformationNeedVectorItem>? second)
+        {
+            List<InformationNeedVectorItem> merged = new List<InformationNeedVectorItem>();
+            foreach (InformationNeedVectorItem item in (first ?? Array.Empty<InformationNeedVectorItem>()).Concat(second ?? Array.Empty<InformationNeedVectorItem>()))
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.DataType)) continue;
+                int existing = merged.FindIndex(x => string.Equals(x.DataType, item.DataType, StringComparison.OrdinalIgnoreCase));
+                if (existing < 0)
+                {
+                    merged.Add(item);
+                }
+                else if (Math.Max(item.Confidence, item.Score / 100.0) >= Math.Max(merged[existing].Confidence, merged[existing].Score / 100.0))
+                {
+                    merged[existing] = item;
+                }
+            }
+            return merged.OrderByDescending(x => Math.Max(x.Confidence, x.Score / 100.0)).Take(3).ToList();
+        }
+
+        private static string MergeOutgoingUnresolvedVectors(string? first, string? second)
+        {
+            List<StarUnresolvedVectorCodec.OutgoingThread> merged = new List<StarUnresolvedVectorCodec.OutgoingThread>();
+            foreach (StarUnresolvedVectorCodec.OutgoingThread item in StarUnresolvedVectorCodec.ParseOutgoingVector(first, 10)
+                .Concat(StarUnresolvedVectorCodec.ParseOutgoingVector(second, 10)))
+            {
+                int existing = merged.FindIndex(x =>
+                    string.Equals(x.Id, item.Id, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(x.OpenThread, item.OpenThread, StringComparison.OrdinalIgnoreCase));
+                if (existing >= 0) merged[existing] = item;
+                else merged.Add(item);
+            }
+            return StarUnresolvedVectorCodec.EncodeOutgoingVector(merged, 10);
         }
 
         private static void NormalizeInterstarRelayFields(InterstarRelayMessage relay, StarProfile originProfile, StarProfile targetProfile, StarInteractionRequest originalRequest, StarInteractionResponse originResponse)
@@ -2096,6 +2952,11 @@ namespace Wds.SixStars.Api.Ai
                 EmotionalPurpose = model.EmotionalPurpose ?? string.Empty,
                 EmotionalEffectVector = model.EmotionalEffectVector ?? string.Empty,
                 NegativeEmotionVector = model.NegativeEmotionVector ?? string.Empty,
+                IncomingUnresolvedVector = model.QuestionsFromLastCatVector ?? string.Empty,
+                OutgoingUnresolvedVector = model.QuestionsToLastCatVector ?? string.Empty,
+                UnresolvedResolutionVector = model.QuestionResolutionVector ?? string.Empty,
+                EmotionAnimationName = NormalizeBackgroundEmotionAnimation(model.EmotionAnimation),
+                InformationNeeds = ParseBackgroundInformationNeedsVector(model.InformationNeedsVector),
                 VoiceDirective = model.VoiceDirective ?? VoiceDirective.Empty(),
                 SuggestedStateDeltas = model.SuggestedStateDeltas ?? RelationshipDelta.Zero(),
                 ConversationSummary = string.IsNullOrWhiteSpace(model.ConversationSummary)
@@ -2104,6 +2965,8 @@ namespace Wds.SixStars.Api.Ai
                 ChangesSummary = string.IsNullOrWhiteSpace(model.ChangesSummary)
                     ? BuildFallbackChangesSummary(request, model.SpokenText)
                     : model.ChangesSummary,
+                TenTurnConversationSummary = CleanOneLine(model.TenTurnConversationSummary, 1400),
+                HundredTurnConversationSummary = CleanOneLine(model.HundredTurnConversationSummary, 1800),
                 SourceStarEmotionalEffectVector = model.SourceStarEmotionalEffectVector ?? string.Empty,
                 SourceStarNegativeEmotionVector = model.SourceStarNegativeEmotionVector ?? string.Empty,
                 InterstarReplyToSourceStar = CleanOneLine(model.ReplyToSourceStar, 500),
@@ -2117,8 +2980,9 @@ namespace Wds.SixStars.Api.Ai
             response.CanonSourcesUsed.AddRange(model.CanonSourcesUsed);
             response.EmotionScores = model.EmotionScores;
             response.DetectedCombos.AddRange(model.DetectedCombos);
-            // Important quote capture is deterministic now. Ignore model-provided quote choices.
+            response.ImportantPlayerQuotes.AddRange(CleanImportantPlayerQuotes(model.ImportantPlayerQuotes, request.PlayerText, 3));
             response.MemoryNotes.AddRange(model.MemoryNotes);
+            response.ShortTermMemoryItems.AddRange(CleanShortTermMemoryItems(model.ShortTermMemoryItems, 8));
             response.ThingsLearnedOrSuggestedByPlayer.AddRange(CleanDurableLearnedItems(model.ThingsLearnedOrSuggestedByPlayer, 8));
             response.RememberedMarkers.AddRange(model.RememberedMarkers);
             response.ReferencedMemoryMarkerIds.AddRange(model.ReferencedMemoryMarkerIds);
@@ -2134,6 +2998,21 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendCoupleActivitySummary = CleanOneLine(model.GirlfriendCoupleActivitySummary, 520);
             response.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
             response.GirlfriendCoupleActivityItems.AddRange(ParseGirlfriendCoupleActivityVector(response.GirlfriendCoupleActivityVector, 16));
+            response.SextingDetected = state != null && state.IsGirlfriend &&
+                (model.IsSexting || response.GirlfriendCoupleActivityItems.Any(x => string.Equals(x.ItemId, "deepSexting", StringComparison.OrdinalIgnoreCase) && x.Score > 0));
+            if (state == null || !state.IsGirlfriend)
+            {
+                // Girlfriend-only state is deterministically sealed off when this Star is not the
+                // Last Cat's committed girlfriend. General flirting, attraction, pet names, and
+                // pursuit remain available through the ordinary relationship system.
+                response.GirlfriendHistoryUpdates.Clear();
+                response.GirlfriendNeedsMetSummary = string.Empty;
+                response.GirlfriendNeedsMetVector.Clear();
+                response.GirlfriendWantsMetVector.Clear();
+                response.GirlfriendCoupleActivitySummary = string.Empty;
+                response.GirlfriendCoupleActivityVector = string.Empty;
+                response.GirlfriendCoupleActivityItems.Clear();
+            }
             response.InterstarEmotionVectors.AddRange(NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors));
             response.Debug.LoreUsed.AddRange(model.LoreUsed);
             response.Debug.RiskFlags.AddRange(model.RiskFlags);
@@ -2143,8 +3022,80 @@ namespace Wds.SixStars.Api.Ai
             response.Debug.Notes.Add($"Background computed emotionalEffectVector length: {response.EmotionalEffectVector.Length}; negativeEmotionVector length: {response.NegativeEmotionVector.Length}.");
             if (response.InterstarEmotionVectors.Count > 0) response.Debug.Notes.Add("Interstar relationship vectors returned: " + response.InterstarEmotionVectors.Count + ".");
             response.Debug.Notes.Add($"Remembered markers proposed: {response.RememberedMarkers.Count}; referenced marker ids: {response.ReferencedMemoryMarkerIds.Count}.");
+            response.Debug.Notes.Add("Question vectors: fromLastCat=" + StarUnresolvedVectorCodec.ParseIncomingVector(response.IncomingUnresolvedVector, 10).Count + ", toLastCat=" + StarUnresolvedVectorCodec.ParseOutgoingVector(response.OutgoingUnresolvedVector, 10).Count + ", resolved=" + StarUnresolvedVectorCodec.ParseResolutionVector(response.UnresolvedResolutionVector, 8).Count + ".");
+            response.Debug.Notes.Add("Background emotion animation: " + (string.IsNullOrWhiteSpace(response.EmotionAnimationName) ? "none" : response.EmotionAnimationName) + ".");
+            response.Debug.Notes.Add("Background short-term memory items: " + response.ShortTermMemoryItems.Count + ".");
+            response.Debug.Notes.Add("Background sexting detected: " + response.SextingDetected + ".");
+            response.Debug.Notes.Add("Background information needs: " + (response.InformationNeeds.Count == 0 ? "none" : string.Join(", ", response.InformationNeeds.Select(x => x.DataType + ":" + x.Query + "@" + x.Score.ToString("0")))) + ".");
             response.Debug.Notes.Add($"Response length: {response.SpokenText.Length} characters");
             return response;
+        }
+
+        private static string NormalizeBackgroundEmotionAnimation(string? value)
+        {
+            string normalized = Regex.Replace((value ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z]", string.Empty);
+            return normalized switch
+            {
+                "happy" => "happy",
+                "joy" => "happy",
+                "joyful" => "happy",
+                "confused" => "confused",
+                "confusion" => "confused",
+                "puzzled" => "confused",
+                "sad" => "sad",
+                "sorrow" => "sad",
+                "sorrowful" => "sad",
+                "angry" => "angry",
+                "anger" => "angry",
+                "mad" => "angry",
+                "love" => "love",
+                "loving" => "love",
+                "affectionate" => "love",
+                "tender" => "love",
+                _ => string.Empty
+            };
+        }
+
+        private static List<InformationNeedVectorItem> ParseBackgroundInformationNeedsVector(string? vector)
+        {
+            List<InformationNeedVectorItem> result = new List<InformationNeedVectorItem>();
+            if (string.IsNullOrWhiteSpace(vector)) return result;
+
+            foreach (string rawItem in vector.Split('~'))
+            {
+                string item = (rawItem ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(item)) continue;
+                string[] fields = item.Split('^');
+                if (fields.Length < 2) continue;
+
+                string source = NormalizeInformationNeedSubject(fields[0]);
+                if (!IsInformationNeedSubject(source)) continue;
+                string subject = CleanOneLine(fields[1], 360);
+                if (string.IsNullOrWhiteSpace(subject)) continue;
+
+                double score = 100;
+                if (fields.Length >= 3
+                    && double.TryParse(fields[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double parsedScore))
+                {
+                    score = Math.Max(0, Math.Min(100, parsedScore));
+                }
+
+                InformationNeedVectorItem need = new InformationNeedVectorItem
+                {
+                    Subject = source,
+                    DataType = source,
+                    Query = subject,
+                    Score = score,
+                    Confidence = Math.Max(0, Math.Min(1, score / 100.0)),
+                    Reason = "private background review requested local reference data"
+                };
+
+                int existing = result.FindIndex(x => string.Equals(x.DataType, need.DataType, StringComparison.OrdinalIgnoreCase));
+                if (existing < 0) result.Add(need);
+                else if (need.Score >= result[existing].Score) result[existing] = need;
+            }
+
+            return result.OrderByDescending(x => x.Score).Take(3).ToList();
         }
 
         private static bool IsRequestToShowBoobs(string? playerText)
@@ -2233,6 +3184,16 @@ namespace Wds.SixStars.Api.Ai
                     analysis.ThingsLearnedOrSuggestedByPlayer.Add(item);
                 }
             }
+        }
+
+        private static List<string> CleanShortTermMemoryItems(IEnumerable<string>? values, int maxItems)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Select(x => CleanOneLine(x, 700))
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, maxItems))
+                .ToList();
         }
 
         private static List<string> CleanDurableLearnedItems(IEnumerable<string>? values, int maxItems)
@@ -2768,6 +3729,7 @@ namespace Wds.SixStars.Api.Ai
             model.SuggestedStateDeltas ??= RelationshipDelta.Zero();
             model.ImportantPlayerQuotes ??= new List<string>();
             model.MemoryNotes ??= new List<string>();
+            model.ShortTermMemoryItems ??= new List<string>();
             model.ThingsLearnedOrSuggestedByPlayer ??= new List<string>();
             model.RememberedMarkers ??= new List<StarRememberedMarker>();
             model.ReferencedMemoryMarkerIds ??= new List<string>();
@@ -2780,6 +3742,9 @@ namespace Wds.SixStars.Api.Ai
             model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
             model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
             model.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);
+            model.QuestionsFromLastCatVector = StarUnresolvedVectorCodec.NormalizeIncomingVector(model.QuestionsFromLastCatVector, 10);
+            model.QuestionsToLastCatVector = StarUnresolvedVectorCodec.NormalizeOutgoingVector(model.QuestionsToLastCatVector, 10);
+            model.QuestionResolutionVector = StarUnresolvedVectorCodec.NormalizeResolutionVector(model.QuestionResolutionVector, 8);
             model.InterstarEmotionVectors = NormalizeInterstarEmotionVectors(model.InterstarEmotionVectors);
             model.LoreUsed ??= new List<string>();
             model.RiskFlags ??= new List<string>();
@@ -2812,6 +3777,26 @@ namespace Wds.SixStars.Api.Ai
                 parts.Add(confidence.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + ":" + score.ToString("0", System.Globalization.CultureInfo.InvariantCulture));
             }
             return string.Join(";", parts);
+        }
+
+        private static List<string> CleanImportantPlayerQuotes(IEnumerable<string>? quotes, string? currentPlayerText, int maxItems)
+        {
+            string player = (currentPlayerText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(player) || maxItems <= 0) return new List<string>();
+
+            List<string> cleaned = new List<string>();
+            foreach (string? raw in quotes ?? Enumerable.Empty<string>())
+            {
+                string quote = CleanOneLine(raw, 700);
+                if (string.IsNullOrWhiteSpace(quote)) continue;
+                // The review is allowed to decide significance, but not to manufacture a quote.
+                // Require the selected text to occur verbatim in the current player's message.
+                if (player.IndexOf(quote, StringComparison.Ordinal) < 0) continue;
+                if (cleaned.Any(x => string.Equals(x, quote, StringComparison.Ordinal))) continue;
+                cleaned.Add(quote);
+                if (cleaned.Count >= maxItems) break;
+            }
+            return cleaned;
         }
 
         private static List<string> CleanSpeechParts(IEnumerable<string>? parts)
@@ -3047,7 +4032,23 @@ namespace Wds.SixStars.Api.Ai
 
         private static string NormalizeInformationNeedSubject(string? value)
         {
-            return (value ?? string.Empty).Trim().ToLowerInvariant();
+            string normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "beastiary" => "bestiary",
+                "monster" => "bestiary",
+                "monsters" => "bestiary",
+                "memory" => "history",
+                "memories" => "history",
+                "conversation" => "history",
+                "character" => "characters",
+                "people" => "characters",
+                "skill" => "lore",
+                "skills" => "lore",
+                "location" => "world",
+                "locations" => "world",
+                _ => normalized
+            };
         }
 
         private static double Clamp01(double value)
@@ -3169,7 +4170,8 @@ namespace Wds.SixStars.Api.Ai
                 WisdomScore = 0
             };
             model.SpokenParts.AddRange(CleanSpeechParts(spokenParts));
-            // Do not salvage player text into importantPlayerQuotes; deterministic high-impact emotion scoring owns quote capture.
+            // Do not guess an important quote during salvage. Quote significance is an explicit
+            // background-review LLM decision, and malformed output cannot safely make that decision.
             model.RiskFlags.Add("llm_structured_json_parse_failed_salvaged");
             model.RiskFlags.Add("llm_raw_response_used_not_mock");
             model.LoreUsed.Add("local-llm-raw-content");
@@ -3352,6 +4354,30 @@ namespace Wds.SixStars.Api.Ai
                 if (string.IsNullOrWhiteSpace(model.NegativeEmotionVector))
                 {
                     model.NegativeEmotionVector = GetCompactVectorString(root, "lastCatNegativeEmotionVector", "last_cat_negative_emotion_vector", "negativeEmotionVector", "negative_emotion_vector", "boundaryEmotionVector", "boundary_emotion_vector") ?? string.Empty;
+                }
+                if (model.ShortTermMemoryItems == null || model.ShortTermMemoryItems.Count == 0)
+                {
+                    model.ShortTermMemoryItems = GetStringOrArray(root, "shortTermMemoryItems").Concat(GetStringOrArray(root, "short_term_memory_items")).ToList();
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionsFromLastCatVector))
+                {
+                    model.QuestionsFromLastCatVector = GetString(root, "questionsFromLastCatVector") ?? GetString(root, "incomingUnresolvedVector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionsToLastCatVector))
+                {
+                    model.QuestionsToLastCatVector = GetString(root, "questionsToLastCatVector") ?? GetString(root, "outgoingUnresolvedVector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.QuestionResolutionVector))
+                {
+                    model.QuestionResolutionVector = GetString(root, "questionResolutionVector") ?? GetString(root, "unresolvedResolutionVector") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.EmotionAnimation))
+                {
+                    model.EmotionAnimation = GetString(root, "emotionAnimation") ?? GetString(root, "emotion_animation") ?? string.Empty;
+                }
+                if (string.IsNullOrWhiteSpace(model.InformationNeedsVector))
+                {
+                    model.InformationNeedsVector = GetString(root, "informationNeedsVector") ?? GetString(root, "information_needs_vector") ?? string.Empty;
                 }
                 if (string.IsNullOrWhiteSpace(model.SourceStarEmotionalEffectVector))
                 {

@@ -26,7 +26,7 @@ COMPACT RECENT NEED/WANT HISTORY — use only to vary this refresh
 
 RECENT CONVERSATION AND MEMORY
 {{ if data.recentTurns.size == 0 }}No recent usable turns yet.
-{{ else }}{{ for turn in data.recentTurns }}- Turn {{ turn.index }}: player={{ turn.player }}; {{ data.star.displayName }}={{ turn.star }}; summary={{ turn.summary }}
+{{ else }}{{ for turn in data.recentTurns }}- Turn {{ turn.index }}: player={{ turn.player }}; {{ data.star.displayName }}={{ turn.star }}
 {{ end }}{{ end }}{{ if data.importantPlayerQuotes.size > 0 }}Important player quotes:
 {{ for item in data.importantPlayerQuotes }}- {{ item }}
 {{ end }}{{ end }}{{ if data.memoryNotes.size > 0 }}Memory notes:

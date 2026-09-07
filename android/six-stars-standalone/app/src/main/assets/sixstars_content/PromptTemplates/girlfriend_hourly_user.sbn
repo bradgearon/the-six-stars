@@ -1,0 +1,62 @@
+{{ data.currentTimeContext }}
+
+STAR ACTING CARD
+Star: {{ data.star.displayName }}
+Element: {{ data.star.element }}
+Domain: {{ data.star.domain }}
+Core quote: {{ data.star.coreQuote }}
+{{ if data.star.personality != "" }}Personality: {{ data.star.personality }}
+{{ end }}{{ if data.star.backstory != "" }}Backstory: {{ data.star.backstory }}
+{{ end }}{{ if data.star.completeBackground != "" }}Complete background: {{ data.star.completeBackground }}
+{{ end }}{{ data.privateRomanceProfile }}
+
+RELATIONSHIP AND GIRLFRIEND CONTEXT
+{{ data.relationshipContext }}
+{{ if data.girlfriendHistory.size > 0 }}Girlfriend history:
+{{ for item in data.girlfriendHistory }}- {{ item }}
+{{ end }}{{ end }}{{ data.coupleActivityContext }}
+{{ if data.petNamesPlayerUsesForHer.size > 0 }}Pet names player uses for her:
+{{ for item in data.petNamesPlayerUsesForHer }}- {{ item }}
+{{ end }}{{ end }}{{ if data.petNamesSheUsesForPlayer.size > 0 }}Pet names she uses for player:
+{{ for item in data.petNamesSheUsesForPlayer }}- {{ item }}
+{{ end }}{{ end }}
+
+COMPACT RECENT NEED/WANT HISTORY — use only to vary this refresh
+{{ data.compactNeedWantHistory }}
+
+RECENT CONVERSATION AND MEMORY
+{{ if data.recentTurns.size == 0 }}No recent usable turns yet.
+{{ else }}{{ for turn in data.recentTurns }}- Turn {{ turn.index }}: player={{ turn.player }}; {{ data.star.displayName }}={{ turn.star }}
+{{ end }}{{ end }}{{ if data.importantPlayerQuotes.size > 0 }}Important player quotes:
+{{ for item in data.importantPlayerQuotes }}- {{ item }}
+{{ end }}{{ end }}{{ if data.memoryNotes.size > 0 }}Memory notes:
+{{ for item in data.memoryNotes }}- {{ item }}
+{{ end }}{{ end }}{{ if data.thingsLearnedOrSuggestedByPlayer.size > 0 }}Things learned or suggested by the Last Cat:
+{{ for item in data.thingsLearnedOrSuggestedByPlayer }}- {{ item }}
+{{ end }}{{ end }}{{ if data.relationshipEvents.size > 0 }}Relationship events:
+{{ for item in data.relationshipEvents }}- {{ item }}
+{{ end }}{{ end }}{{ if data.interstarUpdates.size > 0 }}Interstar updates that may influence what she wants to say or do:
+{{ for item in data.interstarUpdates }}- {{ item }}
+{{ end }}{{ end }}
+
+PREVIOUS GIRLFRIEND HOURLY STATE
+{{ if data.previousState.available }}GeneratedAt={{ data.previousState.generatedAt }}; Summary={{ data.previousState.summary }}
+{{ if data.previousState.thingsSheWantedToSay.size > 0 }}Previous things she wanted to say:
+{{ for item in data.previousState.thingsSheWantedToSay }}- {{ item }}
+{{ end }}{{ end }}{{ if data.previousState.cuteThingsSheWantedToSay.size > 0 }}Previous cute things she wanted to say:
+{{ for item in data.previousState.cuteThingsSheWantedToSay }}- {{ item }}
+{{ end }}{{ end }}{{ else }}none
+{{ end }}
+NEED CATALOG — use these itemId values
+{{ for item in data.needCatalog }}- {{ item }}
+{{ end }}
+WANT CATALOG — use these itemId values
+{{ for item in data.wantCatalog }}- {{ item }}
+{{ end }}
+OUTPUT REQUIREMENTS
+Return starId, summary, relationshipPosture, needSummary, wantSummary, needVector, wantVector, thingsSheWantsToSay, cuteThingsSheWantsToSay, overallConfidence, overallScore.
+Each vector item must include itemId, displayName, confidence, score, reason. Score high for things she currently needs or wants as this specific girlfriend, not generic romance advice.
+Include receiving needs when fitting, but also include action needs/wants: things she wants or needs to do herself, initiate with him, or do together.
+Include physical affection, reassurance, kisses, tender/cute lines, active flirting, helpful actions, shared activity, and domain-magic affectionate effects when they fit her girlfriend state. At least some thingsSheWantsToSay/cuteThingsSheWantsToSay candidates should be written as actions she can perform in words while telling the Last Cat what she is doing to or with him, followed by a natural invitation or opening for him to respond.
+Cute hooks should follow her Star signature, not generic baby-talk. One signature cute action plus one pet name/sound plus one emotional sentence is usually enough.
+Reason for this refresh: {{ data.reason }}

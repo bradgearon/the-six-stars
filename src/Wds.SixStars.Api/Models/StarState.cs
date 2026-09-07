@@ -78,8 +78,20 @@ namespace Wds.SixStars.Api.Models
 
         public List<string> MemoryNotes { get; set; } = new List<string>();
 
+        /// <summary>Temporary current-context memory. Entries are host-timestamped and automatically expire after the configured short-term memory window.</summary>
+        public List<StarShortTermMemoryEntry> ShortTermMemory { get; set; } = new List<StarShortTermMemoryEntry>();
+
         /// <summary>Durable facts, reported events, preferences, plans, and game-world suggestions the Star has explicitly learned from the Last Cat.</summary>
         public List<string> ThingsLearnedOrSuggestedByPlayer { get; set; } = new List<string>();
+
+        /// <summary>Compact unresolved threads inferred from the Last Cat's words that this Star may want to understand or resolve later. Incoming and outgoing lists share a ten-active-thread cap. Each item is a ^-delimited compact vector.</summary>
+        public List<string> IncomingUnresolvedVectors { get; set; } = new List<string>();
+
+        /// <summary>Compact unresolved threads this Star intentionally left open for later payoff. Incoming and outgoing lists share a ten-active-thread cap. Each item stores priority, tags, resolution intent, and intended effects.</summary>
+        public List<string> OutgoingUnresolvedVectors { get; set; } = new List<string>();
+
+        /// <summary>Recent compact resolution outcomes for unresolved threads. These are not injected wholesale into fast speech; they are retained so later cognition can learn how intended effects actually landed.</summary>
+        public List<string> UnresolvedResolutionHistory { get; set; } = new List<string>();
 
         /// <summary>Exact things the player explicitly asked this Star to remember: coordinates, location markers, descriptions, and named points of interest.</summary>
         public List<StarRememberedMarker> RememberedMarkers { get; set; } = new List<StarRememberedMarker>();
@@ -143,6 +155,12 @@ namespace Wds.SixStars.Api.Models
         /// <summary>Recent active conversation turns only. Older turns are moved to OldConversationArchives after the configured age window.</summary>
         public List<ConversationLogEntry> MemoryLog { get; set; } = new List<ConversationLogEntry>();
 
+        /// <summary>Durable model-generated summaries for each completed ten-turn conversation block.</summary>
+        public List<StarConversationSummaryBlock> TenTurnConversationSummaries { get; set; } = new List<StarConversationSummaryBlock>();
+
+        /// <summary>Durable model-generated summaries for each completed one-hundred-turn conversation block.</summary>
+        public List<StarConversationSummaryBlock> HundredTurnConversationSummaries { get; set; } = new List<StarConversationSummaryBlock>();
+
         /// <summary>Summarized archived conversation blocks with source entries retained for explicit old-memory retrieval.</summary>
         public List<StarConversationArchiveEntry> OldConversationArchives { get; set; } = new List<StarConversationArchiveEntry>();
 
@@ -165,5 +183,7 @@ namespace Wds.SixStars.Api.Models
         /// Summaries of long stories this Star has already told, used to avoid repeating stories.
         /// </summary>
         public List<StarStoryHistoryEntry> StoryHistory { get; set; } = new List<StarStoryHistoryEntry>();
+        /// <summary>Durable girlfriend-only latch. Once a background review detects an actual sexting turn, this stays enabled so future girlfriend prompts can include her SextingModeInstructions.</summary>
+        public bool GirlfriendSextingEnabled { get; set; }
     }
 }

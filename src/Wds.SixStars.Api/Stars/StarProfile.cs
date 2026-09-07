@@ -1,11 +1,22 @@
 using System.Collections.Generic;
 using Wds.SixStars.Api.Stories;
 using Wds.SixStars.Api.Writings;
+using Wds.SixStars.Api.Actors;
 
 namespace Wds.SixStars.Api.Stars
 {
     public sealed class StarProfile
     {
+        /// <summary>Whether this Star is part of the active runtime/Forge roster.</summary>
+        public bool Active { get; set; } = true;
+        /// <summary>Stable configurable roster/display order; lower values appear first.</summary>
+        public int SortOrder { get; set; } = 1000;
+        /// <summary>Generic actor identity. Stars use actorType=star and normally actorId=StarId.</summary>
+        public string ActorType { get; set; } = "star";
+        public string ActorId { get; set; } = string.Empty;
+        /// <summary>Capability/depth declaration shared with generic souled actors.</summary>
+        public ActorSoulConfig Soul { get; set; } = ActorSoulConfig.FullStarSoul();
+
         public string StarId { get; set; } = string.Empty;
         public string DisplayName { get; set; } = string.Empty;
         public string Element { get; set; } = string.Empty;
@@ -26,6 +37,9 @@ namespace Wds.SixStars.Api.Stars
         public string DeepPersonality { get; set; } = string.Empty;
         public string BackstorySummary { get; set; } = string.Empty;
         public string CompleteBackgroundStory { get; set; } = string.Empty;
+
+        /// <summary>Per-Star action/battle appetite used by fast speech and autonomous story writing.</summary>
+        public string ActionBattlePreference { get; set; } = string.Empty;
 
         /// <summary>Version of the compact character attribute schema used by CharacterAttributes.</summary>
         public int CharacterAttributesVersion { get; set; } = StarCharacterAttributeSchema.Version;
@@ -80,9 +94,16 @@ namespace Wds.SixStars.Api.Stars
         /// <summary>Shared quality consensus required before any writing persistence route can save a candidate.</summary>
         public StarWritingPersistenceQualityGate WritingPersistenceQualityGate { get; set; } = new StarWritingPersistenceQualityGate();
 
-        /// <summary>Per-Star score rules deciding which generated jokes and poetic writings become durable.</summary>
+        /// <summary>Per-Star value rules deciding which generated shelf Sparks become durable.</summary>
         public List<StarWritingPersistenceRule> WritingPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
 
+        /// <summary>Reader-emotion impact consensus required before a Constellation Story can persist.</summary>
+        public StarWritingPersistenceQualityGate ConstellationPersistenceQualityGate { get; set; } = new StarWritingPersistenceQualityGate();
+
+        /// <summary>Per-Star reader-emotion IU routes deciding which completed Constellation Stories become durable.</summary>
+        public List<StarWritingPersistenceRule> ConstellationPersistenceRules { get; set; } = new List<StarWritingPersistenceRule>();
+
         public List<StoryMemoryCard> StoryDeck { get; set; } = new List<StoryMemoryCard>();
+        public List<string> SextingModeInstructions { get; set; } = new List<string>();
     }
 }

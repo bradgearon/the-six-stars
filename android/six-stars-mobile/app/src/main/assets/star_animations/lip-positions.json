@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "coordinateSystem": "source-pixels-top-left",
+  "lipAsset": "lips-talking.gif",
+  "notes": "Set x/y to the top-left source-canvas pixel of the cropped lips for each idle frame. Null means not configured. durationMs mirrors the current idle.gif frame timing.",
+  "stars": {
+    "auerlis": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            }
+          ]
+        }
+      }
+    },
+    "elusiaa": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 20
+            }
+          ]
+        }
+      }
+    },
+    "kaelia": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            }
+          ]
+        }
+      }
+    },
+    "khavia": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 20
+            }
+          ]
+        }
+      }
+    },
+    "maera": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            }
+          ]
+        }
+      }
+    },
+    "nyxari": {
+      "animations": {
+        "idle": {
+          "sourceWidth": 128,
+          "sourceHeight": 128,
+          "frames": [
+            {
+              "frame": 0,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 1,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 2,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 3,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 4,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            },
+            {
+              "frame": 5,
+              "x": null,
+              "y": null,
+              "durationMs": 100
+            }
+          ]
+        }
+      }
+    }
+  }
+}

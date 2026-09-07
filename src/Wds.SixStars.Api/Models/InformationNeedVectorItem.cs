@@ -22,6 +22,11 @@ namespace Wds.SixStars.Api.Models
         [JsonIgnore]
         public string DataType { get; set; } = string.Empty;
 
+        // Optional compact lookup subject emitted by the delimiter-streaming contract. The public
+        // JSON schema intentionally remains subject/confidence/score for older structured paths.
+        [JsonIgnore]
+        public string Query { get; set; } = string.Empty;
+
         [JsonIgnore]
         public string Reason { get; set; } = string.Empty;
     }

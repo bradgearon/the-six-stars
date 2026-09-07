@@ -104,7 +104,9 @@ namespace Wds.SixStars.Api.Voice
 
                 _playbackObserver?.NotifyStarSpeechStarted();
 
-                if (AutoPlayChunks && _playbackEndpoint is IAudioOutputKeepAliveEndpoint keepAliveEndpoint)
+                if (AutoPlayChunks
+                    && _playbackEndpoint is IAudioOutputKeepAliveEndpoint keepAliveEndpoint
+                    && _playbackEndpoint is not IStreamingWavePlaybackEndpoint)
                 {
                     outputKeepAlive = keepAliveEndpoint.StartOutputKeepAlive("streaming speech generation and playback", linkedCts.Token);
                 }
@@ -154,7 +156,7 @@ namespace Wds.SixStars.Api.Voice
             finally
             {
                 // GenerateStreamingAsync can fail before the server sends a completion event
-                // (for example while the Python TTS service is still starting). Always cancel
+                // (for example while qwentts.cpp is still starting). Always cancel
                 // and join the ordered consumer so an empty playback loop cannot survive forever.
                 try
                 {
@@ -268,6 +270,7 @@ namespace Wds.SixStars.Api.Voice
             int nextChunkIndex = 0;
             int emptyPollsAfterComplete = 0;
             int waitForMissingChunkPolls = 0;
+            IStreamingWavePlaybackSession? continuousPlayback = null;
 
             try
             {
@@ -319,8 +322,10 @@ namespace Wds.SixStars.Api.Voice
                                 VoiceId = chunk.VoiceId,
                                 WavAudio = CopyBytes(chunk.AudioData),
                                 MimeType = chunk.MimeType,
+                                DurationMs = chunk.DurationMs,
+                                IsStreamingPcmWindow = chunk.IsStreamingPcmWindow,
                                 Instructions = chunk.Text,
-                                Source = "streaming-websocket"
+                                Source = "streaming-qwentts-http"
                             };
 
                             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Consuming ordered chunk {chunk.ChunkIndex + 1}/{chunk.TotalChunks} ({chunk.AudioData.Length} bytes). Queue remaining after dequeue: {queueCountAfterDequeue}. Processed so far: {chunksProcessed}.");
@@ -330,25 +335,41 @@ namespace Wds.SixStars.Api.Voice
                             {
                                 ChunkPlaybackStarted?.Invoke(this, chunk);
 
-                                CancellationToken playbackToken = cancellationToken;
-                                CancellationTokenSource? playbackLinkedCts = null;
-                                CancellationToken playbackInterruptionToken = _interruptionManager?.StartSpeechPlayback() ?? CancellationToken.None;
-                                if (playbackInterruptionToken != CancellationToken.None)
+                                if (_playbackEndpoint is IStreamingWavePlaybackEndpoint streamingPlaybackEndpoint)
                                 {
-                                    playbackLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, playbackInterruptionToken);
-                                    playbackToken = playbackLinkedCts.Token;
+                                    continuousPlayback ??= streamingPlaybackEndpoint.CreateStreamingSession("ordered desktop Star speech");
+                                    Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Queueing audio chunk {chunk.ChunkIndex + 1} into one continuous desktop output (streamingPcm={result.IsStreamingPcmWindow})...");
+                                    await continuousPlayback.EnqueueAsync(result, cancellationToken).ConfigureAwait(false);
                                 }
+                                else
+                                {
+                                    // Flush a prior rolling desktop lane before falling back to standalone playback.
+                                    if (continuousPlayback != null)
+                                    {
+                                        await continuousPlayback.CompleteAsync(cancellationToken).ConfigureAwait(false);
+                                        continuousPlayback.Dispose();
+                                        continuousPlayback = null;
+                                    }
 
-                                try
-                                {
-                                    Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Calling PlayWavAsync for chunk {chunk.ChunkIndex + 1}...");
-                                    await _playbackEndpoint.PlayWavAsync(result, playbackToken).ConfigureAwait(false);
-                                    Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] PlayWavAsync returned for chunk {chunk.ChunkIndex + 1}");
-                                }
-                                finally
-                                {
-                                    playbackLinkedCts?.Dispose();
-                                    _interruptionManager?.SpeechPlaybackCompleted();
+                                    CancellationToken playbackToken = cancellationToken;
+                                    CancellationTokenSource? playbackLinkedCts = null;
+                                    CancellationToken playbackInterruptionToken = _interruptionManager?.StartSpeechPlayback() ?? CancellationToken.None;
+                                    if (playbackInterruptionToken != CancellationToken.None)
+                                    {
+                                        playbackLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, playbackInterruptionToken);
+                                        playbackToken = playbackLinkedCts.Token;
+                                    }
+
+                                    try
+                                    {
+                                        Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Calling standalone PlayWavAsync for chunk {chunk.ChunkIndex + 1}...");
+                                        await _playbackEndpoint.PlayWavAsync(result, playbackToken).ConfigureAwait(false);
+                                    }
+                                    finally
+                                    {
+                                        playbackLinkedCts?.Dispose();
+                                        _interruptionManager?.SpeechPlaybackCompleted();
+                                    }
                                 }
 
                                 ChunkPlaybackCompleted?.Invoke(this, chunk);
@@ -361,12 +382,6 @@ namespace Wds.SixStars.Api.Voice
                             _chunksPlayed++;
                             nextChunkIndex++;
                             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Chunk {chunk.ChunkIndex + 1}/{chunk.TotalChunks} consumed. Played/consumed {_chunksPlayed}, received {_chunksReceived}, expected {_expectedTotalChunks}.");
-
-                            // Small device reopen breath for WPF/NAudio. Unity hosts can set AutoPlayChunks=false.
-                            if (AutoPlayChunks)
-                            {
-                                await Task.Delay(35, cancellationToken).ConfigureAwait(false);
-                            }
 
                             continue;
                         }
@@ -437,6 +452,30 @@ namespace Wds.SixStars.Api.Voice
             }
             finally
             {
+                if (continuousPlayback != null)
+                {
+                    try
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            continuousPlayback.Cancel();
+                        }
+                        else
+                        {
+                            Debug.WriteLine("[StreamingStarVoiceResponsePipeline] All PCM windows queued; waiting for the single rolling desktop output to drain.");
+                            await continuousPlayback.CompleteAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        continuousPlayback.Cancel();
+                    }
+                    finally
+                    {
+                        continuousPlayback.Dispose();
+                    }
+                }
+
                 Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Playback loop ended. Total chunks processed: {chunksProcessed}, played/consumed {_chunksPlayed}, received {_chunksReceived}, expected {_expectedTotalChunks}, generationComplete={_generationComplete}");
             }
         }

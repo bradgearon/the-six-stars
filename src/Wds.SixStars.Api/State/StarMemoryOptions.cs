@@ -3,7 +3,10 @@ namespace Wds.SixStars.Api.State
     public sealed class StarMemoryOptions
     {
         public bool AcceptModelSuggestedDeltas { get; set; }
-        public bool AutoCaptureHighImpactPlayerQuotes { get; set; } = true;
+        // Legacy configuration keys retained so older appsettings continue to bind cleanly.
+        // They are intentionally ignored: important quote significance is selected by the
+        // protected background review LLM and deterministic storage only validates provenance.
+        public bool AutoCaptureHighImpactPlayerQuotes { get; set; } = false;
         public double AutoImportantQuoteMinEmotionConfidence { get; set; } = 0.15;
         public double AutoImportantQuoteMinEmotionScore { get; set; } = 30;
         public double AutoImportantQuoteMinWeightedEmotionScore { get; set; } = 4.5;
@@ -11,6 +14,8 @@ namespace Wds.SixStars.Api.State
         public int MaxMemoryLogEntries { get; set; } = 80;
         public int MaxImportantQuotes { get; set; } = 128;
         public int MaxMemoryNotes { get; set; } = 160;
+        public int MaxShortTermMemoryEntries { get; set; } = 64;
+        public int ShortTermMemoryWindowMs { get; set; } = 1800000;
         public int MaxThingsLearnedOrSuggestedByPlayer { get; set; } = 256;
         public int MaxRelationshipEvents { get; set; } = 100;
         public int MaxGirlfriendHistoryEntries { get; set; } = 80;

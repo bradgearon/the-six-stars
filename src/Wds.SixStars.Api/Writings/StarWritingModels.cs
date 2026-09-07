@@ -4,21 +4,27 @@ using System.Linq;
 
 namespace Wds.SixStars.Api.Writings
 {
-    /// <summary>One score threshold used by a Star's writing persistence rules.</summary>
+    /// <summary>One value threshold used by a Star's writing persistence rules.</summary>
     public sealed class StarWritingPersistenceRequirement
     {
         public string Category { get; set; } = string.Empty;
-        public double MinimumScore { get; set; }
+        public double MinimumValue { get; set; }
+
+        /// <summary>Backward-compatible input alias for older profile JSON.</summary>
+        public double MinimumScore { get => MinimumValue; set => MinimumValue = value; }
     }
 
     /// <summary>
     /// Shared quality floor applied before any Star-specific persistence rule or the global Overall backstop.
-    /// The candidate must meet MinimumOverallScore and at least MinimumSupportingMatches of the listed
+    /// The candidate must meet MinimumOverallValue and at least MinimumSupportingMatches of the listed
     /// supporting requirements. When MinimumSupportingMatches is zero, every supporting requirement is required.
     /// </summary>
     public sealed class StarWritingPersistenceQualityGate
     {
-        public double MinimumOverallScore { get; set; }
+        public double MinimumOverallValue { get; set; }
+
+        /// <summary>Backward-compatible input alias for older profile JSON.</summary>
+        public double MinimumOverallScore { get => MinimumOverallValue; set => MinimumOverallValue = value; }
         public int MinimumSupportingMatches { get; set; }
         public List<StarWritingPersistenceRequirement> SupportingRequirements { get; set; } = new List<StarWritingPersistenceRequirement>();
     }
@@ -86,10 +92,10 @@ namespace Wds.SixStars.Api.Writings
     public sealed class StarWritingImprovementReplacement
     {
         public string Id { get; set; } = string.Empty;
-        public double OldScore { get; set; }
+        public double OldValue { get; set; }
         public List<string> NewWordSet { get; set; } = new List<string>();
         public string NewWriting { get; set; } = string.Empty;
-        public double NewScore { get; set; }
+        public double NewValue { get; set; }
     }
 
     public sealed class StarWritingImprovementResult
@@ -131,13 +137,20 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingEmotionValue
     {
-        public double Score { get; set; }
+        public double Value { get; set; }
     }
 
     public sealed class StarWritingRating
     {
         public int Index { get; set; }
+        /// <summary>Identifies how this review should be interpreted. New reviews use ReaderEmotionIuV1.</summary>
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
+        /// <summary>Compact positional IU vector. ReaderEmotionIuV1 uses 30 emotions plus Overall as the final value.</summary>
         public string EmotionalVector { get; set; } = string.Empty;
+        /// <summary>Legacy compatibility only for the short-lived named-array Constellation format. New LLM reviews never emit this.</summary>
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        /// <summary>Cached Overall IU value derived from the final ReaderEmotionIuV1 vector position.</summary>
+        public double OverallValue { get; set; }
     }
 
     public sealed class StarWritingReviewResult
@@ -154,12 +167,18 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public string SourceBatchId { get; set; } = string.Empty;
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
         public bool Persisted { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
     }
@@ -180,7 +199,7 @@ namespace Wds.SixStars.Api.Writings
     /// <summary>One append-only entry in the shared all-Star writing statement log.</summary>
     public sealed class StarWritingStatementLogEntry
     {
-        public int Version { get; set; } = 3;
+        public int Version { get; set; } = 7;
         public string Id { get; set; } = string.Empty;
         public string SourceBatchId { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
@@ -189,12 +208,19 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public DateTimeOffset GeneratedAt { get; set; }
         public int Index { get; set; }
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Statement { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
-        public Dictionary<string, double> Scores { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
+        public string ValueUnit { get; set; } = StarWritingValueUnits.InformationUnits;
+        public Dictionary<string, double> Values { get; set; } = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         public bool Persisted { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
     }
@@ -206,10 +232,16 @@ namespace Wds.SixStars.Api.Writings
         public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public string Title { get; set; } = string.Empty;
         public List<string> ContributingStarIds { get; set; } = new List<string>();
+        public List<string> StoryCharacters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public string SourceBatchId { get; set; } = string.Empty;
         public List<string> WordsUsed { get; set; } = new List<string>();
         public string Writing { get; set; } = string.Empty;
+        public string ReviewDiscipline { get; set; } = StarWritingReviewDisciplines.LiteraryValuesV1;
         public string EmotionalVector { get; set; } = string.Empty;
+        public List<StarWritingStoryEmotionValue> EmotionFeedback { get; set; } = new List<StarWritingStoryEmotionValue>();
+        public double OverallValue { get; set; }
         public List<string> MatchedPersistenceRuleIds { get; set; } = new List<string>();
         public DateTimeOffset GeneratedAt { get; set; }
         public DateTimeOffset PersistedAt { get; set; }
@@ -222,11 +254,32 @@ namespace Wds.SixStars.Api.Writings
         public bool IsPosted => PostedAt.HasValue;
     }
 
+    /// <summary>
+    /// Version marker for shelf-selection policy changes that need a one-time replay of the
+    /// append-only writing statement log. This is deliberately separate from the JSON schema
+    /// version so clearing a Star can create a fresh state without resurrecting old shelf work.
+    /// </summary>
+    public static class StarWritingPersistencePolicy
+    {
+        public const int CurrentVersion = 2;
+    }
+
+    /// <summary>One current-story desire seed contributed by a souled actor during the light pass.</summary>
+    public sealed class StarWritingStoryWish
+    {
+        public string SourceActorId { get; set; } = string.Empty;
+        public string SourceDisplayName { get; set; } = string.Empty;
+        public string SourceActorType { get; set; } = string.Empty;
+        public string Wish { get; set; } = string.Empty;
+    }
+
     public sealed class StarWritingStoryTermContributionResult
     {
         public string StarId { get; set; } = string.Empty;
         public List<string> Subjects { get; set; } = new List<string>();
         public List<string> Verbs { get; set; } = new List<string>();
+        /// <summary>Five things this contributor would especially like to encounter in a story right now.</summary>
+        public List<string> StoryWishes { get; set; } = new List<string>();
         public string RawModelJson { get; set; } = string.Empty;
     }
 
@@ -235,6 +288,10 @@ namespace Wds.SixStars.Api.Writings
         public string StarId { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
         public string Premise { get; set; } = string.Empty;
+        /// <summary>Living named cast for the story. Entries can include role, desire, and memorable traits.</summary>
+        public List<string> Characters { get; set; } = new List<string>();
+        /// <summary>Living list of the story's actual subjects, themes, situations, and conflicts.</summary>
+        public List<string> StorySubjects { get; set; } = new List<string>();
         public List<string> Beats { get; set; } = new List<string>();
         public string RawModelJson { get; set; } = string.Empty;
     }
@@ -265,6 +322,10 @@ namespace Wds.SixStars.Api.Writings
     {
         public string StarId { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
+        /// <summary>The complete updated cast after this collaborator's pass.</summary>
+        public List<string> Characters { get; set; } = new List<string>();
+        /// <summary>The complete updated story-subject list after this collaborator's pass.</summary>
+        public List<string> StorySubjects { get; set; } = new List<string>();
         public List<string> RevisedBeats { get; set; } = new List<string>();
         public string Story { get; set; } = string.Empty;
         public List<string> AddedLayers { get; set; } = new List<string>();
@@ -287,6 +348,9 @@ namespace Wds.SixStars.Api.Writings
         public int PhaseNumber { get; set; }
         public string Stage { get; set; } = string.Empty;
         public string StarId { get; set; } = string.Empty;
+        public List<string> Characters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public bool PendingFinish { get; set; }
         public string CompletionDecision { get; set; } = string.Empty;
         public string Summary { get; set; } = string.Empty;
@@ -300,10 +364,15 @@ namespace Wds.SixStars.Api.Writings
         public string ViewpointStarId { get; set; } = string.Empty;
         public string Title { get; set; } = string.Empty;
         public string Premise { get; set; } = string.Empty;
+        public List<string> Characters { get; set; } = new List<string>();
+        public List<string> StorySubjects { get; set; } = new List<string>();
         public List<string> OutlineBeats { get; set; } = new List<string>();
         public string CurrentStory { get; set; } = string.Empty;
+        /// <summary>Light-pass noun/subject vocabulary pool, separate from StorySubjects.</summary>
         public List<string> Subjects { get; set; } = new List<string>();
         public List<string> Verbs { get; set; } = new List<string>();
+        /// <summary>Current-story desire seeds contributed by the active collaborators during the light pass.</summary>
+        public List<StarWritingStoryWish> StoryWishes { get; set; } = new List<StarWritingStoryWish>();
         public List<string> ContributingStarIds { get; set; } = new List<string>();
         public bool PendingFinish { get; set; }
         public string FinishRequestedByStarId { get; set; } = string.Empty;
@@ -316,7 +385,8 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingNotesState
     {
-        public int Version { get; set; } = 10;
+        public int Version { get; set; } = 16;
+        public int PersistencePolicyVersion { get; set; }
         public string StarId { get; set; } = string.Empty;
         public DateTimeOffset UpdatedAt { get; set; }
         public List<StarWritingHistoryItem> RecentWritingHistory { get; set; } = new List<StarWritingHistoryItem>();
@@ -389,8 +459,15 @@ namespace Wds.SixStars.Api.Writings
 
     public sealed class StarWritingPerformanceResult
     {
+        public string OutputType { get; set; } = StarWritingOutputTypes.Spark;
         public StarWritingNotesState State { get; set; } = new StarWritingNotesState();
         public List<PersistedStarWriting> SelectedWritings { get; set; } = new List<PersistedStarWriting>();
+        public double SelectedOverallValue { get; set; }
+        public double SelectedPublicValue { get; set; }
+        public int CandidateCount { get; set; }
+        public int ElitePoolCount { get; set; }
+        public int AnchorCount { get; set; }
+        public int ContrastCount { get; set; }
         public Wds.SixStars.Api.Models.StarInteractionResponse Response { get; set; } = new Wds.SixStars.Api.Models.StarInteractionResponse();
     }
 
@@ -407,9 +484,9 @@ namespace Wds.SixStars.Api.Writings
         public static string CategoryOrder => string.Join(",", Categories);
 
         /// <summary>
-        /// Normalizes the current score-only format while still accepting the former
+        /// Normalizes the current value-only format while still accepting the former
         /// score:confidence representation so existing writing-note files migrate without
-        /// another LLM request. The normalized value always contains only 27 scores.
+        /// another LLM request. Values are non-negative and deliberately have no upper bound.
         /// </summary>
         public static bool TryNormalizeComplete(
             string? raw,
@@ -432,8 +509,8 @@ namespace Wds.SixStars.Api.Writings
             {
                 foreach (string item in separated)
                 {
-                    if (!TryParseScore(item, out double score)) return false;
-                    parsed.Add(score);
+                    if (!TryParseValue(item, out double value)) return false;
+                    parsed.Add(value);
                 }
             }
             else
@@ -444,8 +521,8 @@ namespace Wds.SixStars.Api.Writings
                     // Defensive compatibility if a model uses colons between score-only items.
                     foreach (string token in tokens)
                     {
-                        if (!TryParseScore(token, out double score)) return false;
-                        parsed.Add(score);
+                        if (!TryParseValue(token, out double value)) return false;
+                        parsed.Add(value);
                     }
                 }
                 else if (tokens.Length == Categories.Length * 2)
@@ -454,8 +531,8 @@ namespace Wds.SixStars.Api.Writings
                     // and returned alternating score/confidence values in one colon chain.
                     for (int i = 0; i < Categories.Length; i++)
                     {
-                        if (!TryParseScore(tokens[i * 2], out double score)) return false;
-                        parsed.Add(score);
+                        if (!TryParseValue(tokens[i * 2], out double value)) return false;
+                        parsed.Add(value);
                     }
                 }
                 else
@@ -466,7 +543,7 @@ namespace Wds.SixStars.Api.Writings
 
             for (int i = 0; i < Categories.Length; i++)
             {
-                values[Categories[i]] = new StarWritingEmotionValue { Score = parsed[i] };
+                values[Categories[i]] = new StarWritingEmotionValue { Value = parsed[i] };
             }
 
             normalized = Format(values);
@@ -480,21 +557,21 @@ namespace Wds.SixStars.Api.Writings
         {
             if (!TryNormalizeComplete(raw, out normalized, out values)) return false;
 
-            // A local model was observed returning category positions 0..26 as scores.
+            // A local model was observed returning category positions 0..26 as values.
             // That has the correct length but is not a literary rating vector.
-            int categoryIndexScores = 0;
+            int categoryIndexValues = 0;
             for (int i = 0; i < Categories.Length; i++)
             {
                 if (values.TryGetValue(Categories[i], out StarWritingEmotionValue value)
-                    && Math.Abs(value.Score - i) < 0.0001)
+                    && Math.Abs(value.Value - i) < 0.0001)
                 {
-                    categoryIndexScores++;
+                    categoryIndexValues++;
                 }
             }
-            if (categoryIndexScores >= 20) return false;
+            if (categoryIndexValues >= 20) return false;
 
-            // Real 0-100 ratings should not consist almost entirely of 0..1 placeholders.
-            if (values.Values.Count(x => x.Score <= 1.0) >= 24) return false;
+            // Real literary values should not consist almost entirely of 0..1 placeholders.
+            if (values.Values.Count(x => x.Value <= 1.0) >= 24) return false;
 
             return true;
         }
@@ -513,17 +590,17 @@ namespace Wds.SixStars.Api.Writings
             if (parts.Length == 1) parts = text.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < Categories.Length; i++)
             {
-                double score = 0;
-                if (i < parts.Length) TryParseScore(parts[i], out score);
-                values[Categories[i]] = new StarWritingEmotionValue { Score = Clamp(score, 0, 100) };
+                double value = 0;
+                if (i < parts.Length) TryParseValue(parts[i], out value);
+                values[Categories[i]] = new StarWritingEmotionValue { Value = ClampMinimum(value, 0) };
             }
 
             return Format(values);
         }
 
-        private static bool TryParseScore(string raw, out double score)
+        private static bool TryParseValue(string raw, out double value)
         {
-            score = 0;
+            value = 0;
             string text = (raw ?? string.Empty).Trim().Trim('"');
             if (string.IsNullOrWhiteSpace(text)) return false;
 
@@ -531,21 +608,50 @@ namespace Wds.SixStars.Api.Writings
             int colon = text.IndexOf(':');
             if (colon >= 0) text = text.Substring(0, colon).Trim();
 
-            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out score)) return false;
-            if (double.IsNaN(score) || double.IsInfinity(score) || score < 0 || score > 100) return false;
+            if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value)) return false;
+            if (double.IsNaN(value) || double.IsInfinity(value) || value < 0) return false;
             return true;
+        }
+
+        public static string FormatValues(IReadOnlyDictionary<string, double> values)
+        {
+            if (values == null) return string.Empty;
+            Dictionary<string, StarWritingEmotionValue> normalized = new Dictionary<string, StarWritingEmotionValue>(StringComparer.OrdinalIgnoreCase);
+            foreach (string category in Categories)
+            {
+                if (!values.TryGetValue(category, out double value)
+                    || double.IsNaN(value)
+                    || double.IsInfinity(value)
+                    || value < 0)
+                {
+                    return string.Empty;
+                }
+                normalized[category] = new StarWritingEmotionValue { Value = value };
+            }
+            return Format(normalized);
+        }
+
+        public static double ReadValue(IReadOnlyDictionary<string, StarWritingEmotionValue> values, string category)
+        {
+            return values != null
+                && values.TryGetValue(category ?? string.Empty, out StarWritingEmotionValue? value)
+                && value != null
+                && !double.IsNaN(value.Value)
+                && !double.IsInfinity(value.Value)
+                ? Math.Max(0.0, value.Value)
+                : 0.0;
         }
 
         private static string Format(IReadOnlyDictionary<string, StarWritingEmotionValue> values)
         {
             return string.Join(";", Categories.Select(category =>
-                values[category].Score.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
+                values[category].Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
         }
 
-        private static double Clamp(double value, double min, double max)
+        private static double ClampMinimum(double value, double min)
         {
             if (double.IsNaN(value) || double.IsInfinity(value)) return min;
-            return Math.Max(min, Math.Min(max, value));
+            return Math.Max(min, value);
         }
     }
 }

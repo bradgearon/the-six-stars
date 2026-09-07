@@ -30,6 +30,7 @@ import android.os.SystemClock;
 import android.text.InputType;
 import android.util.Base64;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -106,7 +107,8 @@ public final class MainActivity extends ComponentActivity {
     private static final String LEGACY_BRIDGE_URL = "http://192.168.1.217:8066";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_RESPONSE = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_RESPONSE";
     private static final String ACTION_STAR_INITIATIVE_SERVICE_STATUS = "com.wds.sixstarsmobile.STAR_INITIATIVE_SERVICE_STATUS";
-    private static final String[] STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
+    private static final String[] DEFAULT_STAR_IDS = new String[]{"Elusiaa", "Kaelia", "Maera", "Khavia", "Auerlis", "Nyxari"};
+    private final List<String> activeStarIds = new ArrayList<>(Arrays.asList(DEFAULT_STAR_IDS));
     private static final int SAMPLE_RATE = 16000;
     private static final int FRAME_STATUS = 1;
     private static final int FRAME_AUDIO_WAV = 2;
@@ -124,6 +126,7 @@ public final class MainActivity extends ComponentActivity {
     private static final int KEEP_AWAKE_REASON_REQUEST = 1;
     private static final int KEEP_AWAKE_REASON_VOICE_STREAM = 2;
     private static final int KEEP_AWAKE_REASON_AUDIO_PLAYBACK = 4;
+    private static final long PLAYER_ACTIVITY_SIGNAL_THROTTLE_MS = 750L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService httpExecutor = Executors.newFixedThreadPool(2);
@@ -186,6 +189,11 @@ public final class MainActivity extends ComponentActivity {
     private ImageView prodTalkIcon;
     private View prodTalkButton;
     private View prodListenButton;
+    private View prodListenSubmenu;
+    private View prodListenThoughtOption;
+    private View prodListenSparkOption;
+    private View prodListenConstellationOption;
+    private TextView prodConstellationChoiceIcon;
     private View prodPhotoButton;
     private View prodVoiceActions;
     private Button prodCancelVoiceButton;
@@ -215,6 +223,9 @@ public final class MainActivity extends ComponentActivity {
     private boolean pendingShirtOffAnimation;
     private String pendingShirtOffStarId = "";
     private boolean shirtOffAnimationActive;
+    private boolean emotionAnimationActive;
+    private String pendingEmotionAnimationName = "";
+    private String pendingEmotionAnimationStarId = "";
     private AlertDialog activeStarSelectionDialog;
     private boolean prodMode = true;
     private boolean starInitiativeEnabled;
@@ -254,8 +265,20 @@ public final class MainActivity extends ComponentActivity {
     private boolean bridgeEventsPrimed;
 
     private volatile boolean destroyed;
+    private volatile long lastDesktopPlayerActivitySignalMs;
 
     private final TreeMap<String, ArrayList<String>> prodConversationByStar = new TreeMap<>();
+    // The current foreground LLM reply is rendered as a transient row as soon as each immutable
+    // § chunk arrives. It is deliberately not persisted; the final correlated response replaces it
+    // with the normal durable conversation row.
+    private final TreeMap<String, String> prodStreamingResponseIdByStar = new TreeMap<>();
+    private final TreeMap<String, String> prodStreamingResponseTextByStar = new TreeMap<>();
+    private String lastRenderedProdConversationStar = "";
+    private String lastRenderedProdConversationText = "";
+    // Build 13: desktop history is a one-time hydration source, not a live renderer.  State events
+    // arrive frequently; re-merging them on every event made the Android transcript repaint and
+    // jump back to the top over and over.
+    private final HashSet<String> prodConversationDesktopHydratedStars = new HashSet<>();
     private int keepScreenAwakeReasonMask;
 
     private final BroadcastReceiver starInitiativeServiceReceiver = new BroadcastReceiver() {
@@ -287,6 +310,14 @@ public final class MainActivity extends ComponentActivity {
     };
 
     @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (event != null && event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            notifyDesktopPlayerActivity("Android app touch");
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         viewModel = new ViewModelProvider(this).get(MainViewModel.class);
@@ -294,6 +325,7 @@ public final class MainActivity extends ComponentActivity {
         bridgeConnectionService = viewModel.bridge();
         conversationService = viewModel.conversations();
         voiceCaptureService = viewModel.voiceCapture();
+        if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(settingsService.echoMicWhileRecording());
         photoAttachmentService = viewModel.photos();
         preparedSpeechCoordinator = viewModel.preparedSpeech();
         starInitiativeCoordinator = viewModel.initiatives();
@@ -302,6 +334,7 @@ public final class MainActivity extends ComponentActivity {
         starInitiativeEnabled = settingsService.isStarInitiativeEnabled();
         starInitiativeBackgroundEnabled = starInitiativeEnabled;
         buildUi();
+        wirePlayerActivityTextWatcher();
         // Restore the durable phone selection before syncStarInitiativeRuntimePrefs() copies the
         // spinner value back into preferences. Without this, a newly built spinner defaults to the
         // first Star and silently overwrites the saved selection during startup.
@@ -353,12 +386,22 @@ public final class MainActivity extends ComponentActivity {
             }
 
             @Override public void onPlaybackStarted(PhoneVoicePlaybackService.PhoneVoiceClip clip, long durationMs, long playbackElapsedMs) {
+                if (clip != null && clip.fromDesktop && clip.audioSequence == 0 && clip.streamId != null && !clip.streamId.isEmpty()) {
+                    notifyDesktopVoicePlaybackStarted(clip);
+                }
                 runOnUiThread(() -> {
                     starVoicePlaybackActive = true;
                     activeAnimatedVoiceClip = clip;
                     setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, clip.label);
                     startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
                     if (viewModel != null) viewModel.setVoicePlaying(true);
+                });
+            }
+
+            @Override public void onLipSyncState(boolean speaking) {
+                runOnUiThread(() -> {
+                    if (!starVoicePlaybackActive || activeAnimatedVoiceClip == null || !activeAnimatedVoiceClip.continuousPcm) return;
+                    starAnimationCoordinator.voiceSpeechActivity(speaking);
                 });
             }
 
@@ -400,7 +443,10 @@ public final class MainActivity extends ComponentActivity {
             }
         });
         viewModel.bridgeEvents().observe(this, event -> {
-            if (event != null) handleBridgeEvent(event.payload);
+            // MainViewModel has already sequence-filtered socket events. Do not filter them a
+            // second time here: initial/state hydration can legitimately know about a newer
+            // sequence before an already-accepted LiveData event reaches this observer.
+            if (event != null) handleBridgeEvent(event.payload, true);
         });
         viewModel.mobileStatePayload().observe(this, payload -> {
             if (payload != null) applyMobileStatePayload(payload);
@@ -416,7 +462,9 @@ public final class MainActivity extends ComponentActivity {
         super.onResume();
         activityResumed = true;
         registerStarInitiativeServiceReceiver();
-        ensureBridgeWebSocket();
+        if (viewModel != null) viewModel.onAppResumed();
+        else ensureBridgeWebSocket();
+        notifyDesktopPlayerActivity("Android app resumed");
         loadPrefetchedInitiativeIntoMemory("Android activity resumed");
         selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
         syncPreparedSpeech("Android activity resumed", true);
@@ -469,6 +517,26 @@ public final class MainActivity extends ComponentActivity {
 
     private boolean isDesktopVoiceStreamActive() {
         return phoneVoiceService != null && phoneVoiceService.isDesktopStreamActive();
+    }
+
+    private void wirePlayerActivityTextWatcher() {
+        if (messageEdit == null) return;
+        messageEdit.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+                if (text != null && text.length() > 0) {
+                    notifyDesktopPlayerActivity("Android text entry");
+                }
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable editable) {
+            }
+        });
     }
 
     private void buildUi() {
@@ -524,7 +592,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout selectors = row();
         starSpinner = new Spinner(this);
         starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
-                STAR_IDS));
+                activeStarIds));
         requestTypeSpinner = new Spinner(this);
         requestTypeSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item,
                 new String[]{"Chat", "Story", "Photo", "Letter", "BattleUpdate", "Debug"}));
@@ -661,6 +729,11 @@ public final class MainActivity extends ComponentActivity {
         prodTalkIcon = null;
         prodTalkButton = null;
         prodListenButton = null;
+        prodListenSubmenu = null;
+        prodListenThoughtOption = null;
+        prodListenSparkOption = null;
+        prodListenConstellationOption = null;
+        prodConstellationChoiceIcon = null;
         prodPhotoButton = null;
         prodVoiceActions = null;
         prodCancelVoiceButton = null;
@@ -687,6 +760,11 @@ public final class MainActivity extends ComponentActivity {
         prodTalkIcon = findViewById(R.id.prod_talk_icon);
         prodTalkButton = findViewById(R.id.prod_talk_button);
         prodListenButton = findViewById(R.id.prod_listen_button);
+        prodListenSubmenu = findViewById(R.id.prod_listen_submenu);
+        prodListenThoughtOption = findViewById(R.id.prod_listen_thought_option);
+        prodListenSparkOption = findViewById(R.id.prod_listen_spark_option);
+        prodListenConstellationOption = findViewById(R.id.prod_listen_constellation_option);
+        prodConstellationChoiceIcon = findViewById(R.id.prod_constellation_choice_icon);
         prodPhotoButton = findViewById(R.id.prod_photo_button);
         prodVoiceActions = findViewById(R.id.prod_voice_actions);
         prodCancelVoiceButton = findViewById(R.id.prod_cancel_voice_button);
@@ -717,6 +795,7 @@ public final class MainActivity extends ComponentActivity {
         prodStarSubtitleText.setContentDescription("Open Star selector");
         avatarFrame.setContentDescription("Open companion menu and status");
         catAvatar.setContentDescription("Open companion menu and status");
+        if (prodListenButton != null) prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story");
 
         prodSpriteView = findViewById(R.id.prod_sprite_view);
         if (prodSpriteView != null) {
@@ -726,7 +805,19 @@ public final class MainActivity extends ComponentActivity {
         }
 
         prodTalkButton.setOnClickListener(v -> prodTalkButtonTapped());
-        if (prodListenButton != null) prodListenButton.setOnClickListener(v -> requestStarInitiativeFromListenButton());
+        if (prodListenButton != null) prodListenButton.setOnClickListener(v -> toggleProdListenSubmenu());
+        if (prodListenThoughtOption != null) prodListenThoughtOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            requestStarInitiativeFromListenButton();
+        });
+        if (prodListenSparkOption != null) prodListenSparkOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked(), "spark");
+        });
+        if (prodListenConstellationOption != null) prodListenConstellationOption.setOnClickListener(v -> {
+            hideProdListenSubmenu();
+            dispatchStarWritingCommand("TellStarWriting", playOnPhoneCheck == null || playOnPhoneCheck.isChecked(), "constellation-story");
+        });
         if (prodPhotoButton != null) prodPhotoButton.setOnClickListener(v -> startPhotoCapture());
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
         prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
@@ -739,6 +830,7 @@ public final class MainActivity extends ComponentActivity {
         messageEdit.setMaxLines(4);
 
         refreshProdStarUi(selectedStarName());
+        loadProdConversationCacheIfNeeded(selectedStarName());
         refreshProdConversationWindow();
         updateProdRecordingUi();
         updateStarStateUi(selectedStarName(), true, true, 0, 0, 0, 0.0, false, false, "Prod ready");
@@ -749,7 +841,7 @@ public final class MainActivity extends ComponentActivity {
     private void createProdHiddenControls() {
         serverUrlEdit = input(savedBridgeUrl(), false);
         starSpinner = new Spinner(this);
-        starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, STAR_IDS));
+        starSpinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, activeStarIds));
         starSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 if (suppressStarSelectionDispatch) return;
@@ -929,27 +1021,20 @@ public final class MainActivity extends ComponentActivity {
         bridgeUrl.setText(serverUrlEdit == null ? "" : serverUrlEdit.getText().toString());
         controls.addView(bridgeUrl, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
 
-        TextView ipv6Label = prodText("Preferred local IPv6 address", 12, 0xFF9EE8F0, true);
-        controls.addView(ipv6Label);
-        EditText preferredIpv6 = input(settingsService == null ? "" : settingsService.preferredIpv6Address(), false);
-        preferredIpv6.setSingleLine(true);
-        preferredIpv6.setHint("Auto-detected from the desktop socket adapter");
-        controls.addView(preferredIpv6, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
-
-        CheckBox preferIpv6 = new CheckBox(this);
-        preferIpv6.setText("Use saved IPv6 first for local connections");
-        preferIpv6.setTextColor(0xFFEAF7FF);
-        preferIpv6.setChecked(settingsService == null || settingsService.useIpv6Primary());
-        controls.addView(preferIpv6);
-
-        TextView ipv6Hint = prodText("The desktop reports the routable IPv6 address on the same adapter carrying the working socket. Link-local addresses are not saved because their interface scope cannot be reused safely on Android.", 11, 0xFF9CB8C5, false);
-        controls.addView(ipv6Hint);
-
         CheckBox playPhone = new CheckBox(this);
         playPhone.setText("Play Star voice on this phone");
         playPhone.setTextColor(0xFFEAF7FF);
         playPhone.setChecked(playOnPhoneCheck == null || playOnPhoneCheck.isChecked());
         controls.addView(playPhone);
+
+        CheckBox micEcho = new CheckBox(this);
+        micEcho.setText("Echo microphone while recording");
+        micEcho.setTextColor(0xFFEAF7FF);
+        micEcho.setChecked(settingsService != null && settingsService.echoMicWhileRecording());
+        controls.addView(micEcho);
+
+        TextView micEchoHint = prodText("Dry low-latency mic monitoring plays your live microphone into Android device audio only while Talk is recording. For screen capture, use Device/Internal audio only; if the recorder also captures the microphone, it records your voice twice a few milliseconds apart and sounds hollow or \"in space.\" Headphones also prevent speaker feedback.", 11, 0xFFB6E6F2, false);
+        controls.addView(micEchoHint);
 
         CheckBox romance = new CheckBox(this);
         romance.setText("Romance Mode");
@@ -969,9 +1054,6 @@ public final class MainActivity extends ComponentActivity {
         buttons.addView(save, weightParams(1));
         buttons.addView(test, weightParams(1));
         controls.addView(buttons);
-
-        Button updateIpv6 = prodButton("Update IPv6 from Desktop");
-        controls.addView(updateIpv6, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         LinearLayout buttons2 = row();
         Button audio = prodButton("Test Audio");
@@ -997,11 +1079,11 @@ public final class MainActivity extends ComponentActivity {
 
         LinearLayout writingButtons = row();
         prodGenerateWritingButton = prodButton("Create Shelf Work");
-        prodTellWritingButton = prodButton("Tell Best / Latest (" + selectedStarPendingWritingCount + ")");
+        prodTellWritingButton = prodButton("Tell Top Sparks (" + selectedStarPendingWritingCount + ")");
         writingButtons.addView(prodGenerateWritingButton, weightParams(1));
         writingButtons.addView(prodTellWritingButton, weightParams(1));
         controls.addView(writingButtons);
-        TextView writingHint = prodText("First chooses five word pairs without the writing task, composes five pieces, may refine them through configured review passes, then applies the final shelf ratings.", 11, 0xFFB6A7C8, false);
+        TextView writingHint = prodText("Create Shelf Work uses the configured shelf generator. Tell Top Sparks builds a 25-item weighted-IU listening set from the top 100 untold Sparks. The main Listen → Constellation choice deterministically plays the highest-Overall-IU unplayed story and queues its full narration in spoken chunks.", 11, 0xFFB6A7C8, false);
         controls.addView(writingHint);
         updateProdWritingButtons();
 
@@ -1041,6 +1123,11 @@ public final class MainActivity extends ComponentActivity {
         dialog.setOnShowListener(d -> {
             dialog.getWindow().setBackgroundDrawable(makeProdPanel(0xF00B1220, 0xFF00D5D7, 18));
             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(0xFFEAF7FF);
+            micEcho.setOnCheckedChangeListener((buttonView, isChecked) -> {
+                if (settingsService != null) settingsService.setEchoMicWhileRecording(isChecked);
+                if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(isChecked);
+                status.setText(buildProdMenuStatusText());
+            });
             prodBackgroundWritingLoopCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
                 if (suppressBackgroundWritingLoopToggleDispatch) return;
                 dispatchBackgroundWritingLoopToggle(isChecked, prodBackgroundWritingLoopCheck, status);
@@ -1053,13 +1140,11 @@ public final class MainActivity extends ComponentActivity {
             fetchMobileState(false);
             save.setOnClickListener(v -> {
                 if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
-                baseUrl(); // Persist the manually editable IPv4/hostname fallback before reconnecting.
-                if (viewModel != null && !viewModel.updatePreferredIpv6Settings(
-                        preferredIpv6.getText().toString(), preferIpv6.isChecked())) {
-                    setDebug("Invalid IPv6 address", "Enter a routable IPv6 address, clear the field, or use Update IPv6 from Desktop.");
-                    return;
-                }
+                baseUrl(); // Persist the manually editable IPv4/hostname bridge before reconnecting.
+                if (viewModel != null) viewModel.updatePreferredIpv6Settings("", false);
                 if (playOnPhoneCheck != null) playOnPhoneCheck.setChecked(playPhone.isChecked());
+                if (settingsService != null) settingsService.setEchoMicWhileRecording(micEcho.isChecked());
+                if (voiceCaptureService != null) voiceCaptureService.setMonitorEnabled(micEcho.isChecked());
                 if (romanceCheck != null) romanceCheck.setChecked(romance.isChecked());
                 starInitiativeEnabled = initiative.isChecked();
                 starInitiativeBackgroundEnabled = starInitiativeEnabled;
@@ -1075,26 +1160,6 @@ public final class MainActivity extends ComponentActivity {
                 baseUrl();
                 testConnection(true);
                 mainHandler.postDelayed(() -> status.setText(buildProdMenuStatusText()), 900);
-            });
-            updateIpv6.setOnClickListener(v -> {
-                if (serverUrlEdit != null) serverUrlEdit.setText(bridgeUrl.getText().toString().trim());
-                baseUrl();
-                updateIpv6.setEnabled(false);
-                updateIpv6.setText("Checking Desktop…");
-                viewModel.refreshPreferredIpv6(false).whenComplete((address, error) -> runOnUiThread(() -> {
-                    updateIpv6.setEnabled(true);
-                    updateIpv6.setText("Update IPv6 from Desktop");
-                    if (error != null) {
-                        setDebug("IPv6 discovery failed", error.toString());
-                    } else {
-                        preferredIpv6.setText(address);
-                        preferIpv6.setChecked(true);
-                        viewModel.updatePreferredIpv6Settings(address, true);
-                        setDebug("IPv6 saved", "The app will use http://[" + address + "]:"
-                                + BridgeAddressService.bridgePort(baseUrl()) + " first and fall back to " + baseUrl() + ".");
-                    }
-                    status.setText(buildProdMenuStatusText());
-                }));
             });
             audio.setOnClickListener(v -> testPhoneAudio());
             prodGenerateWritingButton.setOnClickListener(v -> dispatchStarWritingCommand("GenerateStarWriting", false));
@@ -1113,13 +1178,12 @@ public final class MainActivity extends ComponentActivity {
         sb.append("Star: ").append(selectedStarName()).append('\n');
         sb.append(prodRelationshipText == null ? "Relationship: unknown" : prodRelationshipText.getText()).append("\n\n");
         sb.append(nonEmptyText(connectionStatusText, "Connection: not checked yet.")).append('\n');
-        sb.append("Configured fallback: ").append(settingsService == null ? baseUrl() : settingsService.bridgeUrl()).append('\n');
-        sb.append("Saved IPv6: ").append(settingsService == null || settingsService.preferredIpv6Address().isEmpty()
-                ? "none discovered" : settingsService.preferredIpv6Address()).append('\n');
-        sb.append("IPv6 primary: ").append(settingsService == null || settingsService.useIpv6Primary() ? "enabled" : "disabled").append('\n');
+        sb.append("Network mode: IPv4 LAN only\n");
+        sb.append("Configured bridge: ").append(settingsService == null ? baseUrl() : settingsService.bridgeUrl()).append('\n');
         sb.append("Active bridge: ").append(viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()).append('\n');
         sb.append(nonEmptyText(audioStatusText, "Audio: phone voice socket not connected yet.")).append("\n\n");
         sb.append("Desktop auto writing: ").append(desktopBackgroundWritingLoopEnabled ? "enabled" : "disabled").append('\n');
+        sb.append("Microphone echo while recording: ").append(settingsService != null && settingsService.echoMicWhileRecording() ? "enabled" : "disabled").append('\n');
         sb.append("Automatic X posting: ").append(desktopXPostingEnabled ? "enabled" : "disabled").append('\n');
         sb.append("X status: ").append(desktopXPostingStatus == null ? "unknown" : desktopXPostingStatus).append('\n');
         sb.append("Writing shelf: ").append(Math.max(0, selectedStarPendingWritingCount)).append(" new, ")
@@ -1161,7 +1225,7 @@ public final class MainActivity extends ComponentActivity {
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(2);
         grid.setPadding(0, dp(8), 0, dp(6));
-        for (String starId : STAR_IDS) {
+        for (String starId : new ArrayList<>(activeStarIds)) {
             StarMeta meta = starMeta(starId);
             LinearLayout card = starSelectionCard(meta, quickXStatus);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
@@ -1236,6 +1300,7 @@ public final class MainActivity extends ComponentActivity {
         settingsService.setProductionMode(useProd);
         invalidatePrefetchedInitiative("Android session mode changed.");
         buildUi();
+        wirePlayerActivityTextWatcher();
         syncStarInitiativeBackgroundService("Android UI mode switched", true);
         testConnection(false);
     }
@@ -1272,7 +1337,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void setProdAnimationState(String state) {
         prodAnimationState = (state == null || state.length() == 0) ? "idle" : state.toLowerCase(Locale.US);
-        if (shirtOffAnimationActive) return;
+        if (shirtOffAnimationActive || emotionAnimationActive) return;
         if (prodSpriteView != null) {
             prodSpriteView.setStarAnimation(selectedStarName(), prodAnimationState, starMeta(selectedStarName()).frameResIds);
         }
@@ -1293,6 +1358,50 @@ public final class MainActivity extends ComponentActivity {
         maybePlayPendingShirtOffAnimation();
     }
 
+    private void queueEmotionAnimation(String starId, String animationName) {
+        if (!prodMode || starId == null || animationName == null) return;
+        String normalized = animationName.trim().toLowerCase(Locale.US);
+        if (!("happy".equals(normalized)
+                || "confused".equals(normalized)
+                || "sad".equals(normalized)
+                || "angry".equals(normalized)
+                || "love".equals(normalized))) return;
+        pendingEmotionAnimationStarId = starId;
+        pendingEmotionAnimationName = normalized;
+        maybePlayPendingEmotionAnimation();
+    }
+
+    private void maybePlayPendingEmotionAnimation() {
+        if (emotionAnimationActive
+                || shirtOffAnimationActive
+                || prodSpriteView == null
+                || pendingEmotionAnimationName.length() == 0) return;
+
+        final String starId = pendingEmotionAnimationStarId;
+        final String animationName = pendingEmotionAnimationName;
+        pendingEmotionAnimationStarId = "";
+        pendingEmotionAnimationName = "";
+        if (starId.length() == 0 || !starId.equalsIgnoreCase(selectedStarName())) return;
+
+        emotionAnimationActive = true;
+        boolean started = prodSpriteView.playOneShotAnimation(starId, animationName, 120L, () -> {
+            emotionAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Emotion animation finished", starId + " returned from " + animationName + ".gif to the current idle/talking-lips state.");
+            maybePlayPendingEmotionAnimation();
+            maybePlayPendingShirtOffAnimation();
+        });
+
+        if (!started) {
+            emotionAnimationActive = false;
+            setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
+            appendVoiceDebug("Emotion animation skipped", "No star_animations/" + starId.toLowerCase(Locale.US) + "/" + animationName + ".gif asset was found.");
+            maybePlayPendingEmotionAnimation();
+        } else {
+            appendVoiceDebug("Emotion animation playing", starId + " is playing " + animationName + ".gif once from a completed fast-speech control vector.");
+        }
+    }
+
     private void queueShirtOffAnimation(String starId) {
         if (!prodMode || starId == null || !starId.equalsIgnoreCase(selectedStarName())) return;
         pendingShirtOffAnimation = true;
@@ -1304,6 +1413,7 @@ public final class MainActivity extends ComponentActivity {
     private void maybePlayPendingShirtOffAnimation() {
         if (!pendingShirtOffAnimation
                 || shirtOffAnimationActive
+                || emotionAnimationActive
                 || starVoicePlaybackActive
                 || isDesktopVoiceStreamActive()
                 || !(phoneVoiceService == null || phoneVoiceService.isIdle())
@@ -1324,6 +1434,7 @@ public final class MainActivity extends ComponentActivity {
             shirtOffAnimationActive = false;
             setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
             appendVoiceDebug("Shirt-off reaction finished", starId + " returned to the current voice/idle state after the two-second final-frame hold.");
+            maybePlayPendingEmotionAnimation();
             maybePlayPendingShirtOffAnimation();
         });
 
@@ -1331,21 +1442,40 @@ public final class MainActivity extends ComponentActivity {
             shirtOffAnimationActive = false;
             setProdAnimationState(starVoicePlaybackActive ? "talking" : "idle");
             appendVoiceDebug("Shirt-off reaction skipped", "No star_animations/" + starId.toLowerCase(Locale.US) + "/shirt-off.gif asset was found.");
+            maybePlayPendingEmotionAnimation();
         } else {
             appendVoiceDebug("Shirt-off reaction playing", starId + " is playing shirt-off.gif once.");
         }
     }
 
     private void startStarVoiceAnimationMarkers(PhoneVoicePlaybackService.PhoneVoiceClip clip, long fallbackDurationMs, long playbackElapsedMs) {
-        if (!prodMode || clip == null || !clip.fromDesktop) return;
+        if (!prodMode || clip == null) return;
+
+        // Lip/talking animation is a property of the audio being played, not of how that audio
+        // reached the phone. Prepared thoughts and prefetched Listen lines are intentionally
+        // played from Android's local WAV cache (fromDesktop=false), but they retain the same
+        // speechActivitySegmentsMs timeline that the desktop computed from WAV loudness. The
+        // old fromDesktop guard therefore made cached speech audibly play while the Star stayed
+        // on idle.gif. Drive the animation markers for every real phone-voice clip. Clips that
+        // have no activity timeline still use StarAnimationCoordinator's whole-clip talking
+        // fallback, so local/test WAVs never regress to silent-looking idle playback.
         activeAnimatedVoiceClip = clip;
         starVoicePlaybackActive = true;
-        starAnimationCoordinator.beginVoice(fallbackDurationMs, clip.speechActivitySegmentsMs, playbackElapsedMs);
+        if (clip.continuousPcm) {
+            // Live PCM owns its lip timeline inside SmartPcmPlaybackWriter. The writer analyzes each
+            // committed forward-only PCM block, then emits mouth state from AudioTrack's actual
+            // playback head. Do not schedule the desktop packet markers for this path.
+            starAnimationCoordinator.beginStreamingVoice();
+        } else {
+            // Prepared/cached WAVs still have a complete immutable marker timeline available up front.
+            starAnimationCoordinator.beginVoice(fallbackDurationMs, clip.speechActivitySegmentsMs, playbackElapsedMs);
+        }
     }
 
     private void appendProdConversationLine(String speaker, String text) {
         if (!prodMode || text == null || text.trim().length() == 0) return;
         String star = selectedStarName();
+        loadProdConversationCacheIfNeeded(star);
         ArrayList<String> lines = prodConversationByStar.get(star);
         if (lines == null) {
             lines = new ArrayList<>();
@@ -1355,7 +1485,23 @@ public final class MainActivity extends ComponentActivity {
         // Newest-first means the Star response should appear above the player line once it arrives.
         lines.add(0, line);
         while (lines.size() > 12) lines.remove(lines.size() - 1);
+        persistProdConversationCache(star);
         refreshProdConversationWindow();
+    }
+
+    private void loadProdConversationCacheIfNeeded(String starId) {
+        if (!prodMode || settingsService == null || starId == null || starId.trim().isEmpty()) return;
+        ArrayList<String> existing = prodConversationByStar.get(starId);
+        if (existing != null && !existing.isEmpty()) return;
+        java.util.List<String> saved = settingsService.prodConversationLines(starId);
+        if (saved == null || saved.isEmpty()) return;
+        prodConversationByStar.put(starId, new ArrayList<>(saved));
+    }
+
+    private void persistProdConversationCache(String starId) {
+        if (!prodMode || settingsService == null || starId == null || starId.trim().isEmpty()) return;
+        ArrayList<String> lines = prodConversationByStar.get(starId);
+        settingsService.setProdConversationLines(starId, lines == null ? new ArrayList<>() : lines);
     }
 
     private boolean recentProdConversationAlreadyHas(String speaker, String text) {
@@ -1371,21 +1517,33 @@ public final class MainActivity extends ComponentActivity {
 
     private void refreshProdConversationWindow() {
         if (prodConversationText == null) return;
-        ArrayList<String> lines = prodConversationByStar.get(selectedStarName());
-        if (lines == null || lines.size() == 0) {
-            prodConversationText.setText("No conversation yet.");
-            if (prodConversationScroll != null) {
-                prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
+        String selectedStar = selectedStarName();
+        ArrayList<String> lines = prodConversationByStar.get(selectedStar);
+        String streamingText = prodStreamingResponseTextByStar.get(selectedStar);
+        StringBuilder sb = new StringBuilder();
+        if (streamingText != null && streamingText.trim().length() > 0) {
+            sb.append(selectedStar).append(": ").append(streamingText.trim().replace('\n', ' '));
+        }
+        if (lines != null && lines.size() > 0) {
+            int end = Math.min(lines.size(), streamingText != null && streamingText.trim().length() > 0 ? 9 : 10);
+            for (int i = 0; i < end; i++) {
+                if (sb.length() > 0) sb.append('\n');
+                sb.append(lines.get(i));
             }
+        }
+        String nextText = sb.length() == 0 ? "No conversation yet." : sb.toString();
+
+        // Conversation is a WebSocket/event-driven surface. Relationship/daily-state traffic may
+        // repaint other controls, but it should never make this TextView flash, reset layout, or
+        // jump to the top when its transcript bytes did not actually change.
+        if (selectedStar.equalsIgnoreCase(lastRenderedProdConversationStar)
+                && nextText.equals(lastRenderedProdConversationText)) {
             return;
         }
-        StringBuilder sb = new StringBuilder();
-        int end = Math.min(lines.size(), 10);
-        for (int i = 0; i < end; i++) {
-            if (sb.length() > 0) sb.append('\n');
-            sb.append(lines.get(i));
-        }
-        prodConversationText.setText(sb.toString());
+
+        lastRenderedProdConversationStar = selectedStar;
+        lastRenderedProdConversationText = nextText;
+        prodConversationText.setText(nextText);
         if (prodConversationScroll != null) {
             prodConversationScroll.post(() -> prodConversationScroll.scrollTo(0, 0));
         }
@@ -1398,7 +1556,9 @@ public final class MainActivity extends ComponentActivity {
         prodStarSubtitleText.setText(meta.element + " Star • " + meta.domain);
         prodStarSubtitleText.setContentDescription("Current Star: " + meta.id + ". Open Star selector.");
         if (prodSpriteView != null && !shirtOffAnimationActive) prodSpriteView.setStarAnimation(meta.id, prodAnimationState, meta.frameResIds);
-        refreshProdConversationWindow();
+        // Conversation rendering is intentionally NOT tied to Star-state rendering. Relationship,
+        // writing, daily-state, and background events can update many times while the user is
+        // reading the transcript. Only real conversation changes / Star selection should repaint it.
     }
 
     private void updateProdStarStateUi(String starId, boolean met, boolean ally, int heart, int trust, int romance, double connection, boolean ready, boolean girlfriend, String status) {
@@ -1462,11 +1622,12 @@ public final class MainActivity extends ComponentActivity {
     private StarMeta starMeta(String starId) {
         String id = starId == null ? "Elusiaa" : starId;
         if (id.equalsIgnoreCase("Kaelia")) return new StarMeta("Kaelia", "Void", "Fatalism", 0xFF8B5CF6, R.drawable.portrait_kaelia, new int[]{R.drawable.star_kaelia_idle_0});
-        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0, R.drawable.star_maera_idle_1, R.drawable.star_maera_idle_2, R.drawable.star_maera_idle_3, R.drawable.star_maera_idle_4, R.drawable.star_maera_idle_5});
+        if (id.equalsIgnoreCase("Maera")) return new StarMeta("Maera", "Blood", "Possession", 0xFFFF4D6D, R.drawable.portrait_maera, new int[]{R.drawable.star_maera_idle_0});
         if (id.equalsIgnoreCase("Khavia")) return new StarMeta("Khavia", "Water", "Friendship", 0xFF22D3EE, R.drawable.portrait_khavia, new int[]{R.drawable.star_khavia_idle_0});
         if (id.equalsIgnoreCase("Auerlis")) return new StarMeta("Auerlis", "Fire", "Joy", 0xFFF97316, R.drawable.portrait_auerlis, new int[]{R.drawable.star_auerlis_idle_0});
         if (id.equalsIgnoreCase("Nyxari")) return new StarMeta("Nyxari", "Shadow", "Fragmentation", 0xFF60A5FA, R.drawable.portrait_nyxari, new int[]{R.drawable.star_nyxari_idle_0});
-        return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0, R.drawable.star_elusiaa_idle_1, R.drawable.star_elusiaa_idle_2, R.drawable.star_elusiaa_idle_3, R.drawable.star_elusiaa_idle_4, R.drawable.star_elusiaa_idle_5});
+        if (id.equalsIgnoreCase("Elusiaa")) return new StarMeta("Elusiaa", "Light", "Mercy", 0xFF38E8FF, R.drawable.portrait_elusiaa, new int[]{R.drawable.star_elusiaa_idle_0});
+        return new StarMeta(id, "Star", "Configured", 0xFF38E8FF, R.drawable.ui_cat_avatar, new int[]{R.drawable.ui_cat_avatar});
     }
 
     private TextView label(String text) {
@@ -1582,6 +1743,47 @@ public final class MainActivity extends ComponentActivity {
         else bridgeConnectionService.ensureConnected();
     }
 
+    private void notifyDesktopVoicePlaybackStarted(PhoneVoicePlaybackService.PhoneVoiceClip clip) {
+        if (destroyed || clip == null || !clip.fromDesktop || clip.audioSequence != 0
+                || clip.streamId == null || clip.streamId.trim().isEmpty()) return;
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-playback-start-" + System.currentTimeMillis());
+            json.put("commandType", "VoicePlaybackStarted");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("voiceStreamId", clip.streamId);
+            json.put("voiceAudioSequence", clip.audioSequence);
+            json.put("reason", "Android AudioTrack playback head advanced for the first desktop voice sentence.");
+            sendSocketRequest("dispatch", json, 10000L, response -> { }, error -> { });
+        } catch (Exception ignored) {
+            // Best-effort timing acknowledgement only. Voice playback must never depend on it.
+        }
+    }
+
+    private void notifyDesktopPlayerActivity(String reason) {
+        if (destroyed) return;
+        long nowMs = SystemClock.elapsedRealtime();
+        long previous = lastDesktopPlayerActivitySignalMs;
+        if (previous > 0L && nowMs - previous < PLAYER_ACTIVITY_SIGNAL_THROTTLE_MS) return;
+        lastDesktopPlayerActivitySignalMs = nowMs;
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("commandId", "android-activity-" + System.currentTimeMillis());
+            json.put("commandType", "PlayerActivity");
+            json.put("sourceClientId", "SixStarsMobileAndroid");
+            json.put("sessionId", currentSessionId());
+            json.put("starId", selectedStarName());
+            json.put("reason", reason == null || reason.trim().length() == 0 ? "Android app activity" : reason.trim());
+            sendSocketRequest("dispatch", json, 10000L, response -> { }, error -> { });
+        } catch (Exception ignored) {
+            // This ping is deliberately best-effort. The real foreground request still carries
+            // its own cancellation/foreground lease if the control socket is temporarily down.
+        }
+    }
+
     private void sendSocketRequest(String operation, JSONObject payload, long timeoutMs, Consumer<JSONObject> onSuccess, Consumer<Throwable> onFailure) {
         ensureBridgeWebSocket();
         if (bridgeConnectionService == null) {
@@ -1628,27 +1830,31 @@ public final class MainActivity extends ComponentActivity {
         }
         sendSocketRequest("health", new JSONObject(), 10000L, json -> {
             try {
-                boolean promoted = viewModel != null && viewModel.acceptHealthNetworkInfo(json, true);
+                if (viewModel != null) viewModel.acceptHealthNetworkInfo(json, false);
                 String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
                 String host = BridgeAddressService.hostFromBaseUrl(activeUrl);
                 int audioPort = json.optInt("audioPort", BridgeAddressService.audioPort(activeUrl));
                 runOnUiThread(() -> {
                     if (connectionStatusText != null) {
                         connectionStatusText.setText("Connected: " + json.optString("machineName", "desktop")
-                                + " at " + activeUrl + (BridgeAddressService.isIpv6Url(activeUrl) ? " (IPv6 WebSocket)" : " (WebSocket)"));
+                                + " at " + activeUrl + " (IPv4 LAN WebSocket)");
                     }
                     if (manual) {
                         setDebug("Health OK", "Active=" + activeUrl
                                 + ", adapter=" + json.optString("localAdapterName", "unknown")
-                                + ", discoveredIPv6=" + json.optString("preferredIpv6Address", "none")
+                                + ", networkMode=IPv4-only"
                                 + ", HTTP port " + json.optInt("port")
                                 + ", WebSocket clients " + json.optInt("webSocketClientCount")
                                 + ", audio port " + audioPort
                                 + ", audio clients " + json.optInt("audioClientCount"));
                     }
                 });
-                if (!promoted && (playOnPhoneCheck == null || playOnPhoneCheck.isChecked())) ensureAudioSocket(host, audioPort);
-                fetchMobileState(false);
+                if (playOnPhoneCheck == null || playOnPhoneCheck.isChecked()) ensureAudioSocket(host, audioPort);
+                refreshActiveStarRoster();
+                // MainViewModel hydrates Star state once on bridge connect and all later changes
+                // arrive over the subscribed WebSocket event stream. A routine health check must
+                // not refetch state (or indirectly make the conversation surface look polled).
+                if (manual) fetchMobileState(true);
             } catch (Exception ex) {
                 if (manual) runOnUiThread(() -> setDebug("Health parse failed", ex.toString()));
             }
@@ -1656,6 +1862,72 @@ public final class MainActivity extends ComponentActivity {
             if (connectionStatusText != null) connectionStatusText.setText("Connecting to " + (viewModel == null ? baseUrl() : viewModel.activeBridgeUrl()) + " — " + error.getMessage());
             if (manual) setDebug("WebSocket health failed", error.toString());
         }));
+    }
+
+    private void refreshActiveStarRoster() {
+        String activeBase = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
+        httpExecutor.execute(() -> {
+            try {
+                JSONObject response = new JSONObject(get(activeBase + "/api/mobile/stars", 10000));
+                JSONArray stars = response.optJSONArray("stars");
+                if (stars == null || stars.length() == 0) return;
+
+                ArrayList<String> discovered = new ArrayList<>();
+                for (int i = 0; i < stars.length(); i++) {
+                    String id = stars.optString(i, "").trim();
+                    if (id.length() == 0) continue;
+                    boolean duplicate = false;
+                    for (String existing : discovered) {
+                        if (existing.equalsIgnoreCase(id)) { duplicate = true; break; }
+                    }
+                    if (!duplicate) discovered.add(id);
+                }
+                if (discovered.isEmpty()) return;
+
+                runOnUiThread(() -> applyActiveStarRoster(discovered));
+            } catch (Exception ex) {
+                // The desktop JSON roster is authoritative when reachable; offline startup keeps
+                // the built-in visual fallback list so the phone remains usable.
+                appendVoiceDebug("Star roster refresh", "Using current phone roster: " + ex.getMessage());
+            }
+        });
+    }
+
+    private void applyActiveStarRoster(List<String> discovered) {
+        if (discovered == null || discovered.isEmpty()) return;
+        String selected = selectedStarName();
+
+        activeStarIds.clear();
+        activeStarIds.addAll(discovered);
+
+        if (starSpinner != null) {
+            suppressStarSelectionDispatch = true;
+            try {
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                        this,
+                        android.R.layout.simple_spinner_dropdown_item,
+                        new ArrayList<>(activeStarIds));
+                starSpinner.setAdapter(adapter);
+                int position = -1;
+                for (int i = 0; i < adapter.getCount(); i++) {
+                    String item = adapter.getItem(i);
+                    if (item != null && item.equalsIgnoreCase(selected)) { position = i; break; }
+                }
+                if (position < 0) position = 0;
+                starSpinner.setSelection(position);
+            } finally {
+                suppressStarSelectionDispatch = false;
+            }
+            String current = selectedStarName();
+            settingsService.setSelectedStarId(current);
+            refreshProdStarUi(current);
+            // Roster refreshes are background state maintenance. Do not repaint the conversation
+            // unless rebuilding the adapter actually changed the selected Star.
+            if (!current.equalsIgnoreCase(selected)) {
+                loadProdConversationCacheIfNeeded(current);
+                refreshProdConversationWindow();
+            }
+        }
     }
 
     private int defaultAudioPort() {
@@ -1833,6 +2105,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private boolean playPrefetchedInitiativeIfAvailable() {
+        notifyDesktopPlayerActivity("Android local prepared thought playback");
         if (isDesktopVoiceStreamActive() || (phoneVoiceService != null && !phoneVoiceService.isIdle())) {
             appendVoiceDebug("Prepared Listen held",
                     "Existing Star speech is still playing, so the prepared at-rest line remains queued instead of clearing the voice queue.");
@@ -1970,6 +2243,41 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private void toggleProdListenSubmenu() {
+        if (prodListenSubmenu == null) {
+            requestStarInitiativeFromListenButton();
+            return;
+        }
+        boolean opening = prodListenSubmenu.getVisibility() != View.VISIBLE;
+        if (!opening) {
+            hideProdListenSubmenu();
+            return;
+        }
+
+        if (prodConstellationChoiceIcon != null) {
+            String[] constellations = new String[]{
+                    "\u2726 \u00B7 \u2727",
+                    "\u22C6  \u2726  \u22C6",
+                    "\u2727 \u00B7 \u22C6",
+                    "\u2726  \u02DA  \u2727",
+                    "\u22C6 \u00B7 \u2736"
+            };
+            int constellationIndex = (int) Math.floorMod(System.nanoTime(), (long) constellations.length);
+            prodConstellationChoiceIcon.setText(constellations[constellationIndex]);
+        }
+        prodListenSubmenu.setVisibility(View.VISIBLE);
+        if (prodListenButton != null) {
+            prodListenButton.setContentDescription("Close Listen choices");
+        }
+    }
+
+    private void hideProdListenSubmenu() {
+        if (prodListenSubmenu != null) prodListenSubmenu.setVisibility(View.GONE);
+        if (prodListenButton != null) {
+            prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story");
+        }
+    }
+
     private void requestStarInitiativeFromListenButton() {
         if (!prodMode || destroyed) return;
         if (recording) {
@@ -2064,15 +2372,36 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void dispatchStarWritingCommand(String commandType, boolean returnAudio) {
+        dispatchStarWritingCommand(commandType, returnAudio, "spark");
+    }
+
+    private void dispatchStarWritingCommand(String commandType, boolean returnAudio, String writingOutputType) {
         if (starWritingRequestRunning) return;
         try {
             final String starId = selectedStarName();
+            final boolean constellationPlayback = "constellation-story".equalsIgnoreCase(writingOutputType);
+            final boolean foregroundPerformance = "TellStarWriting".equalsIgnoreCase(commandType);
             starWritingRequestRunning = true;
             updateProdWritingButtons();
+            if (foregroundPerformance) {
+                pauseStarInitiativeBackgroundService("Android is playing saved Star writing in the foreground.");
+                setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, true, "Saved Star writing requested; keeping the phone awake until the voice stream starts.");
+                if (returnAudio) {
+                    // The control WebSocket and phone-audio TCP socket are independent. A stale
+                    // audio socket used to make Story/Spark return text but play nothing. Start a
+                    // connection immediately on the active IPv4 route, then refresh /health so a custom
+                    // desktop audio port can replace it before TTS.
+                    String activeUrl = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
+                    ensureAudioSocket(BridgeAddressService.hostFromBaseUrl(activeUrl), BridgeAddressService.audioPort(activeUrl));
+                    if (viewModel != null) viewModel.refreshPhoneVoiceConnection();
+                }
+            }
             if (prodMiniStatusText != null) {
                 prodMiniStatusText.setText("GenerateStarWriting".equalsIgnoreCase(commandType)
-                        ? starId + " is choosing words, creating, and rating five writings…"
-                        : starId + " is choosing her best new writings…");
+                        ? starId + " is choosing words, creating, and rating shelf work…"
+                        : constellationPlayback
+                            ? starId + " is loading her highest-IU unplayed Constellation Story and preparing the complete spoken queue…"
+                            : starId + " is reading a weighted set of 25 from her top 100 IU Sparks, then choosing five…");
             }
 
             JSONObject json = new JSONObject();
@@ -2081,14 +2410,19 @@ public final class MainActivity extends ComponentActivity {
             json.put("sourceClientId", "SixStarsMobileAndroid");
             json.put("sessionId", currentSessionId());
             json.put("starId", starId);
+            if ("TellStarWriting".equalsIgnoreCase(commandType)) {
+                json.put("writingOutputType", constellationPlayback ? "constellation-story" : "spark");
+            }
             json.put("reason", "GenerateStarWriting".equalsIgnoreCase(commandType)
-                    ? "Android cat popup requested five two-word jokes or poetic writings."
-                    : "Android cat popup requested the best and latest untold writing performance.");
+                    ? "Android requested new writing shelf work."
+                    : constellationPlayback
+                        ? "Android requested the highest-Overall-IU unplayed Constellation Story, formatted into a complete spokenText queue for phone narration."
+                        : "Android requested a Spark performance from a 25-item weighted-IU listening set drawn from the top-100 untold Sparks.");
             json.put("returnAudio", returnAudio);
             json.put("returnAudioInline", false);
             json.put("clientName", "SixStarsMobileAndroidWritingShelf");
 
-            appendVoiceDebug("Writing shelf command sent", commandType + " for " + starId);
+            appendVoiceDebug("Writing shelf command sent", commandType + " for " + starId + ("TellStarWriting".equalsIgnoreCase(commandType) ? " outputType=" + (constellationPlayback ? "constellation-story" : "spark") : ""));
             sendSocketRequest("dispatch", json, 240000L, response -> {
                 JSONObject event = response.optJSONObject("event");
                 runOnUiThread(() -> {
@@ -2101,6 +2435,17 @@ public final class MainActivity extends ComponentActivity {
                                 response.optString("message", commandType));
                     }
                     setDebug("Writing shelf request complete", clip(response.toString(), 5000));
+                    if (foregroundPerformance) {
+                        setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved Star writing response returned; voice stream/playback now owns wake state.");
+                        // When audio was requested, the phone voice stream / queue-idle callbacks
+                        // are the authoritative signal that foreground narration is finished. A
+                        // fixed timer here could restart prepared Listen work while Qwen was still
+                        // generating a five-Spark performance.
+                        if (!returnAudio) {
+                            allowPreparedListenAfter(2500L, "Saved writing returned without phone audio.");
+                            mainHandler.postDelayed(() -> syncStarInitiativeBackgroundService("saved writing text-only performance finished", true), 2800L);
+                        }
+                    }
                 });
             }, error -> runOnUiThread(() -> {
                 starWritingRequestRunning = false;
@@ -2108,11 +2453,17 @@ public final class MainActivity extends ComponentActivity {
                 if (prodMiniStatusText != null) prodMiniStatusText.setText("Writing request failed.");
                 setDebug("Writing shelf request failed", error.toString());
                 appendVoiceDebug("Writing shelf request failed", error.toString());
+                if (foregroundPerformance) {
+                    setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved writing request failed.");
+                    syncStarInitiativeBackgroundService("saved writing request failed; resume at-rest preparation", true);
+                }
             }));
         } catch (Exception ex) {
             starWritingRequestRunning = false;
             updateProdWritingButtons();
             setDebug("Writing shelf request failed", ex.toString());
+            setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Saved writing request failed before dispatch.");
+            syncStarInitiativeBackgroundService("saved writing dispatch failed; resume at-rest preparation", true);
         }
     }
 
@@ -2123,7 +2474,7 @@ public final class MainActivity extends ComponentActivity {
         }
         if (prodTellWritingButton != null) {
             prodTellWritingButton.setEnabled(!starWritingRequestRunning && selectedStarPendingWritingCount > 0);
-            prodTellWritingButton.setText("Tell Best / Latest (" + Math.max(0, selectedStarPendingWritingCount) + ")");
+            prodTellWritingButton.setText("Tell Top Sparks (" + Math.max(0, selectedStarPendingWritingCount) + ")");
         }
     }
 
@@ -2332,26 +2683,50 @@ public final class MainActivity extends ComponentActivity {
 
     private void seedProdConversationFromStateIfNeeded(String starId, JSONObject state) {
         if (!prodMode || starId == null || state == null) return;
-        ArrayList<String> existing = prodConversationByStar.get(starId);
-        if (existing != null && existing.size() > 0) return;
+        loadProdConversationCacheIfNeeded(starId);
+
+        // The bridge emits Star-state payloads for many unrelated background changes. Hydrate the
+        // transcript from desktop state once per Star per activity lifetime; afterwards, actual
+        // Conversation/Transcript bridge events and the local cache own the visible window.
+        if (prodConversationDesktopHydratedStars.contains(starId)) return;
 
         JSONArray history = optJsonArrayEither(state, "recentConversationHistory", "RecentConversationHistory");
         if (history == null || history.length() == 0) return;
 
-        ArrayList<String> lines = new ArrayList<>();
-        for (int i = 0; i < history.length() && lines.size() < 12; i++) {
+        ArrayList<String> remote = new ArrayList<>();
+        for (int i = 0; i < history.length() && remote.size() < 12; i++) {
             JSONObject item = history.optJSONObject(i);
             if (item == null) continue;
             String player = optStringEither(item, "playerText", "PlayerText", "").trim().replace('\n', ' ');
             String star = optStringEither(item, "starResponse", "StarResponse", "").trim().replace('\n', ' ');
-            if (star.length() > 0) lines.add(starId + ": " + clip(star, 520));
-            if (player.length() > 0 && lines.size() < 12) lines.add("You: " + clip(player, 360));
+            if (star.length() > 0) remote.add(starId + ": " + clip(star, 520));
+            if (player.length() > 0 && remote.size() < 12) remote.add("You: " + clip(player, 360));
+        }
+        if (remote.isEmpty()) return;
+
+        ArrayList<String> before = prodConversationByStar.get(starId);
+        ArrayList<String> merged = new ArrayList<>();
+
+        // Preserve the phone cache at the front when it exists. It may contain the just-finished
+        // turn while the desktop state snapshot is a fraction of a second behind. Desktop history
+        // then fills older/missing lines without shuffling the visible transcript on every event.
+        if (before != null) {
+            for (String line : before) {
+                if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
+                if (merged.size() >= 12) break;
+            }
+        }
+        for (String line : remote) {
+            if (line != null && !line.trim().isEmpty() && !merged.contains(line)) merged.add(line);
+            if (merged.size() >= 12) break;
         }
 
-        if (lines.size() > 0) {
-            prodConversationByStar.put(starId, lines);
-            refreshProdConversationWindow();
-            appendVoiceDebug("Nyxari restored conversation history", "Loaded " + lines.size() + " recent line(s) for " + starId + " from desktop Star state.");
+        prodConversationDesktopHydratedStars.add(starId);
+        if (!merged.isEmpty() && (before == null || !before.equals(merged))) {
+            prodConversationByStar.put(starId, merged);
+            persistProdConversationCache(starId);
+            if (starId.equalsIgnoreCase(selectedStarName())) refreshProdConversationWindow();
+            appendVoiceDebug("Nyxari restored conversation history", "Hydrated " + merged.size() + " recent line(s) for " + starId + " once from phone cache + desktop Star state.");
         }
     }
 
@@ -2397,8 +2772,12 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handleBridgeEvent(JSONObject event) {
+        handleBridgeEvent(event, false);
+    }
+
+    private void handleBridgeEvent(JSONObject event, boolean sequenceAlreadyFiltered) {
         long seq = optLongEither(event, "sequence", "Sequence", 0L);
-        if (seq > 0L && seq <= lastBridgeEventSequence) return;
+        if (!sequenceAlreadyFiltered && seq > 0L && seq <= lastBridgeEventSequence) return;
         if (seq > lastBridgeEventSequence) lastBridgeEventSequence = seq;
         String type = optStringEither(event, "eventType", "EventType", "BridgeEvent");
         String selected = optStringEither(event, "selectedStarId", "SelectedStarId", "");
@@ -2424,10 +2803,15 @@ public final class MainActivity extends ComponentActivity {
             if (paused) phoneVoiceService.pause(); else phoneVoiceService.resume();
         }
 
-        if (isTranscriptBridgeEvent(type)) {
+        if ("StarEmotionAnimationCue".equalsIgnoreCase(type)) {
+            String animationName = optStringEither(event, "animationName", "AnimationName", message);
+            queueEmotionAnimation(starId, animationName);
+        } else if (isTranscriptBridgeEvent(type)) {
             handleTranscriptBridgeEvent(event, type, seq, starId, message);
         } else if (isWritingBridgeEvent(type)) {
             handleWritingBridgeEvent(event, type, seq, starId, message);
+        } else if (isConversationStreamBridgeEvent(type)) {
+            handleConversationStreamBridgeEvent(event, type, seq, starId, message);
         } else if (isConversationBridgeEvent(type)) {
             handleConversationBridgeEvent(event, type, seq, starId, message);
         } else if (isPhotoBridgeEvent(type)) {
@@ -2449,8 +2833,19 @@ public final class MainActivity extends ComponentActivity {
         }
 
         if ("StarHistoryCleared".equalsIgnoreCase(type) || "AllStarsDataCleared".equalsIgnoreCase(type)) {
-            if ("AllStarsDataCleared".equalsIgnoreCase(type)) prodConversationByStar.clear();
-            else if (starId != null && starId.length() > 0) prodConversationByStar.remove(starId);
+            if ("AllStarsDataCleared".equalsIgnoreCase(type)) {
+                prodConversationByStar.clear();
+                prodStreamingResponseIdByStar.clear();
+                prodStreamingResponseTextByStar.clear();
+                prodConversationDesktopHydratedStars.clear();
+                if (settingsService != null) settingsService.clearAllProdConversationLines();
+            } else if (starId != null && starId.length() > 0) {
+                prodConversationByStar.remove(starId);
+                prodStreamingResponseIdByStar.remove(starId);
+                prodStreamingResponseTextByStar.remove(starId);
+                prodConversationDesktopHydratedStars.remove(starId);
+                if (settingsService != null) settingsService.clearProdConversationLines(starId);
+            }
             refreshProdConversationWindow();
             responseText.setText(("AllStarsDataCleared".equalsIgnoreCase(type) ? "All Star data cleared." : "History cleared for " + starId + ".") + " The next conversation starts from the refreshed Star memory.");
             setDebug("History cleared", message);
@@ -2475,6 +2870,8 @@ public final class MainActivity extends ComponentActivity {
 
         JSONArray items = optJsonArrayEither(event, "writingItems", "WritingItems");
         String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        String storyTitle = optStringEither(event, "storyTitle", "StoryTitle", "").trim();
+        boolean constellationPlayback = storyTitle.length() > 0;
         StringBuilder visible = new StringBuilder();
         if (items != null) {
             for (int i = 0; i < items.length(); i++) {
@@ -2490,14 +2887,56 @@ public final class MainActivity extends ComponentActivity {
         }
 
         String title = "StarWritingGenerated".equalsIgnoreCase(type) || "GenerateStarWriting".equalsIgnoreCase(type)
-                ? starId + " — five new writings"
-                : starId + " — best and latest writing";
+                ? starId + " — new shelf work"
+                : constellationPlayback
+                    ? starId + " — Constellation Story: " + storyTitle
+                    : starId + " — favorite high-IU Sparks";
         responseText.setText(title + "\n\n" + (visible.length() > 0 ? visible.toString() : message)
-                + "\n\nNew: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount);
+                + (constellationPlayback ? "" : "\n\nNew Sparks: " + selectedStarPendingWritingCount + " · Saved: " + selectedStarPersistedWritingCount));
         if (prodMiniStatusText != null) {
-            prodMiniStatusText.setText(message + " New writing: " + selectedStarPendingWritingCount + ".");
+            prodMiniStatusText.setText(constellationPlayback ? message : message + " New Sparks: " + selectedStarPendingWritingCount + ".");
         }
         appendVoiceDebug("Writing shelf updated", "#" + seq + " " + type + ", pending=" + selectedStarPendingWritingCount + ", saved=" + selectedStarPersistedWritingCount);
+    }
+
+    private boolean isConversationStreamBridgeEvent(String type) {
+        return "MobileConversationStreamChunk".equalsIgnoreCase(type);
+    }
+
+    private void handleConversationStreamBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        if (event == null || starId == null || starId.trim().length() == 0) return;
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        String cumulative = optStringEither(event, "spokenText", "SpokenText", "").trim();
+        if (streamId.length() == 0 || cumulative.length() == 0) return;
+
+        String activeId = prodStreamingResponseIdByStar.get(starId);
+        if (activeId == null || !activeId.equals(streamId)) {
+            prodStreamingResponseIdByStar.put(starId, streamId);
+        }
+        prodStreamingResponseTextByStar.put(starId, cumulative);
+        refreshProdConversationWindow();
+
+        int chunkIndex = optIntEither(event, "streamingChunkIndex", "StreamingChunkIndex", 0);
+        long firstChunkMs = optLongEither(event, "firstStreamedTextChunkMs", "FirstStreamedTextChunkMs", 0L);
+        long elapsedMs = optLongEither(event, "serverElapsedMs", "ServerElapsedMs", 0L);
+        responseText.setText(starId + " — replying…\n\n" + cumulative);
+        if (prodMiniStatusText != null) prodMiniStatusText.setText(starId + " is replying…");
+        appendVoiceDebug(starId + " streamed text", "#" + seq + " stream=" + streamId + ", chunk=" + chunkIndex
+                + ", first=" + firstChunkMs + " ms, elapsed=" + elapsedMs + " ms, chars=" + cumulative.length());
+    }
+
+    private void finishProdStreamingConversation(String starId, String streamId) {
+        if (starId == null || starId.trim().length() == 0) return;
+        String activeId = prodStreamingResponseIdByStar.get(starId);
+        if (activeId == null) return;
+        if (streamId != null && streamId.trim().length() > 0 && !activeId.equals(streamId.trim())) return;
+        prodStreamingResponseIdByStar.remove(starId);
+        prodStreamingResponseTextByStar.remove(starId);
+    }
+
+    private void clearProdStreamingConversationForStar(String starId) {
+        finishProdStreamingConversation(starId, "");
+        refreshProdConversationWindow();
     }
 
     private boolean isConversationBridgeEvent(String type) {
@@ -2508,6 +2947,8 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handleConversationBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        finishProdStreamingConversation(starId, streamId);
         String transcript = optStringEither(event, "transcript", "Transcript", "").trim();
         String spoken = optStringEither(event, "spokenText", "SpokenText", "").trim();
         String storyMarkdown = optStringEither(event, "storyMarkdown", "StoryMarkdown", "").trim();
@@ -2541,6 +2982,7 @@ public final class MainActivity extends ComponentActivity {
             appendVoiceDebug(starId + " returned through queued bridge event", "#" + seq + " chars=" + visible.length() + ". This still works if the direct WebSocket request promise was interrupted.");
             setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star response arrived; screen can rest after voice/playback completes.");
         } else if ("MobileConversationResponseFailed".equalsIgnoreCase(type)) {
+            refreshProdConversationWindow();
             responseText.setText("Star response failed — " + starId + "\n\n" + clip(error.length() > 0 ? error : message, 2000));
             setDebug("Queued Star response failed", "event=#" + seq + " " + type + " — " + clip(error.length() > 0 ? error : message, 1200));
             setKeepScreenAwake(KEEP_AWAKE_REASON_REQUEST, false, "Queued Star failure arrived.");
@@ -2576,6 +3018,7 @@ public final class MainActivity extends ComponentActivity {
             String lower = line.toLowerCase(Locale.US);
             if (lower.startsWith("you: [voice message]") || lower.startsWith("you: [voice")) {
                 lines.set(i, "You: " + transcript.trim().replace('\n', ' '));
+                persistProdConversationCache(star);
                 refreshProdConversationWindow();
                 return true;
             }
@@ -2696,7 +3139,14 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void handlePhotoBridgeEvent(JSONObject event, String type, long seq, String starId, String message) {
+        String streamId = optStringEither(event, "commandId", "CommandId", "").trim();
+        finishProdStreamingConversation(starId, streamId);
         String spoken = optStringEither(event, "spokenText", "SpokenText", "");
+        if (spoken.trim().length() > 0 && !recentProdConversationAlreadyHas(starId, spoken)) {
+            appendProdConversationLine(starId, spoken);
+        } else {
+            refreshProdConversationWindow();
+        }
         String photoSummary = optStringEither(event, "photoSummary", "PhotoSummary", "");
         String photoError = optStringEither(event, "photoError", "PhotoError", "");
         StringBuilder out = new StringBuilder();
@@ -2983,6 +3433,7 @@ public final class MainActivity extends ComponentActivity {
             return;
         }
 
+        clearProdStreamingConversationForStar(starName);
         appendProdConversationLine("You", requestText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
@@ -3074,6 +3525,8 @@ public final class MainActivity extends ComponentActivity {
 
     private void onSelectedStarPageChanged() {
         selectedStarVisibleSinceMs = SystemClock.elapsedRealtime();
+        loadProdConversationCacheIfNeeded(selectedStarName());
+        refreshProdConversationWindow();
         preparedSpeechSyncResult = new PreparedSpeechStore.SyncResult(new ArrayList<>(), 0, 0.0, "low");
         updatePreparedSpeechIndicator();
         syncPreparedSpeech("selected Star changed", true);
@@ -3130,13 +3583,13 @@ public final class MainActivity extends ComponentActivity {
         }
         if (prodListenButton != null) {
             if (preparedSpeechPlaybackActive && activePreparedSpeechItem != null) {
-                prodListenButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought.");
+                prodListenButton.setContentDescription(activePreparedSpeechItem.starId + " is speaking a prepared thought. Tap to open Listen choices.");
             } else if (item != null) {
-                prodListenButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ". Listen now.");
+                prodListenButton.setContentDescription(capitalize(item.priority) + " prepared thought ready from " + item.starId + ". Tap to open Listen choices.");
             } else if (result != null && result.preparingCount > 0) {
-                prodListenButton.setContentDescription(selectedStarName() + " is preparing something to say.");
+                prodListenButton.setContentDescription(selectedStarName() + " is preparing something to say. Tap to open Listen choices.");
             } else {
-                prodListenButton.setContentDescription("Ask the selected Star if she has something to say.");
+                prodListenButton.setContentDescription("Open Listen choices: prepared thought, Spark shelf, or Constellation Story.");
             }
         }
 
@@ -3256,6 +3709,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void playPreparedSpeech(PreparedSpeechStore.CachedItem item, String reason) {
         if (item == null || preparedSpeechPlaybackActive || item.chunks == null || item.chunks.isEmpty()) return;
+        notifyDesktopPlayerActivity("Android local prepared thought playback");
         boolean playOnPhone = playOnPhoneCheck == null || playOnPhoneCheck.isChecked();
         if (!playOnPhone) return;
         preparedSpeechPlaybackActive = true;
@@ -3321,6 +3775,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void completePreparedSpeechPlayback(PreparedSpeechStore.CachedItem item, String url) {
         if (item == null) return;
+        notifyDesktopPlayerActivity("Android local prepared thought finished");
         preparedSpeechPlaybackActive = false;
         activePreparedSpeechItem = null;
         try {
@@ -3351,6 +3806,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void sendMessage() {
+        notifyDesktopPlayerActivity("Android text message");
         String playerText = messageEdit == null ? "" : messageEdit.getText().toString();
         String requestType = requestTypeSpinner == null || requestTypeSpinner.getSelectedItem() == null ? "Chat" : requestTypeSpinner.getSelectedItem().toString();
         if (playerText.trim().length() == 0 && !"Story".equalsIgnoreCase(requestType)) {
@@ -3360,6 +3816,7 @@ public final class MainActivity extends ComponentActivity {
         }
 
         String starName = selectedStarName();
+        clearProdStreamingConversationForStar(starName);
         appendProdConversationLine("You", playerText);
         if (messageEdit != null) messageEdit.setText("");
         if (prodTextComposer != null) prodTextComposer.setVisibility(View.GONE);
@@ -3397,6 +3854,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void startRecording() {
+        notifyDesktopPlayerActivity("Android voice recording started");
         if (voiceCaptureService == null || !voiceCaptureService.hasPermission()) {
             startRecordingAfterAudioPermission = true;
             requestAudioPermissionIfNeeded();
@@ -3414,6 +3872,7 @@ public final class MainActivity extends ComponentActivity {
                         if (recordButton != null) recordButton.setText("Stop / Send");
                         updateProdRecordingUi();
                         setDebug("Recording", "Speak now. Press Send Voice when finished, or Cancel to discard.");
+                        appendVoiceDebug("Voice recording started", selectedStarName() + " is listening on the Android microphone.");
                     });
                 }
 
@@ -3470,7 +3929,12 @@ public final class MainActivity extends ComponentActivity {
                 setDebug("Recording too short", "Captured " + captured.pcm16.length + " bytes. Record at least about one second.");
                 return;
             }
-            appendProdConversationLine("You", "[voice message]");
+            clearProdStreamingConversationForStar(selectedStarName());
+            // Put one stable row in the event-driven conversation surface immediately so a
+            // screen recording always shows that the Last Cat spoke before the Star answers.
+            // MobileTranscriptReady replaces this exact row with Whisper's real text; it is not a
+            // polling refresh and it never creates a second player turn.
+            appendProdConversationLine("You", "[voice message — transcribing…]");
             sendAudio(captured.pcm16);
         }));
     }
@@ -3485,7 +3949,7 @@ public final class MainActivity extends ComponentActivity {
             requestJson.put("bitsPerSample", 16);
         } catch (Exception ex) {
             setDebug("Voice request could not start", ex.toString());
-            appendVoiceDebug("Khavia could not prepare your recorded voice", ex.toString());
+            appendVoiceDebug(selectedStarName() + " could not prepare your recorded voice", ex.toString());
             return;
         }
 
@@ -3500,7 +3964,7 @@ public final class MainActivity extends ComponentActivity {
                 String checksum = sha256Hex(wav);
                 runOnUiThread(() -> {
                     setDebug("Sending voice", "Uploading recorded WAV to desktop Whisper. Star voice will stream back on the socket. recordedSha256=" + shortHash(checksum));
-                    appendVoiceDebug("Khavia carried your recorded voice", "WebSocket audio request queued at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
+                    appendVoiceDebug(selectedStarName() + " received your recorded voice request", "WebSocket audio request queued at " + now() + ", bytes=" + wav.length + ", sha256=" + shortHash(checksum));
                 });
                 sendSocketRequest("audio", requestJson, 240000L,
                         response -> handleConversationResponse("Voice request complete", response.toString()),
@@ -3546,6 +4010,9 @@ public final class MainActivity extends ComponentActivity {
                 long serverElapsedMs = optLongEither(json, "serverElapsedMs", "ServerElapsedMs", 0L);
                 long runtimeElapsedMs = optLongEither(json, "runtimeElapsedMs", "RuntimeElapsedMs", 0L);
                 long gateWaitMs = optLongEither(json, "gateWaitMs", "GateWaitMs", 0L);
+                String streamingResponseId = optStringEither(json, "streamingResponseId", "StreamingResponseId", "").trim();
+                int streamedTextChunkCount = optIntEither(json, "streamedTextChunkCount", "StreamedTextChunkCount", 0);
+                long firstStreamedTextChunkMs = optLongEither(json, "firstStreamedTextChunkMs", "FirstStreamedTextChunkMs", 0L);
                 long clientQueueMs = optLongEither(json, "clientQueueMs", "ClientQueueMs", 0L);
                 long clientSocketRoundTripMs = optLongEither(json, "clientSocketRoundTripMs", "ClientSocketRoundTripMs", 0L);
                 long clientAfterSendMs = optLongEither(json, "clientAfterSendMs", "ClientAfterSendMs", 0L);
@@ -3603,8 +4070,11 @@ public final class MainActivity extends ComponentActivity {
                         appendProdConversationLine("You", transcript);
                     }
                 }
+                finishProdStreamingConversation(starId, streamingResponseId);
                 if (!recentProdConversationAlreadyHas(starId, visibleResponse)) {
                     appendProdConversationLine(starId, visibleResponse);
+                } else {
+                    refreshProdConversationWindow();
                 }
 
                 String header = title + " — " + starId;
@@ -3618,6 +4088,8 @@ public final class MainActivity extends ComponentActivity {
                         + "\nServer total: " + serverElapsedMs + " ms"
                         + "\nRuntime: " + runtimeElapsedMs + " ms"
                         + "\nRuntime gate wait: " + gateWaitMs + " ms"
+                        + "\nFirst streamed text chunk: " + firstStreamedTextChunkMs + " ms"
+                        + "\nStreamed text chunks: " + streamedTextChunkCount
                         + "\nAndroid request queue: " + clientQueueMs + " ms"
                         + "\nWebSocket round trip: " + clientSocketRoundTripMs + " ms"
                         + "\nAfter socket send: " + clientAfterSendMs + " ms"
@@ -3703,6 +4175,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void playSavedVoiceAudio() {
+        notifyDesktopPlayerActivity("Android local voice replay");
         if (phoneVoiceService != null) phoneVoiceService.playSavedVoice();
     }
 
