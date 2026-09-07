@@ -591,8 +591,13 @@ namespace Wds.SixStars.Api.Ai
                 foregroundResponse,
                 Math.Min(3, Clamp(_options.RecentHistoryCount, 1, 20)));
 
+            int currentTurnNumber = Math.Max(1, state.InteractionCount + 1);
+
             object data = new
             {
+                isGirlfriend = state?.IsGirlfriend,
+                isTenTurn = currentTurnNumber % 10 == 0,
+                isHundredTurn = currentTurnNumber % 100 == 0,
                 starDisplayName = profile.DisplayName,
                 requestType = request.RequestType.ToString(),
                 currentTimeContext = BuildCurrentTimeContext(),

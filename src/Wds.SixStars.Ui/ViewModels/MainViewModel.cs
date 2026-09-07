@@ -306,7 +306,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         if (_useStreamingTts)
         {
             _streamingVoiceResponsePipeline = new StreamingStarVoiceResponsePipeline(
-                CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true),
+                CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false),
                 playbackEndpoint,
                 _speechPipeline,
                 _interruptionManager);
@@ -314,7 +314,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             // Dedicated generator for story autoplay prefetch. It must be separate from
             // the active streaming pipeline so it can generate the next story chunk while
             // the current one is still playing.
-            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true);
+            _storyAutoplayPrefetchStreamingGenerator = CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false);
         }
         else
         {
@@ -1500,7 +1500,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (preferSmoothDesktopWav)
         {
-            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop smooth mode: requesting complete WAV speech parts from qwentts.cpp; Android/mobile remains on rolling PCM.");
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Legacy complete-WAV desktop mode requested.");
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop Smart DirectSound mode: requesting rolling PCM from qwentts.cpp.");
         }
 
         return CreateLocalStreamingVoiceGenerator(preferSmoothDesktopWav ? "wav" : null);
@@ -3563,7 +3567,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 StarInteractionResponse liveVoiceTemplate = CreateLiveVoiceTemplateResponse(request.StarId);
                 liveSpeech = new LiveStarVoiceResponsePipeline(
-                    CreateStreamingVoiceGenerator(preferSmoothDesktopWav: true),
+                    CreateStreamingVoiceGenerator(preferSmoothDesktopWav: false),
                     _playbackEndpoint,
                     _speechPipeline,
                     _interruptionManager)
