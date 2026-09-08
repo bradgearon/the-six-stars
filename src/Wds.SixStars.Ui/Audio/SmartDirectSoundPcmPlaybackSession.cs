@@ -90,14 +90,13 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             if (_provider == null)
             {
                 _format = format;
-                _provider = new BufferedWaveProvider(format)
+                _provider = new BufferedWaveProvider(format, TimeSpan.FromMinutes(2))
                 {
                     // The physical DirectSound lane must never tear itself down on a transient producer
                     // gap. The smart low-water controller pauses/refills before this normally matters;
                     // ReadFully is a final safety net that returns silence rather than EOF.
                     ReadFully = true,
-                    DiscardOnBufferOverflow = false,
-                    BufferDuration = TimeSpan.FromMinutes(2)
+                    DiscardOnBufferOverflow = false
                 };
             }
             else if (!SameWaveFormat(_format!, format))

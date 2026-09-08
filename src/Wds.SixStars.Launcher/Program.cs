@@ -157,9 +157,9 @@ internal static class Program
         {
             Path.Combine(root, "six-stars.exe"),
             Path.Combine(root, "ui", "six-stars.exe"),
-            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Release", "net8.0-windows", "win-x64", "publish", "six-stars.exe"),
-            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Release", "net8.0-windows", "six-stars.exe"),
-            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Debug", "net8.0-windows", "six-stars.exe")
+            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Release", "net9.0-windows", "win-x64", "publish", "six-stars.exe"),
+            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Release", "net9.0-windows", "six-stars.exe"),
+            Path.Combine(root, "src", "Wds.SixStars.Ui", "bin", "Debug", "net9.0-windows", "six-stars.exe")
         };
 
         return candidates.FirstOrDefault(File.Exists);

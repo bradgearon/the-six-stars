@@ -70,6 +70,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly StarVoiceResponsePipeline? _voiceResponsePipeline;
     private readonly StreamingStarVoiceResponsePipeline? _streamingVoiceResponsePipeline;
     private readonly IWavePlaybackEndpoint _playbackEndpoint;
+    private readonly SpeakAsStarPlaybackEndpoint _speakAsStarPlaybackEndpoint;
+    private readonly BenaveilVoiceProcessor _benaveilVoiceProcessor;
+    private string _benaveilVoiceProcessingStatus = "Benaveil effect has not loaded.";
     private readonly IStarVoiceGenerator? _storyAutoplayPrefetchVoiceGenerator;
     private readonly IStreamingVoiceGenerator? _storyAutoplayPrefetchStreamingGenerator;
     private readonly NaudioMicrophoneSpeechSource _microphoneSpeechSource;
@@ -300,7 +303,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
             : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
 
-        IWavePlaybackEndpoint playbackEndpoint = new SpeakAsStarPlaybackEndpoint(CreatePlaybackEndpoint());
+        _benaveilVoiceProcessor = new BenaveilVoiceProcessor(_appConfig.BenaveilVoiceProcessing);
+        _benaveilVoiceProcessor.StatusChanged += message => OnUiThread(() => BenaveilVoiceProcessingStatus = message);
+        _speakAsStarPlaybackEndpoint = new SpeakAsStarPlaybackEndpoint(CreatePlaybackEndpoint());
+        IWavePlaybackEndpoint playbackEndpoint = new BenaveilProcessingPlaybackEndpoint(_speakAsStarPlaybackEndpoint, _benaveilVoiceProcessor);
+        _benaveilVoiceProcessor.ApplyDisabled(_appConfig.BenaveilVoiceProcessing.Disabled);
         _playbackEndpoint = playbackEndpoint;
 
         if (_useStreamingTts)
@@ -757,6 +764,41 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _recordButtonText;
         set => SetProperty(ref _recordButtonText, value);
+    }
+
+    public bool DisableBenaveilVoiceProcessing
+    {
+        get => _appConfig.BenaveilVoiceProcessing.Disabled;
+        set
+        {
+            try
+            {
+                string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+                JsonObject root = File.Exists(path)
+                    ? JsonNode.Parse(File.ReadAllText(path), documentOptions: new JsonDocumentOptions
+                        { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject()
+                    : new JsonObject();
+                if (root["BenaveilVoiceProcessing"] is not JsonObject section)
+                {
+                    section = new JsonObject();
+                    root["BenaveilVoiceProcessing"] = section;
+                }
+                section["Disabled"] = value;
+                string temporary = path + ".tmp";
+                File.WriteAllText(temporary, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                File.Move(temporary, path, overwrite: true);
+                _appConfig.BenaveilVoiceProcessing.Disabled = value;
+                _benaveilVoiceProcessor.ApplyDisabled(value);
+            }
+            catch (Exception ex) { Status = "Could not save Benaveil processing setting: " + ex.Message; }
+            OnPropertyChanged(nameof(DisableBenaveilVoiceProcessing));
+        }
+    }
+
+    public string BenaveilVoiceProcessingStatus
+    {
+        get => _benaveilVoiceProcessingStatus;
+        private set => SetProperty(ref _benaveilVoiceProcessingStatus, value);
     }
 
     public bool EnableMicrophoneOutput
@@ -2993,7 +3035,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             });
 
             using SpeakAsStarPlaybackEndpoint.OutputScope outputScope =
-                ((SpeakAsStarPlaybackEndpoint)_playbackEndpoint).Begin(
+                _speakAsStarPlaybackEndpoint.Begin(
                     normalizedStarId, text, EnableMicrophoneOutput, AuthoringMode,
                     _appConfig.VoiceOutput.MicrophoneOutputDeviceId, cancellationToken);
 
@@ -4545,6 +4587,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             // These two UI-owned switches persist in appsettings.json, even when local
             // configuration contains an older copy of their values.
+            JsonNode? savedBenaveilDisabled = mergedRoot?["BenaveilVoiceProcessing"]?["Disabled"]?.DeepClone();
             JsonNode? savedMicrophoneOutput = mergedRoot?["VoiceOutput"]?["EnableMicrophoneOutput"]?.DeepClone();
             JsonNode? savedAuthoringMode = mergedRoot?["VoiceOutput"]?["AuthoringMode"]?.DeepClone();
             if (File.Exists(localConfigPath))
@@ -4564,6 +4607,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 if (savedMicrophoneOutput != null) voiceOutput["EnableMicrophoneOutput"] = savedMicrophoneOutput;
                 if (savedAuthoringMode != null) voiceOutput["AuthoringMode"] = savedAuthoringMode;
             }
+            if (savedBenaveilDisabled != null && mergedRoot["BenaveilVoiceProcessing"] is JsonObject benaveilOutput)
+                benaveilOutput["Disabled"] = savedBenaveilDisabled;
             AppConfiguration? config = mergedRoot.Deserialize<AppConfiguration>(jsonOptions);
             return config ?? new AppConfiguration();
         }
@@ -4776,6 +4821,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _xOAuth2AuthorizationService.Dispose();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
+            _benaveilVoiceProcessor.Dispose();
             _services.Dispose();
             _preparedSpeechGenerationGate.Dispose();
             _operationController.Dispose();

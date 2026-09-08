@@ -205,6 +205,12 @@
                     <Button Content="Play Elusiaa Clone WAV" Command="{Binding PlayElusiaaCloneWavCommand}" Margin="0,0,0,8" Height="34" />
                     <TextBlock Text="This plays src\Wds.SixStars.Api\Content\VoiceClones\elusiaa_clone.wav directly through NAudio using the selected audio backend, bypassing LLM and Qwen synthesis." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <TextBlock Text="TTS orchestration stays in .NET and calls the local qwentts.cpp HTTP server directly. PCM mode emits low-latency transport packets; Android joins them into one continuous adaptively buffered AudioTrack." TextWrapping="Wrap" Foreground="#666" />
+                    <Separator Margin="0,10,0,8" />
+                    <CheckBox Content="Disable Benaveil voice processing"
+                              IsChecked="{Binding DisableBenaveilVoiceProcessing, Mode=TwoWay}"
+                              ToolTip="Use Benaveil's original clone voice and unload VocalSynth. Uncheck to load the preset in the background."
+                              Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding BenaveilVoiceProcessingStatus}" TextWrapping="Wrap" Foreground="#666" />
                 </StackPanel>
                 </ScrollViewer>
             </GroupBox>
