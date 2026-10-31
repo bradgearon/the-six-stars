@@ -73,6 +73,9 @@ public final class PixelStarAnimationView extends View {
     private int frameIndex;
     private String activeKey = "";
     private Drawable activeDrawable;
+    private IndexedStarGif indexedIdle;
+    private final Map<String, IndexedStarGif> indexedIdleCache = new ConcurrentHashMap<>();
+    private final Set<String> unavailableIndexedIdle = ConcurrentHashMap.newKeySet();
     private Animatable2.AnimationCallback activeAnimationCallback;
     private int animationGeneration;
 
@@ -85,6 +88,35 @@ public final class PixelStarAnimationView extends View {
             }
         }
     };
+
+    // Explicitly redraw indexed idle frames and their matching lip anchors together.
+    // This runs during silence too, so talking toggles never change the idle clock.
+    private boolean frameRefreshPosted;
+    private final Runnable frameRefresh = new Runnable() {
+        @Override public void run() {
+            frameRefreshPosted = false;
+            if (!shouldRefreshFrames()) return;
+            invalidate();
+            scheduleFrameRefresh();
+        }
+    };
+
+    private boolean shouldRefreshFrames() {
+        return (indexedIdle != null || (lipTalkingActive && lipTalkingDrawable != null))
+                && isAttachedToWindow() && isShown() && getWindowVisibility() == VISIBLE;
+    }
+
+    private void scheduleFrameRefresh() {
+        if (!frameRefreshPosted && shouldRefreshFrames()) {
+            frameRefreshPosted = true;
+            postOnAnimation(frameRefresh);
+        }
+    }
+
+    private void cancelFrameRefresh() {
+        removeCallbacks(frameRefresh);
+        frameRefreshPosted = false;
+    }
 
     public PixelStarAnimationView(Context context) {
         super(context);
@@ -113,13 +145,13 @@ public final class PixelStarAnimationView extends View {
         String normalizedStar = normalizeAssetPart(starId);
         String normalizedState = normalizeAssetPart(state == null || state.length() == 0 ? "idle" : state);
 
-        // When lip anchors + lips-talking.gif are available, speech is composited over
+        // When lip anchors + lips.gif are available, speech is composited over
         // idle.gif instead of swapping the entire character to talking.gif. That keeps
         // the body on the exact same idle frame/timeline while only the mouth animates.
         boolean useLipComposite = "talking".equals(normalizedState) && canUseLipTalking(normalizedStar);
         String baseState = useLipComposite ? "idle" : normalizedState;
         String key = normalizedStar + ":" + baseState;
-        boolean sameBase = key.equals(activeKey) && (activeDrawable != null || frames.length > 0);
+        boolean sameBase = key.equals(activeKey) && (indexedIdle != null || activeDrawable != null || frames.length > 0);
 
         if (!sameBase) {
             activeKey = key;
@@ -130,7 +162,14 @@ public final class PixelStarAnimationView extends View {
                     "star_animations/" + normalizedStar + "/idle.gif"
             };
             boolean loadedGif = false;
+            if ("idle".equals(baseState) && canUseLipTalking(normalizedStar)) {
+                indexedIdle = getIndexedIdle(normalizedStar);
+                // Start at the first actual draw, not while loading/decoding assets.
+                baseAnimationStartedAtMs = 0L;
+                loadedGif = indexedIdle != null;
+            }
             for (String path : candidates) {
+                if (loadedGif) break;
                 if (loadGif(path)) {
                     loadedGif = true;
                     break;
@@ -154,6 +193,8 @@ public final class PixelStarAnimationView extends View {
             stopLipTalking();
         }
 
+        scheduleFrameRefresh();
+        invalidate();
         // Preload the selected Star's base states and the optional cropped lip GIF.
         preloadStarGifs(normalizedStar);
     }
@@ -200,7 +241,11 @@ public final class PixelStarAnimationView extends View {
     private Drawable decodeAnimatedGif(String assetPath) {
         try {
             ImageDecoder.Source source = ImageDecoder.createSource(getContext().getAssets(), assetPath);
-            Drawable drawable = ImageDecoder.decodeDrawable(source);
+            Drawable drawable = ImageDecoder.decodeDrawable(source, (decoder, info, ignoredSource) -> {
+                // Keep intrinsic bounds in file pixels so JSON anchors and lip dimensions
+                // share the same coordinate system regardless of device density.
+                decoder.setTargetSize(info.getSize().getWidth(), info.getSize().getHeight());
+            });
             if (drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) return null;
 
             // AnimatedImageDrawable enables bilinear filtering by default when
@@ -217,7 +262,7 @@ public final class PixelStarAnimationView extends View {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
         preloadAnimatedGif("star_animations/" + normalizedStar + "/idle.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/talking.gif");
-        preloadAnimatedGif("star_animations/" + normalizedStar + "/lips-talking.gif");
+        preloadAnimatedGif("star_animations/" + normalizedStar + "/lips.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/happy.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/confused.gif");
         preloadAnimatedGif("star_animations/" + normalizedStar + "/sad.gif");
@@ -231,7 +276,26 @@ public final class PixelStarAnimationView extends View {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || lipSyncConfig == null) return false;
         StarLipSyncConfig.AnimationPositions positions = lipSyncConfig.animation(normalizedStar, "idle");
         if (positions == null || !positions.hasConfiguredPosition) return false;
-        return getOrDecodeGif("star_animations/" + normalizedStar + "/lips-talking.gif") != null;
+        // Composite only over an actual idle GIF with a matching source canvas.
+        IndexedStarGif idle = getIndexedIdle(normalizedStar);
+        if (idle == null || idle.width != positions.sourceWidth
+                || idle.height != positions.sourceHeight) return false;
+        return getOrDecodeGif("star_animations/" + normalizedStar + "/lips.gif") != null;
+    }
+
+    private IndexedStarGif getIndexedIdle(String star) {
+        if (unavailableIndexedIdle.contains(star)) return null;
+        IndexedStarGif cached = indexedIdleCache.get(star);
+        if (cached != null) return cached;
+        try {
+            IndexedStarGif decoded = IndexedStarGif.load(getContext().getAssets(),
+                    "star_animations/" + star + "/idle.gif");
+            indexedIdleCache.put(star, decoded);
+            return decoded;
+        } catch (Exception exception) {
+            unavailableIndexedIdle.add(star);
+            return null;
+        }
     }
 
     @TargetApi(Build.VERSION_CODES.P)
@@ -250,10 +314,13 @@ public final class PixelStarAnimationView extends View {
 
     private void startLipTalking(String normalizedStar) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
-        String assetPath = "star_animations/" + normalizedStar + "/lips-talking.gif";
+        String assetPath = "star_animations/" + normalizedStar + "/lips.gif";
         Drawable drawable = getOrDecodeGif(assetPath);
         if (drawable == null) return;
-        if (lipTalkingActive && drawable == lipTalkingDrawable && assetPath.equals(lipTalkingAssetPath)) return;
+        if (lipTalkingActive && drawable == lipTalkingDrawable && assetPath.equals(lipTalkingAssetPath)) {
+            scheduleFrameRefresh();
+            return;
+        }
 
         stopLipTalking();
         lipTalkingDrawable = drawable;
@@ -268,10 +335,12 @@ public final class PixelStarAnimationView extends View {
         if (lipTalkingDrawable instanceof Animatable && isAttachedToWindow()) {
             ((Animatable) lipTalkingDrawable).start();
         }
+        scheduleFrameRefresh();
         invalidate();
     }
 
     private void stopLipTalking() {
+        cancelFrameRefresh();
         lipTalkingActive = false;
         lipTalkingAssetPath = "";
         if (lipTalkingDrawable instanceof Animatable) {
@@ -282,6 +351,7 @@ public final class PixelStarAnimationView extends View {
             lipTalkingDrawable.setCallback(null);
         }
         lipTalkingDrawable = null;
+        scheduleFrameRefresh();
         invalidate();
     }
 
@@ -462,6 +532,7 @@ public final class PixelStarAnimationView extends View {
     private void clearCurrentAnimation() {
         animationGeneration++;
         handler.removeCallbacks(animator);
+        indexedIdle = null;
         stopLipTalking();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                 && activeDrawable instanceof Animatable2
@@ -490,6 +561,8 @@ public final class PixelStarAnimationView extends View {
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        if (indexedIdle != null) baseAnimationStartedAtMs = 0L;
+        scheduleFrameRefresh();
         if (activeDrawable instanceof Animatable) {
             baseAnimationStartedAtMs = SystemClock.uptimeMillis();
             activeDrawable.setVisible(true, true);
@@ -506,6 +579,7 @@ public final class PixelStarAnimationView extends View {
     }
 
     @Override protected void onDetachedFromWindow() {
+        cancelFrameRefresh();
         handler.removeCallbacks(animator);
         if (activeDrawable instanceof Animatable) {
             ((Animatable) activeDrawable).stop();
@@ -514,6 +588,21 @@ public final class PixelStarAnimationView extends View {
             ((Animatable) lipTalkingDrawable).stop();
         }
         super.onDetachedFromWindow();
+    }
+
+    @Override protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        // View construction can invoke this override before field initialization.
+        if (frameRefresh == null) return;
+        cancelFrameRefresh();
+        scheduleFrameRefresh();
+    }
+
+    @Override protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (frameRefresh == null) return;
+        cancelFrameRefresh();
+        scheduleFrameRefresh();
     }
 
     @Override protected void onDraw(Canvas canvas) {
@@ -526,7 +615,16 @@ public final class PixelStarAnimationView extends View {
         int sourceWidth = 0;
         int sourceHeight = 0;
 
-        if (activeDrawable != null) {
+        int displayedIdleFrame = -1;
+        if (indexedIdle != null) {
+            long now = SystemClock.uptimeMillis();
+            if (baseAnimationStartedAtMs == 0L) baseAnimationStartedAtMs = now;
+            displayedIdleFrame = indexedIdle.frameAt(Math.max(0L, now - baseAnimationStartedAtMs));
+            sourceWidth = indexedIdle.width;
+            sourceHeight = indexedIdle.height;
+            baseDestination = destinationRect(sourceWidth, sourceHeight, vw, vh);
+            canvas.drawBitmap(indexedIdle.frames[displayedIdleFrame], null, baseDestination, paint);
+        } else if (activeDrawable != null) {
             sourceWidth = activeDrawable.getIntrinsicWidth();
             sourceHeight = activeDrawable.getIntrinsicHeight();
             baseDestination = destinationRect(sourceWidth, sourceHeight, vw, vh);
@@ -541,25 +639,26 @@ public final class PixelStarAnimationView extends View {
         }
 
         if (baseDestination != null) {
-            drawTalkingLips(canvas, baseDestination, sourceWidth, sourceHeight);
+            drawTalkingLips(canvas, baseDestination, displayedIdleFrame);
         }
     }
 
-    private void drawTalkingLips(Canvas canvas, Rect baseDestination, int sourceWidth, int sourceHeight) {
+    private void drawTalkingLips(Canvas canvas, Rect baseDestination, int displayedIdleFrame) {
         if (!lipTalkingActive || lipTalkingDrawable == null || lipSyncConfig == null
-                || !"idle".equals(activeBaseState)) return;
+                || displayedIdleFrame < 0 || !"idle".equals(activeBaseState)) return;
 
         StarLipSyncConfig.AnimationPositions positions = lipSyncConfig.animation(activeBaseStar, activeBaseState);
         if (positions == null || !positions.hasConfiguredPosition) return;
 
-        long elapsedMs = baseAnimationStartedAtMs <= 0L
-                ? 0L
-                : Math.max(0L, SystemClock.uptimeMillis() - baseAnimationStartedAtMs);
-        StarLipSyncConfig.LipPosition position = positions.positionForElapsed(elapsedMs);
+        // The very same index selected the bitmap drawn above. JSON timing is
+        // deliberately not used: mismatched delays must never shift lips early.
+        StarLipSyncConfig.LipPosition position = positions.positionForFrame(displayedIdleFrame);
         if (position == null) return;
 
         float scaleX = baseDestination.width() / (float) Math.max(1, positions.sourceWidth);
         float scaleY = baseDestination.height() / (float) Math.max(1, positions.sourceHeight);
+        // Each Star owns a differently sized cropped GIF. Preserve its source-pixel
+        // size and use the idle canvas scale, never fit it to the entire Star viewport.
         int lipWidth = Math.max(1, Math.round(lipTalkingDrawable.getIntrinsicWidth() * scaleX));
         int lipHeight = Math.max(1, Math.round(lipTalkingDrawable.getIntrinsicHeight() * scaleY));
         int left = baseDestination.left + Math.round(position.x * scaleX);

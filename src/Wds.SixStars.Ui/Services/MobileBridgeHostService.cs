@@ -35,7 +35,10 @@ internal sealed class MobileBridgeHostService : IDisposable
         string conversationArchivePrefix,
         bool conversationArchiveEnabled,
         SixStarsRuntime runtime,
-        string worldEventApiKey)
+        string worldEventApiKey,
+        Func<Wds.SixStars.Api.Music.MusicCompositionRequest, CancellationToken, Task<byte[]>>? musicHandler = null,
+        Func<byte[], CancellationToken, Task<string>>? musicTranscriptionHandler = null,
+        Func<Wds.SixStars.Api.Music.MusicCompositionRequest, System.IO.Stream, CancellationToken, Task>? musicStreamHandler = null)
     {
         Stop();
         _audioHost = new MobileBridgeAudioSocketHost();
@@ -57,7 +60,7 @@ internal sealed class MobileBridgeHostService : IDisposable
             conversationArchivePrefix,
             conversationArchiveEnabled,
             runtime,
-            worldEventApiKey);
+            worldEventApiKey, musicHandler, musicTranscriptionHandler, musicStreamHandler);
         _server.StatusChanged += OnStatusChanged;
         _server.Start();
     }

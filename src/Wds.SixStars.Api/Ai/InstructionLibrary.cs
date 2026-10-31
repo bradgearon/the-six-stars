@@ -37,6 +37,11 @@ namespace Wds.SixStars.Api.Ai
             return JsonSerializer.Deserialize<MainInstructionSet>(json, _jsonOptions) ?? CreateFallbackMainInstructions();
         }
 
+        public Wds.SixStars.Api.Music.MusicCompositionInstructions LoadMusicCompositionInstructions()
+        {
+            return Wds.SixStars.Api.Music.MusicCompositionInstructions.Load(ContentRootPath);
+        }
+
         public StarProfile LoadStarProfile(string starId)
         {
             string fileName = starId.ToLowerInvariant() + ".json";

@@ -224,6 +224,7 @@ public sealed class MobileBridgeDispatchResult
     public int XPostingPostedCount { get; set; }
     public int XPostingFailedCount { get; set; }
     public bool PlaybackPaused { get; set; }
+    public BoyfriendGradeCard? BoyfriendGradeCard { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string Error { get; set; } = string.Empty;
@@ -356,6 +357,7 @@ public sealed class MobileBridgeDispatchEvent
     public bool IsGirlfriend { get; set; }
     public bool GirlfriendCuteModeEnabled { get; set; } = true;
     public bool GirlfriendCuteModeActive { get; set; }
+    public BoyfriendGradeCard? BoyfriendGradeCard { get; set; }
     public string GirlfriendCuteModeSignature { get; set; } = string.Empty;
     public bool BackgroundWritingLoopEnabled { get; set; }
     public string BackgroundWritingLoopStatus { get; set; } = string.Empty;
@@ -460,6 +462,7 @@ public sealed class MobileBridgeDispatchEvent
             IsGirlfriend = state?.IsGirlfriend ?? result.IsGirlfriend,
             GirlfriendCuteModeEnabled = state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = (state?.GirlfriendCuteModeEnabled ?? result.GirlfriendCuteModeEnabled) && (state?.GirlfriendHourlyState?.CuteModeActive ?? result.GirlfriendCuteModeActive),
+            BoyfriendGradeCard = result.BoyfriendGradeCard ?? (state == null ? null : BoyfriendGrades.Build(state, DateTimeOffset.UtcNow)),
             GirlfriendCuteModeSignature = !string.IsNullOrWhiteSpace(result.GirlfriendCuteModeSignature) ? result.GirlfriendCuteModeSignature : (state?.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty),
             BackgroundWritingLoopEnabled = result.BackgroundWritingLoopEnabled,
             BackgroundWritingLoopStatus = result.BackgroundWritingLoopStatus ?? string.Empty,

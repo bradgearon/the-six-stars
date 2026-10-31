@@ -50,6 +50,7 @@
                         <CheckBox Content="Authoring mode (save WAV)" IsChecked="{Binding AuthoringMode}"
                                   ToolTip="Save typed and recorded Speak as Star lines under Authoring\StarName beside the executable." />
                     </StackPanel>
+                    <Button DockPanel.Dock="Bottom" Content="Ask for Music" Click="AskForMusic_Click" Height="34" Margin="0,8,0,0" />
                     <Button DockPanel.Dock="Bottom"
                             Content="Speak as Star"
                             Command="{Binding SpeakPlayerTextAsStarCommand}"
@@ -201,10 +202,16 @@
                     <ComboBox ItemsSource="{Binding AudioBackends}"
                               SelectedItem="{Binding SelectedAudioBackend, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                               Margin="0,0,0,6" Height="30" />
-                    <TextBlock Text="Default is directsound. Use wasapi when Windows shared-mode audio is healthy and you want the modern output path; use waveout as the legacy fallback." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
+                    <TextBlock Text="Use wasapi for Windows shared-mode playback. Auto also selects wasapi; waveout is a compatibility alternative. The selection applies to the next spoken line, including streaming." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <Button Content="Play Elusiaa Clone WAV" Command="{Binding PlayElusiaaCloneWavCommand}" Margin="0,0,0,8" Height="34" />
                     <TextBlock Text="This plays src\Wds.SixStars.Api\Content\VoiceClones\elusiaa_clone.wav directly through NAudio using the selected audio backend, bypassing LLM and Qwen synthesis." TextWrapping="Wrap" Foreground="#666" Margin="0,0,0,8" />
                     <TextBlock Text="TTS orchestration stays in .NET and calls the local qwentts.cpp HTTP server directly. PCM mode emits low-latency transport packets; Android joins them into one continuous adaptively buffered AudioTrack." TextWrapping="Wrap" Foreground="#666" />
+                    <Separator Margin="0,10,0,8" />
+                    <CheckBox Content="Disable Benaveil voice processing"
+                              IsChecked="{Binding DisableBenaveilVoiceProcessing, Mode=TwoWay}"
+                              ToolTip="Use Benaveil's original clone voice and unload VocalSynth. Uncheck to load the preset in the background."
+                              Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding BenaveilVoiceProcessingStatus}" TextWrapping="Wrap" Foreground="#666" />
                 </StackPanel>
                 </ScrollViewer>
             </GroupBox>

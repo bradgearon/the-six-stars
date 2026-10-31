@@ -63,32 +63,15 @@ final class StarLipSyncConfig {
             hasConfiguredPosition = configured;
         }
 
-        LipPosition positionForElapsed(long elapsedMs) {
-            if (frames.isEmpty() || !hasConfiguredPosition) return null;
-
-            long loopTime = Math.floorMod(elapsedMs, (long) loopDurationMs);
-            int cursor = 0;
-            int selectedIndex = frames.size() - 1;
-            for (int i = 0; i < frames.size(); i++) {
-                cursor += Math.max(10, frames.get(i).durationMs);
-                if (loopTime < cursor) {
-                    selectedIndex = i;
-                    break;
+        LipPosition positionForFrame(int displayedFrame) {
+            for (LipPosition position : frames) {
+                if (position.frame == displayedFrame) {
+                    return position.configured ? position : null;
                 }
-            }
-
-            LipPosition exact = frames.get(selectedIndex);
-            if (exact.configured) return exact;
-
-            // Partial JSON is useful while the artist is entering anchors. Hold the most
-            // recent configured anchor instead of making the mouth vanish on unfinished frames.
-            for (int offset = 1; offset < frames.size(); offset++) {
-                int previous = Math.floorMod(selectedIndex - offset, frames.size());
-                LipPosition candidate = frames.get(previous);
-                if (candidate.configured) return candidate;
             }
             return null;
         }
+
     }
 
     private final Map<String, Map<String, AnimationPositions>> byStar = new HashMap<>();
@@ -133,7 +116,9 @@ final class StarLipSyncConfig {
                         JSONObject frame = frameArray.optJSONObject(f);
                         if (frame == null) continue;
                         boolean configured = frame.has("x") && !frame.isNull("x")
-                                && frame.has("y") && !frame.isNull("y");
+                                && frame.has("y") && !frame.isNull("y")
+                                && frame.optInt("x", -1) >= 0 && frame.optInt("x", -1) < sourceWidth
+                                && frame.optInt("y", -1) >= 0 && frame.optInt("y", -1) < sourceHeight;
                         framePositions.add(new LipPosition(
                                 frame.optInt("frame", f),
                                 configured ? frame.optInt("x", 0) : 0,
@@ -142,6 +127,7 @@ final class StarLipSyncConfig {
                                 configured));
                     }
 
+                    framePositions.sort((left, right) -> Integer.compare(left.frame, right.frame));
                     config.byStar
                             .computeIfAbsent(normalize(starName), ignored -> new HashMap<>())
                             .put(normalize(animationName), new AnimationPositions(sourceWidth, sourceHeight, framePositions));

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Resonator.Core\Resonator.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\resonator.config.json" Link="resonator.config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

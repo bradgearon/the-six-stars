@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Resonator.Core", "Resonator.Core\Resonator.Core.csproj", "{1A4435B5-5F76-4D3B-9C86-2E8517E5AC01}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Resonator.Api", "Resonator.Api\Resonator.Api.csproj", "{53240467-C43D-4C75-B1CD-363B0CBF5B02}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Resonator.Cli", "Resonator.Cli\Resonator.Cli.csproj", "{5D4FA031-0483-4B02-A55A-FC0BBFCB7C03}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Debug|Any CPU = Debug|Any CPU
+        Release|Any CPU = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {1A4435B5-5F76-4D3B-9C86-2E8517E5AC01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {1A4435B5-5F76-4D3B-9C86-2E8517E5AC01}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {1A4435B5-5F76-4D3B-9C86-2E8517E5AC01}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {1A4435B5-5F76-4D3B-9C86-2E8517E5AC01}.Release|Any CPU.Build.0 = Release|Any CPU
+        {53240467-C43D-4C75-B1CD-363B0CBF5B02}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {53240467-C43D-4C75-B1CD-363B0CBF5B02}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {53240467-C43D-4C75-B1CD-363B0CBF5B02}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {53240467-C43D-4C75-B1CD-363B0CBF5B02}.Release|Any CPU.Build.0 = Release|Any CPU
+        {5D4FA031-0483-4B02-A55A-FC0BBFCB7C03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {5D4FA031-0483-4B02-A55A-FC0BBFCB7C03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {5D4FA031-0483-4B02-A55A-FC0BBFCB7C03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {5D4FA031-0483-4B02-A55A-FC0BBFCB7C03}.Release|Any CPU.Build.0 = Release|Any CPU
+    EndGlobalSection
+EndGlobal

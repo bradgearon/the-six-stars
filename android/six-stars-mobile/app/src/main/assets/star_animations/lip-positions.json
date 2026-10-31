@@ -1,8 +1,8 @@
 {
   "version": 1,
   "coordinateSystem": "source-pixels-top-left",
-  "lipAsset": "lips-talking.gif",
-  "notes": "Set x/y to the top-left source-canvas pixel of the cropped lips for each idle frame. Null means not configured. durationMs mirrors the current idle.gif frame timing.",
+  "lipAsset": "lips.gif",
+  "notes": "Set x/y to the top-left source-canvas pixel of the cropped lips for each idle frame. Anchors measured from the supplied idle.gif files and aligned to tightly cropped talking mouths with no transparent padding. All coordinates are in the original 128x128 canvas; frames are zero-based. durationMs mirrors each idle.gif frame timing.",
   "stars": {
     "auerlis": {
       "animations": {
@@ -12,38 +12,38 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 41,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 41,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 41,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 42,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 42,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 41,
               "durationMs": 100
             }
           ]
@@ -58,38 +58,38 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 38,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 38,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 38,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 39,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 39,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
+              "x": 60,
+              "y": 38,
               "durationMs": 20
             }
           ]
@@ -104,38 +104,38 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 42,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 42,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 42,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 43,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 43,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
+              "x": 65,
+              "y": 42,
               "durationMs": 100
             }
           ]
@@ -150,39 +150,39 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 50,
+              "y": 45,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 50,
+              "y": 45,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 50,
+              "y": 45,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 50,
+              "y": 46,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 50,
+              "y": 46,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
-              "durationMs": 20
+              "x": 50,
+              "y": 45,
+              "durationMs": 100
             }
           ]
         }
@@ -196,38 +196,38 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 32,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 32,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 32,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 33,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 33,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 32,
               "durationMs": 100
             }
           ]
@@ -242,38 +242,38 @@
           "frames": [
             {
               "frame": 0,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 36,
               "durationMs": 100
             },
             {
               "frame": 1,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 36,
               "durationMs": 100
             },
             {
               "frame": 2,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 36,
               "durationMs": 100
             },
             {
               "frame": 3,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 37,
               "durationMs": 100
             },
             {
               "frame": 4,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 37,
               "durationMs": 100
             },
             {
               "frame": 5,
-              "x": null,
-              "y": null,
+              "x": 58,
+              "y": 36,
               "durationMs": 100
             }
           ]

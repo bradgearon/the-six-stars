@@ -19,10 +19,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ui=Join-Path (Get-Location) 'src\Wds.SixStars.Ui';" ^
   "$json=[ordered]@{ LLM=[ordered]@{ ApiKey=$token }; ScreenLLM=[ordered]@{ ApiKey=$token } } | ConvertTo-Json -Depth 8;" ^
   "Set-Content -Path (Join-Path $ui 'appsettings.Local.json') -Value $json -Encoding UTF8;" ^
-  "$bin=Join-Path $ui 'bin\Debug\net8.0-windows';" ^
+  "$bin=Join-Path $ui 'bin\Debug\net9.0-windows';" ^
   "if (Test-Path $bin) { Set-Content -Path (Join-Path $bin 'appsettings.Local.json') -Value $json -Encoding UTF8 };" ^
   "Write-Host 'Wrote src\Wds.SixStars.Ui\appsettings.Local.json';" ^
-  "if (Test-Path $bin) { Write-Host 'Wrote bin\Debug\net8.0-windows\appsettings.Local.json' }"
+  "if (Test-Path $bin) { Write-Host 'Wrote bin\Debug\net9.0-windows\appsettings.Local.json' }"
 
 if errorlevel 1 exit /b %errorlevel%
 

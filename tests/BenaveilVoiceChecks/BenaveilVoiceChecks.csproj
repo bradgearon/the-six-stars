@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio.Core" Version="3.1.1-preview.1" />
+    <ProjectReference Include="../../src/Wds.SixStars.Api/Wds.SixStars.Api.csproj" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Audio/BenaveilProcessingPlaybackEndpoint.cs" Link="BenaveilProcessingPlaybackEndpoint.cs" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Services/DesktopVoiceOutputService.cs" Link="DesktopVoiceOutputService.cs" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Audio/BenaveilProcessingVoiceGenerator.cs" Link="BenaveilProcessingVoiceGenerator.cs" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Audio/IBenaveilVoiceProcessor.cs" Link="IBenaveilVoiceProcessor.cs" />
+  </ItemGroup>
+</Project>

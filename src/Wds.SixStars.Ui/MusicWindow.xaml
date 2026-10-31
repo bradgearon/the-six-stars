@@ -1,0 +1,23 @@
+<Window x:Class="Wds.SixStars.Ui.MusicWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Song Mode — Ask for Music" Width="880" Height="700" MinWidth="650" MinHeight="520" WindowStartupLocation="CenterOwner">
+ <Grid Margin="16">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="140"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <TextBlock x:Name="Heading" Text="Start a new song" FontSize="22" FontWeight="SemiBold"/>
+  <TextBlock Grid.Row="1" Margin="0,8" Text="Describe the music or how you want it to feel. Once a song is saved, each request revises that song." TextWrapping="Wrap"/>
+  <TextBox Grid.Row="2" x:Name="Brief" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontSize="15"/>
+  <WrapPanel Grid.Row="3" Margin="0,10">
+   <TextBlock Text="Bars" VerticalAlignment="Center"/><TextBox x:Name="Bars" Text="8" Width="45" Margin="8,0,16,0"/>
+   <TextBlock Text="Tempo" VerticalAlignment="Center"/><TextBox x:Name="Tempo" Text="96" Width="50" Margin="8,0,16,0"/>
+   <TextBlock Text="Meter" VerticalAlignment="Center"/><TextBox x:Name="Meter" Text="4/4" Width="50" Margin="8,0,16,0"/>
+   <CheckBox x:Name="UseAhd" Content="Use AHD" IsChecked="True" VerticalAlignment="Center"/>
+  </WrapPanel>
+  <WrapPanel Grid.Row="4" Margin="0,0,0,10">
+   <Button x:Name="Ask" Content="Ask for Music" Click="Ask_Click" Padding="12,6" Margin="0,0,8,0"/>
+   <Button x:Name="Render" Content="Render MIDI" Click="Render_Click" Padding="12,6" Margin="0,0,8,0"/>
+   <Button x:Name="Play" Content="Play MIDI" Click="Play_Click" Padding="12,6" Margin="0,0,8,0"/>
+   <Button Content="Stop / Cancel" Click="Stop_Click" Padding="12,6" Margin="0,0,8,0"/>
+   <Button Content="Clear Song Work" Click="Clear_Click" Padding="12,6"/>
+  </WrapPanel>
+  <TextBox Grid.Row="5" x:Name="Score" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas" VerticalScrollBarVisibility="Auto"/>
+  <TextBlock Grid.Row="6" x:Name="Status" Margin="0,10,0,0" TextWrapping="Wrap" Text="Ready. Speech input will be added later."/>
+ </Grid>
+</Window>

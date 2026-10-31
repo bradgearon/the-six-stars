@@ -111,18 +111,20 @@ public sealed class SpeakAsStarPlaybackEndpoint : IWavePlaybackEndpoint, IStream
                 if (_directory != null)
                 {
                     Directory.CreateDirectory(_directory);
+                    using var memory = new MemoryStream(audio.WavAudio, writable: false);
+                    using var reader = new WaveFileReader(memory);
                     if (_writer == null)
                     {
                         _temporary = Path.Combine(_directory, Guid.NewGuid().ToString("N") + ".partial");
-                        _writer = new WaveFileWriter(_temporary, new WaveFormat(24000, 16, 1));
+                        // Retain the effected voice's sample rate and stereo image in authored takes.
+                        WaveFormat format = new WaveFormat(reader.WaveFormat.SampleRate, 16, reader.WaveFormat.Channels);
+                        _writer = new WaveFileWriter(_temporary, format);
                     }
                     // Decode each chunk, then concatenate PCM under ONE WAV header.
-                    using var memory = new MemoryStream(audio.WavAudio, writable: false);
-                    using var reader = new WaveFileReader(memory);
                     using var converted = new MediaFoundationResampler(reader, _writer.WaveFormat) { ResamplerQuality = 60 };
                     byte[] buffer = new byte[16384];
                     int read;
-                    while ((read = converted.Read(buffer, 0, buffer.Length)) > 0)
+                    while ((read = converted.Read(buffer)) > 0)
                     {
                         token.ThrowIfCancellationRequested();
                         _writer.Write(buffer, 0, read);

@@ -1,0 +1,60 @@
+{
+  "ppq": 480,
+  "defaultTempo": 120,
+  "defaultChannel": 0,
+  "defaultVelocity": 96,
+  "defaultOctave": 3,
+  "midiNoteForC0": 24,
+  "pitchBendRangeSemitones": 2,
+  "articulationDefaults": {
+    "leadTicks": 30,
+    "durationTicks": 30,
+    "velocity": 100
+  },
+  "articulations": {
+    "short":       { "keySwitchMidiNote": 24, "channel": 0 },
+    "long":        { "keySwitchMidiNote": 25, "channel": 0 },
+    "legato":      { "keySwitchMidiNote": 26, "channel": 0 },
+    "legatoAgile": { "keySwitchMidiNote": 27, "channel": 0 },
+    "portamento":  { "keySwitchMidiNote": 28, "channel": 0 },
+    "dynamics":    { "keySwitchMidiNote": 29, "channel": 0 },
+    "tremolo":     { "keySwitchMidiNote": 30, "channel": 0 },
+    "trills":      { "keySwitchMidiNote": 31, "channel": 0 },
+    "pizzicato":   { "keySwitchMidiNote": 32, "channel": 0 },
+    "harmonics":   { "keySwitchMidiNote": 33, "channel": 0 },
+    "ponticello":  { "keySwitchMidiNote": 34, "channel": 0 },
+    "rest":        { "keySwitchMidiNote": 35, "channel": 0 }
+  },
+  "percussion": {
+    "channel": 9,
+    "defaultDurationTicks": 60,
+    "noteMap": {
+      "C": 36,
+      "C#": 37,
+      "D": 38,
+      "D#": 39,
+      "E": 42,
+      "F": 44,
+      "F#": 46,
+      "G": 45,
+      "G#": 47,
+      "A": 50,
+      "A#": 49,
+      "B": 51
+    },
+    "labels": {
+      "C": "Kick",
+      "C#": "Rim",
+      "D": "Snare",
+      "D#": "Clap",
+      "E": "Closed Hat",
+      "F": "Pedal Hat",
+      "F#": "Open Hat",
+      "G": "Low Tom",
+      "G#": "Mid Tom",
+      "A": "High Tom",
+      "A#": "Crash",
+      "B": "Ride"
+    }
+  }
+}
