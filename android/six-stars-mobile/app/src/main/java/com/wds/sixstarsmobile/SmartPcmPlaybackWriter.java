@@ -119,6 +119,9 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
         private double learnedStartupMs = DEFAULT_STARTUP_MS;
         private double learnedMsPerChar = 68.0;
 
+        AdaptiveProfile() { }
+        AdaptiveProfile(double initialStartupMs) { learnedStartupMs = Math.max(MIN_STARTUP_MS, Math.min(MAX_STARTUP_MS, initialStartupMs)); }
+
         synchronized double startupMs() { return learnedStartupMs; }
         synchronized double msPerChar() { return learnedMsPerChar; }
 
@@ -148,6 +151,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
 
     private final AdaptiveProfile profile;
     private final Listener listener;
+    private final boolean musicMode;
     private final LinkedBlockingDeque<PcmChunk> input = new LinkedBlockingDeque<>();
     private final CountDownLatch finished = new CountDownLatch(1);
     private final Object pauseGate = new Object();
@@ -172,15 +176,20 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
     private Thread workerThread;
     private Thread observerThread;
 
-    SmartPcmPlaybackWriter(AdaptiveProfile profile, Listener listener) {
+    SmartPcmPlaybackWriter(AdaptiveProfile profile, Listener listener) { this(profile, listener, false); }
+
+    SmartPcmPlaybackWriter(AdaptiveProfile profile, Listener listener, boolean musicMode) {
+        this.musicMode = musicMode;
         this.profile = profile == null ? new AdaptiveProfile() : profile;
         this.listener = listener == null ? NO_OP : listener;
     }
 
-    void start() {
+    void start() { start(SystemClock.elapsedRealtime()); }
+
+    void start(long requestStartedElapsedMs) {
         if (workerStarted) return;
         workerStarted = true;
-        startRequestedElapsedMs = SystemClock.elapsedRealtime();
+        startRequestedElapsedMs = requestStartedElapsedMs > 0 ? requestStartedElapsedMs : SystemClock.elapsedRealtime();
         workerThread = new Thread(this::runWorker, "six-stars-smart-pcm-writer");
         workerThread.start();
     }
@@ -331,8 +340,8 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
                     lastUnderruns = underruns;
                 }
 
-                if (!inputEnded && input.isEmpty() && leadMs < lowWaterMs && committedFrames > playedFrames
-                        && producerIdleMs() < calculateProducerIdleReleaseMs(stats)) {
+                if (!inputEnded && input.isEmpty() && leadMs < lowWaterMs
+                        && (musicMode || (committedFrames > playedFrames && producerIdleMs() < calculateProducerIdleReleaseMs(stats)))) {
                     emergencyRefills++;
                     profile.increaseStartup(Math.max(profile.startupMs() + 180.0, liveTargetMs));
                     refill(localTrack, stats, sampleRate, channels, liveTargetMs, leadMs);
@@ -410,7 +419,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
             // delayed. If the producer has gone idle and we still have audible lead, release the
             // existing AudioTrack buffer and let it play; a later packet can be written to the same
             // stream and another emergency refill can occur if needed.
-            if (leadMs > 0L && producerIdleMs() >= calculateProducerIdleReleaseMs(stats)) break;
+            if (!musicMode && leadMs > 0L && producerIdleMs() >= calculateProducerIdleReleaseMs(stats)) break;
         }
 
         buffering = false;
@@ -666,7 +675,7 @@ final class SmartPcmPlaybackWriter implements AutoCloseable {
         return new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setContentType(musicMode ? AudioAttributes.CONTENT_TYPE_MUSIC : AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build())
                 .setAudioFormat(new AudioFormat.Builder()
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)

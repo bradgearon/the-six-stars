@@ -1,0 +1,1 @@
+Extract over your current Six Stars solution root, replacing these files. Rebuild the desktop UI. Requires the existing Song Mode feature and NAudio 3. The shared renderer matches the previous Android streaming update. No Android rebuild is needed for this desktop-only patch. Instructions and appsettings are not included. See docs/desktop-music-streaming.md.

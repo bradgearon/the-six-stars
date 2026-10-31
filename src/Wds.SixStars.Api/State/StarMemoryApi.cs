@@ -172,8 +172,19 @@ namespace Wds.SixStars.Api.State
             }
             AddUnique(state.PetNamesPlayerUsesForStar, request.PetNamesPlayerUsesForStar, 20);
             AddUnique(state.PetNamesStarUsesForPlayer, request.PetNamesStarUsesForPlayer, 20);
+            if (state.IsGirlfriend && state.BoyfriendGradeLedger == null)
+                state.BoyfriendGradeLedger = BoyfriendGrades.ImportHistory(state);
             UpdateGirlfriendNeedsMetHistory(state, request, now);
             UpdateGirlfriendCoupleActivityHistory(state, request, now);
+            if (state.IsGirlfriend && state.BoyfriendGradeLedger != null)
+            {
+                string evidenceId = request.TurnStartedAt == default
+                    ? "update:" + now.ToString("o")
+                    : "turn:" + request.TurnStartedAt.ToString("o");
+                BoyfriendGrades.Record(state.BoyfriendGradeLedger, state, evidenceId, request.TurnStartedAt == default ? now : request.TurnStartedAt,
+                    request.GirlfriendNeedsMetVector, request.GirlfriendWantsMetVector,
+                    FirstNonEmpty(request.GirlfriendNeedsMetSummary, request.GirlfriendCoupleActivitySummary), request.BoyfriendPerformanceVector);
+            }
             UpsertLearnedFunctions(state, request.LearnedFunctions);
             UpsertSecrets(state, request.SecretsUnlocked, now);
             UpdateCombos(state, request.DetectedCombos, now);

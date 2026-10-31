@@ -102,6 +102,8 @@ namespace Wds.SixStars.Api.Models
         public List<RelationshipComboState> RelationshipCombos { get; set; } = new List<RelationshipComboState>();
         public List<string> RelationshipEvents { get; set; } = new List<string>();
 
+        public BoyfriendGradeLedger? BoyfriendGradeLedger { get; set; }
+
         public bool IsGirlfriend { get; set; }
         public DateTimeOffset? GirlfriendSince { get; set; }
 

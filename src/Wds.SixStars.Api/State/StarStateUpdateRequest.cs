@@ -42,6 +42,7 @@ namespace Wds.SixStars.Api.State
         public List<string> GirlfriendHistoryUpdates { get; set; } = new List<string>();
         public List<string> PetNamesPlayerUsesForStar { get; set; } = new List<string>();
         public List<string> PetNamesStarUsesForPlayer { get; set; } = new List<string>();
+        public List<GirlfriendVectorItem> BoyfriendPerformanceVector { get; set; } = new List<GirlfriendVectorItem>();
         public string GirlfriendNeedsMetSummary { get; set; } = string.Empty;
         public List<GirlfriendVectorItem> GirlfriendNeedsMetVector { get; set; } = new List<GirlfriendVectorItem>();
         public List<GirlfriendVectorItem> GirlfriendWantsMetVector { get; set; } = new List<GirlfriendVectorItem>();

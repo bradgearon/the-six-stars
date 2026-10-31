@@ -1,0 +1,9 @@
+{
+  "ResonatorMidi": {
+    "Enabled": true,
+    "EndpointUrl": "http://127.0.0.1:5000/midi",
+    "BodyMode": "JsonProperty",
+    "NotationProperty": "notation",
+    "TimeoutSeconds": 120
+  }
+}

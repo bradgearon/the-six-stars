@@ -1,0 +1,1 @@
+Extract over your existing solution root, replacing these files. Rebuild and deploy BOTH the desktop host and android/six-stars-mobile. See docs/android-music-streaming.md for behavior and verification. Your music instruction files are not included.

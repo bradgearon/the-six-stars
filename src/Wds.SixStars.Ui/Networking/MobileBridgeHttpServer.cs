@@ -24,6 +24,9 @@ public sealed class MobileBridgeHttpServer : IDisposable
     private readonly Func<MobileBridgeRequest, CancellationToken, Task<MobileBridgeResponse>> _audioHandler;
     private readonly Func<CancellationToken, Task<object>> _testAudioHandler;
     private readonly Func<string, string, CancellationToken, Task<byte[]>> _standaloneLocalTtsHandler;
+    private readonly Func<Wds.SixStars.Api.Music.MusicCompositionRequest, CancellationToken, Task<byte[]>>? _musicHandler;
+    private readonly Func<byte[], CancellationToken, Task<string>>? _musicTranscriptionHandler;
+    private readonly Func<Wds.SixStars.Api.Music.MusicCompositionRequest, Stream, CancellationToken, Task>? _musicStreamHandler;
     private readonly Func<object> _healthFactory;
     private readonly Func<object> _starsFactory;
     private readonly Func<string, CancellationToken, Task<object>> _stateFactory;
@@ -65,8 +68,14 @@ public sealed class MobileBridgeHttpServer : IDisposable
         string? conversationArchivePrefix = null,
         bool conversationArchiveEnabled = true,
         SixStarsRuntime? runtime = null,
-        string? worldEventApiKey = null)
+        string? worldEventApiKey = null,
+        Func<Wds.SixStars.Api.Music.MusicCompositionRequest, CancellationToken, Task<byte[]>>? musicHandler = null,
+        Func<byte[], CancellationToken, Task<string>>? musicTranscriptionHandler = null,
+        Func<Wds.SixStars.Api.Music.MusicCompositionRequest, Stream, CancellationToken, Task>? musicStreamHandler = null)
     {
+        _musicStreamHandler = musicStreamHandler;
+        _musicHandler = musicHandler;
+        _musicTranscriptionHandler = musicTranscriptionHandler;
         Port = port;
         _messageHandler = messageHandler;
         _audioHandler = audioHandler;
@@ -199,6 +208,38 @@ public sealed class MobileBridgeHttpServer : IDisposable
                 if (_conversationArchiveEnabled && request.Method == "GET" && IsConversationArchivePath(request.Path))
                 {
                     await WriteConversationArchiveFileAsync(stream, request.Path, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "POST" && request.Path == "/api/mobile/music/transcribe")
+                {
+                    if (_musicTranscriptionHandler == null) { await WriteJsonAsync(stream, 503, new { error = "Music transcription unavailable." }, serverToken); return; }
+                    using var body = JsonDocument.Parse(request.Body);
+                    string encoded = GetJsonString(body.RootElement, "audioBase64");
+                    if (encoded.Length > 5400000) { await WriteJsonAsync(stream, 400, new { error = "Recording is too long." }, serverToken); return; }
+                    string transcript = await _musicTranscriptionHandler(Convert.FromBase64String(encoded), serverToken).ConfigureAwait(false);
+                    await WriteJsonAsync(stream, 200, new { transcript }, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "POST" && request.Path == "/api/mobile/music/stream")
+                {
+                    if (_musicStreamHandler == null) { await WriteJsonAsync(stream, 503, new { error = "Music streaming unavailable." }, serverToken); return; }
+                    var musicRequest = JsonSerializer.Deserialize<Wds.SixStars.Api.Music.MusicCompositionRequest>(request.Body, _jsonOptions);
+                    try { Wds.SixStars.Api.Music.MusicCompositionService.ValidateRequest(musicRequest!); }
+                    catch (ArgumentException e) { await WriteJsonAsync(stream, 400, new { error = e.Message }, serverToken); return; }
+                    await _musicStreamHandler(musicRequest!, stream, serverToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (request.Method == "POST" && request.Path == "/api/mobile/music")
+                {
+                    if (_musicHandler == null) { await WriteJsonAsync(stream, 503, new { error = "Music is unavailable." }, serverToken); return; }
+                    var musicRequest = JsonSerializer.Deserialize<Wds.SixStars.Api.Music.MusicCompositionRequest>(request.Body, _jsonOptions);
+                    try { Wds.SixStars.Api.Music.MusicCompositionService.ValidateRequest(musicRequest!); }
+                    catch (ArgumentException e) { await WriteJsonAsync(stream, 400, new { error = e.Message }, serverToken); return; }
+                    byte[] wav = await _musicHandler(musicRequest!, serverToken).ConfigureAwait(false);
+                    await WriteBytesAsync(stream, 200, "audio/wav", wav, serverToken).ConfigureAwait(false);
                     return;
                 }
 

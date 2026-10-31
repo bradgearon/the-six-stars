@@ -54,6 +54,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     }
 
     static final class PhoneVoiceClip {
+        final boolean isMusic;
         final byte[] wav;
         final String label;
         final String sha256;
@@ -89,6 +90,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                        String textKey, long declaredDurationMs, Runnable onCompleted) {
             this.wav = wav == null ? new byte[0] : wav;
             this.label = label == null ? "phone voice" : label;
+            this.isMusic = "Music preview".equals(this.label);
             this.sha256 = sha256 == null ? "" : sha256;
             this.fromDesktop = fromDesktop;
             this.streamId = streamId == null ? "" : streamId;
@@ -183,6 +185,9 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     private int reconnectAttempt;
     private String activeStreamId = "";
     private long activeStreamOrdinal;
+    private final java.util.concurrent.locks.ReentrantLock audioOutputLock = new java.util.concurrent.locks.ReentrantLock(true);
+    private volatile MusicStreamPlaybackService musicStream;
+    private final SmartPcmPlaybackWriter.AdaptiveProfile musicProfile = new SmartPcmPlaybackWriter.AdaptiveProfile(500);
     private volatile boolean desktopStreamActive;
     private int nextExpectedSequence;
     private int droppedStaleFrames;
@@ -201,15 +206,38 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     void setListener(Listener value) { listener = value == null ? NO_OP_LISTENER : value; }
 
     void start() { playbackQueue.start(); pcmStreamQueue.start(); }
-    boolean isIdle() { return playbackQueue.isIdle() && pcmStreamQueue.isIdle(); }
-    boolean isPaused() { return playbackQueue.isPaused() || pcmStreamQueue.isPaused(); }
+    boolean isIdle() { return playbackQueue.isIdle() && pcmStreamQueue.isIdle() && (musicStream == null || musicStream.isFinished()); }
+    boolean isPaused() { return playbackQueue.isPaused() || pcmStreamQueue.isPaused() || (musicStream != null && musicStream.isPaused()); }
     boolean isDesktopStreamActive() { return desktopStreamActive; }
-    void pause() { playbackQueue.pausePlayback(); pcmStreamQueue.pausePlayback(); }
-    void resume() { playbackQueue.resumePlayback(); pcmStreamQueue.resumePlayback(); }
-    void clearForNewStream() { playbackQueue.clearForNewStream(); pcmStreamQueue.clearForNewStream(); }
+    void pause() { playbackQueue.pausePlayback(); pcmStreamQueue.pausePlayback(); if (musicStream != null) musicStream.pause(); }
+    void resume() { playbackQueue.resumePlayback(); pcmStreamQueue.resumePlayback(); if (musicStream != null) musicStream.resume(); }
+    void clearForNewStream() { playbackQueue.clearForNewStream(); pcmStreamQueue.clearForNewStream(); if (musicStream != null) musicStream.close(); }
     void beginPreparedPrefix() { playbackQueue.beginPreparedPrefix(); }
     void enqueuePreparedPrefix(ArrayList<PhoneVoiceClip> clips) { playbackQueue.enqueuePreparedPrefix(clips); }
     void cancelPreparedPrefix() { playbackQueue.cancelPreparedPrefix(); }
+    synchronized MusicStreamPlaybackService openMusicStream(long requestedAt, long durationMs, MusicStreamClient.Status status) {
+        if (musicStream != null && !musicStream.isFinished()) throw new IllegalStateException("Music is already playing.");
+        PhoneVoiceClip clip = new PhoneVoiceClip(new byte[0], "Music preview", "", false, "", 0L, 0, new int[0]);
+        java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+        musicStream = new MusicStreamPlaybackService(audioOutputLock, musicProfile, requestedAt, new MusicStreamPlaybackService.Listener() {
+            public void onStarted() {
+                started.set(true);
+                post(() -> { listener.onPlaybackStarted(clip, durationMs, 0L); status.update("Playing music as it arrives…"); });
+            }
+            public void onBuffering(boolean buffering, long leadMs, long targetMs) {
+                post(() -> status.update(buffering ? "Buffering music… " + leadMs + " / " + targetMs + " ms" : "Playing music…"));
+            }
+            public void onFinished(boolean complete) {
+                post(() -> {
+                    if (started.get()) listener.onPlaybackFinished(clip, complete);
+                    if (PhoneVoicePlaybackService.this.isIdle()) listener.onQueueIdle();
+                });
+            }
+        });
+        if (playbackQueue.isPaused() || pcmStreamQueue.isPaused()) musicStream.pause();
+        return musicStream;
+    }
+
     void enqueue(PhoneVoiceClip clip) { playbackQueue.enqueue(clip); }
 
     void disconnect() {
@@ -667,14 +695,42 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
 
         boolean isPaused() { return paused; }
         boolean isIdle() { synchronized (preparedLock) { return queue.isEmpty() && activeTrack == null && activeClip == null && !preparedPrefixPending; } }
-        void enqueue(PhoneVoiceClip clip) { if (clip != null && clip.wav.length > 0) queue.offerLast(clip); }
-        void beginPreparedPrefix() { preparedPrefixPending = true; }
+        void enqueue(PhoneVoiceClip clip) {
+            if (clip == null || clip.wav.length == 0) return;
+            synchronized (preparedLock) {
+                queue.offerLast(clip);
+                preparedLock.notifyAll();
+            }
+        }
+        void beginPreparedPrefix() { synchronized (preparedLock) { preparedPrefixPending = true; } }
         void cancelPreparedPrefix() { synchronized (preparedLock) { preparedPrefixPending = false; preparedLock.notifyAll(); } }
         void enqueuePreparedPrefix(ArrayList<PhoneVoiceClip> clips) {
-            if (clips != null) for (int i = clips.size() - 1; i >= 0; i--) enqueueFirst(clips.get(i));
-            cancelPreparedPrefix();
+            synchronized (preparedLock) {
+                // Publish the entire ordered prefix before the consumer can take anything.
+                // A thread-safe deque alone does not make this reverse-insertion loop atomic.
+                if (clips != null) {
+                    for (int i = clips.size() - 1; i >= 0; i--) {
+                        PhoneVoiceClip clip = clips.get(i);
+                        if (clip != null && clip.wav.length > 0) queue.offerFirst(clip);
+                    }
+                }
+                preparedPrefixPending = false;
+                preparedLock.notifyAll();
+            }
         }
-        private void enqueueFirst(PhoneVoiceClip clip) { if (clip != null && clip.wav.length > 0) queue.offerFirst(clip); }
+
+        private PhoneVoiceClip takeNextClip() throws InterruptedException {
+            synchronized (preparedLock) {
+                // Gate every clip, including local cached fragments, until the prefix is ready.
+                while (running && (preparedPrefixPending || queue.isEmpty())) preparedLock.wait();
+                if (!running) return null;
+                PhoneVoiceClip clip = queue.removeFirst();
+                // Reserve the clip before releasing the lock so isIdle cannot report the gap
+                // between dequeue, burst coalescing and AudioTrack construction as idle.
+                activeClip = clip;
+                return clip;
+            }
+        }
 
         void pausePlayback() {
             paused = true;
@@ -698,8 +754,11 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         }
 
         void clearForNewStream() {
-            cancelPreparedPrefix();
-            queue.clear();
+            synchronized (preparedLock) {
+                queue.clear();
+                preparedPrefixPending = false;
+                preparedLock.notifyAll();
+            }
             stopTrack(activeTrack);
             if (thread != null) thread.interrupt();
         }
@@ -707,12 +766,8 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
         private void loop() {
             while (running) {
                 try {
-                    PhoneVoiceClip clip = queue.takeFirst();
-                    if (clip.fromDesktop && preparedPrefixPending) {
-                        queue.offerFirst(clip);
-                        synchronized (preparedLock) { if (preparedPrefixPending && running) preparedLock.wait(100L); }
-                        continue;
-                    }
+                    PhoneVoiceClip clip = takeNextClip();
+                    if (clip == null) continue;
 
                     // Prepared Listen and other cached Android speech is often queued as several
                     // complete WAV fragments in one tight burst. Playing each fragment through a new
@@ -721,16 +776,19 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     // burst into one PCM/WAV clip before playback so it is one continuous speaker and
                     // animation lifecycle.
                     clip = coalesceLocalBurst(clip);
-                    playWav(clip);
+                    audioOutputLock.lockInterruptibly();
+                    try { playWav(clip); } finally { audioOutputLock.unlock(); }
                 } catch (InterruptedException ignored) {
                 } catch (Throwable error) {
                     post(() -> listener.onError("Audio playback failed", error));
+                } finally {
+                    activeClip = null;
                 }
             }
         }
 
         private PhoneVoiceClip coalesceLocalBurst(PhoneVoiceClip first) throws InterruptedException {
-            if (first == null || first.fromDesktop || first.continuousPcm || first.wav.length == 0) return first;
+            if (first == null || first.isMusic || first.fromDesktop || first.continuousPcm || first.wav.length == 0) return first;
 
             // Give a synchronous cache-enqueue loop one small scheduling window to put the rest of
             // its chunks into this queue. This replaces much larger inter-clip AudioTrack gaps with a
@@ -744,19 +802,22 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             pcm.write(format.pcm, 0, format.pcm.length);
 
             while (clips.size() < MAX_LOCAL_BURST_CLIPS) {
-                PhoneVoiceClip next = queue.peekFirst();
-                if (next == null || next.fromDesktop || next.continuousPcm || next.wav.length == 0) break;
-
+                PhoneVoiceClip next;
                 ParsedWav parsed;
-                try {
-                    parsed = ParsedWav.parse(next.wav);
-                } catch (Throwable invalid) {
-                    break;
+                synchronized (preparedLock) {
+                    // A newly inserted prefix must not change the head between parsing and
+                    // removal, or the PCM and completion callback can belong to different clips.
+                    if (preparedPrefixPending) break;
+                    next = queue.peekFirst();
+                    if (next == null || next.isMusic || next.fromDesktop || next.continuousPcm || next.wav.length == 0) break;
+                    try {
+                        parsed = ParsedWav.parse(next.wav);
+                    } catch (Throwable invalid) {
+                        break;
+                    }
+                    if (parsed.sampleRate != format.sampleRate || parsed.channels != format.channels) break;
+                    queue.removeFirst();
                 }
-                if (parsed.sampleRate != format.sampleRate || parsed.channels != format.channels) break;
-
-                next = queue.pollFirst();
-                if (next == null) break;
                 clips.add(next);
                 pcm.write(parsed.pcm, 0, parsed.pcm.length);
             }
@@ -812,7 +873,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
             if (minBuffer <= 0) minBuffer = parsed.sampleRate * parsed.channels * 2 / 5;
             int bufferSize = Math.max(minBuffer, Math.min(parsed.pcm.length, parsed.sampleRate * parsed.channels * 2));
             AudioTrack track = new AudioTrack.Builder()
-                    .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(clip.isMusic ? AudioAttributes.CONTENT_TYPE_MUSIC : AudioAttributes.CONTENT_TYPE_SPEECH).build())
                     .setAudioFormat(new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(parsed.sampleRate).setChannelMask(channelConfig).build())
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .setBufferSizeInBytes(bufferSize)
@@ -1035,7 +1096,10 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
                     // Prepared/local WAV playback keeps priority. A single live writer starts only
                     // after an already-playing prepared prefix has naturally finished.
                     while (running && !stream.cancelled && !playbackQueue.isIdle()) Thread.sleep(20L);
-                    if (running && !stream.cancelled) playStream(stream);
+                    if (running && !stream.cancelled) {
+                        audioOutputLock.lockInterruptibly();
+                        try { if (running && !stream.cancelled) playStream(stream); } finally { audioOutputLock.unlock(); }
+                    }
                     synchronized (gate) {
                         byKey.remove(streamKey(stream.streamId, stream.ordinal));
                         if (activeStream == stream) activeStream = null;
@@ -1212,6 +1276,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
     }
 
     @Override public void close() {
+        if (musicStream != null) musicStream.close();
         closed = true;
         synchronized (socketLock) {
             desiredHost = "";

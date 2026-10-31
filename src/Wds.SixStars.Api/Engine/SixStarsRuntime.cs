@@ -27,6 +27,17 @@ namespace Wds.SixStars.Api.Engine
 {
     public sealed class SixStarsRuntime
     {
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<bool>> _proposalThinking = new System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource<bool>>();
+
+        /// <summary>Hosts call after the acknowledgement is delivered (or transport fails).
+        /// The generated answer must not compete with its own thinking phrase's audio stream.</summary>
+        public void CompleteGirlfriendProposalThinking(StarInteractionResponse response)
+        {
+            foreach (var e in response.UnityEvents.Where(x => x.Type == "GirlfriendProposalStarted"))
+                if (e.Data.TryGetValue("proposalDeliveryId", out string? id) && _proposalThinking.TryGetValue(id, out var completion))
+                    completion.TrySetResult(true);
+        }
+
         private readonly IStarProfileProvider _profileProvider;
         private readonly IStarAgent _agent;
         private readonly IRelationshipDeltaCalculator _deltaCalculator;
@@ -499,6 +510,7 @@ namespace Wds.SixStars.Api.Engine
             state.GirlfriendMetWantVectorHistory = new List<string>();
             state.GirlfriendNeedsMetPerformanceVector = new List<GirlfriendVectorItem>();
             state.GirlfriendWantsMetPerformanceVector = new List<GirlfriendVectorItem>();
+            state.BoyfriendGradeLedger = null;
             state.GirlfriendCoupleActivityScores = new List<GirlfriendCoupleActivityScore>();
             state.GirlfriendCoupleActivityHistory = new List<GirlfriendCoupleActivityHistoryEntry>();
             state.GirlfriendCoupleActivityBestExamples = new List<GirlfriendCoupleActivityBestExample>();
@@ -897,6 +909,9 @@ namespace Wds.SixStars.Api.Engine
             GirlfriendProposalDecision? girlfriendProposal = await TryPrepareGirlfriendProposalAsync(profile, request, state, cancellationToken).ConfigureAwait(false);
             if (girlfriendProposal != null && !IsGirlfriendProposalWorkerRequest(request))
             {
+                string deliveryId = Guid.NewGuid().ToString("N");
+                request.GameContext.Flags["proposalDeliveryId"] = deliveryId;
+                _proposalThinking[deliveryId] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 StarInteractionResponse thinkingResponse = CreateGirlfriendProposalThinkingResponse(profile, request, girlfriendProposal);
                 ApplyVoiceDefaults(profile, thinkingResponse);
                 QueueGirlfriendProposalDecisionAfterThinkingResponse(profile, request, state, girlfriendProposal, cancellationToken);
@@ -2615,6 +2630,7 @@ namespace Wds.SixStars.Api.Engine
                 Target = profile.StarId,
                 Data =
                 {
+                    { "proposalDeliveryId", GetGameContextFlag(request.GameContext, "proposalDeliveryId", "") },
                     { "note", "Spoke a preprogrammed girlfriend-proposal thinking phrase immediately. Full proposal answer is running in the background." },
                     { "playerText", request.PlayerText ?? string.Empty },
                     { "decision", decision.Decision },
@@ -2670,6 +2686,7 @@ namespace Wds.SixStars.Api.Engine
         {
             StarInteractionRequest workerRequest = CloneRequestForGirlfriendProposal(request);
             workerRequest.GameContext.Flags["girlfriendProposalWorker"] = "true";
+            workerRequest.GameContext.Flags["foregroundConciseMode"] = "false";
             workerRequest.GameContext.Flags["girlfriendProposalDecision"] = initialDecision.Decision;
             workerRequest.GameContext.Flags["existingGirlfriendStarId"] = initialDecision.ExistingGirlfriendStarId ?? string.Empty;
             workerRequest.GameContext.Flags["girlfriendProposalReason"] = initialDecision.Reason ?? string.Empty;
@@ -2710,6 +2727,14 @@ namespace Wds.SixStars.Api.Engine
                     workerRequest.GameContext.RecentEvents.Add("Current exclusive girlfriend: " + (string.IsNullOrWhiteSpace(currentGirlfriend) ? "none" : currentGirlfriend) + ". Girlfriend proposal decision flag: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + ".");
 
                     StarInteractionResponse proposalResponse = await _agent.GenerateAsync(profile, workerRequest, latestState, workToken).ConfigureAwait(false);
+                    if (string.IsNullOrWhiteSpace(proposalResponse.SpokenText))
+                    {
+                        proposalResponse.SetSpokenParts(new[] { alreadyThis ? "I already am your girlfriend. Yes, we're together."
+                            : blockedByOther ? "I can't be your girlfriend while you're committed to someone else."
+                            : shouldAccept ? "Yes. I'd like to be your girlfriend. We're together now."
+                            : "Not yet. I want us to build more trust and closeness first." });
+                    }
+                    proposalResponse.StarId = profile.StarId;
                     ApplyVoiceDefaults(profile, proposalResponse);
                     proposalResponse.Debug.DetectedIntent = "GirlfriendProposal";
                     proposalResponse.Debug.Notes.Add("Girlfriend proposal worker decision: " + workerRequest.GameContext.Flags["girlfriendProposalDecision"] + "; reason=" + workerRequest.GameContext.Flags["girlfriendProposalReason"]);
@@ -2758,6 +2783,14 @@ namespace Wds.SixStars.Api.Engine
                         }
                     });
 
+                    string deliveryId = GetGameContextFlag(workerRequest.GameContext, "proposalDeliveryId", "");
+                    if (_proposalThinking.TryGetValue(deliveryId, out var thinkingFinished))
+                    {
+                        // Older hosts do not acknowledge this event. Keep their text follow-up live,
+                        // but give current hosts enough time to finish TTS or report transport failure.
+                        await Task.WhenAny(thinkingFinished.Task, Task.Delay(TimeSpan.FromMinutes(2), workToken)).ConfigureAwait(false);
+                        workToken.ThrowIfCancellationRequested();
+                    }
                     GirlfriendProposalCompleted?.Invoke(this, proposalResponse);
                 }
                 catch (OperationCanceledException)
@@ -2769,8 +2802,17 @@ namespace Wds.SixStars.Api.Engine
                     System.Diagnostics.Debug.WriteLine("[SixStarsRuntime] Girlfriend proposal generation failed: " + ex);
                     GirlfriendProposalFailed?.Invoke(this, ex);
                 }
+                finally
+                {
+                    _proposalThinking.TryRemove(GetGameContextFlag(workerRequest.GameContext, "proposalDeliveryId", ""), out _);
+                }
+
             },
-                CancellationToken.None);
+                CancellationToken.None,
+                bypassPostForegroundQuiet: true,
+                allowForegroundPreemption: false,
+                bypassPlayerActivitySuppression: true,
+                allowPlayerActivityPreemption: false);
         }
 
         private sealed class GirlfriendProposalDecision
@@ -3500,6 +3542,7 @@ namespace Wds.SixStars.Api.Engine
                 GirlfriendHistoryUpdates = response.GirlfriendHistoryUpdates,
                 PetNamesPlayerUsesForStar = response.PetNamesPlayerUsesForStar,
                 PetNamesStarUsesForPlayer = response.PetNamesStarUsesForPlayer,
+                BoyfriendPerformanceVector = response.BoyfriendPerformanceVector,
                 GirlfriendNeedsMetSummary = response.GirlfriendNeedsMetSummary,
                 GirlfriendNeedsMetVector = response.GirlfriendNeedsMetVector,
                 GirlfriendWantsMetVector = response.GirlfriendWantsMetVector,

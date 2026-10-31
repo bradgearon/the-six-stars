@@ -1,0 +1,614 @@
+--- a/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java
++++ b/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java
+@@ -716,7 +716,10 @@
+                         break;
+                     }
+                 }
+-                if (playbackDrained && running && !drainInterrupted) {
++                // During a live desktop stream the next PCM window is normally already queued (or
++                // arriving shortly). Do not inject a 70 ms dead-air guard between streaming windows.
++                // Keep the old hardware-drain guard only when this really looks like the end of speech.
++                if (playbackDrained && running && !drainInterrupted && !desktopStreamActive && queue.isEmpty()) {
+                     try { Thread.sleep(70L); } catch (InterruptedException interrupted) { drainInterrupted = true; }
+                 }
+                 completed = running && !drainInterrupted && playbackDrained && offset >= parsed.pcm.length;
+--- a/appsettings.sixstars.example.json
++++ b/appsettings.sixstars.example.json
+@@ -194,7 +194,10 @@
+     "Model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+     "MaxWordsPerChunk": 30,
+     "MaxSentencesPerChunk": 2,
+-    "HttpBaseUrl": "http://localhost:8101"
++    "HttpBaseUrl": "http://localhost:8101",
++    "ResponseFormat": "pcm",
++    "PcmFirstChunkMilliseconds": 480,
++    "PcmChunkMilliseconds": 960
+   },
+   "Companion": {
+     "DefaultStarId": "Elusiaa"
+--- a/src/Wds.SixStars.Api/LocalModels/LocalModelServiceOptions.cs
++++ b/src/Wds.SixStars.Api/LocalModels/LocalModelServiceOptions.cs
+@@ -39,7 +39,9 @@
+             BaseUrl = "http://localhost:8101",
+             Model = "qwen3-tts-base",
+             DefaultLanguage = "English",
+-            ResponseFormat = "wav",
++            ResponseFormat = "pcm",
++            PcmFirstChunkMilliseconds = 480,
++            PcmChunkMilliseconds = 960,
+             TaskType = "VoiceClone",
+             ChunkGenerationMode = "first_then_prefetch",
+             MaxParallelChunks = 1
+--- a/src/Wds.SixStars.Api/Voice/LiveStarVoiceResponsePipeline.cs
++++ b/src/Wds.SixStars.Api/Voice/LiveStarVoiceResponsePipeline.cs
+@@ -65,6 +65,7 @@
+ 
+         public bool IsStarted => _started;
+         public int TextChunksEnqueued => Volatile.Read(ref _textChunksEnqueued);
++        public int AudioChunksProduced => Volatile.Read(ref _audioSequence);
+ 
+         public void Start(string sessionId, StarInteractionResponse voiceTemplate, CancellationToken cancellationToken)
+         {
+@@ -282,10 +283,10 @@
+                 int emitted = Math.Max(0, Volatile.Read(ref _audioSequence) - audioBefore);
+                 if (emitted >= pending.Count) return;
+ 
+-                // The Qwen wire protocol sends text parts strictly in order. If a nominally complete
+-                // request returned fewer WAVs than text parts, retry only the missing tail once. This
+-                // avoids duplicating sentences that already reached Android while preventing a silent
+-                // final sentence from being accepted as a successful live-voice run.
++                // A WAV response normally emits one audio chunk per text part. PCM streaming may emit
++                // several short WAV windows for one text part, so emitted can be greater than pending.
++                // A successful PCM request throws if a text part returns no audio, preserving the same
++                // missing-tail safety without delaying first playback for a whole sentence.
+                 if (retriedMissingTail)
+                 {
+                     throw new InvalidOperationException(
+--- a/src/Wds.SixStars.Api/Voice/QwenCppHttpStreamingVoiceGenerator.cs
++++ b/src/Wds.SixStars.Api/Voice/QwenCppHttpStreamingVoiceGenerator.cs
+@@ -8,6 +8,7 @@
+ using System.Text.Json;
+ using System.Threading;
+ using System.Threading.Tasks;
++using Wds.SixStars.Api.Audio;
+ 
+ namespace Wds.SixStars.Api.Voice
+ {
+@@ -20,9 +21,9 @@
+     /// raises the existing IStreamingVoiceGenerator events directly. There is no intermediate
+     /// WebSocket or native gateway process.
+     ///
+-    /// qwentts.cpp returns one complete WAV when response_format=wav. Six Stars already supplies
+-    /// short LLM-authored TextParts, so each TextPart becomes one playable WAV chunk while the next
+-    /// part is generated in parallel with playback by StreamingStarVoiceResponsePipeline.
++    /// qwentts.cpp streams raw 24 kHz mono PCM while response_format=pcm. Six Stars wraps short
++    /// PCM windows into ordinary WAV chunks so existing desktop/Android playback stays compatible,
++    /// but the first audible chunk no longer waits for the entire sentence to finish synthesizing.
+     /// </summary>
+     public sealed class QwenCppHttpStreamingVoiceGenerator : IStreamingVoiceGenerator
+     {
+@@ -125,48 +126,88 @@
+                 await EnsureVoiceRegisteredAsync(request, voiceId, force: false, generationCts.Token).ConfigureAwait(false);
+ 
+                 double totalDurationMs = 0;
++                int emittedAudioChunks = 0;
++                bool streamPcm = string.Equals(_options.ResponseFormat, "pcm", StringComparison.OrdinalIgnoreCase);
+                 for (int index = 0; index < parts.Count; index++)
+                 {
+                     generationCts.Token.ThrowIfCancellationRequested();
+                     string text = parts[index];
+ 
+-                    byte[] wav;
+-                    try
++                    if (streamPcm)
+                     {
+-                        wav = await SynthesizeWavAsync(request, voiceId, text, generationCts.Token).ConfigureAwait(false);
++                        Func<byte[], double, bool> emitPcmWindow = (wav, durationMs) =>
++                        {
++                            if (!IsCurrentGeneration(generationVersion) || generationCts.IsCancellationRequested) return false;
++
++                            int chunkIndex = emittedAudioChunks++;
++                            totalDurationMs += durationMs;
++                            AudioChunkReady?.Invoke(this, new AudioChunkEventArgs
++                            {
++                                ChunkIndex = chunkIndex,
++                                // The final number is not known until the HTTP PCM stream reaches EOS.
++                                // Consumers already take the maximum seen and GenerationComplete publishes
++                                // the authoritative final value.
++                                TotalChunks = chunkIndex + 1,
++                                AudioData = wav,
++                                MimeType = "audio/wav",
++                                Text = text,
++                                StarId = starId,
++                                VoiceId = voiceId
++                            });
++                            return true;
++                        };
++
++                        try
++                        {
++                            await SynthesizePcmStreamingAsync(request, voiceId, text, emitPcmWindow, generationCts.Token).ConfigureAwait(false);
++                        }
++                        catch (Exception ex) when ((ex is UnknownVoiceException || ex is EmptyPcmStreamException)
++                            && !string.IsNullOrWhiteSpace(request.VoiceSettings?.VoiceCloneAudioFile))
++                        {
++                            // In chunked PCM mode tts-server may already have committed HTTP 200 before
++                            // an unknown-voice backend error occurs, which surfaces to the client as an
++                            // empty stream rather than an HTTP error. A native server restart can therefore
++                            // invalidate its in-memory voice registry while this .NET process still has the
++                            // old registration fingerprint cached. Force one registration and retry.
++                            await EnsureVoiceRegisteredAsync(request, voiceId, force: true, generationCts.Token).ConfigureAwait(false);
++                            await SynthesizePcmStreamingAsync(request, voiceId, text, emitPcmWindow, generationCts.Token).ConfigureAwait(false);
++                        }
+                     }
+-                    catch (UnknownVoiceException) when (!string.IsNullOrWhiteSpace(request.VoiceSettings?.VoiceCloneAudioFile))
++                    else
+                     {
+-                        // tts-server may have been restarted while the .NET process stayed alive.
+-                        // Its in-memory voice registry is then empty even though this generator cached
+-                        // the previous registration. Re-register once and retry transparently.
+-                        await EnsureVoiceRegisteredAsync(request, voiceId, force: true, generationCts.Token).ConfigureAwait(false);
+-                        wav = await SynthesizeWavAsync(request, voiceId, text, generationCts.Token).ConfigureAwait(false);
+-                    }
++                        byte[] wav;
++                        try
++                        {
++                            wav = await SynthesizeWavAsync(request, voiceId, text, generationCts.Token).ConfigureAwait(false);
++                        }
++                        catch (UnknownVoiceException) when (!string.IsNullOrWhiteSpace(request.VoiceSettings?.VoiceCloneAudioFile))
++                        {
++                            await EnsureVoiceRegisteredAsync(request, voiceId, force: true, generationCts.Token).ConfigureAwait(false);
++                            wav = await SynthesizeWavAsync(request, voiceId, text, generationCts.Token).ConfigureAwait(false);
++                        }
+ 
+-                    if (!IsCurrentGeneration(generationVersion))
+-                    {
+-                        return;
++                        if (!IsCurrentGeneration(generationVersion)) return;
++                        double durationMs = GetWavDurationMs(wav);
++                        int chunkIndex = emittedAudioChunks++;
++                        totalDurationMs += durationMs;
++                        AudioChunkReady?.Invoke(this, new AudioChunkEventArgs
++                        {
++                            ChunkIndex = chunkIndex,
++                            TotalChunks = parts.Count,
++                            AudioData = wav,
++                            MimeType = "audio/wav",
++                            Text = text,
++                            StarId = starId,
++                            VoiceId = voiceId
++                        });
+                     }
+-
+-                    totalDurationMs += GetWavDurationMs(wav);
+-                    AudioChunkReady?.Invoke(this, new AudioChunkEventArgs
+-                    {
+-                        ChunkIndex = index,
+-                        TotalChunks = parts.Count,
+-                        AudioData = wav,
+-                        MimeType = "audio/wav",
+-                        Text = text,
+-                        StarId = starId,
+-                        VoiceId = voiceId
+-                    });
+                 }
+ 
+                 if (IsCurrentGeneration(generationVersion))
+                 {
+                     GenerationComplete?.Invoke(this, new GenerationCompleteEventArgs
+                     {
+-                        TotalChunks = parts.Count,
++                        TotalChunks = emittedAudioChunks,
+                         TotalDurationMs = totalDurationMs,
+                         StarId = starId,
+                         WasCancelled = false
+@@ -286,32 +327,120 @@
+             }
+         }
+ 
+-        private async Task<byte[]> SynthesizeWavAsync(VoiceSynthesisRequest request, string voiceId, string text, CancellationToken cancellationToken)
++        private async Task SynthesizePcmStreamingAsync(
++            VoiceSynthesisRequest request,
++            string voiceId,
++            string text,
++            Func<byte[], double, bool> onWavChunk,
++            CancellationToken cancellationToken)
+         {
+-            Dictionary<string, object> payload = new Dictionary<string, object>
+-            {
+-                { "input", text },
+-                { "voice", voiceId },
+-                { "response_format", "wav" },
+-                { "speed", request.VoiceSettings?.Speed ?? 1.0 }
+-            };
++            Dictionary<string, object> payload = BuildSpeechPayload(request, voiceId, text, "pcm");
++            string url = CombineUrl(_options.BaseUrl, "/v1/audio/speech");
++            string json = JsonSerializer.Serialize(payload, _jsonOptions);
++            Stopwatch timer = Stopwatch.StartNew();
++            Debug.WriteLine($"[QwenCppHttpTTS] PCM POST begin {url}; voice={voiceId}; chars={text.Length}");
+ 
+-            // Base voice-clone mode uses the registered reference voice. Instructions are intended
+-            // for VoiceDesign/CustomVoice modes and can be invalid for a Base clone checkpoint.
+-            if (!string.Equals(_options.TaskType, "VoiceClone", StringComparison.OrdinalIgnoreCase))
++            using (HttpRequestMessage httpRequest = new HttpRequestMessage(HttpMethod.Post, url))
+             {
+-                string instructions = !string.IsNullOrWhiteSpace(request.VoiceSettings?.VoiceDesignPrompt)
+-                    ? request.VoiceSettings!.VoiceDesignPrompt
+-                    : request.VoiceSettings?.DeliveryInstructions ?? string.Empty;
+-                if (!string.IsNullOrWhiteSpace(instructions))
++                httpRequest.Content = new StringContent(json, Encoding.UTF8, "application/json");
++                using (HttpResponseMessage response = await _httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false))
+                 {
+-                    payload["instructions"] = instructions;
++                    if (!response.IsSuccessStatusCode)
++                    {
++                        string errorText = await SafeReadStringAsync(response).ConfigureAwait(false);
++                        if (errorText.IndexOf("unknown voice", StringComparison.OrdinalIgnoreCase) >= 0)
++                        {
++                            throw new UnknownVoiceException(errorText);
++                        }
++                        throw new InvalidOperationException("qwentts.cpp PCM synthesis returned " + (int)response.StatusCode + ": " + errorText);
++                    }
++
++                    Debug.WriteLine($"[QwenCppHttpTTS] PCM response headers after {timer.ElapsedMilliseconds} ms; contentType={response.Content.Headers.ContentType?.MediaType ?? "unknown"}");
++
++                    Stream responseStream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
++                    using (responseStream)
++                    using (MemoryStream pending = new MemoryStream())
++                    {
++                        byte[] readBuffer = new byte[32 * 1024];
++                        int firstTargetBytes = PcmBytesForMilliseconds(_options.PcmFirstChunkMilliseconds);
++                        int steadyTargetBytes = PcmBytesForMilliseconds(_options.PcmChunkMilliseconds);
++                        bool firstWindow = true;
++                        bool firstBytesLogged = false;
++                        int totalPcmBytes = 0;
++                        int emittedWindows = 0;
++
++                        while (true)
++                        {
++                            cancellationToken.ThrowIfCancellationRequested();
++                            int read = await responseStream.ReadAsync(readBuffer, 0, readBuffer.Length, cancellationToken).ConfigureAwait(false);
++                            if (read <= 0) break;
++
++                            if (!firstBytesLogged)
++                            {
++                                firstBytesLogged = true;
++                                Debug.WriteLine($"[QwenCppHttpTTS] First PCM bytes arrived after {timer.ElapsedMilliseconds} ms.");
++                            }
++
++                            pending.Position = pending.Length;
++                            pending.Write(readBuffer, 0, read);
++                            totalPcmBytes += read;
++
++                            while (pending.Length >= (firstWindow ? firstTargetBytes : steadyTargetBytes))
++                            {
++                                int targetBytes = firstWindow ? firstTargetBytes : steadyTargetBytes;
++                                byte[] pcm = TakePrefix(pending, targetBytes);
++                                byte[] wav = WaveFileUtilities.WrapPcm16InWav(pcm, Pcm24KhzMono());
++                                double durationMs = PcmDurationMs(pcm.Length);
++                                if (!onWavChunk(wav, durationMs))
++                                {
++                                    throw new OperationCanceledException("qwentts.cpp PCM consumer stopped the current synthesis.", cancellationToken);
++                                }
++                                emittedWindows++;
++                                if (firstWindow)
++                                {
++                                    firstWindow = false;
++                                    Debug.WriteLine($"[QwenCppHttpTTS] First playable PCM/WAV window emitted after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
++                                }
++                            }
++                        }
++
++                        if ((pending.Length & 1) != 0)
++                        {
++                            throw new InvalidOperationException("qwentts.cpp PCM stream ended on an odd byte boundary; expected PCM16 audio.");
++                        }
++                        if (pending.Length > 0)
++                        {
++                            byte[] pcm = TakePrefix(pending, checked((int)pending.Length));
++                            byte[] wav = WaveFileUtilities.WrapPcm16InWav(pcm, Pcm24KhzMono());
++                            double durationMs = PcmDurationMs(pcm.Length);
++                            if (!onWavChunk(wav, durationMs))
++                            {
++                                throw new OperationCanceledException("qwentts.cpp PCM consumer stopped the current synthesis.", cancellationToken);
++                            }
++                            emittedWindows++;
++                            if (firstWindow)
++                            {
++                                firstWindow = false;
++                                Debug.WriteLine($"[QwenCppHttpTTS] First playable PCM/WAV window emitted at EOS after {timer.ElapsedMilliseconds} ms ({durationMs:0} ms audio).");
++                            }
++                        }
++
++                        if (totalPcmBytes <= 0 || emittedWindows <= 0)
++                        {
++                            throw new EmptyPcmStreamException("qwentts.cpp returned an empty PCM stream; the cloned voice may need to be re-registered after a server restart.");
++                        }
++                        Debug.WriteLine($"[QwenCppHttpTTS] PCM stream complete after {timer.ElapsedMilliseconds} ms; audio={PcmDurationMs(totalPcmBytes):0} ms; windows={emittedWindows}.");
++                    }
+                 }
+             }
++        }
+ 
++        private async Task<byte[]> SynthesizeWavAsync(VoiceSynthesisRequest request, string voiceId, string text, CancellationToken cancellationToken)
++        {
++            Dictionary<string, object> payload = BuildSpeechPayload(request, voiceId, text, "wav");
+             string url = CombineUrl(_options.BaseUrl, "/v1/audio/speech");
+             string json = JsonSerializer.Serialize(payload, _jsonOptions);
+-            Debug.WriteLine($"[QwenCppHttpTTS] POST {url}; voice={voiceId}; chars={text.Length}");
++            Debug.WriteLine($"[QwenCppHttpTTS] WAV POST {url}; voice={voiceId}; chars={text.Length}");
+ 
+             using (HttpRequestMessage httpRequest = new HttpRequestMessage(HttpMethod.Post, url))
+             {
+@@ -340,6 +469,71 @@
+             }
+         }
+ 
++        private Dictionary<string, object> BuildSpeechPayload(VoiceSynthesisRequest request, string voiceId, string text, string responseFormat)
++        {
++            Dictionary<string, object> payload = new Dictionary<string, object>
++            {
++                { "input", text },
++                { "voice", voiceId },
++                { "response_format", responseFormat },
++                { "speed", request.VoiceSettings?.Speed ?? 1.0 }
++            };
++
++            // Base voice-clone mode uses the registered reference voice. Instructions are intended
++            // for VoiceDesign/CustomVoice modes and can be invalid for a Base clone checkpoint.
++            if (!string.Equals(_options.TaskType, "VoiceClone", StringComparison.OrdinalIgnoreCase))
++            {
++                string instructions = !string.IsNullOrWhiteSpace(request.VoiceSettings?.VoiceDesignPrompt)
++                    ? request.VoiceSettings!.VoiceDesignPrompt
++                    : request.VoiceSettings?.DeliveryInstructions ?? string.Empty;
++                if (!string.IsNullOrWhiteSpace(instructions))
++                {
++                    payload["instructions"] = instructions;
++                }
++            }
++            return payload;
++        }
++
++        private static PcmAudioFormat Pcm24KhzMono()
++        {
++            return new PcmAudioFormat
++            {
++                SampleRateHz = 24000,
++                Channels = 1,
++                BitsPerSample = 16,
++                Encoding = "pcm_s16le"
++            };
++        }
++
++        private static int PcmBytesForMilliseconds(int milliseconds)
++        {
++            int ms = Math.Max(80, milliseconds);
++            long bytes = 24000L * 2L * ms / 1000L;
++            bytes &= ~1L;
++            return checked((int)Math.Max(2L, bytes));
++        }
++
++        private static double PcmDurationMs(int pcmBytes)
++        {
++            return pcmBytes <= 0 ? 0 : pcmBytes * 1000.0 / (24000.0 * 2.0);
++        }
++
++        private static byte[] TakePrefix(MemoryStream pending, int count)
++        {
++            byte[] all = pending.ToArray();
++            if (count <= 0 || count > all.Length) throw new ArgumentOutOfRangeException(nameof(count));
++            byte[] prefix = new byte[count];
++            Buffer.BlockCopy(all, 0, prefix, 0, count);
++            pending.SetLength(0);
++            int remainder = all.Length - count;
++            if (remainder > 0)
++            {
++                pending.Write(all, count, remainder);
++            }
++            pending.Position = pending.Length;
++            return prefix;
++        }
++
+         private List<string> ResolveTextParts(VoiceSynthesisRequest request)
+         {
+             if (request.TextParts != null)
+@@ -509,5 +703,10 @@
+         {
+             public UnknownVoiceException(string message) : base(message) { }
+         }
++
++        private sealed class EmptyPcmStreamException : Exception
++        {
++            public EmptyPcmStreamException(string message) : base(message) { }
++        }
+     }
+ }
+--- a/src/Wds.SixStars.Api/Voice/QwenCppHttpTtsOptions.cs
++++ b/src/Wds.SixStars.Api/Voice/QwenCppHttpTtsOptions.cs
+@@ -12,7 +12,9 @@
+         public string BaseUrl { get; set; } = "http://localhost:8101";
+         public string Model { get; set; } = "qwen3-tts-base";
+         public string DefaultLanguage { get; set; } = "English";
+-        public string ResponseFormat { get; set; } = "wav";
++        public string ResponseFormat { get; set; } = "pcm";
++        public int PcmFirstChunkMilliseconds { get; set; } = 480;
++        public int PcmChunkMilliseconds { get; set; } = 960;
+         public string TaskType { get; set; } = "VoiceClone";
+         public int MaxWordsPerChunk { get; set; } = 30;
+         public int MaxSentencesPerChunk { get; set; } = 2;
+--- a/src/Wds.SixStars.Ui/Configuration/AppConfiguration.cs
++++ b/src/Wds.SixStars.Ui/Configuration/AppConfiguration.cs
+@@ -413,7 +413,9 @@
+         public string HttpBaseUrl { get; set; } = "http://localhost:8101";
+         public string Model { get; set; } = "qwen3-tts-base";
+         public string DefaultLanguage { get; set; } = "English";
+-        public string ResponseFormat { get; set; } = "wav";
++        public string ResponseFormat { get; set; } = "pcm";
++        public int PcmFirstChunkMilliseconds { get; set; } = 480;
++        public int PcmChunkMilliseconds { get; set; } = 960;
+         public string TaskType { get; set; } = "VoiceClone";
+         public int MaxWordsPerChunk { get; set; } = 30;
+         public int MaxSentencesPerChunk { get; set; } = 2;
+--- a/src/Wds.SixStars.Ui/ViewModels/MainViewModel.MobileBridge.cs
++++ b/src/Wds.SixStars.Ui/ViewModels/MainViewModel.MobileBridge.cs
+@@ -2344,6 +2344,7 @@
+             // protected primary memory review immediately at that point; Android playback-start is
+             // diagnostic only and no longer controls/cancels the durable update lifecycle.
+             backgroundAnalysisId = starResponse.BackgroundAnalysisId ?? string.Empty;
++            livePhoneVoice?.MarkGemmaEos();
+             _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
+                 "mobile.gemma-eos",
+                 backgroundAnalysisId,
+@@ -2420,7 +2421,7 @@
+                 response.VoiceBytesSent = livePhoneVoice.BytesSent;
+                 response.VoiceError = livePhoneVoice.ErrorMessage;
+                 response.VoiceMessage = string.IsNullOrWhiteSpace(livePhoneVoice.ErrorMessage)
+-                    ? "Voice chunks were buffered during Gemma and Qwen started only after LLM EOS; Android audio delivery begins after text transport."
++                    ? "The first complete sentence starts Qwen during Gemma streaming; native qwentts.cpp PCM is forwarded in short playable windows instead of waiting for a whole sentence WAV."
+                     : "Live Android voice streaming ended with an error after " + livePhoneVoice.ChunksSent + " chunk(s).";
+             }
+             response.GateWaitMs = gateWaitMs;
+@@ -3001,6 +3002,19 @@
+                     // wait for Gemma EOS just to begin audible speech.
+                     run.TransportReady.Wait(stream.CancellationToken);
+ 
++                    if (run.TryMarkFirstAudioReady(out long firstAudioMs, out bool gemmaEosAlreadyReached))
++                    {
++                        _services.MobileConversation.TraceBackgroundAnalysisHostEvent(
++                            "mobile.first-audio-ready",
++                            string.Empty,
++                            request.SessionId ?? string.Empty,
++                            request.StarId ?? string.Empty,
++                            "First playable Qwen audio became available " + firstAudioMs.ToString(System.Globalization.CultureInfo.InvariantCulture) + " ms after the first sentence was queued; gemmaEosAlreadyReached=" + gemmaEosAlreadyReached + ".");
++                        OnUiThread(() => AppendMobileBridgeVoiceDebug(
++                            "First Qwen audio ready",
++                            firstAudioMs + " ms after first sentence queued; Gemma EOS already reached=" + gemmaEosAlreadyReached + "."));
++                    }
++
+                     int chunkIndex = args.Sequence;
+                     int knownTotal = Math.Max(chunkIndex + 1, run.ExpectedChunks);
+                     MobileAudioFrameContext frameContext = new MobileAudioFrameContext
+@@ -3263,10 +3277,11 @@
+             }
+ 
+             await run.Pipeline.CompleteInputAsync().ConfigureAwait(false);
++            run.ExpectedChunks = Math.Max(run.ExpectedChunks, run.Pipeline.AudioChunksProduced);
+             if (run.ExpectedChunks > 0 && run.ChunksSent != run.ExpectedChunks)
+             {
+                 throw new InvalidOperationException(
+-                    "Live Android voice completed with " + run.ChunksSent + " sent WAV(s) for " + run.ExpectedChunks + " streamed speech chunk(s).");
++                    "Live Android voice completed with " + run.ChunksSent + " sent audio segment(s) for " + run.ExpectedChunks + " generated audio segment(s).");
+             }
+             if (run.Stream.AudioSession != null && !run.Stream.CancellationToken.IsCancellationRequested)
+             {
+@@ -3331,6 +3346,9 @@
+         private readonly List<string> _deferredTextChunks = new List<string>();
+         private bool _firstSpeechChunkAccepted;
+         private bool _transportReleaseStarted;
++        private readonly System.Diagnostics.Stopwatch _firstSentenceTtsTimer = new System.Diagnostics.Stopwatch();
++        private bool _gemmaEosReached;
++        private bool _firstAudioReadyLogged;
+ 
+         public bool HadTargets { get; set; }
+         public int ChunksSent { get; set; }
+@@ -3385,11 +3403,36 @@
+ 
+             if (startNow)
+             {
++                lock (_transportGate)
++                {
++                    _firstSentenceTtsTimer.Restart();
++                    _gemmaEosReached = false;
++                    _firstAudioReadyLogged = false;
++                }
+                 Pipeline.EnqueueTextChunk(cleaned);
+             }
+             return startNow;
+         }
+ 
++        public void MarkGemmaEos()
++        {
++            lock (_transportGate)
++            {
++                _gemmaEosReached = true;
++            }
++        }
++
++        public bool TryMarkFirstAudioReady(out long elapsedMilliseconds, out bool gemmaEosAlreadyReached)
++        {
++            lock (_transportGate)
++            {
++                elapsedMilliseconds = _firstSentenceTtsTimer.IsRunning ? _firstSentenceTtsTimer.ElapsedMilliseconds : -1L;
++                gemmaEosAlreadyReached = _gemmaEosReached;
++                if (_firstAudioReadyLogged) return false;
++                _firstAudioReadyLogged = true;
++                return true;
++            }
++        }
+ 
+         public List<string> DrainDeferredTextChunks()
+         {
+--- a/src/Wds.SixStars.Ui/ViewModels/MainViewModel.cs
++++ b/src/Wds.SixStars.Ui/ViewModels/MainViewModel.cs
+@@ -1502,7 +1502,11 @@
+             DefaultLanguage = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_LANGUAGE")
+                 ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_LANGUAGE")
+                 ?? _appConfig.WebSocketTTS.DefaultLanguage,
+-            ResponseFormat = "wav",
++            ResponseFormat = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_RESPONSE_FORMAT")
++                ?? _appConfig.WebSocketTTS.ResponseFormat
++                ?? "pcm",
++            PcmFirstChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_FIRST_CHUNK_MS"), _appConfig.WebSocketTTS.PcmFirstChunkMilliseconds),
++            PcmChunkMilliseconds = GetIntSetting(Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_PCM_CHUNK_MS"), _appConfig.WebSocketTTS.PcmChunkMilliseconds),
+             TaskType = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_TASK_TYPE")
+                 ?? Environment.GetEnvironmentVariable("SIX_STARS_WEBSOCKET_TTS_TASK_TYPE")
+                 ?? _appConfig.WebSocketTTS.TaskType,
+--- a/src/Wds.SixStars.Ui/appsettings.json
++++ b/src/Wds.SixStars.Ui/appsettings.json
+@@ -97,7 +97,9 @@
+     "HttpBaseUrl": "http://localhost:8101",
+     "Model": "qwen3-tts-base",
+     "DefaultLanguage": "English",
+-    "ResponseFormat": "wav",
++    "ResponseFormat": "pcm",
++    "PcmFirstChunkMilliseconds": 480,
++    "PcmChunkMilliseconds": 960,
+     "TaskType": "VoiceClone",
+     "MaxWordsPerChunk": 30,
+     "MaxSentencesPerChunk": 2,
+--- /dev/null
++++ a/ai_updates/NATIVE-QWENTTS-PCM-FIRST-AUDIO-LATENCY.md
+@@ -0,0 +1,33 @@
++# Native qwentts.cpp PCM first-audio latency update
++
++## What changed
++
++- The local qwentts.cpp adapter now requests `response_format=pcm` by default.
++- qwentts.cpp streams raw 24 kHz mono PCM while it is generating. The .NET adapter groups the stream into a 480 ms first window and 960 ms later windows, wraps each window in a normal PCM16 WAV, and feeds the existing desktop/Android playback pipeline immediately.
++- Existing consumers therefore remain WAV-compatible, but first playback no longer waits for the entire first sentence to synthesize.
++- The Android player no longer adds its 70 ms final hardware-drain guard between windows of an active desktop stream.
++- The mobile live-voice pipeline now validates the final number of generated audio windows rather than assuming one WAV equals one LLM sentence.
++
++## Timing diagnostics
++
++The qwentts.cpp HTTP adapter writes diagnostics for PCM POST begin, response headers, first PCM bytes, first playable PCM/WAV window, and stream completion.
++
++The Android bridge also records `mobile.first-audio-ready` and a visible `First Qwen audio ready` journal entry. It reports milliseconds from the first punctuation-complete sentence being queued to Qwen and whether Gemma had already reached EOS. This directly verifies whether playable speech overlaps foreground LLM generation on a real run.
++
++## Configuration
++
++Defaults:
++
++```json
++"ResponseFormat": "pcm",
++"PcmFirstChunkMilliseconds": 480,
++"PcmChunkMilliseconds": 960
++```
++
++Environment overrides:
++
++- `SIX_STARS_QWENTTS_RESPONSE_FORMAT=pcm|wav`
++- `SIX_STARS_QWENTTS_PCM_FIRST_CHUNK_MS=480`
++- `SIX_STARS_QWENTTS_PCM_CHUNK_MS=960`
++
++`wav` remains as a compatibility fallback.

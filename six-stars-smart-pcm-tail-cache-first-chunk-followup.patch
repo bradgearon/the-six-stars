@@ -1,0 +1,25 @@
+# Smart PCM tail/cache/first-chunk follow-up — reference diff
+#
+# The included Apply-SmartPcmTailCacheFirstChunk.ps1 is the authoritative applier because it validates
+# the exact SmartPcmPlaybackWriter-rebuild source shape before changing anything. Recent builds moved
+# these methods enough that hard-coded hunk line numbers would be less safe than validated replacement.
+#
+# PcmSpeechActivityAnalyzer.java
+#   - clamp PAD_BEFORE/PAD_AFTER markers to rms.length * FRAME_MS
+#
+# SmartPcmPlaybackWriter.java
+#   + firstInputObservedElapsedMs / firstInputAudioMs
+#   + actual writer start -> first write(PcmChunk) measurement
+#   + firstChunkGenerationRate() / effectiveGenerationRate()
+#   * calculateTargetMs() uses the first-chunk signal immediately
+#   * completion learning/result generationRate use effective rate
+#   * startup debug adds firstChunkWait, firstChunkRate, packetRate
+#   * genuinely quiet empty lip analysis closes the mouth
+#   * every live lip marker is hard-clamped to batchEndFrame
+#
+# PhoneVoicePlaybackService.java
+#   * enqueuePreparedPrefix coalesces same-format cached WAV fragments
+#   * no inserted silence; one local WAV / one playback lifecycle
+#   * original completion callbacks are preserved
+#
+# See SMART-PCM-TAIL-CACHE-FIRST-CHUNK-NOTES.md.

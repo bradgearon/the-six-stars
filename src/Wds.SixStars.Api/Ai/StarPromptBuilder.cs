@@ -1041,6 +1041,7 @@ namespace Wds.SixStars.Api.Ai
 
             task.AppendLine();
             task.AppendLine("GIRLFRIEND PROPOSAL DECISION MODE");
+            task.AppendLine("This is the final spoken follow-up to an acknowledgement already delivered. Supply non-empty spokenText with the actual decision, never another thinking/waiting phrase. Do not suppress speech or return only relationship metadata.");
             task.AppendLine("The Last Cat has just asked " + profile.DisplayName + " to be his girlfriend. Answer directly in " + profile.DisplayName + "'s voice.");
             task.AppendLine("Decision flag from deterministic relationship gate: " + (string.IsNullOrWhiteSpace(decision) ? "unknown" : decision) + ".");
             task.AppendLine("Existing exclusive girlfriend: " + (string.IsNullOrWhiteSpace(existing) ? "none" : existing) + ".");

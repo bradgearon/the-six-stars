@@ -13,7 +13,7 @@ namespace Wds.SixStars.Ui.Audio;
 /// the reusable WhisperSpeechInputPipeline. Unity does not use this class; Unity pushes audio
 /// through UnityMicrophoneSpeechAdapter instead.
 ///
-/// Windows can invalidate a WaveIn handle while the computer sleeps. The old WaveInEvent may
+/// Windows can invalidate a WaveIn handle while the computer sleeps. The old WaveIn may
 /// remain non-null after resume while never producing another DataAvailable event. This adapter
 /// remembers whether capture was requested, watches the audio-buffer heartbeat, and rebuilds the
 /// complete NAudio capture graph after resume or an unexpected device stop.
@@ -30,7 +30,7 @@ public sealed class NaudioMicrophoneSpeechSource : IDisposable
     private readonly PcmAudioFormat _format = PcmAudioFormat.Mono16Khz();
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly object _recoverySync = new();
-    private WaveInEvent? _waveIn;
+    private WaveIn? _waveIn;
     private Channel<byte[]>? _channel;
     private CancellationTokenSource? _cts;
     private Task? _pumpTask;
@@ -100,7 +100,7 @@ public sealed class NaudioMicrophoneSpeechSource : IDisposable
     }
 
     /// <summary>
-    /// Recreates the WaveIn device after Windows resumes. A stale WaveInEvent often remains
+    /// Recreates the WaveIn device after Windows resumes. A stale WaveIn often remains
     /// non-null after sleep, so merely calling StartAsync would incorrectly report that capture
     /// is already running.
     /// </summary>
@@ -203,8 +203,9 @@ public sealed class NaudioMicrophoneSpeechSource : IDisposable
             SingleWriter = false
         });
 
-        WaveInEvent wave = new WaveInEvent
+        WaveIn wave = new WaveIn
         {
+            DeviceNumber = -1,
             WaveFormat = new WaveFormat(_format.SampleRateHz, _format.BitsPerSample, _format.Channels),
             BufferMilliseconds = 100,
             NumberOfBuffers = 3
@@ -236,7 +237,7 @@ public sealed class NaudioMicrophoneSpeechSource : IDisposable
 
     private async Task StopCaptureCoreAsync()
     {
-        WaveInEvent? wave = _waveIn;
+        WaveIn? wave = _waveIn;
         Interlocked.Exchange(ref _intentionalStop, 1);
         try
         {

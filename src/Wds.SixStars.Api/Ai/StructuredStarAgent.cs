@@ -2992,6 +2992,7 @@ namespace Wds.SixStars.Api.Ai
             response.GirlfriendHistoryUpdates.AddRange(model.GirlfriendHistoryUpdates);
             response.PetNamesPlayerUsesForStar.AddRange(model.PetNamesPlayerUsesForStar);
             response.PetNamesStarUsesForPlayer.AddRange(model.PetNamesStarUsesForPlayer);
+            response.BoyfriendPerformanceVector.AddRange(NormalizeGirlfriendVector(model.BoyfriendPerformanceVector, 8));
             response.GirlfriendNeedsMetSummary = CleanOneLine(model.GirlfriendNeedsMetSummary, 420);
             response.GirlfriendNeedsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12));
             response.GirlfriendWantsMetVector.AddRange(NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12));
@@ -3006,6 +3007,7 @@ namespace Wds.SixStars.Api.Ai
                 // Last Cat's committed girlfriend. General flirting, attraction, pet names, and
                 // pursuit remain available through the ordinary relationship system.
                 response.GirlfriendHistoryUpdates.Clear();
+                response.BoyfriendPerformanceVector.Clear();
                 response.GirlfriendNeedsMetSummary = string.Empty;
                 response.GirlfriendNeedsMetVector.Clear();
                 response.GirlfriendWantsMetVector.Clear();
@@ -3739,6 +3741,7 @@ namespace Wds.SixStars.Api.Ai
             model.GirlfriendHistoryUpdates ??= new List<string>();
             model.PetNamesPlayerUsesForStar ??= new List<string>();
             model.PetNamesStarUsesForPlayer ??= new List<string>();
+            model.BoyfriendPerformanceVector = NormalizeGirlfriendVector(model.BoyfriendPerformanceVector, 8);
             model.GirlfriendNeedsMetVector = NormalizeGirlfriendVector(model.GirlfriendNeedsMetVector, 12);
             model.GirlfriendWantsMetVector = NormalizeGirlfriendVector(model.GirlfriendWantsMetVector, 12);
             model.GirlfriendCoupleActivityVector = NormalizeGirlfriendCoupleActivityVectorText(model.GirlfriendCoupleActivityVector, 16);

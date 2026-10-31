@@ -4,6 +4,8 @@ namespace Wds.SixStars.Ui.Configuration
 {
     public sealed class AppConfiguration
     {
+        public BenaveilVoiceProcessingConfig BenaveilVoiceProcessing { get; set; } = new BenaveilVoiceProcessingConfig();
+        public Wds.SixStars.Api.Music.ResonatorMidiOptions ResonatorMidi { get; set; } = new Wds.SixStars.Api.Music.ResonatorMidiOptions();
         public LocalModelsConfig LocalModels { get; set; } = new LocalModelsConfig();
         public OpenWakeWordConfig OpenWakeWord { get; set; } = new OpenWakeWordConfig();
         public VoiceInputConfig VoiceInput { get; set; } = new VoiceInputConfig();
@@ -405,6 +407,10 @@ namespace Wds.SixStars.Ui.Configuration
 
     public sealed class VoiceOutputConfig
     {
+        public bool EnableMicrophoneOutput { get; set; } = false;
+        public bool AuthoringMode { get; set; } = false;
+        // Optional render endpoint ID for a virtual mixer/cable. Never a capture endpoint ID.
+        public string MicrophoneOutputDeviceId { get; set; } = string.Empty;
         /// <summary>
         /// Master switch for writing generated Star voice WAVs to disk. Set false to play
         /// generated audio without archiving every spoken line. Override with
@@ -476,5 +482,18 @@ namespace Wds.SixStars.Ui.Configuration
         public string ExchangeLogDirectory { get; set; } = "logs/llm-exchanges";
         public int ExchangeLogMaxTextChars { get; set; } = 2000000;
         public string PayloadShape { get; set; } = "OpenAiImageUrl";
+    }
+}
+
+namespace Wds.SixStars.Ui.Configuration
+{
+    public sealed class BenaveilVoiceProcessingConfig
+    {
+        public bool Disabled { get; set; } = false;
+        public string PluginPath { get; set; } = @"C:\Program Files\Common Files\VST3\iZotope\VocalSynth 2.vst3";
+        public string PresetPath { get; set; } = @"Content\VocalSynth\Benaveil.vstpreset";
+        public int SampleRate { get; set; } = 48000;
+        public int BlockSize { get; set; } = 1024;
+        public double MaxTailSeconds { get; set; } = 5;
     }
 }

@@ -1,0 +1,5 @@
+Extract into the solution root, replace files, rebuild and restart the desktop host. No Android reinstall needed.
+
+Bars is now a composition target. Valid shorter/longer melodies play without a length-repair request. Total duration rounds UP to the next whole measure by appending rests; no notes are cut, moved or stretched. Already complete measures are unchanged, including on repeated render. Both the composer and MIDI adapter use this behavior, and phone WAV rendering retains the final rests. Existing notation syntax, header tempo/meter validation and rendering resource limits remain. Instruction documents are not overwritten.
+
+Tests cover short/long melodies, 4/4, 6/8, 3/16, unchanged note events, idempotent padding, one-attempt generation and trailing rest preservation in PCM WAV.

@@ -1,0 +1,27 @@
+@host = http://localhost:5000
+
+### Melody -> MIDI
+POST {{host}}/midi
+Content-Type: application/json
+
+{
+  "notation": "tempo=120 4/4 | A C E D | C B A _ |",
+  "fileName": "melody.mid"
+}
+
+### Drums -> MIDI using profile note map
+POST {{host}}/midi
+Content-Type: application/json
+
+{
+  "notation": "tempo=120 4/4 mode=drums | [C A#] E, E, D E, E, |",
+  "fileName": "drums.mid"
+}
+
+### Parse/inspect
+POST {{host}}/parse
+Content-Type: application/json
+
+{
+  "notation": "tempo=96 4/4 | C#3 E3 F#3 B3 |"
+}

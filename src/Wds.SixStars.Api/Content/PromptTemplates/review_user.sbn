@@ -26,7 +26,7 @@ QUESTION STATE BEFORE THIS TURN:
 
 {{ end }}
 Return compact background review JSON using only primitive fields and arrays of primitive strings/numbers/booleans; never return nested JSON objects. 
-Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, {{ if data.isTenTurn }}tenTurnConversationSummary, {{ end }}{{ if data.isHundredTurn }}hundredTurnConversationSummary, {{ end }}shortTermMemoryItems, isSexting, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector{{ if data.isGirlfriend }}, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector{{ end }}, and requestToShowBoobs.
+Include emotionalEffectVector, negativeEmotionVector, emotionAnimation, informationNeedsVector, {{ if data.isTenTurn }}tenTurnConversationSummary, {{ end }}{{ if data.isHundredTurn }}hundredTurnConversationSummary, {{ end }}shortTermMemoryItems, isSexting, thingsLearnedOrSuggestedByPlayer, questionsFromLastCatVector, questionsToLastCatVector, questionResolutionVector{{ if data.isGirlfriend }}, boyfriendPerformanceVector, girlfriendNeedsMetSummary, girlfriendNeedsMetVector, girlfriendWantsMetVector, girlfriendCoupleActivitySummary, girlfriendCoupleActivityVector{{ end }}, and requestToShowBoobs.
 Use importantPlayerQuotes only for rare, genuinely significant exact player wording under the system rule; otherwise return [] for it. 
 Do not include emotionScores. Keep updates selective. 
 Set tenTurnConversationSummary="" except on a ten-turn checkpoint and hundredTurnConversationSummary="" except on a hundred-turn checkpoint. 

@@ -28,6 +28,8 @@ android {
 
 
 dependencies {
+    // Explicit GIF frames keep idle artwork and lip anchors on one frame index.
+    implementation("com.github.bumptech.glide:gifdecoder:4.16.0")
     implementation("androidx.activity:activity:1.12.4")
     implementation("androidx.core:core:1.17.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.8.7")

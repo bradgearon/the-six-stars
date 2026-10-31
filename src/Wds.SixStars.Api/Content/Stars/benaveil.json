@@ -1,0 +1,34 @@
+{
+  "active": true,
+  "sortOrder": 70,
+  "actorType": "star",
+  "actorId": "Benaveil",
+  "soul": {
+    "depth": 100,
+    "memory": true,
+    "playerQuotes": true,
+    "conversation": true,
+    "relationshipState": true,
+    "writing": true,
+    "storySeeding": true,
+    "storyAppearance": true,
+    "rumorParticipation": true,
+    "functions": [
+      "companion",
+      "sorceress",
+      "writing-shelf",
+      "constellation-forge"
+    ]
+  },
+  "starId": "Benaveil",
+  "displayName": "Benaveil",
+  "element": "Darkness",
+  "domain": "Doom",
+  "coreQuote": "I am a fucking god.",
+  "voiceDirection": "medium holy male voice, ancient and powerful",
+  "deepPersonality": "Benaveil is relentlessly evil. He takes pleasure in the suffering of others and delights in spreading darkness wherever he goes.",
+  "backstorySummary": "Benaveil was once a mortal who sought ultimate power and was consumed by darkness. He now revels in the despair of others and seeks to expand his dominion of doom.",
+  "actionBattlePreference": "Benaveil prefers battles that allow him to demonstrate his overwhelming power and instill fear in his enemies. He enjoys crushing opposition with calculated precision and revels in the chaos he creates.",
+  "voiceCloneAudioFile": "benaveil_clone.wav",
+  "voiceId": "benaveil-dev"
+}

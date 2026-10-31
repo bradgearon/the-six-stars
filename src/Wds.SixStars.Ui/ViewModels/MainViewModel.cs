@@ -70,6 +70,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly StarVoiceResponsePipeline? _voiceResponsePipeline;
     private readonly StreamingStarVoiceResponsePipeline? _streamingVoiceResponsePipeline;
     private readonly IWavePlaybackEndpoint _playbackEndpoint;
+    private readonly SpeakAsStarPlaybackEndpoint _speakAsStarPlaybackEndpoint;
+    private readonly BenaveilVoiceProcessor _benaveilVoiceProcessor;
+    private string _benaveilVoiceProcessingStatus = "Benaveil effect has not loaded.";
     private readonly IStarVoiceGenerator? _storyAutoplayPrefetchVoiceGenerator;
     private readonly IStreamingVoiceGenerator? _storyAutoplayPrefetchStreamingGenerator;
     private readonly NaudioMicrophoneSpeechSource _microphoneSpeechSource;
@@ -300,7 +303,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             ? "[TTS] Using hosted Alibaba Qwen3-TTS voice cloning."
             : $"[TTS] Using direct qwentts.cpp HTTP streaming adapter: {_useStreamingTts}");
 
-        IWavePlaybackEndpoint playbackEndpoint = CreatePlaybackEndpoint();
+        _benaveilVoiceProcessor = new BenaveilVoiceProcessor(_appConfig.BenaveilVoiceProcessing);
+        _benaveilVoiceProcessor.StatusChanged += message => OnUiThread(() => BenaveilVoiceProcessingStatus = message);
+        _speakAsStarPlaybackEndpoint = new SpeakAsStarPlaybackEndpoint(CreatePlaybackEndpoint());
+        IWavePlaybackEndpoint playbackEndpoint = _speakAsStarPlaybackEndpoint;
+        _benaveilVoiceProcessor.ApplyDisabled(_appConfig.BenaveilVoiceProcessing.Disabled);
         _playbackEndpoint = playbackEndpoint;
 
         if (_useStreamingTts)
@@ -757,6 +764,82 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _recordButtonText;
         set => SetProperty(ref _recordButtonText, value);
+    }
+
+    public bool DisableBenaveilVoiceProcessing
+    {
+        get => _appConfig.BenaveilVoiceProcessing.Disabled;
+        set
+        {
+            try
+            {
+                string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+                JsonObject root = File.Exists(path)
+                    ? JsonNode.Parse(File.ReadAllText(path), documentOptions: new JsonDocumentOptions
+                        { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject()
+                    : new JsonObject();
+                if (root["BenaveilVoiceProcessing"] is not JsonObject section)
+                {
+                    section = new JsonObject();
+                    root["BenaveilVoiceProcessing"] = section;
+                }
+                section["Disabled"] = value;
+                string temporary = path + ".tmp";
+                File.WriteAllText(temporary, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                File.Move(temporary, path, overwrite: true);
+                _appConfig.BenaveilVoiceProcessing.Disabled = value;
+                _benaveilVoiceProcessor.ApplyDisabled(value);
+            }
+            catch (Exception ex) { Status = "Could not save Benaveil processing setting: " + ex.Message; }
+            OnPropertyChanged(nameof(DisableBenaveilVoiceProcessing));
+        }
+    }
+
+    public string BenaveilVoiceProcessingStatus
+    {
+        get => _benaveilVoiceProcessingStatus;
+        private set => SetProperty(ref _benaveilVoiceProcessingStatus, value);
+    }
+
+    public bool EnableMicrophoneOutput
+    {
+        get => _appConfig.VoiceOutput.EnableMicrophoneOutput;
+        set => SaveSpeakAsStarOption(nameof(EnableMicrophoneOutput), value);
+    }
+
+    public bool AuthoringMode
+    {
+        get => _appConfig.VoiceOutput.AuthoringMode;
+        set => SaveSpeakAsStarOption(nameof(AuthoringMode), value);
+    }
+
+    private void SaveSpeakAsStarOption(string name, bool value)
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+            JsonObject root = File.Exists(path)
+                ? JsonNode.Parse(File.ReadAllText(path), documentOptions: new JsonDocumentOptions
+                    { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true })!.AsObject()
+                : new JsonObject();
+            JsonObject? output = root["VoiceOutput"] as JsonObject;
+            if (output == null)
+            {
+                output = new JsonObject();
+                root["VoiceOutput"] = output;
+            }
+            output[name] = value;
+            string temporary = path + ".tmp";
+            File.WriteAllText(temporary, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporary, path, overwrite: true);
+            if (name == nameof(EnableMicrophoneOutput)) _appConfig.VoiceOutput.EnableMicrophoneOutput = value;
+            else _appConfig.VoiceOutput.AuthoringMode = value;
+        }
+        catch (Exception ex)
+        {
+            Status = "Could not save Speak as Star setting: " + ex.Message;
+        }
+        OnPropertyChanged(name);
     }
 
     public string SpeakAsStarRecordButtonText
@@ -1393,7 +1476,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     private IStarVoiceGenerator CreateVoiceGenerator()
     {
         System.Diagnostics.Debug.WriteLine("[TTS] Streaming TTS is disabled; using the mock non-streaming fallback.");
-        return new MockStarVoiceGenerator();
+        return new BenaveilProcessingStandardVoiceGenerator(new MockStarVoiceGenerator(), _benaveilVoiceProcessor);
     }
 
     private IWavePlaybackEndpoint CreatePlaybackEndpoint()
@@ -1472,6 +1555,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private IStreamingVoiceGenerator CreateStreamingVoiceGenerator(bool preferSmoothDesktopWav = false)
+        => new BenaveilProcessingVoiceGenerator(CreateRawStreamingVoiceGenerator(preferSmoothDesktopWav), _benaveilVoiceProcessor);
+
+    private IStreamingVoiceGenerator CreateRawStreamingVoiceGenerator(bool preferSmoothDesktopWav)
     {
         if (IsHostedTtsEnabled())
         {
@@ -1504,10 +1590,10 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         else
         {
-            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop Smart DirectSound mode: requesting rolling PCM from qwentts.cpp.");
+            System.Diagnostics.Debug.WriteLine("[Streaming TTS] Desktop adaptive PCM mode: requesting rolling PCM from qwentts.cpp.");
         }
 
-        return CreateLocalStreamingVoiceGenerator(preferSmoothDesktopWav ? "wav" : null);
+        return CreateRawLocalStreamingVoiceGenerator(preferSmoothDesktopWav ? "wav" : null);
     }
 
     /// <summary>
@@ -1516,6 +1602,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
     /// local-TTS bridge calls this so phone TTS can remain entirely on the desktop GPU.
     /// </summary>
     private IStreamingVoiceGenerator CreateLocalStreamingVoiceGenerator(string? responseFormatOverride = null)
+        => new BenaveilProcessingVoiceGenerator(CreateRawLocalStreamingVoiceGenerator(responseFormatOverride), _benaveilVoiceProcessor);
+
+    private IStreamingVoiceGenerator CreateRawLocalStreamingVoiceGenerator(string? responseFormatOverride)
     {
         string? httpBaseUrl = Environment.GetEnvironmentVariable("SIX_STARS_QWENTTS_HTTP_URL")
             ?? _appConfig.QwenTTS.HttpBaseUrl;
@@ -1868,7 +1957,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task HandleGeneratedGirlfriendProposalResponseAsync(StarInteractionResponse response)
     {
-        CancellationToken token = _operationController.CurrentToken;
+        CancellationToken token = CancellationToken.None;
         try
         {
             if (IsMobileBridgeStoryResponse(response))
@@ -1978,6 +2067,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         finally
         {
+            _runtime.CompleteGirlfriendProposalThinking(response);
             OnUiThread(() =>
             {
                 IsProcessingRuntime = false;
@@ -2002,7 +2092,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
 
             if (!storyContinued && completedNormally && _voiceConversationLoopActive && !cancellationToken.IsCancellationRequested)
             {
-                if (storyThinkingPlaceholder)
+                if (storyThinkingPlaceholder || response.UnityEvents.Any(x => x.Type == "GirlfriendProposalStarted"))
                 {
                     OnUiThread(() => Status = "Waiting for generated story to finish thinking before listening again...");
                 }
@@ -2951,9 +3041,16 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 Status = "Speaking " + sourceLabel + " directly in " + normalizedStarId + "'s voice...";
             });
 
+            using SpeakAsStarPlaybackEndpoint.OutputScope outputScope =
+                _speakAsStarPlaybackEndpoint.Begin(
+                    normalizedStarId, text, EnableMicrophoneOutput, AuthoringMode,
+                    _appConfig.VoiceOutput.MicrophoneOutputDeviceId, cancellationToken);
+
             DesktopVoiceOutputService.Result result = await _services.VoiceOutput
                 .SpeakAsync(DefaultSessionId, response, cancellationToken)
                 .ConfigureAwait(false);
+
+            string? authoredPath = await outputScope.FinishAsync(cancellationToken).ConfigureAwait(false);
 
             OnUiThread(() =>
             {
@@ -2961,7 +3058,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 CancelStopButtonText = "Cancel";
                 Status = !result.Configured
                     ? "No voice pipeline is configured for direct Speak as Star playback."
-                    : "Direct Speak as Star playback complete for " + normalizedStarId + ".";
+                    : "Direct Speak as Star playback complete for " + normalizedStarId + "."
+                        + (authoredPath == null ? "" : " Saved: " + authoredPath);
             });
         }
         catch (OperationCanceledException)
@@ -4494,6 +4592,11 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 System.Diagnostics.Debug.WriteLine($"[Config] appsettings.json not found at {configPath}. Using defaults/local overrides.");
             }
 
+            // These two UI-owned switches persist in appsettings.json, even when local
+            // configuration contains an older copy of their values.
+            JsonNode? savedBenaveilDisabled = mergedRoot?["BenaveilVoiceProcessing"]?["Disabled"]?.DeepClone();
+            JsonNode? savedMicrophoneOutput = mergedRoot?["VoiceOutput"]?["EnableMicrophoneOutput"]?.DeepClone();
+            JsonNode? savedAuthoringMode = mergedRoot?["VoiceOutput"]?["AuthoringMode"]?.DeepClone();
             if (File.Exists(localConfigPath))
             {
                 JsonNode? localRoot = JsonNode.Parse(File.ReadAllText(localConfigPath));
@@ -4506,6 +4609,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
                 return new AppConfiguration();
             }
 
+            if (mergedRoot["VoiceOutput"] is JsonObject voiceOutput)
+            {
+                if (savedMicrophoneOutput != null) voiceOutput["EnableMicrophoneOutput"] = savedMicrophoneOutput;
+                if (savedAuthoringMode != null) voiceOutput["AuthoringMode"] = savedAuthoringMode;
+            }
+            if (savedBenaveilDisabled != null && mergedRoot["BenaveilVoiceProcessing"] is JsonObject benaveilOutput)
+                benaveilOutput["Disabled"] = savedBenaveilDisabled;
             AppConfiguration? config = mergedRoot.Deserialize<AppConfiguration>(jsonOptions);
             return config ?? new AppConfiguration();
         }
@@ -4718,6 +4828,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IDisposable
             _xOAuth2AuthorizationService.Dispose();
             _runtime.StopDailyStateBackgroundUpdates();
             _operationController.CancelAllRuntimeOperations("App shutting down.");
+            _benaveilVoiceProcessor.Dispose();
             _services.Dispose();
             _preparedSpeechGenerationGate.Dispose();
             _operationController.Dispose();

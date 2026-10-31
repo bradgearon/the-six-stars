@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="3.1.1-preview.1" />
+    <PackageReference Include="NAudio.Dmo" Version="3.1.1-preview.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="3.1.1-preview.1" />
+    <PackageReference Include="NAudio.WinMM" Version="3.1.1-preview.1" />
+    <ProjectReference Include="../../src/Wds.SixStars.Api/Wds.SixStars.Api.csproj" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Audio/SmartDirectSoundPcmPlaybackSession.cs" Link="SmartDirectSoundPcmPlaybackSession.cs" />
+    <Compile Include="../../src/Wds.SixStars.Ui/Audio/DirectSoundWaveFormatHelper.cs" Link="DirectSoundWaveFormatHelper.cs" />
+  </ItemGroup>
+</Project>

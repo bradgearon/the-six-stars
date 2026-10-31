@@ -10,8 +10,8 @@ namespace Wds.SixStars.Ui.Audio;
 
 /// <summary>
 /// Standard desktop WAV playback endpoint. Unity will provide its own endpoint later, but WPF uses NAudio.
-/// Streaming Star speech uses the smart DirectSound rolling-PCM session so one DirectSound device
-/// stays open for the whole response with adaptive prebuffer/refill behavior. One-shot playback
+/// Streaming Star speech uses one rolling-PCM session with the configured backend
+/// for the whole response, retaining adaptive prebuffer/refill behavior. One-shot playback
 /// still honors SIX_STARS_AUDIO_BACKEND for compatibility.
 /// </summary>
 public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOutputKeepAliveEndpoint, IStreamingWavePlaybackEndpoint
@@ -29,9 +29,10 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
 
     public IStreamingWavePlaybackSession CreateStreamingSession(string reason)
     {
-        // Deliberately DirectSound-only: this mirrors Android SmartPcmPlaybackWriter semantics
-        // rather than reopening/alternating Windows audio backends while a response is playing.
-        return new SmartDirectSoundPcmPlaybackSession(_smartPcmProfile, reason);
+        string backend = NormalizeBackend(Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND")
+            ?? _configuredBackend ?? "wasapi");
+        if (backend == "auto") backend = "wasapi";
+        return new SmartDirectSoundPcmPlaybackSession(_smartPcmProfile, reason, backend);
     }
 
     public IDisposable StartOutputKeepAlive(string reason, CancellationToken cancellationToken)
@@ -95,7 +96,7 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
             System.Diagnostics.Debug.WriteLine($"[NaudioPlayback] WARNING: Could not read WAV header: {ex.Message}");
         }
 
-        string backend = NormalizeBackend(_configuredBackend ?? Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND") ?? "directsound");
+        string backend = NormalizeBackend(Environment.GetEnvironmentVariable("SIX_STARS_AUDIO_BACKEND") ?? _configuredBackend ?? "wasapi");
         System.Diagnostics.Debug.WriteLine("[NaudioPlayback] Requested backend: " + backend);
 
         if (backend == "wasapi")
@@ -171,7 +172,7 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
                         await PlayWithWasapiAsync(wav, mimeType, cancellationToken).ConfigureAwait(false);
                         break;
                     case "waveout":
-                        await PlayWithWaveOutEventAsync(wav, mimeType, cancellationToken).ConfigureAwait(false);
+                        await PlayWithWaveOutAsync(wav, mimeType, cancellationToken).ConfigureAwait(false);
                         break;
                     case "directsound":
                         await PlayWithDirectSoundAsync(wav, mimeType, cancellationToken).ConfigureAwait(false);
@@ -217,10 +218,9 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
         using WaveStream reader = CreateReader(memoryStream, mimeType);
         byte[] pcm = ReadAllPcmBytes(reader);
         WaveFormat directSoundFormat = DirectSoundWaveFormatHelper.Canonicalize(reader.WaveFormat);
-        BufferedWaveProvider provider = new BufferedWaveProvider(directSoundFormat)
+        BufferedWaveProvider provider = new BufferedWaveProvider(directSoundFormat, reader.TotalTime + TimeSpan.FromSeconds(1))
         {
             DiscardOnBufferOverflow = false,
-            BufferDuration = reader.TotalTime + TimeSpan.FromSeconds(1),
             ReadFully = false
         };
         provider.AddSamples(pcm, 0, pcm.Length);
@@ -229,14 +229,14 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
         await PlayInitializedOutputAsync(output, provider, cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task PlayWithWaveOutEventAsync(byte[] wav, string? mimeType, CancellationToken cancellationToken)
+    private static async Task PlayWithWaveOutAsync(byte[] wav, string? mimeType, CancellationToken cancellationToken)
     {
         using MemoryStream memoryStream = new MemoryStream(wav, writable: false);
         using WaveStream reader = CreateReader(memoryStream, mimeType);
-        using WaveOutEvent output = new WaveOutEvent
+        using WaveOut output = new WaveOut
         {
             DeviceNumber = -1,
-            DesiredLatency = 100,
+            BufferMilliseconds = 34,
             NumberOfBuffers = 3
         };
         await PlayInitializedOutputAsync(output, reader, cancellationToken).ConfigureAwait(false);
@@ -352,10 +352,10 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
                 return new OutputPlayerBundle(new DirectSoundOut(latencyMs));
 
             case "waveout":
-                return new OutputPlayerBundle(new WaveOutEvent
+                return new OutputPlayerBundle(new WaveOut
                 {
                     DeviceNumber = -1,
-                    DesiredLatency = latencyMs,
+                    BufferMilliseconds = Math.Max(1, (latencyMs + 2) / 3),
                     NumberOfBuffers = 3
                 });
 
@@ -507,10 +507,10 @@ public sealed class NaudioWavePlaybackEndpoint : IWavePlaybackEndpoint, IAudioOu
 
         public WaveFormat WaveFormat { get; }
 
-        public int Read(byte[] buffer, int offset, int count)
+        public int Read(Span<byte> buffer)
         {
-            Array.Clear(buffer, offset, count);
-            return count;
+            buffer.Clear();
+            return buffer.Length;
         }
     }
 

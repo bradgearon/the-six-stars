@@ -1,3 +1,4 @@
+using Wds.SixStars.Ui.Audio;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -149,7 +150,7 @@ public sealed partial class MainViewModel
             _appConfig.ConversationArchive.PathPrefix,
             _appConfig.ConversationArchive.Enabled,
             _runtime,
-            FirstNonEmptyForMobile(Environment.GetEnvironmentVariable("SIX_STARS_WORLD_EVENT_API_KEY"), _appConfig.WorldEvents.ApiKey));
+            FirstNonEmptyForMobile(Environment.GetEnvironmentVariable("SIX_STARS_WORLD_EVENT_API_KEY"), _appConfig.WorldEvents.ApiKey), ProcessMobileMusicAsync, TranscribeMobileMusicAsync, ProcessMobileMusicStreamAsync);
 
         MobileBridgeEnabled = true;
         MobileBridgeStatus = "Android bridge running. HTTP/WebSocket " + MobileBridgeUrl + "; phone audio socket " + MobileBridgeAudioUrl + ". Archive: " + ConversationArchiveUrl + ". Use the HTTP base URL in the Android app.";
@@ -1022,6 +1023,7 @@ public sealed partial class MainViewModel
                         IsGirlfriend = reset.IsGirlfriend,
                         GirlfriendCuteModeEnabled = reset.GirlfriendCuteModeEnabled,
                         GirlfriendCuteModeActive = reset.GirlfriendCuteModeEnabled && (reset.GirlfriendHourlyState?.CuteModeActive ?? false),
+                        BoyfriendGradeCard = BoyfriendGrades.Build(reset, DateTimeOffset.UtcNow),
                         GirlfriendCuteModeSignature = reset.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                         PendingWritingCount = 0,
                         PersistedWritingCount = 0,
@@ -1288,6 +1290,7 @@ public sealed partial class MainViewModel
                 IsGirlfriend = stateAfterResponse.IsGirlfriend,
                 GirlfriendCuteModeEnabled = stateAfterResponse.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = stateAfterResponse.GirlfriendCuteModeEnabled && (stateAfterResponse.GirlfriendHourlyState?.CuteModeActive ?? false),
+                BoyfriendGradeCard = BoyfriendGrades.Build(stateAfterResponse, DateTimeOffset.UtcNow),
                 GirlfriendCuteModeSignature = stateAfterResponse.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 Message = response.Ok ? "The Star response is ready for Android. If the direct HTTP request was interrupted, the phone can use this queued event." : response.VoiceError,
                 Error = response.Ok ? string.Empty : response.VoiceError,
@@ -1350,6 +1353,7 @@ public sealed partial class MainViewModel
             IsGirlfriend = state.IsGirlfriend,
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            BoyfriendGradeCard = BoyfriendGrades.Build(state, DateTimeOffset.UtcNow),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             State = state,
             Message = response.Ok ? "Conversation response ready." : response.VoiceError,
@@ -1424,6 +1428,7 @@ public sealed partial class MainViewModel
             IsGirlfriend = state.IsGirlfriend,
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            BoyfriendGradeCard = BoyfriendGrades.Build(state, DateTimeOffset.UtcNow),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
@@ -1471,6 +1476,7 @@ public sealed partial class MainViewModel
             IsGirlfriend = state.IsGirlfriend,
             GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+            BoyfriendGradeCard = BoyfriendGrades.Build(state, DateTimeOffset.UtcNow),
             GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
             BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
@@ -1520,6 +1526,7 @@ public sealed partial class MainViewModel
                 IsGirlfriend = state.IsGirlfriend,
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+                BoyfriendGradeCard = BoyfriendGrades.Build(state, DateTimeOffset.UtcNow),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 PendingWritingCount = writingState.PendingCount,
                 PersistedWritingCount = writingState.PersistedWritings.Count,
@@ -1689,6 +1696,7 @@ public sealed partial class MainViewModel
                 IsGirlfriend = state.IsGirlfriend,
                 GirlfriendCuteModeEnabled = state.GirlfriendCuteModeEnabled,
                 GirlfriendCuteModeActive = state.GirlfriendCuteModeEnabled && (state.GirlfriendHourlyState?.CuteModeActive ?? false),
+                BoyfriendGradeCard = BoyfriendGrades.Build(state, DateTimeOffset.UtcNow),
                 GirlfriendCuteModeSignature = state.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
                 BackgroundWritingLoopEnabled = BackgroundWritingLoopEnabled,
                 BackgroundWritingLoopStatus = BackgroundWritingLoopStatus,
@@ -1922,24 +1930,16 @@ public sealed partial class MainViewModel
         AppendMobileBridgeVoiceDebug("Standalone local TTS request", normalizedStar + " clone=" + clonePath);
 
         using IStreamingVoiceGenerator generator = CreateLocalStreamingVoiceGenerator();
-        TaskCompletionSource<byte[]> audioReady = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+        List<byte[]> chunks = new List<byte[]>();
         generator.AudioChunkReady += (_, args) =>
         {
-            if (args.AudioData != null && args.AudioData.Length > 0) audioReady.TrySetResult(args.AudioData);
+            if (args.AudioData.Length > 0) chunks.Add(args.AudioData);
         };
-        generator.GenerationError += (_, args) =>
-        {
-            audioReady.TrySetException(args.Exception ?? new InvalidOperationException(args.ErrorMessage));
-        };
-        generator.GenerationComplete += (_, args) =>
-        {
-            if (args.WasCancelled) audioReady.TrySetCanceled(cancellationToken);
-            else if (!audioReady.Task.IsCompleted) audioReady.TrySetException(new InvalidOperationException("Local TTS completed without returning a WAV chunk."));
-        };
-
         await generator.ConnectAsync(cancellationToken).ConfigureAwait(false);
         await generator.GenerateStreamingAsync(request, cancellationToken).ConfigureAwait(false);
-        byte[] wav = await audioReady.Task.WaitAsync(TimeSpan.FromSeconds(120), cancellationToken).ConfigureAwait(false);
+        byte[] wav = Array.Empty<byte>();
+        foreach (byte[] chunk in chunks) wav = BenaveilProcessingPlaybackEndpoint.Join(wav, chunk);
+        if (wav.Length == 0) throw new InvalidOperationException("Local TTS completed without audio.");
         AppendMobileBridgeVoiceDebug("Standalone local TTS", normalizedStar + " generated " + wav.Length + " WAV bytes through the desktop-resolved clone path.");
         return wav;
     }
@@ -2060,6 +2060,24 @@ public sealed partial class MainViewModel
         {
             System.Diagnostics.Debug.WriteLine("[MobileBridge] Could not publish mobile transcript event: " + ex.Message);
         }
+    }
+
+    private async Task<string> TranscribeMobileMusicAsync(byte[] wav, CancellationToken token)
+    {
+        if (wav.Length == 0 || wav.Length > 4000000) throw new ArgumentException("Record up to two minutes of speech.");
+        PcmWavData pcm = DecodePcm16WavOrRaw(wav, 16000, 1, 16);
+        string segmentId = "music-" + Guid.NewGuid().ToString("N");
+        using DisposableWhisperWrapper streamer = new DisposableWhisperWrapper(CreateWhisperStreamer());
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromMinutes(2));
+        await streamer.BeginSegmentAsync(segmentId, pcm.Format, new WhisperTranscriptionOptions {
+            Language = Environment.GetEnvironmentVariable("SIX_STARS_WHISPER_LANGUAGE") ?? _appConfig.Whisper.Language,
+            Prompt = "Music composition: melody, rhythm, tempo, meter, intervals, harmony."
+        }, deadline.Token).ConfigureAwait(false);
+        await streamer.PushAudioAsync(segmentId, pcm.Pcm16, 0, pcm.Pcm16.Length, deadline.Token).ConfigureAwait(false);
+        var transcript = await streamer.EndSegmentAsync(segmentId, deadline.Token).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(transcript.Text)) throw new InvalidOperationException("No speech was recognized. Please try again.");
+        return transcript.Text;
     }
 
     private async Task<MobileBridgeResponse> ProcessMobileAudioAsync(MobileBridgeRequest request, CancellationToken cancellationToken)
@@ -2624,6 +2642,21 @@ public sealed partial class MainViewModel
                             ? "Android text response returned. Phone voice generation continues in the background."
                             : "Android response complete. Voice chunks sent: " + response.VoiceChunksSent + ", bytes: " + response.VoiceBytesSent + ".";
             });
+            if (starResponse.UnityEvents.Any(x => x.Type == "GirlfriendProposalStarted"))
+            {
+                var afterThinking = response.AfterTransportResponseAsync;
+                response.AfterTransportResponseAsync = async () =>
+                {
+                    try { if (afterThinking != null) await afterThinking().ConfigureAwait(false); }
+                    finally { _runtime.CompleteGirlfriendProposalThinking(starResponse); }
+                };
+                var failedThinking = response.OnTransportFailureAsync;
+                response.OnTransportFailureAsync = async () =>
+                {
+                    try { if (failedThinking != null) await failedThinking().ConfigureAwait(false); }
+                    finally { _runtime.CompleteGirlfriendProposalThinking(starResponse); }
+                };
+            }
             response.ServerElapsedMs = totalStopwatch.ElapsedMilliseconds;
             return response;
         }
@@ -3167,6 +3200,7 @@ public sealed partial class MainViewModel
             {
                 HadTargets = true
             };
+            RegisterMobileLiveVoiceRun(run);
 
             pipeline.GenerationError += (_, args) =>
             {
@@ -3239,6 +3273,7 @@ public sealed partial class MainViewModel
                 try { generator?.Dispose(); } catch { }
             }
             voiceCts.Dispose();
+            UnregisterMobileLiveVoiceRun(stream.StreamId);
             EndMobileVoiceStream(stream, "known-response voice could not start");
             throw;
         }
@@ -4235,7 +4270,24 @@ public sealed partial class MainViewModel
 
         try
         {
-            await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, null, response.BackgroundAnalysisId).ConfigureAwait(false);
+            // The decision is already complete text, but it still belongs to the normal live
+            // speech lane. Batch its parts once and use the same ordered transport/drain as chat.
+            MobileLiveVoiceRun? liveVoice = TryStartMobileKnownResponseVoice(
+                response, sessionId, CancellationToken.None, "Girlfriend proposal follow-up via normal live speech");
+            if (liveVoice != null)
+            {
+                await FinishMobileLiveVoiceAsync(liveVoice, response.BackgroundAnalysisId).ConfigureAwait(false);
+                mobileResponse.VoiceChunksSent = liveVoice.ChunksSent;
+                mobileResponse.VoiceBytesSent = liveVoice.BytesSent;
+                mobileResponse.VoiceError = liveVoice.ErrorMessage;
+                if (!string.IsNullOrWhiteSpace(liveVoice.ErrorMessage))
+                    OnUiThread(() => MobileBridgeStatus = "Girlfriend proposal voice error: " + liveVoice.ErrorMessage);
+            }
+            else
+            {
+                // Preserve non-streaming TTS and the existing disconnected-phone handling.
+                await SendMobileVoiceAsync(response, mobileResponse, CancellationToken.None, null, response.BackgroundAnalysisId).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
@@ -4265,6 +4317,7 @@ public sealed partial class MainViewModel
             IsGirlfriend = persistedState.IsGirlfriend,
             GirlfriendCuteModeEnabled = persistedState.GirlfriendCuteModeEnabled,
             GirlfriendCuteModeActive = persistedState.GirlfriendCuteModeEnabled && (persistedState.GirlfriendHourlyState?.CuteModeActive ?? false),
+            BoyfriendGradeCard = BoyfriendGrades.Build(persistedState, DateTimeOffset.UtcNow),
             GirlfriendCuteModeSignature = persistedState.GirlfriendHourlyState?.CuteModeSignature ?? string.Empty,
             Message = message,
             SpokenText = response.SpokenText ?? string.Empty,

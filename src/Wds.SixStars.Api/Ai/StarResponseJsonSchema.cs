@@ -20,7 +20,7 @@ namespace Wds.SixStars.Api.Ai
                         "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary",
                         "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                         "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                        "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
+                        "boyfriendPerformanceVector", "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                         "thingsLearnedOrSuggestedByPlayer", "loreUsed", "riskFlags", "wisdomScore"
                     }
                 },
@@ -55,6 +55,7 @@ namespace Wds.SixStars.Api.Ai
                         { "petNamesPlayerUsesForStar", StringArray(5) },
                         { "petNamesStarUsesForPlayer", StringArray(5) },
                         { "girlfriendNeedsMetSummary", StringProperty(420) },
+                        { "boyfriendPerformanceVector", GirlfriendVectorArray(8) },
                         { "girlfriendNeedsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendWantsMetVector", GirlfriendVectorArray(12) },
                         { "girlfriendCoupleActivitySummary", StringProperty(520) },
@@ -640,7 +641,7 @@ namespace Wds.SixStars.Api.Ai
                 "detectedCombos", "suggestedStateDeltas", "conversationSummary", "changesSummary", "tenTurnConversationSummary", "hundredTurnConversationSummary",
                 "thingsLearnedOrSuggestedByPlayer", "shortTermMemoryItems", "isSexting", "questionsFromLastCatVector", "questionsToLastCatVector", "questionResolutionVector", "emotionAnimation", "informationNeedsVector", "importantPlayerQuotes", "memoryNotes", "rememberedMarkers", "referencedMemoryMarkerIds", "secretsUnlocked", "learnedFunctions", "relationshipEvents",
                 "girlfriendHistoryUpdates", "petNamesPlayerUsesForStar", "petNamesStarUsesForPlayer",
-                "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
+                "boyfriendPerformanceVector", "girlfriendNeedsMetSummary", "girlfriendNeedsMetVector", "girlfriendWantsMetVector", "girlfriendCoupleActivitySummary", "girlfriendCoupleActivityVector",
                 "requestToShowBoobs", "loreUsed", "riskFlags", "wisdomScore"
             };
 
@@ -689,6 +690,7 @@ namespace Wds.SixStars.Api.Ai
                         { "petNamesStarUsesForPlayer", StringArray() },
                         { "girlfriendNeedsMetSummary", StringProperty() },
                         // Each item is itemId^displayName^confidence^score^reason.
+                        { "boyfriendPerformanceVector", StringArray() },
                         { "girlfriendNeedsMetVector", StringArray() },
                         { "girlfriendWantsMetVector", StringArray() },
                         { "girlfriendCoupleActivitySummary", StringProperty() },

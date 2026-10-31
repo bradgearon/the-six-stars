@@ -4,6 +4,8 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
+using NAudio.CoreAudioApi;
+using System.Runtime.ExceptionServices;
 using Wds.SixStars.Api.Voice;
 
 namespace Wds.SixStars.Ui.Audio;
@@ -11,7 +13,7 @@ namespace Wds.SixStars.Ui.Audio;
 /// <summary>
 /// Desktop equivalent of the Android SmartPcmPlaybackWriter.
 ///
-/// One logical Star response owns exactly one DirectSoundOut instance and one rolling PCM buffer.
+/// One logical Star response owns exactly one configured output instance and one rolling PCM buffer.
 /// Incoming qwentts.cpp PCM transport windows are decoded and appended to that buffer. Playback
 /// starts only after an adaptive reservoir has accumulated, and if generation unexpectedly falls
 /// behind the output is paused/refilled before the DirectSound buffer is allowed to underrun.
@@ -44,7 +46,11 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
     private readonly TaskCompletionSource<bool> _drained = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private BufferedWaveProvider? _provider;
-    private DirectSoundOut? _output;
+    private IWavePlayer? _output;
+    private readonly string _backend;
+    private readonly bool _musicMode;
+    private readonly Func<IWavePlayer>? _outputFactory;
+    private ExceptionDispatchInfo? _failure;
     private WaveFormat? _format;
     private Task? _monitorTask;
     private bool _started;
@@ -61,8 +67,13 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
     private int _emergencyRefills;
     private int _disposed;
 
-    public SmartDirectSoundPcmPlaybackSession(DesktopSmartPcmAdaptiveProfile profile, string reason)
+    public SmartDirectSoundPcmPlaybackSession(DesktopSmartPcmAdaptiveProfile profile, string reason, string backend = "directsound", Func<IWavePlayer>? outputFactory = null,
+        bool musicMode = false, long? requestStartedAtMs = null)
     {
+        _backend = backend;
+        _musicMode = musicMode;
+        _createdAtMs = requestStartedAtMs ?? Environment.TickCount64;
+        _outputFactory = outputFactory;
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         _reason = string.IsNullOrWhiteSpace(reason) ? "desktop smart PCM speech" : reason;
     }
@@ -78,9 +89,18 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
         DecodeAudio(encoded, voiceAudio.MimeType, out WaveFormat format, out byte[] pcm);
         if (pcm.Length == 0) return Task.CompletedTask;
 
-        double durationMs = format.AverageBytesPerSecond > 0
-            ? pcm.Length * 1000.0 / format.AverageBytesPerSecond
-            : Math.Max(1.0, voiceAudio.DurationMs);
+        return EnqueuePcmAsync(pcm, format, cancellationToken);
+    }
+
+    /// <summary>Shared raw PCM entry point; avoids encoding/decoding a WAV for each music block.</summary>
+    internal Task EnqueuePcmAsync(byte[] pcm, WaveFormat format, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (pcm == null) throw new ArgumentNullException(nameof(pcm));
+        if (format == null) throw new ArgumentNullException(nameof(format));
+        if (format.BlockAlign <= 0 || pcm.Length % format.BlockAlign != 0)
+            throw new ArgumentException("PCM must contain complete sample frames.", nameof(pcm));
+        double durationMs = pcm.Length * 1000.0 / format.AverageBytesPerSecond;
         long now = Environment.TickCount64;
 
         lock (_gate)
@@ -90,14 +110,13 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             if (_provider == null)
             {
                 _format = format;
-                _provider = new BufferedWaveProvider(format)
+                _provider = new BufferedWaveProvider(format, _musicMode ? TimeSpan.FromSeconds(4) : TimeSpan.FromMinutes(2))
                 {
                     // The physical DirectSound lane must never tear itself down on a transient producer
                     // gap. The smart low-water controller pauses/refills before this normally matters;
                     // ReadFully is a final safety net that returns silence rather than EOF.
                     ReadFully = true,
-                    DiscardOnBufferOverflow = false,
-                    BufferDuration = TimeSpan.FromMinutes(2)
+                    DiscardOnBufferOverflow = false
                 };
             }
             else if (!SameWaveFormat(_format!, format))
@@ -136,6 +155,21 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
         return Task.CompletedTask;
     }
 
+    /// <summary>Producer backpressure without holding the audio monitor lock while waiting.</summary>
+    internal async Task WaitForBufferBelowAsync(double milliseconds, CancellationToken token)
+    {
+        while (true)
+        {
+            token.ThrowIfCancellationRequested();
+            lock (_gate)
+            {
+                ThrowIfUnavailable(token);
+                if (_provider == null || _provider.BufferedDuration.TotalMilliseconds <= milliseconds) return;
+            }
+            await Task.Delay(MonitorPeriodMs, token).ConfigureAwait(false);
+        }
+    }
+
     public async Task CompleteAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -161,7 +195,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
 
     public void Cancel()
     {
-        DirectSoundOut? output;
+        IWavePlayer? output;
         lock (_gate)
         {
             if (_cancelled) return;
@@ -248,7 +282,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
         if (!_started)
         {
             bool targetReached = bufferedMs >= targetMs;
-            bool shortPhraseReady = bufferedMs >= MinIdleStartMs && (_inputEnded || idleMs >= idleReleaseMs);
+            bool shortPhraseReady = bufferedMs >= MinIdleStartMs && (_inputEnded || (!_musicMode && idleMs >= idleReleaseMs));
             if (targetReached || shortPhraseReady)
             {
                 StartDirectSoundLocked(targetReached ? "adaptive-target" : (_inputEnded ? "input-ended" : "producer-idle"));
@@ -270,12 +304,12 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
         double lowWaterMs = Math.Max(EmergencyLeadMs, Math.Min(650.0, targetMs * 0.30));
         double refillTargetMs = Math.Max(MinRefillMs, Math.Min(1400.0, targetMs * 0.70));
 
-        if (!_inputEnded && !_buffering && bufferedMs < lowWaterMs && bufferedMs > 0)
+        if (!_inputEnded && !_buffering && bufferedMs < lowWaterMs && (_musicMode || bufferedMs > 0))
         {
             _buffering = true;
             _emergencyRefills++;
             _profile.IncreaseStartup(Math.Max(_profile.StartupMs + 180.0, targetMs));
-            try { _output.Pause(); } catch { }
+            _output.Pause();
             Debug.WriteLine(
                 $"[SmartDirectSound] emergency refill #{_emergencyRefills}: paused with {bufferedMs:0}ms lead; " +
                 $"target={refillTargetMs:0}ms, rate={EffectiveGenerationRateLocked():0.00}x.");
@@ -292,7 +326,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             if (refillReady || _inputEnded)
             {
                 _buffering = false;
-                try { _output.Play(); } catch { }
+                _output.Play();
                 Debug.WriteLine(
                     $"[SmartDirectSound] refill released with {bufferedMs:0}ms lead; target={refillTargetMs:0}ms.");
             }
@@ -311,7 +345,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             if (_buffering)
             {
                 _buffering = false;
-                try { _output.Play(); } catch { }
+                _output.Play();
             }
 
             if (bufferedMs <= 0.5)
@@ -336,24 +370,31 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
     {
         if (_started || _provider == null || _format == null) return;
 
-        DirectSoundOut output = new DirectSoundOut(DirectSoundLatencyMs);
+        IWavePlayer output = _outputFactory?.Invoke() ?? _backend switch
+        {
+            "wasapi" => new WasapiOut(AudioClientShareMode.Shared, true, DirectSoundLatencyMs),
+            "waveout" => new WaveOut { DeviceNumber = -1, NumberOfBuffers = 3,
+                BufferMilliseconds = (DirectSoundLatencyMs + 2) / 3 },
+            _ => new DirectSoundOut(DirectSoundLatencyMs)
+        };
         output.PlaybackStopped += OnPlaybackStopped;
         try
         {
             output.Init(_provider);
-            output.Play();
             _output = output;
             _started = true;
+            output.Play();
 
             long firstWait = _firstInputAtMs > 0 ? Math.Max(0, _firstInputAtMs - _createdAtMs) : 0;
             Debug.WriteLine(
-                $"[SmartDirectSound] started DirectSound only; reason={startReason}, " +
+                $"[SmartDirectSound] started {_backend}; reason={startReason}, " +
                 $"buffer={_provider.BufferedDuration.TotalMilliseconds:0}ms, target={CalculateTargetMsLocked():0}ms, " +
                 $"rate={EffectiveGenerationRateLocked():0.00}x, jitter={_stats.JitterMs:0}ms, " +
                 $"firstChunkWait={firstWait}ms, deviceLatency={DirectSoundLatencyMs}ms, format={DescribeWaveFormat(_format)}, lane={_reason}.");
         }
         catch
         {
+            _output = null;
             output.PlaybackStopped -= OnPlaybackStopped;
             output.Dispose();
             throw;
@@ -365,7 +406,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
         if (_stopped) return;
         _stopped = true;
 
-        DirectSoundOut? output = _output;
+        IWavePlayer? output = _output;
         _output = null;
         if (output != null)
         {
@@ -400,10 +441,8 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             // Ignore our own normal stop. A spontaneous stop before input completion is not allowed to
             // cause device reopen churn; report it as an error instead so it is visible in diagnostics.
             if (_stopped || _cancelled) return;
-            if (!_inputEnded)
-            {
-                StopWithErrorLocked(new InvalidOperationException("DirectSound stopped before the smart PCM stream completed."));
-            }
+            StopWithErrorLocked(new InvalidOperationException(
+                $"{_backend} stopped unexpectedly before the rolling PCM output finished draining."));
         }
     }
 
@@ -417,9 +456,10 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
 
     private void StopWithErrorLocked(Exception error)
     {
-        if (_stopped) return;
+        if (_stopped || _cancelled) return;
+        _failure = ExceptionDispatchInfo.Capture(error);
         _stopped = true;
-        DirectSoundOut? output = _output;
+        IWavePlayer? output = _output;
         _output = null;
         if (output != null)
         {
@@ -428,6 +468,7 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
             try { output.Dispose(); } catch { }
         }
         _drained.TrySetException(error);
+        _ = _drained.Task.Exception; // also observed if Enqueue surfaces it before Complete is reached
         try { _monitorCts.Cancel(); } catch { }
     }
 
@@ -486,7 +527,8 @@ internal sealed class SmartDirectSoundPcmPlaybackSession : IStreamingWavePlaybac
 
     private void ThrowIfUnavailable(CancellationToken cancellationToken)
     {
-        if (_cancelled) throw new OperationCanceledException("Smart DirectSound playback was cancelled.", cancellationToken);
+        _failure?.Throw();
+        if (_cancelled) throw new OperationCanceledException("Smart PCM playback was cancelled.", cancellationToken);
         if (_inputEnded) throw new InvalidOperationException("Cannot enqueue audio after smart DirectSound playback has completed input.");
         if (_stopped) throw new InvalidOperationException("Cannot enqueue audio after smart DirectSound playback has stopped.");
     }
@@ -600,7 +642,12 @@ internal sealed class DesktopSmartPcmAdaptiveProfile
     private const double MinStartupMs = 500.0;
     private const double MaxStartupMs = 2200.0;
     private readonly object _gate = new object();
-    private double _startupMs = 900.0;
+    private double _startupMs;
+
+    public DesktopSmartPcmAdaptiveProfile(double initialStartupMs = 900.0)
+    {
+        _startupMs = Math.Clamp(initialStartupMs, MinStartupMs, MaxStartupMs);
+    }
 
     public double StartupMs
     {

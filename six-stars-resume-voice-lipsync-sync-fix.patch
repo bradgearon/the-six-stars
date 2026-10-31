@@ -1,0 +1,389 @@
+diff --git a/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/MainActivity.java b/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/MainActivity.java
+index f0d28ab..7909cf1 100644
+--- a/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/MainActivity.java
++++ b/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/MainActivity.java
+@@ -485,6 +485,16 @@ public final class MainActivity extends ComponentActivity {
+         destroyed = true;
+         stopRecording(false);
+         mainHandler.removeCallbacks(preparedSpeechLoop);
++
++        // If the user actually closes/swipes away this Activity, abandon any in-flight phone
++        // voice transport and queued playback instead of letting a late previous reply remain in
++        // the ViewModel/service and block the next launch. Configuration changes are excluded so a
++        // normal Activity recreation does not interrupt speech.
++        if (isFinishing() && !isChangingConfigurations() && phoneVoiceService != null) {
++            phoneVoiceService.disconnect();
++            cancelStarVoiceAnimationMarkers("Android activity closed by user.");
++        }
++
+         if (phoneVoiceService != null) phoneVoiceService.setListener(null);
+         if (starAnimationCoordinator != null) starAnimationCoordinator.setListener(null);
+         httpExecutor.shutdownNow();
+diff --git a/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java b/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java
+index 42df560..416df14 100644
+--- a/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java
++++ b/android/six-stars-mobile/app/src/main/java/com/wds/sixstarsmobile/PhoneVoicePlaybackService.java
+@@ -227,9 +227,17 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+     }
+ 
+     /**
+-     * Re-open an idle voice socket after Android resumes. A TCP Socket can remain isConnected()==true
+-     * even though Wi-Fi sleep invalidated the path, so connect() alone cannot reliably detect this.
+-     * Never interrupt active/queued speech; in that case only remember the desired route.
++     * Re-open the phone voice socket after Android resumes. A TCP Socket can remain
++     * isConnected()==true even though Wi-Fi sleep or an Activity/task restart invalidated the path.
++     *
++     * AudioTrack playback and the ordered PCM queues are independent from the TCP socket, so a
++     * completed response may still be playing locally while the transport is already safe to
++     * refresh. Do not wait for that local playback to finish: doing so can leave a stale socket in
++     * place for many seconds and make the next Star response appear to hang.
++     *
++     * A reconnect during an actually active desktop stream is also safe here: stream id/order state
++     * and already accepted audio are preserved, and the desktop has reconnect grace for the same
++     * phone client. The next accepted frame re-activates desktopStreamActive.
+      */
+     void refreshConnection(String host, int port) {
+         if (host == null || host.trim().isEmpty() || port <= 0) return;
+@@ -237,17 +245,15 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+         synchronized (socketLock) {
+             desiredHost = normalizedHost;
+             desiredPort = port;
+-            if (desktopStreamActive || !isIdle()) {
+-                refreshWhenIdle = true;
+-                post(() -> listener.onDebug("Phone voice resume refresh deferred",
+-                        "Existing Star speech is active; the voice socket will refresh after the queue becomes idle."));
+-                return;
+-            }
++            boolean preservingActiveTransport = desktopStreamActive;
++            boolean preservingLocalPlayback = !isIdle();
+             refreshWhenIdle = false;
+             reconnectScheduled = false;
+             reconnectAttempt = 0;
+-            post(() -> listener.onDebug("Phone voice socket",
+-                    "Refreshing idle voice socket after Android resume: " + normalizedHost + ":" + port + "."));
++            post(() -> listener.onDebug("Phone voice socket refresh",
++                    "Refreshing after Android resume: " + normalizedHost + ":" + port
++                            + "; preserveDesktopStream=" + preservingActiveTransport
++                            + ", preserveLocalPlayback=" + preservingLocalPlayback + "."));
+             startSocketLocked(normalizedHost, port);
+         }
+     }
+@@ -383,7 +389,17 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+             } else {
+                 queued = enqueueDesktopInOrder(clip);
+             }
+-            post(() -> listener.onSocketStatus((queued > 0 ? "Queued" : "Buffered") + " phone voice chunk " + chunkNumber + "/" + totalChunks));
++            // Continuous PCM can arrive dozens of times per second. Updating the Android status
++            // TextView for every 240 ms transport packet floods the main looper and can visibly
++            // delay animation callbacks even though AudioTrack itself is already playing. Keep
++            // detailed transport state in the stream-level logs and only surface sparse PCM
++            // progress here. Legacy complete WAV clips remain one-status-per-clip.
++            if (!continuousPcm || sequence == 0 || ((sequence + 1) % 25) == 0) {
++                int finalQueued = queued;
++                post(() -> listener.onSocketStatus((finalQueued > 0 ? "Queued" : "Buffered")
++                        + (continuousPcm ? " PCM packet " : " phone voice chunk ")
++                        + chunkNumber + "/" + totalChunks));
++            }
+             return;
+         }
+ 
+@@ -448,9 +464,17 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                         "stream=" + ordinal + ", active=" + activeStreamOrdinal + "."));
+                 return;
+             }
+-            pcmStreamQueue.markBatchEnded(streamId, ordinal);
++            int throughAudioSequence;
++            synchronized (orderedQueueLock) {
++                // The batch-end control shares the same TCP socket and is sent only after the final
++                // PCM packet in this qwentts request, so every sequence before nextExpectedSequence
++                // belongs to the completed batch.
++                throughAudioSequence = nextExpectedSequence - 1;
++            }
++            pcmStreamQueue.markBatchEnded(streamId, ordinal, throughAudioSequence);
+             post(() -> listener.onDebug("PCM synthesis batch complete",
+-                    "stream=" + ordinal + "; short buffered speech may start below the normal startup target."));
++                    "stream=" + ordinal + ", throughSequence=" + throughAudioSequence
++                            + "; short buffered speech may start below the normal startup target."));
+             return;
+         }
+ 
+@@ -960,10 +984,13 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+         }
+ 
+         /** Marks the end of one qwentts HTTP synthesis batch without ending the logical reply. */
+-        void markBatchEnded(String streamId, long ordinal) {
++        void markBatchEnded(String streamId, long ordinal, int throughAudioSequence) {
+             DesktopPcmStream stream;
+             synchronized (gate) { stream = byKey.get(streamKey(streamId, ordinal)); }
+-            if (stream != null) stream.producerBatchEnds++;
++            if (stream != null) {
++                stream.producerBatchEnds++;
++                if (throughAudioSequence >= 0) stream.lipBatchEndSequences.offerLast(throughAudioSequence);
++            }
+         }
+ 
+         void cancelStream(String streamId, long ordinal) {
+@@ -1058,19 +1085,37 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+             ArrayList<PhoneVoiceClip> writtenClips = new ArrayList<>();
+             ByteArrayOutputStream assembledPcm = new ByteArrayOutputStream();
+             long writtenFrames = 0L;
++            int lastWrittenSequence = -1;
+             for (ParsedPcmPacket packet : startup) {
+                 validateFormat(packet, sampleRate, channels);
+                 writtenFrames = writePacket(track, packet, writtenFrames, writtenClips, assembledPcm);
++                lastWrittenSequence = Math.max(lastWrittenSequence, packet.clip.audioSequence);
+             }
++            // Provisional startup timeline: enough to begin lip motion with the first audible
++            // syllables. Do not keep rebuilding global RMS thresholds for every 240 ms packet;
++            // complete qwentts batch boundaries below are the stable points where the old
++            // complete-WAV behavior can be reproduced.
+             refreshStreamLipTimeline(animationClip, assembledPcm, sampleRate, channels);
+ 
+             int initialUnderruns = track.getUnderrunCount();
+             int lastUnderruns = initialUnderruns;
+             int emergencyRefills = 0;
+             boolean completed = false;
+-            boolean playbackNotified = false;
++            AtomicBoolean playbackStartedSignal = new AtomicBoolean(false);
++            AtomicBoolean playbackFinishedSignal = new AtomicBoolean(false);
++            Thread playbackWatcher = null;
+             try {
+                 track.play();
++
++                // Keep the old, proven animation alignment behavior: detect the first frame that
++                // actually reaches AudioTrack playback on a dedicated watcher thread. Do not tie
++                // lip-start timing to the PCM writer loop, which may be blocked filling the rolling
++                // buffer while the speaker is already producing sound.
++                long initialDurationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
++                playbackWatcher = startContinuousPlaybackWatcher(
++                        track, animationClip, sampleRate, initialDurationMs,
++                        playbackStartedSignal, playbackFinishedSignal);
++
+                 long startupAudioForLog = startupAudioMs;
+                 long startupTargetForLog = targetMs;
+                 boolean shortBatchRelease = startupAudioMs < targetMs
+@@ -1082,15 +1127,13 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+ 
+                 while (running && !stream.cancelled) {
+                     waitWhilePaused(track);
+-                    boolean timelineChanged = false;
+                     PhoneVoiceClip clip = stream.chunks.poll(24L, TimeUnit.MILLISECONDS);
+                     if (clip != null) {
+                         ParsedPcmPacket packet = parsePacket(clip);
+                         validateFormat(packet, sampleRate, channels);
+                         stats.observe(packet, packet.clip.receivedAtElapsedMs);
+                         writtenFrames = writePacket(track, packet, writtenFrames, writtenClips, assembledPcm);
+-                        refreshStreamLipTimeline(animationClip, assembledPcm, sampleRate, channels);
+-                        timelineChanged = true;
++                        lastWrittenSequence = Math.max(lastWrittenSequence, packet.clip.audioSequence);
+                         if (!paused && track.getPlayState() != AudioTrack.PLAYSTATE_PLAYING) {
+                             try { track.play(); } catch (Exception ignored) { }
+                         }
+@@ -1099,18 +1142,14 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                     long playedFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+                     long playbackElapsedMs = playedFrames * 1000L / Math.max(1, sampleRate);
+                     long assembledDurationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
+-                    if (!playbackNotified && playedFrames > 0L) {
+-                        playbackNotified = true;
+-                        long startedElapsed = playbackElapsedMs;
+-                        long startedDuration = assembledDurationMs;
+-                        post(() -> listener.onPlaybackStarted(
+-                                animationClip, startedDuration, Math.min(startedDuration, startedElapsed)));
+-                    } else if (playbackNotified && timelineChanged) {
+-                        long updateElapsed = playbackElapsedMs;
+-                        long updateDuration = assembledDurationMs;
+-                        post(() -> listener.onPlaybackTimelineUpdated(
+-                                animationClip, updateDuration, Math.min(updateDuration, updateElapsed)));
+-                    }
++
++                    // Recalculate the marker timeline only when the complete PCM for a qwentts
++                    // synthesis batch has been written. This mirrors the old complete-WAV behavior
++                    // and avoids moving thresholds/state every transport packet while the mouth is
++                    // already animating.
++                    refreshCompletedBatchLipTimeline(
++                            stream, animationClip, assembledPcm, sampleRate, channels,
++                            lastWrittenSequence, assembledDurationMs, playbackElapsedMs);
+ 
+                     long leadMs = Math.max(0L, (writtenFrames - playedFrames) * 1000L / Math.max(1, sampleRate));
+                     long liveTargetMs = calculateTargetMs(stats);
+@@ -1133,7 +1172,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                         try { track.pause(); } catch (Exception ignored) { }
+                         long refillTarget = Math.max(MIN_REFILL_MS, Math.min(1400L, Math.round(liveTargetMs * 0.70)));
+                         long refilledMs = 0L;
+-                        boolean refillTimelineChanged = false;
+                         while (running && !stream.cancelled && refilledMs < refillTarget) {
+                             PhoneVoiceClip refill = stream.chunks.poll(50L, TimeUnit.MILLISECONDS);
+                             if (refill != null) {
+@@ -1141,22 +1179,18 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                                 validateFormat(packet, sampleRate, channels);
+                                 stats.observe(packet, packet.clip.receivedAtElapsedMs);
+                                 writtenFrames = writePacket(track, packet, writtenFrames, writtenClips, assembledPcm);
++                                lastWrittenSequence = Math.max(lastWrittenSequence, packet.clip.audioSequence);
+                                 refilledMs += packet.durationMs;
+-                                refillTimelineChanged = true;
+                             }
+                             if (stream.producerBatchEnds > stream.batchEndsSeenAtLastPacket) break;
+                             if (stream.ended && stream.chunks.isEmpty()) break;
+                         }
+-                        if (refillTimelineChanged) {
+-                            refreshStreamLipTimeline(animationClip, assembledPcm, sampleRate, channels);
+-                            long refillPlayedFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+-                            long refillElapsedMs = refillPlayedFrames * 1000L / Math.max(1, sampleRate);
+-                            long refillDurationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
+-                            if (playbackNotified) {
+-                                post(() -> listener.onPlaybackTimelineUpdated(
+-                                        animationClip, refillDurationMs, Math.min(refillDurationMs, refillElapsedMs)));
+-                            }
+-                        }
++                        long refillPlayedFrames = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
++                        long refillElapsedMs = refillPlayedFrames * 1000L / Math.max(1, sampleRate);
++                        long refillDurationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
++                        refreshCompletedBatchLipTimeline(
++                                stream, animationClip, assembledPcm, sampleRate, channels,
++                                lastWrittenSequence, refillDurationMs, refillElapsedMs);
+                         if (running && !stream.cancelled) try { track.play(); } catch (Exception ignored) { }
+                         long finalRefilledMs = refilledMs;
+                         long finalLeadMs = leadMs;
+@@ -1167,13 +1201,6 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+ 
+                     if (stream.ended && stream.chunks.isEmpty()) {
+                         long head = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+-                        if (!playbackNotified && head > 0L) {
+-                            playbackNotified = true;
+-                            long elapsedMs = head * 1000L / Math.max(1, sampleRate);
+-                            long durationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
+-                            post(() -> listener.onPlaybackStarted(
+-                                    animationClip, durationMs, Math.min(durationMs, elapsedMs)));
+-                        }
+                         if (head >= writtenFrames) {
+                             completed = true;
+                             break;
+@@ -1190,7 +1217,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                     long head = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+                     long elapsedMs = head * 1000L / Math.max(1, sampleRate);
+                     long durationMs = writtenFrames * 1000L / Math.max(1, sampleRate);
+-                    if (playbackNotified) {
++                    if (playbackStartedSignal.get()) {
+                         post(() -> listener.onPlaybackTimelineUpdated(
+                                 animationClip, durationMs, Math.min(durationMs, elapsedMs)));
+                     }
+@@ -1201,11 +1228,13 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                     }
+                 }
+             } finally {
++                playbackFinishedSignal.set(true);
++                if (playbackWatcher != null) playbackWatcher.interrupt();
+                 stopTrack(track);
+                 track.release();
+                 activeTrack = null;
+                 boolean clean = completed;
+-                if (playbackNotified) post(() -> listener.onPlaybackFinished(animationClip, clean));
++                if (playbackStartedSignal.get()) post(() -> listener.onPlaybackFinished(animationClip, clean));
+                 double rate = stats.rate;
+                 int underrunDelta = Math.max(0, lastUnderruns - initialUnderruns);
+                 int refills = emergencyRefills;
+@@ -1255,6 +1284,96 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+                     assembledPcm.toByteArray(), sampleRate, channels);
+         }
+ 
++        /**
++         * Apply the old complete-WAV RMS behavior at stable qwentts batch boundaries.
++         *
++         * A boundary is queued only after the final PCM packet of that HTTP synthesis request has
++         * crossed the TCP socket. We wait until playback has actually written through that audio
++         * sequence, then recalculate once. This avoids reclassifying the already-playing mouth on
++         * every tiny transport packet while still letting the first buffered prefix start quickly.
++         */
++        private void refreshCompletedBatchLipTimeline(DesktopPcmStream stream,
++                                                      PhoneVoiceClip animationClip,
++                                                      ByteArrayOutputStream assembledPcm,
++                                                      int sampleRate,
++                                                      int channels,
++                                                      int lastWrittenSequence,
++                                                      long assembledDurationMs,
++                                                      long playbackElapsedMs) {
++            if (stream == null || animationClip == null || assembledPcm == null) return;
++
++            boolean crossedBoundary = false;
++            int throughSequence = -1;
++            while (true) {
++                Integer boundary = stream.lipBatchEndSequences.peekFirst();
++                if (boundary == null || boundary > lastWrittenSequence) break;
++                throughSequence = boundary;
++                stream.lipBatchEndSequences.pollFirst();
++                crossedBoundary = true;
++            }
++            if (!crossedBoundary) return;
++
++            refreshStreamLipTimeline(animationClip, assembledPcm, sampleRate, channels);
++            int[] segments = animationClip.speechActivitySegmentsMs;
++            int segmentCount = segments == null ? 0 : segments.length / 2;
++            int firstStartMs = segmentCount > 0 ? Math.max(0, segments[0]) : -1;
++            long safeElapsed = Math.min(assembledDurationMs, Math.max(0L, playbackElapsedMs));
++            post(() -> listener.onPlaybackTimelineUpdated(
++                    animationClip, assembledDurationMs, safeElapsed));
++
++            int finalThroughSequence = throughSequence;
++            post(() -> listener.onDebug("PCM lip timeline finalized",
++                    "stream=" + stream.ordinal
++                            + ", throughSequence=" + finalThroughSequence
++                            + ", segments=" + segmentCount
++                            + ", firstStart=" + firstStartMs + "ms"
++                            + ", playbackElapsed=" + safeElapsed + "ms."));
++        }
++
++        private Thread startContinuousPlaybackWatcher(AudioTrack track,
++                                                       PhoneVoiceClip animationClip,
++                                                       int sampleRate,
++                                                       long initialDurationMs,
++                                                       AtomicBoolean started,
++                                                       AtomicBoolean finished) {
++            Thread watcher = new Thread(() -> {
++                AudioTimestamp timestamp = new AudioTimestamp();
++                long deadline = SystemClock.elapsedRealtime() + 30000L;
++                while (running && !finished.get() && !started.get() && SystemClock.elapsedRealtime() < deadline) {
++                    long frame = 0L;
++                    try {
++                        frame = track.getTimestamp(timestamp) && timestamp.framePosition > 0L
++                                ? timestamp.framePosition
++                                : Integer.toUnsignedLong(track.getPlaybackHeadPosition());
++                    } catch (IllegalStateException released) {
++                        break;
++                    }
++
++                    if (frame > 0L && started.compareAndSet(false, true)) {
++                        long elapsedMs = frame * 1000L / Math.max(1, sampleRate);
++                        long durationMs = Math.max(initialDurationMs, elapsedMs);
++                        int[] segments = animationClip.speechActivitySegmentsMs;
++                        int firstMarkerMs = segments != null && segments.length >= 2 ? Math.max(0, segments[0]) : -1;
++                        post(() -> listener.onPlaybackStarted(
++                                animationClip, durationMs, Math.min(durationMs, elapsedMs)));
++                        post(() -> listener.onDebug("PCM playback output started",
++                                "stream=" + animationClip.streamOrdinal
++                                        + ", playbackHead=" + elapsedMs + "ms"
++                                        + ", firstLipMarker=" + firstMarkerMs + "ms."));
++                        break;
++                    }
++
++                    try {
++                        Thread.sleep(8L);
++                    } catch (InterruptedException ignored) {
++                        break;
++                    }
++                }
++            }, "six-stars-pcm-playback-start-watcher");
++            watcher.start();
++            return watcher;
++        }
++
+         private void waitWhilePaused(AudioTrack track) {
+             while (running && paused) {
+                 try { if (track.getPlayState() == AudioTrack.PLAYSTATE_PLAYING) track.pause(); } catch (Exception ignored) { }
+@@ -1347,6 +1466,7 @@ final class PhoneVoicePlaybackService implements AutoCloseable {
+             final long ordinal;
+             final String label;
+             final LinkedBlockingDeque<PhoneVoiceClip> chunks = new LinkedBlockingDeque<>();
++            final LinkedBlockingDeque<Integer> lipBatchEndSequences = new LinkedBlockingDeque<>();
+             volatile int producerBatchEnds;
+             volatile int batchEndsSeenAtLastPacket;
+             volatile boolean ended;

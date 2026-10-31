@@ -10,6 +10,7 @@ internal sealed class DesktopVoiceOutputService : IDisposable
 {
     internal sealed record Result(bool Configured, bool Streaming, VoiceSynthesisResult? Voice);
 
+    private readonly SemaphoreSlim _speechGate = new(1, 1);
     private readonly bool _useStreaming;
     private readonly StreamingStarVoiceResponsePipeline? _streaming;
     private readonly StarVoiceResponsePipeline? _standard;
@@ -28,6 +29,15 @@ internal sealed class DesktopVoiceOutputService : IDisposable
     }
 
     public async Task<Result> SpeakAsync(string sessionId, StarInteractionResponse response, CancellationToken cancellationToken)
+    {
+        // A replacement request waits for the previous pipeline and generator to finish
+        // cancellation/cleanup before shared Star and queue state can be reset.
+        await _speechGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return await SpeakCoreAsync(sessionId, response, cancellationToken).ConfigureAwait(false); }
+        finally { _speechGate.Release(); }
+    }
+
+    private async Task<Result> SpeakCoreAsync(string sessionId, StarInteractionResponse response, CancellationToken cancellationToken)
     {
         if (_useStreaming && _streaming != null)
         {

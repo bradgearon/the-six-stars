@@ -214,6 +214,7 @@ public final class MainActivity extends ComponentActivity {
     private int selectedStarUnpostedWritingCount;
     private boolean starWritingRequestRunning;
     private View prodTextToggleButton;
+    private MusicRequestDialog musicRequestDialog;
     private View prodTextComposer;
     private TextView prodConversationText;
     private ScrollView prodConversationScroll;
@@ -393,7 +394,7 @@ public final class MainActivity extends ComponentActivity {
                     starVoicePlaybackActive = true;
                     activeAnimatedVoiceClip = clip;
                     setKeepScreenAwake(KEEP_AWAKE_REASON_AUDIO_PLAYBACK, true, clip.label);
-                    startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
+                    if (!clip.isMusic) startStarVoiceAnimationMarkers(clip, durationMs, playbackElapsedMs);
                     if (viewModel != null) viewModel.setVoicePlaying(true);
                 });
             }
@@ -480,6 +481,7 @@ public final class MainActivity extends ComponentActivity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        if (musicRequestDialog != null) musicRequestDialog.close();
         stopRecording(false);
         mainHandler.removeCallbacks(preparedSpeechLoop);
         if (phoneVoiceService != null) phoneVoiceService.setListener(null);
@@ -822,6 +824,7 @@ public final class MainActivity extends ComponentActivity {
         prodCancelVoiceButton.setOnClickListener(v -> cancelProdVoiceRecording());
         prodSendVoiceButton.setOnClickListener(v -> sendProdVoiceRecording());
         prodTextToggleButton.setOnClickListener(v -> toggleProdTextComposer());
+        findViewById(R.id.prod_music_button).setOnClickListener(v -> showMusicRequest());
         prodSendTextButton.setOnClickListener(v -> sendMessage());
 
         messageEdit.setHint("Type a message to the selected Star...");
@@ -892,21 +895,60 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private final java.util.HashMap<String, JSONObject> boyfriendCards = new java.util.HashMap<>();
+
+    private void addBoyfriendGradeCard(LinearLayout outer) {
+        JSONObject card = boyfriendCards.get(selectedStarName().toLowerCase(Locale.US));
+        JSONArray categories = card == null ? null : optJsonArrayEither(card, "categories", "Categories");
+        TextView heading = prodText("Boyfriend grade card", 22, 0xFFFFF4FA, true);
+        outer.addView(heading);
+        outer.addView(prodText("Cumulative grade  ·  This week", 12, 0xFFFFD6EA, false));
+        if (categories == null || categories.length() == 0) {
+            outer.addView(prodText("Waiting for her relationship memories. Grades appear after three observations in a category.", 13, 0xFFB6E6F2, false));
+            return;
+        }
+        for (int i = 0; i < categories.length(); i++) {
+            JSONObject category = categories.optJSONObject(i);
+            if (category == null) continue;
+            LinearLayout panel = new LinearLayout(this);
+            panel.setOrientation(LinearLayout.VERTICAL);
+            panel.setPadding(dp(10), dp(8), dp(10), dp(8));
+            LinearLayout line = row();
+            panel.addView(prodText(optStringEither(category, "category", "Category", ""), 15, 0xFFEAF7FF, true));
+            String grade = optStringEither(category, "grade", "Grade", "Not yet rated");
+            line.addView(prodText(grade, "Not yet rated".equals(grade) ? 12 : 28, 0xFFFFB4D6, true));
+            TextView week = prodText("  Week: " + optStringEither(category, "weekGrade", "WeekGrade", "Not yet rated"), 11, 0xFFB6A6B6, false);
+            line.addView(week);
+            panel.addView(line);
+            String memory = optStringEither(category, "memory", "Memory", "");
+            String date = optStringEither(category, "memoryAt", "MemoryAt", "");
+            if (date.length() >= 10) memory = date.substring(0, 10) + " · " + memory;
+            panel.addView(prodText(memory, 12, 0xFFB6E6F2, false));
+            String priority = optStringEither(category, "currentPriority", "CurrentPriority", "");
+            if (!priority.isEmpty()) panel.addView(prodText("On her mind: " + priority, 12, 0xFFFFD6EA, false));
+            outer.addView(panel);
+        }
+        String from = optStringEither(card, "historyFrom", "HistoryFrom", "");
+        if (from.length() >= 10) outer.addView(prodText("Remembered history from " + from.substring(0, 10), 11, 0xFFB6A6B6, false));
+        outer.addView(prodText(optStringEither(card, "note", "Note", ""), 11, 0xFFB6A6B6, false));
+    }
+
     private void showGirlfriendSettingsDialog() {
         final String starName = selectedStarName();
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.VERTICAL);
         outer.setPadding(dp(14), dp(14), dp(14), dp(8));
 
-        TextView title = prodText(starName + " Settings", 22, 0xFFFFF4FA, true);
+        TextView title = prodText(starName + " · Girlfriend", 22, 0xFFFFF4FA, true);
         title.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(title);
 
-        TextView sub = prodText("Girlfriend controls for the selected Star. Tap the Star sprite to open this again.", 12, 0xFFFFD6EA, false);
+        TextView sub = prodText("The moments she remembers with you.", 12, 0xFFFFD6EA, false);
         sub.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(sub);
 
-        TextView status = prodOutput(buildGirlfriendSettingsStatusText(), 6);
+        addBoyfriendGradeCard(outer);
+        TextView status = prodOutput(buildGirlfriendSettingsStatusText(), 1);
         status.setTextIsSelectable(true);
         outer.addView(status, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -916,7 +958,7 @@ public final class MainActivity extends ComponentActivity {
         cuteMode.setChecked(selectedStarCuteModeEnabled);
         outer.addView(cuteMode);
 
-        TextView hint = prodText("When enabled, the desktop runtime may activate her Star-specific cute mode during girlfriend hourly state updates. When disabled, she stays affectionate but avoids the special cute-mode behavior pattern.", 12, 0xFFB6E6F2, false);
+        TextView hint = prodText("Allow her special cute-mode style.", 12, 0xFFB6E6F2, false);
         outer.addView(hint);
 
         LinearLayout buttons = row();
@@ -937,8 +979,10 @@ public final class MainActivity extends ComponentActivity {
         quickXStatus.setGravity(Gravity.CENTER_HORIZONTAL);
         outer.addView(quickXStatus);
 
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(outer);
         AlertDialog dialog = new AlertDialog.Builder(this)
-                .setView(outer)
+                .setView(scroll)
                 .setNegativeButton("Close", null)
                 .create();
         dialog.setOnShowListener(d -> {
@@ -967,16 +1011,7 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private String buildGirlfriendSettingsStatusText() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Star: ").append(selectedStarName()).append('\n');
-        sb.append(selectedStarIsGirlfriend ? "Relationship: girlfriend" : "Relationship: not girlfriend").append('\n');
-        sb.append("Cute mode setting: ").append(selectedStarCuteModeEnabled ? "enabled" : "disabled").append('\n');
-        sb.append("Cute mode right now: ").append(selectedStarCuteModeActive ? "active" : "not active").append('\n');
-        if (selectedStarCuteModeSignature != null && selectedStarCuteModeSignature.trim().length() > 0) {
-            sb.append("Signature: ").append(selectedStarCuteModeSignature.trim()).append('\n');
-        }
-        sb.append('\n').append("This only controls the girlfriend cute-mode style layer. It does not turn off normal affection or romance.");
-        return sb.toString();
+        return "Cute mode: " + (!selectedStarCuteModeEnabled ? "off" : selectedStarCuteModeActive ? "active" : "allowed");
     }
 
     private void confirmBreakupFromGirlfriendSettings(AlertDialog parentDialog, String starName) {
@@ -3194,6 +3229,10 @@ public final class MainActivity extends ComponentActivity {
     private void applyStarStateObject(JSONObject state, String status) {
         String starId = optStringEither(state, "starId", "StarId", selectedStarName());
         if (!starId.equalsIgnoreCase(selectedStarName())) return;
+        JSONObject gradeCard = state.optJSONObject("boyfriendGradeCard");
+        if (gradeCard == null) gradeCard = state.optJSONObject("BoyfriendGradeCard");
+        if (gradeCard != null) boyfriendCards.put(starId.toLowerCase(Locale.US), gradeCard);
+        if (!optBooleanEither(state, "isGirlfriend", "IsGirlfriend", selectedStarIsGirlfriend)) boyfriendCards.remove(starId.toLowerCase(Locale.US));
         boolean met = optBooleanEither(state, "isMet", "IsMet", selectedStarIsMet);
         boolean ally = optBooleanEither(state, "isAlly", "IsAlly", selectedStarIsAlly);
         int heart = optIntEither(state, "heart", "Heart", 0);
@@ -4172,6 +4211,17 @@ public final class MainActivity extends ComponentActivity {
 
     private void closeAudioSocket() {
         if (phoneVoiceService != null) phoneVoiceService.disconnect();
+    }
+
+    private void showMusicRequest() {
+        if (voiceCaptureService != null && voiceCaptureService.isRecording()) {
+            android.widget.Toast.makeText(this, "Finish the current recording first.", android.widget.Toast.LENGTH_SHORT).show(); return;
+        }
+        if (musicRequestDialog != null) musicRequestDialog.close();
+        String bridge = viewModel == null ? baseUrl() : viewModel.activeBridgeUrl();
+        musicRequestDialog = new MusicRequestDialog(this, bridge, voiceCaptureService,
+                settingsService.echoMicWhileRecording(), phoneVoiceService);
+        musicRequestDialog.show();
     }
 
     private void playSavedVoiceAudio() {

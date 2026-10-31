@@ -126,7 +126,19 @@ namespace Wds.SixStars.Api.Voice
                     VoiceSettings = CreateSettingsFromResponse(response)
                 };
 
-                await _streamingGenerator.GenerateStreamingAsync(request, linkedCts.Token).ConfigureAwait(false);
+                Task generationTask = _streamingGenerator.GenerateStreamingAsync(request, linkedCts.Token);
+                if (_playbackTask != null)
+                {
+                    Task first = await Task.WhenAny(generationTask, _playbackTask).ConfigureAwait(false);
+                    if (first == _playbackTask && _playbackTask.IsFaulted)
+                    {
+                        linkedCts.Cancel();
+                        _streamingGenerator.CancelGeneration();
+                        try { await generationTask.ConfigureAwait(false); } catch { }
+                        await _playbackTask.ConfigureAwait(false); // retain original playback failure
+                    }
+                }
+                await generationTask.ConfigureAwait(false);
 
                 if (_playbackTask != null)
                 {
@@ -271,6 +283,7 @@ namespace Wds.SixStars.Api.Voice
             int emptyPollsAfterComplete = 0;
             int waitForMissingChunkPolls = 0;
             IStreamingWavePlaybackSession? continuousPlayback = null;
+            bool playbackFailed = false;
 
             try
             {
@@ -394,7 +407,8 @@ namespace Wds.SixStars.Api.Voice
                         {
                             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Playback error on chunk {chunk.ChunkIndex + 1}: {ex.Message}");
                             Debug.WriteLine($"[StreamingStarVoiceResponsePipeline] Stack trace: {ex.StackTrace}");
-                            nextChunkIndex++;
+                            playbackFailed = true;
+                            throw; // A failed output session cannot consume subsequent chunks.
                         }
                     }
                     else
@@ -456,7 +470,7 @@ namespace Wds.SixStars.Api.Voice
                 {
                     try
                     {
-                        if (cancellationToken.IsCancellationRequested)
+                        if (cancellationToken.IsCancellationRequested || playbackFailed)
                         {
                             continuousPlayback.Cancel();
                         }

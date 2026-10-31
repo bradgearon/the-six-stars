@@ -20,6 +20,21 @@ public partial class MainWindow : Window
     private const uint MOD_CONTROL = 0x0002;
     private const uint MOD_WIN = 0x0008;
     private HwndSource? _source;
+    private MusicWindow? _musicWindow;
+
+    private void AskForMusic_Click(object sender, RoutedEventArgs e)
+    {
+        if (_musicWindow != null) { _musicWindow.Activate(); return; }
+        try {
+            if (DataContext is not MainViewModel vm) return;
+            _musicWindow = vm.CreateMusicWindow();
+            _musicWindow.Owner = this;
+            _musicWindow.Closed += (_, _) => _musicWindow = null;
+            _musicWindow.Show();
+        } catch (Exception error) {
+            MessageBox.Show(this, error.Message, "Music", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
 
     public MainWindow()
     {
@@ -81,6 +96,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _musicWindow?.Close();
         IntPtr handle = new WindowInteropHelper(this).Handle;
         UnregisterHotKey(handle, HotkeyToggleRecord);
         UnregisterHotKey(handle, HotkeyCancelAll);
